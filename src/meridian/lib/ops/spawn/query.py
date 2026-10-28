@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from typing import NamedTuple, cast
 
-from meridian.lib.core.context_ref import CHAT_REF_RE
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
@@ -86,37 +85,6 @@ def resolve_spawn_reference(
     if resolved is None:
         raise ValueError(f"No spawns found for reference '{normalized}'")
     return resolved
-
-
-def resolve_message_target(
-    project_root: Path,
-    ref: str,
-    *,
-    runtime_root: Path | None = None,
-) -> str:
-    """Resolve the spawn a message to *ref* reaches.
-
-    Spawn IDs and ``@`` references follow :func:`resolve_spawn_reference`. A chat ID
-    differs: it names that chat's own session (exact ``chat_id``), so a peer primary
-    is reached, not a child its chat launched. Only a running session can receive.
-    """
-
-    normalized = ref.strip()
-    if normalized.startswith("@"):
-        return resolve_spawn_reference(project_root, normalized, runtime_root=runtime_root)
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None or spawn_store.get_spawn(resolved_runtime_root, normalized):
-        return normalized
-    if not CHAT_REF_RE.fullmatch(normalized):
-        return normalized
-    sessions = overlay_derived(
-        resolved_runtime_root,
-        indexed_spawn_scan(resolved_runtime_root, chat_id=normalized).records,
-    )
-    running = [row for row in sessions if is_active_spawn_status(row.status)]
-    if not running:
-        raise ValueError(f"chat {normalized} has no running session")
-    return max(running, key=lambda row: row.started_at or "").id
 
 
 def resolve_spawn_references(

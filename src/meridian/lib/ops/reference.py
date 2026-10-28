@@ -19,7 +19,6 @@ from meridian.lib.ops.reference_recovery import (
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
@@ -81,19 +80,26 @@ def _normalize_optional(value: str | None) -> str | None:
 
 
 def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
-    """Resolve a spawn reference from spawn id first, then chat id."""
+    """Resolve a spawn reference: a spawn id, or the spawn that owns a chat.
+
+    A chat ID names that chat's own session, never a child it launched: a live run
+    that adopted the chat mid-run through native ``/resume`` first, otherwise the
+    spawn its session record links (the newest generation). Whether it is still
+    running is for the caller to check.
+    """
 
     spawn = spawn_store.get_spawn(runtime_root, ref)
     if spawn is not None:
         return SpawnId(spawn.id)
 
-    matches = list(indexed_spawn_scan(runtime_root, owner_chat_id=ref).records)
-    if not matches:
-        matches = list(indexed_spawn_scan(runtime_root, chat_id=ref).records)
-    if matches:
-        matches.sort(key=lambda item: item.started_at or "", reverse=True)
-        return SpawnId(matches[0].id)
-
+    if not CHAT_REF_RE.fullmatch(ref):
+        return None
+    owner_id = session_identity.live_observer_for_chat(runtime_root, ref)
+    if owner_id is None:
+        session = session_store.chat_record(runtime_root, ref)
+        owner_id = session.spawn_id if session is not None else None
+    if owner_id is not None and spawn_store.get_spawn(runtime_root, owner_id) is not None:
+        return SpawnId(owner_id)
     return None
 
 

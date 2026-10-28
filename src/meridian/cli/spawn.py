@@ -90,17 +90,11 @@ _SPAWN_USAGE_EPILOGUE = (
     "If the launch was killed, reconcile with `meridian spawn wait` or\n"
     "`meridian status`.\n"
 )
-# Forms `resolve_spawn_reference` accepts; a chat resolves to the newest spawn of its
-# family, which is often a child it launched, not the chat's own session.
+# Forms `resolve_spawn_reference` accepts; a chat names its own session, not a child.
 _SPAWN_REF_FORMS = (
-    "spawn ID, chat ID (the newest spawn of that chat, which may be a child it launched), "
-    "or @latest / @last-failed / @last-completed"
+    "spawn ID, chat ID (that chat's own session), or @latest / @last-failed / @last-completed"
 )
-# Forms `resolve_message_target` accepts: a chat names its own running session.
-_MESSAGE_REF_FORMS = (
-    "spawn ID, chat ID (that chat's running session), or @latest / @last-failed / "
-    "@last-completed"
-)
+
 _SPAWN_WAIT_HELP_EPILOGUE = (
     "Without spawn ids, discovers running descendants and finished background\n"
     "children whose results you have not consumed. Returns at most 32 already-\n"
@@ -1383,8 +1377,9 @@ def _spawn_message(
     ref: Annotated[
         str,
         Parameter(
+            name=["ref", "--spawn-id"],
             help=(
-                f"Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
+                f"Session to message: {_SPAWN_REF_FORMS}. IDs are per project: "
                 "use `-C <repo>` for a session elsewhere."
             )
         ),
@@ -1394,6 +1389,12 @@ def _spawn_message(
         Parameter(help="Message text. Put long content in a file and send its path."),
     ] = "",
 ) -> None:
+    if any(token.split("=", 1)[0] == "--spawn-id" for token in sys.argv[1:]):
+        print(
+            "warning: `--spawn-id` is deprecated and will be removed in the next minor "
+            "release; pass the ref positionally or as `--ref`.",
+            file=sys.stderr,
+        )
     observer = resolve_cli_observer_context(observe=True)
     peer = get_global_options().caller_peer
     asyncio.run(
@@ -1415,7 +1416,7 @@ def _spawn_message(
 def _spawn_inject_deprecated(
     ref: Annotated[
         str,
-        Parameter(help=f"Session to message: {_MESSAGE_REF_FORMS}."),
+        Parameter(help=f"Session to message: {_SPAWN_REF_FORMS}."),
     ],
     message: Annotated[
         str,

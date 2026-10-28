@@ -20,8 +20,9 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
+    resolve_runtime_root_for_read,
 )
-from meridian.lib.ops.spawn.query import resolve_message_target
+from meridian.lib.ops.spawn.query import resolve_spawn_reference
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -40,6 +41,7 @@ def _fail(message: str) -> Never:
 def framed_message(
     message: str,
     *,
+    sender_spawn_id: str | None = None,
     sender: SpawnRecord | None = None,
     sender_project_root: Path | None = None,
     can_reply: bool = False,
@@ -53,15 +55,15 @@ def framed_message(
     needs ``-C``.
     """
 
-    if sender is None:
+    if sender_spawn_id is None:
         provenance = "[Meridian] Message with no sender identity; it has no reply address."
     else:
-        where = f"spawn {sender.id}"
-        if sender.chat_id:
+        where = f"spawn {sender_spawn_id}"
+        if sender is not None and sender.chat_id:
             where += f" (chat {sender.chat_id})"
-        if can_reply:
-            # A chat ID names a primary across generations; a subagent is only its
-            # spawn ID, since its chat resolves to the primary that launched it.
+        if sender is not None and can_reply:
+            # A primary's chat ID names it across generations; any other sender is
+            # addressed by spawn ID.
             address = sender.id
             if sender.kind == "primary":
                 address = spawn_owner_chat_id(sender) or sender.id
@@ -77,10 +79,14 @@ def framed_message(
     return f"{provenance}\n\n{message}"
 
 
-def _sender_record(runtime_root: Path, sender_spawn_id: str | None) -> SpawnRecord | None:
-    """Return the sender's own record, the source of its chat id and route."""
+def _sender_record(runtime_root: Path | None, sender_spawn_id: str | None) -> SpawnRecord | None:
+    """Return the sender's own record, the source of its chat id and route.
 
-    if sender_spawn_id is None:
+    ``None`` when the sender's project has no runtime root or no such record; the
+    frame then still names the sender, without a reply route.
+    """
+
+    if sender_spawn_id is None or runtime_root is None:
         return None
     return read_derived(runtime_root, sender_spawn_id)
 
@@ -138,25 +144,28 @@ async def send_message(
     project_root, _ = resolve_runtime_root_and_config(None)
     runtime_root = resolve_runtime_root(project_root)
     try:
-        normalized_spawn_id = resolve_message_target(
+        normalized_spawn_id = resolve_spawn_reference(
             project_root, normalized_ref, runtime_root=runtime_root
         )
     except ValueError as exc:
         _fail(str(exc))
     if not (runtime_root / "spawns" / normalized_spawn_id).exists():
-        _fail(f"spawn not found: {normalized_spawn_id}")
+        _fail(f"spawn or chat not found: {normalized_ref}")
     socket_path = control_socket_path(runtime_root, normalized_spawn_id)
 
     normalized_message = message.strip()
     if not normalized_message:
         _fail("message is required")
 
-    sender = _sender_record(
-        resolve_runtime_root(sender_project_root) if sender_project_root else runtime_root,
-        sender_spawn_id,
+    sender_root = (
+        resolve_runtime_root_for_read(sender_project_root)
+        if sender_project_root is not None
+        else runtime_root
     )
+    sender = _sender_record(sender_root, sender_spawn_id)
     framed = framed_message(
         normalized_message,
+        sender_spawn_id=sender_spawn_id,
         sender=sender,
         sender_project_root=sender_project_root,
         can_reply=_can_receive_reply(sender),

@@ -27,7 +27,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running primary); `-C` reaches a session in another project |
+| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session); `-C` reaches a session in another project |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
