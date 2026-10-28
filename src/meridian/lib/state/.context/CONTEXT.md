@@ -534,8 +534,18 @@ spawn"); resume, read and `--from` still work on the chat.
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
 - An exact continue writes no link until its session starts: the start event is the only
-  writer of a chat's owner. Until then `spawn show cN` names the previous run, and a
-  racing continue is refused by the chat lock (`ChatBusyError`) in its worker.
+  writer of a chat's owner. Until then `spawn show`, `wait`, `cancel` and
+  `message` by chat ID name the previous run (a short window; once the row exists but its
+  session has not started they can act on a finished run), and a racing continue is
+  refused by the chat lock (`ChatBusyError`) in its worker.
+- A spawn row's `chat_id` is its own chat: an exact continue reserves it with the
+  continue target, so a continue refused before its session starts still resumes that
+  chat. A fresh child has no chat until it starts and carries its caller's chat as a
+  placeholder (`owner_chat_id` is the caller's chat); a child that fails before its
+  session starts therefore resumes or reads the caller's conversation. Reserving it
+  chat-less would need every reader that groups children by `chat_id` (`spawn list
+  --chat`, work dashboard and sessions, `session_records_for_spawns` full scans) to
+  switch to `owner_chat_id`; not done.
 
 A crash between reservation and row write leaves a link to no row; readers skip it.
 `history_id` is the relocation-stable ID of a spawn's history. Only the generation a
