@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,8 @@ from meridian.lib.harness.model_observation import (
     NativeModelReadContext,
     read_last_executed_model,
 )
-from tests.support.opencode_db import write_opencode_v2_db_session
+from meridian.lib.harness.opencode_transcript import detect_opencode_db_schema, read_last_model
+from tests.support.opencode_db import write_opencode_db_session, write_opencode_v2_db_session
 
 
 def test_opencode_reads_last_model(tmp_path: Path) -> None:
@@ -181,3 +183,74 @@ def test_unreadable_pi_header_model_observation_is_best_effort(
     assert read_last_executed_model(
         "pi", sid, context=NativeModelReadContext(native_store=str(tmp_path)),
     ) is None
+
+
+_SESSION = "ses_v2_fixture"
+
+
+def test_opencode_read_last_model_follows_mid_session_switch(tmp_path: Path) -> None:
+    db = tmp_path / "opencode.db"
+    write_opencode_v2_db_session(
+        db_path=db,
+        session_id=_SESSION,
+        model={"id": "mimo-v2.5-free", "providerID": "opencode"},
+        messages=[
+            (
+                "assistant",
+                {"model": {"id": "mimo-v2.5-free", "providerID": "opencode"}},
+            ),
+            (
+                "model-switched",
+                {"model": {"id": "deepseek-v4.1-flash", "providerID": "opencode-go"}},
+            ),
+        ],
+    )
+
+    assert read_last_model(_SESSION, db_path=db) == "opencode-go/deepseek-v4.1-flash"
+
+
+def test_opencode_read_last_model_v2_and_v1_fallback(tmp_path: Path) -> None:
+    v2 = tmp_path / "v2.db"
+    write_opencode_v2_db_session(
+        db_path=v2,
+        session_id=_SESSION,
+        model={"id": "mimo-v2.5-free", "providerID": "opencode"},
+    )
+    assert read_last_model(_SESSION, db_path=v2) == "opencode/mimo-v2.5-free"
+    assert read_last_model("ses_missing", db_path=v2) is None
+
+    v1 = tmp_path / "v1.db"
+    write_opencode_db_session(db_path=v1, session_id=_SESSION, messages=[])
+    with sqlite3.connect(v1) as connection:
+        connection.execute("ALTER TABLE session ADD COLUMN model TEXT")
+        connection.execute(
+            "UPDATE session SET model=?",
+            (json.dumps({"id": "gpt-5.5", "providerID": "openai"}),),
+        )
+    assert read_last_model(_SESSION, db_path=v1) == "openai/gpt-5.5"
+
+
+def test_opencode_v1_session_in_v2_migrated_db_reads_last_model(tmp_path: Path) -> None:
+    path = tmp_path / "opencode.db"
+    write_opencode_v2_db_session(
+        db_path=path,
+        session_id=_SESSION,
+        model={"id": "mimo-v2.5-free", "providerID": "opencode"},
+    )
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                model TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO session (id, time_created, time_updated, model) VALUES (?, 1, 1, ?)",
+            ("ses_legacy", json.dumps({"id": "legacy-model", "providerID": "acme"})),
+        )
+    assert read_last_model("ses_legacy", db_path=path) == "acme/legacy-model"
+    assert detect_opencode_db_schema(path) == "sqlite_v2"

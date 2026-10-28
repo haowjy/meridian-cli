@@ -88,3 +88,31 @@ def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) 
     assert not stale_path.exists()
     assert current_store._lock_path(stale_path).is_file()
     assert current_store.read("example", "native-2") is not None
+
+
+def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path: Path) -> None:
+    from meridian.lib.config.models import MeridianConfig
+    from meridian.lib.idle.service import IdleService, close_on_launch
+
+    env = {"MERIDIAN_HOME": str(tmp_path), "MERIDIAN_SESSION_ROLE": "primary"}
+    store = IdleStore(root=tmp_path / "idle")
+    store.write(
+        IdleState(
+            harness="example",
+            session="open",
+            stretch=1,
+            stretch_open=True,
+            anchor=1,
+            idle_since_ms=1,
+            schedule=IdleSchedule(push_at=2),
+            updated_at_ms=1,
+        )
+    )
+
+    close_on_launch(harness="example", session="open", env=env)
+    close_on_launch(harness="example", session="missing", env=env)
+
+    current = store.read("example", "open")
+    assert current is not None and current.stretch_open is False
+    assert IdleService(store=store, config=MeridianConfig(), env=env).status() == ()
+    assert not store.path_for("example", "missing").exists()
