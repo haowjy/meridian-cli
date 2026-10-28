@@ -24,10 +24,11 @@ Detail: `.context/CONTEXT.md`; the spawn subpackage: `spawn/AGENTS.md`.
   chat links in one session epoch, never nested with the work-store lock);
   `activate_work()` and `publish_work_event()` own the user-visible work events and
   paired telemetry. Details and the incident behind it: `.context/CONTEXT.md`.
-- **Session references go through `ops/reference.py`** (`resolve_session_reference()`
-  → `ResolvedSessionReference`) for `--continue`/`--fork` targets. `--from` resolves
-  once through `ops/spawn/context_ref.resolve_context_ref()`; `-f` files in
-  `launch/reference.py`.
+- **A reference is classified once, in `core/refs.py` (`parse_ref`), and located once, in
+  `ops/locate.py` (`locate`).** Commands project what they need from the result
+  (`locate_run`/`resolve_spawn_target`, `reference.resolve_session_reference`,
+  `session_target.resolve_transcript_source`, `spawn/context_ref.resolve_context_ref`) and
+  never re-check the string's shape. `-f` files resolve in `launch/reference.py`.
 - **Choose spawn status by intent**: see `spawn/AGENTS.md` (stored vs derived).
 - **Sync artifacts belong to `hooks/builtin/autosync_store`**; ops resolves which
   directories are sync roots and never builds `.meridian/autosync/` paths.

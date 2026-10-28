@@ -108,8 +108,8 @@ def main() -> None:
         result = s.get_model_selection(root, harness, native)
         assert result is not None
     elif operation == "resolve":
-        result = s.resolve_session_ref(root, native, harness=harness)
-        assert result is not None
+        result = s.native_generations(root, native, harness=harness)
+        assert result
     elif operation == "archive":
         result = archive_history(root, destination=scratch / "archives", eligible=True)
     elif operation == "close":

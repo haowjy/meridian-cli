@@ -23,11 +23,14 @@ from sqlalchemy import or_, select
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.harness.transcript import reject_runner_history
+from meridian.lib.ops.locate import ChatHit, SpawnHit, Untracked, locate
 from meridian.lib.ops.run_boundary import spawn_view_label
+from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.query import read_stored_spawn_row
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
@@ -98,14 +101,6 @@ class TranscriptSource(NamedTuple):
 class SessionLogTarget(NamedTuple):
     source: TranscriptSource
     view_label: str | None = None
-
-
-def _is_chat_ref(runtime_root: Path, value: str) -> bool:
-    return session_identity.is_tracked_chat_ref(runtime_root, value)
-
-
-def _is_spawn_ref(value: str) -> bool:
-    return value.startswith("p") and value[1:].isdigit()
 
 
 def _extract_session_id_from_path(path: Path) -> str:
@@ -188,14 +183,11 @@ def _target_from_record(record: session_store.SessionRecord) -> SessionLogTarget
     return _native_target(key, record)
 
 
-def _resolve_from_chat_id(*, runtime_root: Path, chat_id: str) -> SessionLogTarget:
-    record = session_store.chat_record(runtime_root, chat_id)
-    if record is None:
-        raise ValueError(f"Chat '{chat_id}' not found")
+def _chat_target(runtime_root: Path, record: session_store.SessionRecord) -> SessionLogTarget:
     if record.record_mode == "historical" and record.spawn_id:
         row = spawn_store.get_spawn(runtime_root, record.spawn_id)
         if row is not None and row.history_id == record.history_id:
-            return _restored_target(runtime_root, row, ref=chat_id)
+            return _restored_target(runtime_root, row, ref=record.chat_id)
     return _target_from_record(record)
 
 
@@ -326,73 +318,38 @@ def resolve_run_sources(
     return tuple(sources)
 
 
-def _resolve_from_spawn_id(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    spawn_id: str,
-    purpose: Literal["display", "capture"] = "display",
-    deadline: float | None = None,
+def resolve_capture_source(
+    *, project_root: Path, runtime_root: Path, spawn_id: str
 ) -> SessionLogTarget:
+    """The exact native source of a terminal spawn's own bound generation, for capture."""
     row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-    if row is None and purpose == "display":
-        indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
-        if indexed is not None:
-            return _indexed_target(
-                runtime_root, indexed, ref=spawn_id, project_root=project_root, deadline=deadline
-            )
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
+    if (
+        row.record_mode == "historical"
+        or row.status not in TERMINAL_SPAWN_STATUSES
+        or row.history_id is None
+    ):
+        raise ValueError("Capture preparation requires an identified terminal record")
+    # Use only this aggregate and its exact session generation. A current chat,
+    # inferred harness or post-launch file discovery cannot establish binding.
+    session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
+    key = session.native_key() if session else None
+    if key is None or session is None:
+        raise NativeSessionUnavailable(row.id, "unbound")
+    return _native_target(key, session)
 
-    if purpose == "capture":
-        if (
-            row.record_mode == "historical"
-            or row.status not in TERMINAL_SPAWN_STATUSES
-            or row.history_id is None
-        ):
-            raise ValueError("Capture preparation requires an identified terminal record")
-        # Use only this aggregate and its exact session generation. A current chat,
-        # inferred harness or post-launch file discovery cannot establish binding.
-        session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
-        key = session.native_key() if session else None
-        if key is None or session is None:
-            raise NativeSessionUnavailable(row.id, "unbound")
-        return _native_target(key, session)
 
+def _spawn_source(runtime_root: Path, row: SpawnRecord) -> SessionLogTarget:
     if row.record_mode == "historical":
-        return _restored_target(runtime_root, row, ref=spawn_id)
+        return _restored_target(runtime_root, row, ref=row.id)
     return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
-def _resolve_from_session_ref(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    session_ref: str,
-    deadline: float | None = None,
+def _indexed_or_untracked(
+    *, project_root: Path, runtime_root: Path, session_ref: str, deadline: float | None
 ) -> SessionLogTarget:
-    matches = [
-        record
-        for record in session_store.list_all_session_records(runtime_root)
-        if (key := record.native_key()) is not None and key.session_id == session_ref
-    ]
-    if matches:
-        if len({record.native_key() for record in matches}) > 1:
-            raise NativeSessionUnavailable(session_ref, "ambiguous_native_file")
-        matches.sort(
-            key=lambda record: (
-                int(record.chat_id[1:]) if record.chat_id[1:].isdigit() else float("inf"),
-                record.chat_id,
-            )
-        )
-        target = _target_from_record(matches[0])
-        return target._replace(
-            view_label=(
-                "also bound to " + ", ".join(record.chat_id for record in matches[1:])
-                if len(matches) > 1
-                else None
-            )
-        )
+    """A native ID, portable history UUID or archive alias with no local binding."""
     indexed = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
     if indexed is not None:
         return _indexed_target(
@@ -423,17 +380,15 @@ def resolve_transcript_source(
     project_root: Path,
     runtime_root: Path | None,
     deadline: float | None = None,
-    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
-    if purpose == "capture":
-        if runtime_root is None or file_path or not _is_spawn_ref(ref.strip()):
-            raise ValueError("Native capture requires an exact local spawn reference")
-        return _resolve_from_spawn_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_id=ref.strip(),
-            purpose=purpose,
-        )
+    """Resolve a reference to the one native transcript to read.
+
+    Reading keeps fallbacks that resuming refuses: the history index finds reclaimed
+    spawns and archive-origin aliases, a portable history UUID names a record, and a
+    restored historical record renders read-only. Last, a native ID Meridian never
+    recorded is read untracked.
+    """
+
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
 
@@ -441,33 +396,41 @@ def resolve_transcript_source(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
-    if runtime_root is not None and _is_chat_ref(runtime_root, normalized_ref):
-        return _resolve_from_chat_id(
-            runtime_root=runtime_root,
-            chat_id=normalized_ref,
+    root = runtime_root or resolve_runtime_root_for_read(project_root)
+    try:
+        located = locate(project_root, normalized_ref, runtime_root=root)
+    except RefNotFound as miss:
+        if miss.kind != "spawn" or root is None:
+            raise
+        indexed = _indexed_spawn(root, normalized_ref, deadline=deadline)
+        if indexed is None:
+            raise
+        return _indexed_target(
+            root, indexed, ref=normalized_ref, project_root=project_root, deadline=deadline
         )
 
-    if runtime_root is None:
-        is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
-        if _is_spawn_ref(normalized_ref) or is_chat_id:
-            raise FileNotFoundError(f"Session reference '{normalized_ref}' not found")
-        return _untracked_target(
-            project_root=project_root,
-            session_ref=normalized_ref,
-        )
-
-    if _is_spawn_ref(normalized_ref):
-        return _resolve_from_spawn_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_id=normalized_ref,
-            deadline=deadline,
-        )
-
-    return _resolve_from_session_ref(
+    if isinstance(located, SpawnHit):
+        return _spawn_source(located.runtime_root, located.spawn)
+    if isinstance(located, ChatHit):
+        if located.ref.kind == "chat":
+            return _chat_target(located.runtime_root, located.chat)
+        chat = located.chat
+        key = chat.native_key()
+        # A legacy binding with no native store can't name its file: read it as untracked.
+        if key is not None:
+            target = _native_target(key, chat)
+            return target._replace(
+                view_label=(
+                    "also bound to " + ", ".join(located.also_bound) if located.also_bound else None
+                )
+            )
+        located = Untracked(located.ref.value)
+    if root is None:
+        return _untracked_target(project_root=project_root, session_ref=located.native_id)
+    return _indexed_or_untracked(
         project_root=project_root,
-        runtime_root=runtime_root,
-        session_ref=normalized_ref,
+        runtime_root=root,
+        session_ref=located.native_id,
         deadline=deadline,
     )
 
@@ -476,6 +439,7 @@ __all__ = [
     "SessionLogTarget",
     "TranscriptSource",
     "native_source_label",
+    "resolve_capture_source",
     "resolve_run_sources",
     "resolve_transcript_source",
 ]

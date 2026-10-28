@@ -78,6 +78,53 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
+## Chat and session references
+
+Every command that takes a reference now resolves it through one rule, so a chat ID, a
+spawn ID and a raw harness session ID mean the same thing everywhere.
+
+- Every spawn command (`show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`,
+  `report`, `message`) takes a spawn ID, a chat ID or a raw harness session ID. A chat or
+  raw ID names the run live in that chat now (a native `/resume` takeover, followed on a
+  best-effort basis), else the spawn that ran it. A chat ID never means a child that
+  chat launched. `cancel` on a primary still needs `--force`.
+- A ref shaped `p<digits>` or `c<digits>` is always a Meridian spawn or chat. One that
+  names nothing fails with a single not-found error (`Chat 'c99999' not found`) instead
+  of falling through to the harness as an untracked session ID. Any other value is
+  treated as a native session ID; only one with no Meridian record resumes untracked, and
+  only through primary `--continue`/`--fork` and spawn `--fork`. Spawn `--continue`
+  requires retained spawn metadata and refuses it.
+- A raw harness session ID names the chat of the newest generation that has a native
+  session key, else the newest generation. Resume and read share this rule. Before, it
+  named the lowest-numbered chat, so `session log <id>` on a session recorded under two
+  chats now reads the newer one. An ID recorded under two native stores (or
+  two harnesses) is refused as ambiguous; pass the chat ID instead.
+- `--continue`, `--fork`, `--fork-fresh`, `session log`/`export`/`search` and
+  `session repair` accept `@latest`, `@last-failed` and `@last-completed`, as the
+  spawn commands and `--from` do. `spawn message` refuses them. `session repair` also
+  accepts a raw harness session ID.
+- `--from cN` names chat `cN`'s own transcript, and `--from pN` the spawn's current chat,
+  not its entry chat. A conversation that ran `/clear` is in a new chat, so a handoff
+  passes the run's own spawn ID (`--from p123`; `meridian task-dir --json` prints it as
+  `spawn_id`) to follow the current chat; a chat ID there reads the transcript
+  from before the `/clear`.
+- A message's reply command names the sender's current chat, so it still reaches a
+  primary after a `/clear`. The old chat ID still names the run in `spawn show` and
+  `cancel`, but `spawn message` refuses it.
+- `--continue` on a chat a live run still holds fails within about two seconds, naming
+  the holder (`Chat c1 is held by pid 4242; continue after it exits, or --fork c1`);
+  continue after it exits, or `--fork` the chat. It used to wait on the lock. A
+  continue's run becomes the chat's owner only when its session starts; until then
+  `spawn show`, `wait`, `cancel` and `message` by chat ID name the previous run. See
+  [Troubleshooting](troubleshooting.md#continue-refuses-the-chat-is-held).
+
+`meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
+running in that chat now; `-C` addresses a session in another project. Chat and spawn
+IDs count per project.
+
+`--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
+and works until the next minor release. Pass the ref positionally instead.
+
 ## Mars 0.24.1
 
 Meridian pins `mars-agents==0.24.1`, up from 0.23.4. Run `meridian mars sync` after upgrading
@@ -1112,7 +1159,9 @@ original chat keeps its native identity. A separate `current_chat_id` selects th
 current conversation: reuse an existing chat unchanged, or create a fresh chat
 with the current chat's settings and work association. History, identities and
 live leases are not copied. A normal fresh launch still starts fresh; only
-continuation follows the previous run.
+continuation follows the previous run. Meridian follows a native `/resume` on a
+best-effort basis; `meridian --continue <chat>` and `meridian session browse` are the
+reliable ways to resume, because they record which run owns the chat.
 
 The same pointer carries a verified post-exit session (Pi): Meridian proves the
 native transcript before reusing or creating that chat, then publishes it as
@@ -1523,7 +1572,8 @@ is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 spelling keep working: it warns on stderr and runs the same command until the
 next minor release. Each message also opens with a `[Meridian]` line naming the
 sending spawn and chat and, when the sender can receive one, the
-`meridian spawn message <id>` command that answers it. Anything that parses the
+`meridian spawn message <sender chat ID>` command that answers it, with
+`-C <sender project root>` when the sender is in another project. Anything that parses the
 delivered text sees that line first; the text you sent follows a blank line.
 
 ## Behavior changes you'll notice

@@ -178,7 +178,7 @@ def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
     runtime_overrides = {
         "MERIDIAN_PROJECT_DIR": "/repo",
         "_MERIDIAN_DEPTH": "2",
-        "MERIDIAN_CHAT_ID": "c-parent",
+        "MERIDIAN_CHAT_ID": "c9007",
         "MERIDIAN_CONTEXT_KB_DIR": "/repo/.meridian/kb",
         "MERIDIAN_ACTIVE_WORK_ID": "current",
         "MERIDIAN_ACTIVE_WORK_DIR": "/repo/.meridian/work/current",

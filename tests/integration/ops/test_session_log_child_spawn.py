@@ -123,7 +123,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
         harness="codex",
         harness_session_id="parent-session-id",
         model="gpt-5.4",
-        chat_id="c-parent",
+        chat_id="c9007",
         kind="primary",
     ).chat_id
     try:
@@ -170,7 +170,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         harness_session_id="11111111-1111-4111-8111-111111111111",
         native_store=(codex_home / "sessions").as_posix(),
         model="gpt-5.4",
-        chat_id="c-child",
+        chat_id="c9012",
         spawn_id="p42",
     ).chat_id
     try:
@@ -422,7 +422,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
         harness_session_id=primary_session_id,
         native_store=(codex_home / "sessions").as_posix(),
         model="gpt-5.4",
-        chat_id="c-owner",
+        chat_id="c9008",
         kind="primary",
     ).chat_id
     primary_spawn_id = str(
@@ -442,7 +442,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
     child_spawn_id = str(
         spawn_store.start_spawn(
             runtime_root,
-            chat_id="c-child",
+            chat_id="c9012",
             owner_chat_id=owner_chat_id,
             parent_id=primary_spawn_id,
             model="gpt-5.4",

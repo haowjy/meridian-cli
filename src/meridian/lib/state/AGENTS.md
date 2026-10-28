@@ -91,8 +91,7 @@ retry, ZIP retention, or restore.
 A chat keeps one `(harness, native_store, harness_session_id)` binding;
 `update_session_harness_id` returns `BindOutcome` from `native_binding.bind`, and callers
 mirror its accepted ID. Per-operation session reads and all appends use the keyed seam in
-`session_store.py`; multi-chat reads use one `chats_rows` pass. `session_exists()` is the
-canonical predicate. Unsupported-version rows are skipped with a warning; scoped appends
+`session_store.py`; multi-chat reads use one `chats_rows` pass. Unsupported-version rows are skipped with a warning; scoped appends
 refuse them.
 
 ## Work items

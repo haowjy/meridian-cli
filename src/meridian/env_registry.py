@@ -220,7 +220,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     ),
     _public_handle(
         "MERIDIAN_CHAT_ID",
-        "Launch-time chat identifier; ambient commands resolve the run's current chat.",
+        "Chat of the conversation that launched this run (a primary's own chat; for a "
+        "spawn, its launcher's chat); ambient commands resolve the run's current chat.",
         project_scoped=True,
     ),
     _public_handle(

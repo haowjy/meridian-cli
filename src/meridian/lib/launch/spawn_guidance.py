@@ -192,7 +192,9 @@ def build_capabilities_prompt(
         # `# Meridian run` block.
         lines.append(
             f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`); use it in names, and as the parent for handoff `--from`."
+            "(`$MERIDIAN_CHAT_ID`); use it in names. For a handoff's `--from`, use your run ID "
+            "instead (`meridian task-dir --json` prints it as `spawn_id`): it follows this "
+            "conversation across `/clear`, which this chat ID does not."
         )
         if has_message_route:
             # Chat IDs count per project, so the bare ID is ambiguous to a peer in

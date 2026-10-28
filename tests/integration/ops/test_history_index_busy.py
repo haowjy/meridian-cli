@@ -30,8 +30,8 @@ def _spawn(root: Path, spawn_id: str = "p-busy") -> str:
         spawn_store.start_spawn(
             root,
             spawn_id=spawn_id,
-            chat_id="c-owner",
-            owner_chat_id="c-owner",
+            chat_id="c9008",
+            owner_chat_id="c9008",
             model="test",
             agent="coder",
             harness="pi",
@@ -171,7 +171,7 @@ def test_no_arg_wait_caps_discovery_at_query_timeout(
             yield_after_secs=3_000.0,
             observe=False,
         ),
-        ctx=RuntimeContext(chat_id=ChatId("c-owner")),
+        ctx=RuntimeContext(chat_id=ChatId("c9008")),
     )
 
     assert result.checkpoint_discovery_pending
@@ -240,7 +240,7 @@ def test_no_arg_wait_yields_when_discovery_remains_busy(
                 yield_after_secs=0.1,
                 observe=False,
             ),
-            ctx=RuntimeContext(chat_id=ChatId("c-owner")),
+            ctx=RuntimeContext(chat_id=ChatId("c9008")),
             sink=sink,
         )
 

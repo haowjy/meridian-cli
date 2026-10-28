@@ -23,9 +23,11 @@ its capabilities block: `meridian -C <its repo> spawn message <its chat ID>
 session in another repo, ask the human for the repo path; `-C <repo>` selects the
 project. No `-C` for a session in your own project. A chat with no running session
 fails with a message saying so.
-`spawn show` and `spawn cancel` on a chat name the spawn that first owned it; `spawn
-message` reaches whichever run is live in the chat now, which differs after a `/clear`
-or a resume of its native session.
+Every spawn command (`show`, `cancel`, ...) takes a chat ID the same way: it names the
+run live in that chat now, else the spawn that ran it. After a `/clear` the run is in a
+new chat, so its address is that new chat (the one in its messages' sender line). The
+chat its capabilities block named still names the run in `show` and `cancel`, but
+`spawn message` refuses it.
 
 **Reading a message.** It opens with `[Meridian] Message from spawn pNN (chat cNN)`
 and, when the sender can receive one, the exact command to answer. Reply with that

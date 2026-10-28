@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
@@ -27,7 +28,7 @@ def _display_path(project_root: Path, path: Path) -> str:
 
 
 def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
-    if len(spawn_id) >= 2 and spawn_id[0] in {"p", "r"} and spawn_id[1:].isdigit():
+    if is_spawn_id(spawn_id):
         return (int(spawn_id[1:]), spawn_id)
     return (10**9, spawn_id)
 

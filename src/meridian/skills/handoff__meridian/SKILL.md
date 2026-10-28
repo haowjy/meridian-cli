@@ -30,10 +30,14 @@ meridian -a AGENT \
   --work WORK_ID \
   --task-dir /absolute/source/checkout \
   --prompt-file /absolute/work/directory/prompts/handoff.md \
-  --from cNNN
+  --from pNNN
 ```
 
 Write every reference as its concrete value because the user's new terminal does not
 inherit this session's shell variables. Include `--work` when attached, `--task-dir`
-for a worktree or sibling checkout, the brief's absolute path, and the current
-root conversation ID as `--from`.
+for a worktree or sibling checkout, the brief's absolute path, and your run ID
+as `--from`: `meridian task-dir --json` prints it as `spawn_id` (a restricted shell can't expand
+`$MERIDIAN_SPAWN_ID`, and the capabilities block is a launch snapshot that names the previous
+run after `--continue`). A spawn ID resolves
+to this run's current chat, so it still points at this conversation after a `/clear`; a
+chat ID would seed the new lead with that chat's transcript from before the `/clear`.

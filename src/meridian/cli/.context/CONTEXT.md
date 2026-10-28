@@ -296,8 +296,9 @@ human-facing spawn output.
 the message with a `[Meridian]` line naming the sender and, when the sender's active
 record is a child spawn or a primary harness with an inbox port, the
 `meridian spawn message <sender chat>` command that answers it. The reply names the
-chat because a primary's spawn ID changes on each `--continue`. The chat id comes from
-the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the root conversation.
+sender's current chat (`continue_chat_id`, so the address survives a `/clear`) because
+a primary's spawn ID changes on each `--continue`. The chat id comes from
+the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the conversation that launched it.
 A session that receives a message otherwise cannot tell which session sent it or
 where to reply.
 
@@ -308,14 +309,14 @@ the sender comes from `GlobalOptions.caller` (captured before the drop; see
 reply gains `-C <sender project root>`. Do not restore caller IDs into the env to fix a
 missing sender: children launched in the other project would inherit them.
 
-A chat ref goes to the run live in that chat now (`_message_target`): a running spawn
-whose `current_chat_id` is the chat, else the chat's owner if it still runs and is still
-in that chat. `current_chat_id` is the chat a run is in now; native `/resume` can move a
-running process into a chat some other run started, so the owner may not be the one
-listening. Every other command resolves a chat
-to its owner only; "who is live" is asked here and nowhere else (KB
-`decisions/chat-spawn-ownership.md`). `@` selectors are refused: they name finished
-spawns.
+A chat ref goes to the run live in that chat now: a running spawn whose
+`current_chat_id` is the chat, else the chat's owner if it still runs and is still in
+that chat. Native `/resume` can move a running process into a chat some other run
+started, so the owner may not be the one listening. This is not specific to `message`:
+every spawn command resolves chat and native refs through `locate_run`, which asks the
+same occupant question, then falls back to the chat's owner (`ops/.context/CONTEXT.md`,
+"Session Reference Resolution"). `spawn message` additionally refuses a chat with no
+running session, and refuses `@` selectors, which name finished spawns.
 
 The frame is message text, built once in the CLI, so the control-socket and
 primary-inbox routes carry it identically and every harness renders it. Do not

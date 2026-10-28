@@ -7,13 +7,13 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.ops.locate import resolve_spawn_target
 from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_root_for_read,
     runtime_context,
 )
 from meridian.lib.ops.spawn.owed import consume_result_if_shown
-from meridian.lib.ops.spawn.query import resolve_spawn_reference
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.spawn_status import read_derived
 
@@ -26,10 +26,10 @@ def _resolve_target_spawn_id(
 ) -> str:
     candidate = (spawn_id or "").strip()
     if candidate:
-        return resolve_spawn_reference(project_root, candidate)
+        return resolve_spawn_target(project_root, candidate)
     normalized_current_spawn = (current_spawn_id or "").strip()
     if normalized_current_spawn:
-        return resolve_spawn_reference(project_root, normalized_current_spawn)
+        return resolve_spawn_target(project_root, normalized_current_spawn)
     raise ValueError("Spawn ID is required. Pass --spawn or set MERIDIAN_SPAWN_ID.")
 
 
@@ -177,9 +177,9 @@ def report_search_sync(
     query = payload.query.strip()
 
     if payload.spawn_id is not None and payload.spawn_id.strip():
-        spawn_ids = (resolve_spawn_reference(project_root, payload.spawn_id.strip()),)
+        spawn_ids = (resolve_spawn_target(project_root, payload.spawn_id.strip()),)
     elif resolved_ctx.spawn_id is not None:
-        spawn_ids = (resolve_spawn_reference(project_root, str(resolved_ctx.spawn_id)),)
+        spawn_ids = (resolve_spawn_target(project_root, str(resolved_ctx.spawn_id)),)
     else:
         runtime_root = resolve_runtime_root_for_read(project_root)
         if runtime_root is None:

@@ -49,7 +49,7 @@ def _patch_spawn_cancel_runtime_resolution(
         lambda _project_root: runtime_root,
     )
     monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.resolve_spawn_reference",
+        "meridian.lib.ops.spawn.api.resolve_spawn_target",
         lambda _project_root, _spawn_id: spawn_id,
     )
 

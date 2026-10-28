@@ -18,12 +18,11 @@ from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
-from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest, is_exact_continue_session
+from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
-from meridian.lib.state.session_store import update_session_spawn_id
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -240,20 +239,6 @@ def _reserve_then_prepare(
         runtime=runtime,
         ctx=resolved_context,
     )
-    continue_chat_id = (
-        (request.session.continue_chat_id or "").strip()
-        if is_exact_continue_session(request.session)
-        else ""
-    )
-    if continue_chat_id:
-        # Publish ownership while the parent still holds the successor's
-        # lifetime lock. The worker later confirms this pointer after startup;
-        # a racing continue must see the successor as busy before then.
-        update_session_spawn_id(
-            context.runtime_root,
-            continue_chat_id,
-            str(context.spawn.spawn_id),
-        )
     logger.debug(
         "spawn_launcher_phase",
         phase="reservation_complete",

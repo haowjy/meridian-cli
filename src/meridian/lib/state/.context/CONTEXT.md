@@ -504,7 +504,11 @@ inverts accepted chat records without discarding aliases or doing I/O. A later
 accepted start projects every earlier unstopped live generation of that chat as
 stopped at the new start time: ordinary starts hold the chat's exclusive lifetime
 lock, while observed-chat starts mint a new chat and immediately stop it.
-Historical multi-ID arrays are ignored on read.
+Historical multi-ID arrays are ignored on read. Chat IDs are `c<digits>` by shape
+(`core/refs.is_chat_id`): `reserve_chat_id` mints them and `start_session` rejects a
+caller-supplied ID of any other shape. `native_generations` is the one native-ID lookup: it
+finds a native ID on any generation, picks the newest with a native session key (else the newest), and refuses an ID recorded under two harnesses or two
+native stores.
 
 Fork and context-source ancestry belong to the chat, not its latest generation:
 accepted starts carry both parent identities and original creation time forward.
@@ -519,7 +523,8 @@ A chat runs as one or more generations, one start event each: a launch, a
 `--continue`, or the new chat a running primary moves into after `/clear`. Every start
 event names the spawn that runs that generation (`spawn_id`) when it is written. `session_identity.chat_owner_spawn` relies on it: it returns the newest
 generation's spawn that has a row, with no scan and no fallback, so a writer that links
-late or not at all makes the chat unresolvable by chat ID.
+late or not at all leaves spawn commands unable to name the chat's owner ("Chat cN has no
+spawn"); resume, read and `--from` still work on the chat.
 
 - Children write the spawn row first, then start the session.
 - The primary runner reserves its ID (`spawn_store.reserve_spawn_id`) before
@@ -528,6 +533,19 @@ late or not at all makes the chat unresolvable by chat ID.
   post-start `update_session_spawn_id` stays: it is the only writer of the session's
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
+- An exact continue writes no link until its session starts: the start event is the only
+  writer of a chat's owner. Until then `spawn show`, `wait`, `cancel` and
+  `message` by chat ID name the previous run (a short window; once the row exists but its
+  session has not started they can act on a finished run), and a racing continue is
+  refused by the chat lock (`ChatBusyError`) in its worker.
+- A spawn row's `chat_id` is its own chat: an exact continue reserves it with the
+  continue target, so a continue refused before its session starts still resumes that
+  chat. A fresh child has no chat until it starts and carries its caller's chat as a
+  placeholder (`owner_chat_id` is the caller's chat); a child that fails before its
+  session starts therefore resumes or reads the caller's conversation. Reserving it
+  chat-less would need every reader that groups children by `chat_id` (`spawn list
+  --chat`, work dashboard and sessions, `session_records_for_spawns` full scans) to
+  switch to `owner_chat_id`; not done.
 
 A crash between reservation and row write leaves a link to no row; readers skip it.
 `history_id` is the relocation-stable ID of a spawn's history. Only the generation a
@@ -551,8 +569,7 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   whether an item is active, so `work done` moves at once. `write_state_locked`
   republishes the item's `work-items/<id>/{work,task}` links around every mutation, so
   nothing else repoints anything when an item moves.
-- `session_store.py` — Session event I/O, lease ownership, and the canonical
-  `session_exists()` predicate (a chat record exists; a harness ID is not required).
+- `session_store.py` — Session event I/O and lease ownership.
   `session_writes()` is the one session write epoch and `set_work_attachments()` the
   one batched attachment write.
 - `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars,
