@@ -12,8 +12,8 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 
 **NEVER merge a PR into `main` without explicit human approval in the current
 conversation.** Stop at draft→ready with a `release:*` label. Approval to merge
-one PR does not carry to the next. Merging lanes into a task branch, or your part
-PRs into a `release/v<X>.<Y>.0` branch, is fine — the gate is `main`.
+one PR does not carry to the next. The same gate applies to merging into a
+`release/v<X>.<Y>.0` branch. Merging lanes into a task branch is fine.
 
 **NEVER use `--no-verify` on git push** unless explicitly instructed.
 
@@ -72,8 +72,9 @@ Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) need no PR: push them stra
 PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
 `release:*` label before merging; no label defaults to RC.
 
-Minor and major releases never merge to `main` piece by piece: every part goes to
-`release/v<X>.<Y>.0`, and that branch's single PR to `main` carries the
+Minor and major changes never merge to `main` piece by piece: each one goes to the open
+`release/v<X>.<Y>.0` branch (create it if none is open), and that branch's single PR to
+`main` carries the
 `release:minor`/`release:major` label
 (`docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch`).
 
