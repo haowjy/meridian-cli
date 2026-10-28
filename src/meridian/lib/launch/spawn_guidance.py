@@ -30,8 +30,8 @@ _GENERAL_CAPABILITIES: tuple[tuple[AgentMode | None, str], ...] = (
     ("primary", "- Notify the human: `meridian notify`."),
     (
         "primary",
-        "- Message a running spawn or another live session (a peer primary, by chat ID; "
-        "`-C <repo>` for another project): `meridian spawn message`.",
+        "- Message a running spawn or another live session: `meridian spawn message`; "
+        "read `meridian skills messaging__meridian`.",
     ),
     (
         None,
@@ -126,6 +126,7 @@ def build_capabilities_prompt(
     work_link: Path | None = None,
     paths_in_user_turn: bool = False,
     chat_id: str | None = None,
+    has_message_route: bool = False,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
@@ -193,13 +194,14 @@ def build_capabilities_prompt(
             f"- `{resolved_chat_id}` — this conversation's chat "
             "(`$MERIDIAN_CHAT_ID`); use it in names, and as the parent for handoff `--from`."
         )
-        # Chat IDs count per project, so the bare ID is ambiguous to a peer in
-        # another repo; the command carries the project it belongs to.
-        lines.append(
-            "- To message this session from another session or repo: "
-            f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-            f'{resolved_chat_id} --message "..."`.'
-        )
+        if has_message_route:
+            # Chat IDs count per project, so the bare ID is ambiguous to a peer in
+            # another repo; the command carries the project it belongs to.
+            lines.append(
+                "- To message this session from another session or repo: "
+                f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
+                f'{resolved_chat_id} --message "..."`.'
+            )
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()

@@ -1354,7 +1354,6 @@ class HistoryIndex:
         self,
         *,
         oldest_first: bool = False,
-        related_chat_ids: set[str] | None = None,
         deadline: float | None = None,
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
@@ -1368,9 +1367,6 @@ class HistoryIndex:
             "kind": RECORDS.c.kind,
         }
         conditions: list[ColumnElement[bool]] = [RECORDS.c.archive_id.is_(None)]
-        if related_chat_ids is not None:
-            chats = sorted(related_chat_ids)
-            conditions.append(or_(RECORDS.c.chat.in_(chats), RECORDS.c.owner.in_(chats)))
         for key, value in filters.items():
             if key not in columns:
                 raise ValueError(f"Unknown history filter: {key}")
@@ -1626,18 +1622,12 @@ class HistoryIndex:
 def indexed_spawn_scan(
     runtime_root: Path,
     *,
-    chat_id: str | None = None,
-    related_chat_ids: set[str] | None = None,
-    owner_chat_id: str | set[str] | None = None,
     parent_id: str | None = None,
     work_id: str | None = None,
     deadline: float | None = None,
 ) -> SpawnScan:
     """Discovery partition; corruption fails coverage rather than omitting a sibling."""
     records = HistoryIndex(runtime_root).spawns(
-        chat_id=chat_id,
-        related_chat_ids=related_chat_ids,
-        owner_chat_id=owner_chat_id,
         parent_id=parent_id,
         work_id=work_id,
         deadline=deadline,

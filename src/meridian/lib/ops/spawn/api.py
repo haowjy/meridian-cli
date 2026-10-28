@@ -2157,17 +2157,15 @@ def _source_spawn_for_follow_up(
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
 ) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
-    resolved_spawn_id = resolve_spawn_reference(
-        project_root,
-        payload_spawn_id,
-        runtime_root=runtime_root,
-    )
+    ref = payload_spawn_id
+    if ref.strip().startswith("@"):
+        ref = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
     try:
         # Resolve tracked chats in their native harness first. A requested
         # harness is not evidence that the chat belongs to that harness.
         resolved_reference = resolve_session_reference(
             project_root,
-            payload_spawn_id,
+            ref,
             runtime_root=runtime_root,
         )
     except ValueError:
@@ -2176,7 +2174,7 @@ def _source_spawn_for_follow_up(
         # An untracked native session ID may need the hint to disambiguate it.
         resolved_reference = resolve_session_reference(
             project_root,
-            payload_spawn_id,
+            ref,
             runtime_root=runtime_root,
             harness_hint=harness_hint,
         )
@@ -2192,18 +2190,15 @@ def _source_spawn_for_follow_up(
                 harness_hint,
             )
         )
-    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-    if row is None and resolved_reference.source_spawn_id is not None:
-        # Follow the native session's exact spawn provenance, never its owner's
-        # latest spawn. Keep the supplied native identity in resolved_reference.
-        resolved_spawn_id = resolved_reference.source_spawn_id
-        row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-        if row is not None and (
-            row.chat_id != resolved_reference.source_chat_id
-            or row.harness != resolved_reference.harness
-        ):
-            raise ValueError("Native session reference has inconsistent retained spawn metadata")
-    if row is None:
+    # The reference owns which spawn the session came from: a spawn ID names itself,
+    # a chat its owner, a native session its recorded provenance.
+    resolved_spawn_id = resolved_reference.source_spawn_id
+    row = (
+        read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+        if resolved_spawn_id is not None
+        else None
+    )
+    if resolved_spawn_id is None or row is None:
         raise ValueError(
             f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
         )

@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.context_ref import CHAT_REF_RE
+from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.harness.bundle import (
     PrimaryInboxError,
     post_to_primary,
@@ -23,7 +24,8 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
 )
 from meridian.lib.ops.spawn.query import resolve_spawn_reference
-from meridian.lib.state.session_identity import spawn_owner_chat_id
+from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.session_identity import live_observer_for_chat
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
@@ -44,38 +46,36 @@ def framed_message(
     sender_spawn_id: str | None = None,
     sender: SpawnRecord | None = None,
     sender_project_root: Path | None = None,
-    can_reply: bool = False,
 ) -> str:
     """Open the message with its sender and, when it exists, a way to answer.
 
     A session that receives a message otherwise cannot tell which session sent
     it, or where to reply. The frame is text, not wire metadata: every harness's
-    delivery path carries it unchanged. *sender_project_root* is set only when the
-    sender lives in another project than the receiver, which is when the reply
-    needs ``-C``.
+    delivery path carries it unchanged. *sender* is the sender's own record, absent
+    when its state can't be read from here; *sender_project_root* is set only when
+    the sender lives in another project, which is when the reply needs ``-C``.
     """
 
     if sender_spawn_id is None:
         provenance = "[Meridian] Message with no sender identity; it has no reply address."
-    else:
+    elif sender is None or not _can_receive_reply(sender):
         where = f"spawn {sender_spawn_id}"
         if sender is not None and sender.chat_id:
             where += f" (chat {sender.chat_id})"
-        if sender is not None and can_reply:
-            # A primary's chat ID names it across generations; any other sender is
-            # addressed by spawn ID.
-            address = sender.id
-            if sender.kind == "primary":
-                address = spawn_owner_chat_id(sender) or sender.id
-            via = ""
-            if sender_project_root is not None:
-                via = f"-C {shlex.quote(sender_project_root.as_posix())} "
-            provenance = (
-                f"[Meridian] Message from {where}. To answer, run "
-                f'`meridian {via}spawn message {address} --message "..."`.'
-            )
-        else:
-            provenance = f"[Meridian] Message from {where}; it has no reply route here."
+        provenance = f"[Meridian] Message from {where}; it has no reply route here."
+    else:
+        # The chat ID names the sender's session across generations.
+        address = sender.chat_id or sender.id
+        via = ""
+        if sender_project_root is not None:
+            via = f"-C {shlex.quote(sender_project_root.as_posix())} "
+        where = f"spawn {sender.id}"
+        if sender.chat_id:
+            where += f" (chat {sender.chat_id})"
+        provenance = (
+            f"[Meridian] Message from {where}. To answer, run "
+            f'`meridian {via}spawn message {address} --message "..."`.'
+        )
     return f"{provenance}\n\n{message}"
 
 
@@ -91,12 +91,41 @@ def _sender_record(runtime_root: Path | None, sender_spawn_id: str | None) -> Sp
     return read_derived(runtime_root, sender_spawn_id)
 
 
-def _can_receive_reply(sender: SpawnRecord | None) -> bool:
+def _can_receive_reply(sender: SpawnRecord) -> bool:
     """True when a message sent back to the sender would reach a live route."""
 
-    if sender is None or not is_active_spawn_status(sender.status):
+    if not is_active_spawn_status(sender.status):
         return False
     return sender.kind != "primary" or primary_accepts_messages(sender)
+
+
+def _live_adopter(runtime_root: Path, chat_id: str) -> str | None:
+    """Find a running spawn that adopted ``chat_id`` mid-run through native ``/resume``.
+
+    Only running rows can hold a chat, so the scan reads the index for those and never
+    every spawn's state file.
+    """
+
+    running = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
+    return live_observer_for_chat(runtime_root, chat_id, records=running)
+
+
+def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
+    """Resolve a spawn ID or chat ID to the spawn that receives the message."""
+
+    if ref.startswith("@"):
+        _fail(f"spawn message takes a spawn ID or chat ID, not {ref}")
+    target = resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
+    if CHAT_REF_RE.fullmatch(ref):
+        owner = read_derived(runtime_root, target) if target != ref else None
+        if owner is None or not is_active_spawn_status(owner.status):
+            adopter = _live_adopter(runtime_root, ref)
+            if adopter is None and owner is not None:
+                _fail(f"chat {ref} has no running session")
+            target = adopter or target
+    if not (runtime_root / "spawns" / target).exists():
+        _fail(f"spawn or chat not found: {ref}")
+    return target
 
 
 async def _send_and_receive(
@@ -143,14 +172,7 @@ async def send_message(
 
     project_root, _ = resolve_runtime_root_and_config(None)
     runtime_root = resolve_runtime_root(project_root)
-    try:
-        normalized_spawn_id = resolve_spawn_reference(
-            project_root, normalized_ref, runtime_root=runtime_root
-        )
-    except ValueError as exc:
-        _fail(str(exc))
-    if not (runtime_root / "spawns" / normalized_spawn_id).exists():
-        _fail(f"spawn or chat not found: {normalized_ref}")
+    normalized_spawn_id = _message_target(project_root, runtime_root, normalized_ref)
     socket_path = control_socket_path(runtime_root, normalized_spawn_id)
 
     normalized_message = message.strip()
@@ -162,13 +184,11 @@ async def send_message(
         if sender_project_root is not None
         else runtime_root
     )
-    sender = _sender_record(sender_root, sender_spawn_id)
     framed = framed_message(
         normalized_message,
         sender_spawn_id=sender_spawn_id,
-        sender=sender,
+        sender=_sender_record(sender_root, sender_spawn_id),
         sender_project_root=sender_project_root,
-        can_reply=_can_receive_reply(sender),
     )
 
     record = read_derived(runtime_root, normalized_spawn_id)

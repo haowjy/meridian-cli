@@ -74,25 +74,27 @@ def get_owner_chat_for_session(
     return session_owner_chat_id(runtime_root, record)
 
 
-def get_recorded_primary_spawn_for_owner_chat(
-    runtime_root: Path,
-    owner_chat_id: str,
-    spawn_id: str | None,
-) -> SpawnRecord | None:
-    """Read and validate a session's recorded primary-spawn relationship."""
+def chat_owner_spawn(runtime_root: Path, chat_id: str) -> SpawnId | None:
+    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
 
-    normalized_owner_chat_id = normalize_optional_identity(owner_chat_id)
-    normalized_spawn_id = normalize_optional_identity(spawn_id)
-    if normalized_owner_chat_id is None or normalized_spawn_id is None:
-        return None
-    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    if (
-        row is None
-        or row.kind != "primary"
-        or not spawn_matches_owner_chat(row, normalized_owner_chat_id)
-    ):
-        return None
-    return row
+    The session record links its newest generation's spawn. A launch that failed before
+    linking leaves the newest generation unlinked, so the walk goes back to the newest
+    generation that has one, then to the newest spawn row started under this exact chat.
+    An unbound child reservation also carries its launcher's chat ID, so it never counts.
+    Which run is live in the chat right now is a different question, not asked here.
+    """
+    for generation in reversed(session_store.chat_generations(runtime_root, chat_id)):
+        if generation.spawn_id and spawn_store.get_spawn(runtime_root, generation.spawn_id):
+            return SpawnId(generation.spawn_id)
+    # Read the authoritative rows, not the rebuildable index: this path is rare
+    # (a failed pre-link launch or legacy data), and resolving a chat must survive a
+    # damaged index.
+    rows = [
+        row
+        for row in spawn_store.list_spawns(runtime_root, chat_id=chat_id).records
+        if not (row.kind == "child" and row.owner_chat_id == row.chat_id)
+    ]
+    return SpawnId(max(rows, key=lambda row: row.started_at or "").id) if rows else None
 
 
 def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
@@ -292,27 +294,11 @@ def spawn_matches_exact_session(row: SpawnRecord, session_chat_id: str) -> bool:
     return spawn_exact_chat_id(row) == normalize_optional_identity(session_chat_id)
 
 
-def list_spawns_for_owner_chat(runtime_root: Path, owner_chat_id: str) -> spawn_store.SpawnScan:
-    """List spawn rows whose owner/session-family chat id matches."""
-
-    return spawn_store.list_spawns(runtime_root, owner_chat_id=owner_chat_id)
-
-
-def list_spawns_for_exact_session(
-    runtime_root: Path, session_chat_id: str
-) -> spawn_store.SpawnScan:
-    """List spawn rows whose exact session chat id matches."""
-
-    return spawn_store.list_spawns(runtime_root, chat_id=session_chat_id)
-
-
 __all__ = [
+    "chat_owner_spawn",
     "get_owner_chat_for_session",
-    "get_recorded_primary_spawn_for_owner_chat",
     "get_session_record_for_spawn",
     "is_tracked_chat_ref",
-    "list_spawns_for_exact_session",
-    "list_spawns_for_owner_chat",
     "live_observer_for_chat",
     "native_identity_candidates",
     "session_exact_chat_id",

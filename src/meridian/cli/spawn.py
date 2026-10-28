@@ -90,10 +90,12 @@ _SPAWN_USAGE_EPILOGUE = (
     "If the launch was killed, reconcile with `meridian spawn wait` or\n"
     "`meridian status`.\n"
 )
-# Forms `resolve_spawn_reference` accepts; a chat names its own session, not a child.
-_SPAWN_REF_FORMS = (
-    "spawn ID, chat ID (that chat's own session), or @latest / @last-failed / @last-completed"
-)
+# Ref forms by what the command does with the target. A chat ID names that chat's own
+# session. `resolve_spawn_reference` also accepts @-selectors everywhere; they name
+# finished spawns, so help lists them only where inspecting one makes sense.
+_RUNNING_REF_FORMS = "spawn ID or chat ID (that chat's own session)"
+_INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
+_SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
 _SPAWN_WAIT_HELP_EPILOGUE = (
     "Without spawn ids, discovers running descendants and finished background\n"
@@ -920,7 +922,7 @@ def _spawn_children(
         str | None,
         Parameter(
             name="spawn_id",
-            help=f"Parent: {_SPAWN_REF_FORMS} (defaults to MERIDIAN_SPAWN_ID).",
+            help=f"Parent: {_INSPECT_REF_FORMS} (defaults to MERIDIAN_SPAWN_ID).",
         ),
     ] = None,
 ) -> None:
@@ -938,7 +940,7 @@ def _spawn_show(
     emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help=f"One or more refs to show: {_SPAWN_REF_FORMS}."),
+        Parameter(name="spawn_id", help=f"One or more refs to show: {_INSPECT_REF_FORMS}."),
     ],
     verbose: Annotated[
         bool,
@@ -979,7 +981,7 @@ def _spawn_status(
     emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help=f"One or more refs to show: {_SPAWN_REF_FORMS}."),
+        Parameter(name="spawn_id", help=f"One or more refs to show: {_INSPECT_REF_FORMS}."),
     ],
     verbose: Annotated[
         bool,
@@ -1089,7 +1091,7 @@ def _spawn_cancel(
         str,
         Parameter(
             help=(
-                f"Spawn to cancel: {_SPAWN_REF_FORMS}."
+                f"Spawn to cancel: {_RUNNING_REF_FORMS}; {_SELECTORS_NOTE}."
             )
         ),
     ],
@@ -1134,8 +1136,8 @@ def _spawn_wait(
         Parameter(
             name="spawn_id",
             help=(
-                f"Refs to wait for ({_SPAWN_REF_FORMS}). Omit to discover running descendants and "
-                "unconsumed finished background children, then list children that "
+                f"Refs to wait for ({_INSPECT_REF_FORMS}). Omit to discover running "
+                "descendants and unconsumed finished background children, then list children that "
                 "appeared while waiting."
             ),
         ),
@@ -1331,8 +1333,8 @@ def _spawn_done(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current completion candidate to accept: {_SPAWN_REF_FORMS} "
-                "(defaults to MERIDIAN_SPAWN_ID)."
+                f"Spawn whose current completion candidate to accept: {_RUNNING_REF_FORMS}; "
+                f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
     ] = None,
@@ -1355,8 +1357,8 @@ def _spawn_rearm(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current candidate to reject and rearm: {_SPAWN_REF_FORMS} "
-                "(defaults to MERIDIAN_SPAWN_ID)."
+                f"Spawn whose current candidate to reject and rearm: {_RUNNING_REF_FORMS}; "
+                f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
     ] = None,
@@ -1377,38 +1379,39 @@ def _spawn_message(
     ref: Annotated[
         str,
         Parameter(
-            name=["ref", "--spawn-id"],
             help=(
-                f"Session to message: {_SPAWN_REF_FORMS}. IDs are per project: "
+                f"Session to message: {_RUNNING_REF_FORMS}. IDs are per project: "
                 "use `-C <repo>` for a session elsewhere."
             )
         ),
-    ],
+    ] = "",
     message: Annotated[
         str,
         Parameter(help="Message text. Put long content in a file and send its path."),
     ] = "",
+    spawn_id: Annotated[
+        str | None,
+        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
+    ] = None,
 ) -> None:
-    if any(token.split("=", 1)[0] == "--spawn-id" for token in sys.argv[1:]):
+    if spawn_id is not None:
         print(
             "warning: `--spawn-id` is deprecated and will be removed in the next minor "
             "release; pass the ref positionally or as `--ref`.",
             file=sys.stderr,
         )
-    observer = resolve_cli_observer_context(observe=True)
-    peer = get_global_options().caller_peer
+        ref = ref or spawn_id
+    if not ref:
+        raise ValueError("spawn message needs a spawn ID or chat ID")
+    caller = get_global_options().caller
     asyncio.run(
         send_message(
             ref,
             message,
-            sender_spawn_id=(
-                str(observer.spawn_id)
-                if observer.spawn_id
-                else peer.spawn_id
-                if peer is not None
-                else None
+            sender_spawn_id=caller.spawn_id if caller is not None else None,
+            sender_project_root=(
+                caller.project_root if caller is not None and caller.cross_project else None
             ),
-            sender_project_root=peer.project_root if peer is not None else None,
         )
     )
 
@@ -1416,19 +1419,23 @@ def _spawn_message(
 def _spawn_inject_deprecated(
     ref: Annotated[
         str,
-        Parameter(help=f"Session to message: {_SPAWN_REF_FORMS}."),
-    ],
+        Parameter(help=f"Session to message: {_RUNNING_REF_FORMS}."),
+    ] = "",
     message: Annotated[
         str,
         Parameter(help="Message text."),
     ] = "",
+    spawn_id: Annotated[
+        str | None,
+        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
+    ] = None,
 ) -> None:
     print(
         "warning: `meridian spawn inject` is deprecated and will be removed in the "
         "next minor release; use `meridian spawn message`.",
         file=sys.stderr,
     )
-    _spawn_message(ref, message)
+    _spawn_message(ref, message, spawn_id)
 
 
 def _spawn_log_removed(

@@ -856,13 +856,19 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
         assert row.forked_from_history_id == source.history_id
         assert session.history_id == row.history_id
         assert (
-            _reference_from_session(root, session, tmp_path, "native-child").source_history_id
+            _reference_from_session(
+                root, session, tmp_path, "native-child", spawn_id=session.spawn_id
+            ).source_history_id
             == row.history_id
         )
         # Exact linked rows also repair references without a session UUID.
         assert (
             _reference_from_session(
-                root, session.model_copy(update={"history_id": None}), tmp_path, "native-child"
+                root,
+                session.model_copy(update={"history_id": None}),
+                tmp_path,
+                "native-child",
+                spawn_id=session.spawn_id,
             ).source_history_id
             == row.history_id
         )

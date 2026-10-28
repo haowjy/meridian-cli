@@ -590,6 +590,7 @@ def _recovered_reference(
         harness_session_id=None,
         harness="codex",
         source_chat_id="c-seed",
+        source_spawn_id="p32",
         source_model="gpt-5.3-codex",
         source_agent=None,
         source_skills=("skill-c",),

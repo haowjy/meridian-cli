@@ -13,7 +13,6 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import overlay_derived
 
 from .query import (
     read_report,
@@ -56,24 +55,8 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         return None
-    # A tracked chat names its own execution. After `/clear` the entry chat is a
-    # stopped predecessor of the live one, so the owner-chat search below would miss
-    # the primary that moved off it.
-    record = session_store.chat_record(runtime_root, chat_id)
-    if record is not None and record.spawn_id:
-        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
-        if row is not None:
-            return row
-    owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
-    spawns = overlay_derived(
-        runtime_root,
-        session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id).records,
-    )
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
-    if not primary_spawns:
-        return None
-
-    return primary_spawns[-1]
+    owner = session_identity.chat_owner_spawn(runtime_root, chat_id)
+    return spawn_store.get_spawn(runtime_root, owner) if owner is not None else None
 
 
 def _is_tracked_session(project_root: Path, chat_id: str) -> bool:

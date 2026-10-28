@@ -80,26 +80,13 @@ def _normalize_optional(value: str | None) -> str | None:
 
 
 def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
-    """Resolve a spawn reference: a spawn id, or the spawn that owns a chat.
-
-    A chat ID names that chat's own session, never a child it launched: a live run
-    that adopted the chat mid-run through native ``/resume`` first, otherwise the
-    spawn its session record links (the newest generation). Whether it is still
-    running is for the caller to check.
-    """
+    """Resolve a spawn reference: a spawn id, or the spawn that owns a chat."""
 
     spawn = spawn_store.get_spawn(runtime_root, ref)
     if spawn is not None:
         return SpawnId(spawn.id)
-
-    if not CHAT_REF_RE.fullmatch(ref):
-        return None
-    owner_id = session_identity.live_observer_for_chat(runtime_root, ref)
-    if owner_id is None:
-        session = session_store.chat_record(runtime_root, ref)
-        owner_id = session.spawn_id if session is not None else None
-    if owner_id is not None and spawn_store.get_spawn(runtime_root, owner_id) is not None:
-        return SpawnId(owner_id)
+    if CHAT_REF_RE.fullmatch(ref):
+        return session_identity.chat_owner_spawn(runtime_root, ref)
     return None
 
 
@@ -181,6 +168,7 @@ def _resolve_spawn_reference(
     if target is not None:
         selected = _reference_from_session(
             runtime_root, target, project_root, target.harness_session_id,
+            spawn_id=target.spawn_id,
         )
         return replace(selected, source_spawn_id=row.id)
     if target_chat_id != row.chat_id:
@@ -224,14 +212,12 @@ def _reference_from_session(
     session: session_store.SessionRecord,
     project_root: Path,
     harness_session_id: str | None,
+    *,
+    spawn_id: str | None,
 ) -> ResolvedSessionReference:
     if session.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
-    linked = (
-        spawn_store.get_spawn(runtime_root, session.spawn_id)
-        if session.spawn_id is not None
-        else None
-    )
+    linked = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id is not None else None
     source_history_id = session.history_id
     if (
         source_history_id is None
@@ -246,7 +232,7 @@ def _reference_from_session(
         stored_harness=stored_harness,
         source_chat_id=session.chat_id,
         source_history_id=source_history_id,
-        source_spawn_id=_normalize_optional(session.spawn_id),
+        source_spawn_id=_normalize_optional(spawn_id),
         source_model=_normalize_optional(session.model),
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
@@ -275,8 +261,13 @@ def _resolve_chat_reference(
     if not records:
         return _resolve_untracked_reference(project_root, ref)
     session = records[0]
+    owner = session_identity.chat_owner_spawn(runtime_root, ref)
     return _reference_from_session(
-        runtime_root, session, project_root, _normalize_optional(session.harness_session_id)
+        runtime_root,
+        session,
+        project_root,
+        _normalize_optional(session.harness_session_id),
+        spawn_id=str(owner) if owner is not None else None,
     )
 
 
@@ -292,7 +283,9 @@ def _resolve_harness_session_reference(
             raise ValueError(
                 "Native session reference is ambiguous across harnesses; specify --harness."
             )
-    return _reference_from_session(runtime_root, session, project_root, ref)
+    return _reference_from_session(
+        runtime_root, session, project_root, ref, spawn_id=session.spawn_id
+    )
 
 
 def _try_recover(

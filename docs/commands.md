@@ -43,10 +43,11 @@ Meridian's; [Claude's inbound gate](harness-integration.md#primary-message-deliv
 covers the values and the trade-off. Chat and spawn IDs count per
 project, so a peer in another repo is addressed with `-C <repo>`. Each injected
 message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
-sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`
-for a primary (its spawn ID for a subagent), with `-C <sender project root>` when
-the sender is in another project. A primary's capabilities block states its own
-address in that form. Other primary harnesses
+sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
+with `-C <sender project root>` when the sender is in another project. A primary whose
+harness has a message route states its own address in that form in its capabilities block.
+A chat ID means that chat's own session, never a child it launched; the same holds for
+`spawn show`, `cancel` and the other ref-taking commands. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
