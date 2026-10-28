@@ -13,9 +13,11 @@ the gaps.
 
 ## Start at the Root
 
-`$MERIDIAN_CHAT_ID` identifies the root conversation, regardless of delegation depth.
-The capabilities block gives its concrete `cNNN` value; use that literal in restricted
-shells. Begin with recent context:
+`$MERIDIAN_CHAT_ID` is the chat of the conversation that launched you: your own chat
+if you are a primary session, your parent's chat if you are a spawn, so it is not the
+root at depth two or more. A primary's capabilities block gives its `cNNN` value; a
+spawn's `# Meridian run` block gives its launcher's. Use that literal in restricted
+shells. To read the root or another session, pass its chat or spawn ID explicitly. Begin with recent context:
 
 ```bash
 meridian session log cNNN --tail 20

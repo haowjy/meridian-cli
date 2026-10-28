@@ -7,7 +7,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | Command | Description |
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
-| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
+| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are the preferred reference — shown in the quit message when a primary session ends. |
 | `meridian --fork [REF]` | Launch a new primary session by forking while preserving launch identity (agent/model/skills). `REF` accepts a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id. |
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
@@ -104,7 +104,9 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
-Session initiation modes: `--continue` resumes the same transcript, `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+Session initiation modes: `--continue` resumes the same transcript (bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+
+Meridian follows a native `/resume` inside a running harness on a best-effort basis. `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
 
 #### Work Precedence
 
@@ -162,7 +164,8 @@ Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `session_config_dir`) is available in `spawn show --verbose` and structured
 JSON output, not default moderate text. JSON for `spawn show`, `status` and
 `wait` always carries the chat identity: `chat_id` (the entry chat),
-`continue_chat_id` (a finished run's verified exit chat, otherwise the entry
+`continue_chat_id` (the chat the run is in now: the one a live or verified-exit
+observation published, such as after an in-process `/clear`; otherwise the entry
 chat) and `run_boundary` (`null` when absent). The native harness session ID is
 not in JSON; `spawn show --verbose` prints it for primaries. Resolve native
 keys from the chat.

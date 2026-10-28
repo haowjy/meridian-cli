@@ -12,7 +12,10 @@ Probe the real binary before designing the adapter. Use a cheap model and captur
 - `--version` and `--help`, including model, prompt, session, and permission flags;
 - one successful turn and one provider/model failure;
 - streaming/RPC acknowledgements, tool results, usage, and terminal events;
-- native session storage, resume, fork, and session-switch behavior;
+- native session storage, resume, fork, and session-switch behavior (Meridian follows a
+  native `/resume` on a best-effort basis; `meridian --continue <chat>` and
+  `meridian session browse` are the reliable ways to resume, because they record which
+  run owns the chat);
 - ambient extension, skill, context-file, and config discovery;
 - cancellation, EOF, and process-group cleanup.
 
@@ -155,10 +158,12 @@ sessions load only session-boundary.
 
 ### Primary message delivery and Claude's inbound gate
 
-`meridian spawn message <primary>` posts to the messaging socket that
+`meridian [-C <root>] spawn message <primary chat ID>` posts to the messaging socket that
 meridian-session-boundary recorded at SessionStart, which is Claude Code's
 cross-session peer lane. Claude decides delivery, not Meridian, and the command
-can only report that the message was posted.
+can only report that the message was posted. Address a primary by its chat ID, since
+its spawn ID changes on every `--continue`; `-C <root>` reaches a primary in another
+project.
 
 Claude's `crossSessionInbound` setting picks the policy:
 

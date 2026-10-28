@@ -34,6 +34,21 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
+## Chat IDs name the chat's own session
+
+A chat ID now means that chat's own session in every spawn command. Before, `spawn
+show`, `status`, `children`, `wait`, `cancel` and `--continue`/`--fork`/`--from` on a
+chat ID resolved to the newest spawn in the chat's family, which could be a child it
+had launched. Scripts that relied on that to reach the newest child must pass the
+child's `pN` ID.
+
+`meridian [-C REPO] spawn message REF` accepts a chat ID and reaches the session
+running in that chat now; `-C` addresses a session in another project. Chat and spawn
+IDs count per project.
+
+`--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
+and works until the next minor release. Pass the ref positionally instead.
+
 ## Mars 0.20.0 (schema v1)
 
 Meridian pins `mars-agents==0.20.2`, up from 0.18.4. Mars 0.20 reads and writes schema v1,
@@ -961,7 +976,9 @@ original chat keeps its native identity. A separate `current_chat_id` selects th
 current conversation: reuse an existing chat unchanged, or create a fresh chat
 with the current chat's settings and work association. History, identities and
 live leases are not copied. A normal fresh launch still starts fresh; only
-continuation follows the previous run.
+continuation follows the previous run. Meridian follows a native `/resume` on a
+best-effort basis; `meridian --continue <chat>` and `meridian session browse` are the
+reliable ways to resume, because they record which run owns the chat.
 
 The same pointer carries a verified post-exit session (Pi): Meridian proves the
 native transcript before reusing or creating that chat, then publishes it as
@@ -1375,7 +1392,8 @@ changes with `git add` directly.
 spelling keep working: it warns on stderr and runs the same command until the
 next minor release. Each message also opens with a `[Meridian]` line naming the
 sending spawn and chat and, when the sender can receive one, the
-`meridian spawn message <id>` command that answers it. Anything that parses the
+`meridian spawn message <sender chat ID>` command that answers it, with
+`-C <sender project root>` when the sender is in another project. Anything that parses the
 delivered text sees that line first; the text you sent follows a blank line.
 
 ## Behavior changes you'll notice
