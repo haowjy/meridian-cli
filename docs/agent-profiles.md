@@ -229,28 +229,16 @@ in Codex's config, including providers and MCP server commands. Installing a pac
 carries harness overrides is therefore installing code you trust. Blocks in already-installed
 packages that older Meridian builds left inert now take effect. Codex flattens nested mappings
 to dotted config keys and emits TOML-compatible scalar, array, and inline-table values as
-`-c` overrides. The following native spelling for network access is deprecated; use the
-profile's `network: allow` field instead:
-
-```yaml
-harness-overrides:
-  codex:
-    sandbox_workspace_write:
-      network_access: true
-```
+`-c` overrides. Network access is not one of them: a profile that sets
+`sandbox_workspace_write.network_access` fails to launch; use the profile's `network` field.
 
 Meridian-owned Codex settings win: native entries that collide with its model, effort,
-sandbox, approval, writable-root, tool-switch, agent, feature, or notification config are
-skipped. For this compatibility release only,
-`sandbox_workspace_write.network_access` is an exception: Meridian warns, applies a
-well-formed boolean after the profile projection, and that native value wins. It becomes
-reserved and skipped like `writable_roots` in the following release. A non-boolean,
-unencodable, or unaddressable value is warned, reported as ignored, and does not suppress
-the portable profile projection. Meridian does not synthesize Codex MCP config,
+sandbox, approval, network, writable-root, tool-switch, agent, feature, or notification config are
+skipped. Meridian does not synthesize Codex MCP config,
 so `mcp_servers.*` entries pass through like other native config. A key segment containing
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
 as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
-`[native] native_config: sandbox_workspace_write.network_access = true -> -c sandbox_workspace_write.network_access=true`.
+`[native] native_config: some_key = true -> -c some_key=true`.
 Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`.
 

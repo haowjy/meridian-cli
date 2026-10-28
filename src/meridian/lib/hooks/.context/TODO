@@ -1,5 +1,0 @@
-# Required follow-up
-
-- Next minor release: deprecated hook names and keys become errors. Flip
-  `src/meridian/lib/hooks/schema.py:NEXT_MINOR_HOOK_CONFIG_BREAKS` from `warn`
-  to `error`, then remove the compatibility-only payload-name path.
