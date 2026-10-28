@@ -111,7 +111,7 @@ class ReconciledDescendantEvidence:
         if index.classify(deadline=cold_deadline).baseline == "absent":
             index.initialize(deadline=cold_deadline)
         selected = index.descendant_projection(
-            str(self._root_spawn_id),
+            (str(self._root_spawn_id),),
             deadline=time.monotonic() + QUERY_TIMEOUT,
         )
         stored_descendants: list[SpawnRecord] = []

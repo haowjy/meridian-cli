@@ -66,6 +66,7 @@ from meridian.lib.state.primary_meta import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
+from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_signals import (
     SpawnSignalKind,
     read_accepted_signals,
@@ -1631,34 +1632,31 @@ def _resolve_wait_targets(
             "No-arg wait requires MERIDIAN_CHAT_ID (run from inside a meridian session)"
         )
 
-    self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
+    if not ctx.spawn_id:
+        raise ValueError("No-arg wait requires MERIDIAN_SPAWN_ID")
+    caller_spawn_id = str(ctx.spawn_id)
     try:
-        pending = _discover_pending_spawns(
+        roots = owned_parent_ids(
             runtime_root,
-            chat_id,
-            exclude_spawn_id=self_spawn_id,
-            only_descendants_of=self_spawn_id,
+            read_derived(runtime_root, caller_spawn_id),
+            chat_id=chat_id,
+            caller_spawn_id=caller_spawn_id,
+            deadline=deadline,
+        )
+        pending = _discover_pending_spawns(runtime_root, roots, deadline=deadline)
+        owed_candidates = resolve_owed_finished_rows(
+            runtime_root=runtime_root,
+            chat_id=chat_id,
+            caller_spawn_id=caller_spawn_id,
+            parent_ids=roots,
+            excluded_ids=excluded_owed_ids.union(row.id for row in pending),
             deadline=deadline,
         )
     except history_index.HistoryIndexBusy:
         return _WaitTargetDiscovery(discovery_pending=True)
 
-    blocked_on_ids = tuple(row.id for row in pending)
-    owed_candidates: tuple[SpawnRecord, ...] = ()
-    if self_spawn_id is not None:
-        try:
-            owed_candidates = resolve_owed_finished_rows(
-                runtime_root=runtime_root,
-                chat_id=chat_id,
-                caller_spawn_id=self_spawn_id,
-                excluded_ids=excluded_owed_ids.union(blocked_on_ids),
-                deadline=deadline,
-            )
-        except history_index.HistoryIndexBusy:
-            return _WaitTargetDiscovery(discovery_pending=True)
-
     return _WaitTargetDiscovery(
-        blocked_on_ids=blocked_on_ids,
+        blocked_on_ids=tuple(row.id for row in pending),
         active_rows=tuple(pending),
         owed_rows=select_delivery_rows(owed_candidates),
         owed_candidate_ids=frozenset(row.id for row in owed_candidates),
@@ -1667,56 +1665,38 @@ def _resolve_wait_targets(
 
 def _discover_pending_spawns(
     runtime_root: Path,
-    chat_id: str,
+    roots: tuple[str, ...],
     *,
-    exclude_spawn_id: str | None = None,
-    only_descendants_of: str | None = None,
     deadline: float | None = None,
 ) -> list[SpawnRecord]:
-    """Discover this owner's active spawns, or only the caller's transitive subtree.
+    """Discover active spawns in the transitive subtrees of ``roots``.
 
-    The index selects membership; lifecycle decisions re-read authority. Recursive
-    traversal retains terminal and archived ancestry so it cannot lose grandchildren.
+    Roots are ``owned_parent_ids``, the same set owed results use: a live primary
+    walks every primary generation of its chat, so background work started before a
+    continue is found; anyone else walks its own subtree. Peers that merely share the
+    chat are not under any root. The index selects membership; lifecycle decisions
+    re-read authority. Recursive traversal retains terminal and archived ancestry so
+    it cannot lose grandchildren.
     """
-    from meridian.lib.state.session_identity import spawn_matches_owner_chat
-
-    index = history_index.HistoryIndex(runtime_root)
-    if only_descendants_of is not None:
-        selected_ids = {
-            projection[0]
-            for projection in index.descendant_projection(
-                only_descendants_of,
-                active_only=True,
-                deadline=deadline,
-            )
-        }
-    else:
-        selected_ids = {
-            row.id
-            for row in index.spawns(
-                owner_chat_id=chat_id,
-                status=set(ACTIVE_SPAWN_STATUSES),
-                deadline=deadline,
-            )
-        }
+    selected = history_index.HistoryIndex(runtime_root).descendant_projection(
+        roots,
+        active_only=True,
+        deadline=deadline,
+    )
 
     candidates: list[SpawnRecord] = []
-    for spawn_id in selected_ids:
-        if spawn_id == exclude_spawn_id:
-            continue
+    for spawn_id, _parent, _archived in selected:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         if row is None:
             # Retirement can race the projection query just as it can race wait polling.
             continue
-        # Nested callers are scoped by subtree, not owner, matching main.
-        if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
-            continue
         candidates.append(row)
 
-    pending: list[SpawnRecord] = []
-    for row in overlay_derived(runtime_root, candidates):
-        if row.status in ACTIVE_SPAWN_STATUSES:
-            pending.append(row)
+    pending = [
+        row
+        for row in overlay_derived(runtime_root, candidates)
+        if row.status in ACTIVE_SPAWN_STATUSES
+    ]
     pending.sort(key=lambda row: row.id)
     return pending
 

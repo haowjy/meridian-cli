@@ -138,6 +138,7 @@ def discover_owed_scope(
     runtime_root: Path,
     chat_id: str,
     caller_spawn_id: str,
+    parent_ids: tuple[str, ...] | None = None,
     excluded: frozenset[str] = frozenset(),
     require_primary: bool = False,
     deadline: float | None = None,
@@ -148,18 +149,20 @@ def discover_owed_scope(
     nested caller owns only its own direct children (see
     :func:`meridian.lib.state.spawn_ownership.owned_parent_ids`). Authority
     revalidation and live lease subtraction happen in :func:`read_owed_snapshot`.
+    A caller that already computed ``parent_ids`` passes them so both share one root set.
     """
 
     current = read_derived(runtime_root, caller_spawn_id)
     if require_primary and not is_live_chat_primary(current, chat_id=chat_id):
         raise ValueError("Spawn collection caller is not this chat's primary")
-    parent_ids = owned_parent_ids(
-        runtime_root,
-        current,
-        chat_id=chat_id,
-        caller_spawn_id=caller_spawn_id,
-        deadline=deadline,
-    )
+    if parent_ids is None:
+        parent_ids = owned_parent_ids(
+            runtime_root,
+            current,
+            chat_id=chat_id,
+            caller_spawn_id=caller_spawn_id,
+            deadline=deadline,
+        )
     if not parent_ids:
         return OwedSpawnScope(parent_ids=(), candidate_ids=())
 
@@ -227,6 +230,7 @@ def resolve_owed_finished_rows(
     runtime_root: Path,
     chat_id: str,
     caller_spawn_id: str,
+    parent_ids: tuple[str, ...],
     excluded_ids: Collection[str],
     deadline: float | None = None,
 ) -> tuple[SpawnRecord, ...]:
@@ -236,6 +240,7 @@ def resolve_owed_finished_rows(
         runtime_root=runtime_root,
         chat_id=chat_id,
         caller_spawn_id=caller_spawn_id,
+        parent_ids=parent_ids,
         deadline=deadline,
     )
     snapshot = read_owed_snapshot(runtime_root=runtime_root, scope=scope)

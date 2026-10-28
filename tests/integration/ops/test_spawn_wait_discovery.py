@@ -113,6 +113,12 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     legacy_child = _spawn(root, "p-legacy", owner=None, parent=primary)
     continued_child = _spawn(root, "p-continued", chat="c-continued", parent=primary)
     unrelated = _spawn(root, "p-unrelated", chat="c-other", owner=None)
+    # An earlier primary generation of this chat: its background subtree is owed to us.
+    earlier = _spawn(root, "p-earlier", owner=None, kind="primary")
+    earlier_child = _spawn(root, "p-earlier-child", parent=earlier, launch_mode="background")
+    earlier_grandchild = _spawn(root, "p-earlier-grandchild", parent=earlier_child)
+    spawn_store.finalize_spawn(root, earlier, "failed", 1, origin="runner")
+    peer = _spawn(root, "p-peer")  # shares the chat, not under any owned root
     owed_ids = tuple(
         _spawn(root, f"p-owed-{index:02d}", parent=primary, launch_mode="background")
         for index in range(36)
@@ -168,7 +174,13 @@ def test_wait_target_discovery_adds_only_owed_finished_background_spawns(
     )
 
     assert not targets.discovery_pending
-    assert targets.blocked_on_ids == (continued_child, legacy_child)
+    assert targets.blocked_on_ids == (
+        continued_child,
+        earlier_child,
+        earlier_grandchild,
+        legacy_child,
+    )
+    assert peer not in targets.blocked_on_ids
     assert tuple(row.id for row in targets.owed_rows) == owed_ids[2:34]
     assert set(owed_ids[:2]).isdisjoint(row.id for row in targets.owed_rows)
     assert set(owed_ids[34:]).isdisjoint(row.id for row in targets.owed_rows)
@@ -233,36 +245,14 @@ def test_discovery_rereads_terminal_authority_for_active_index_row(
 ) -> None:
     _, root = _runtime(tmp_path)
     spawn_id = _spawn(root, "p-stale")
-    stale_active_row = spawn_store.get_spawn(root, spawn_id)
-    assert stale_active_row is not None
     spawn_store.finalize_spawn(root, spawn_id, "succeeded", 0, origin="runner")
 
     # Model a terminal transition immediately after the index selected its row.
-    # Discovery must not trust that provisional lifecycle snapshot over state.json.
+    # Discovery must not trust that provisional selection over state.json.
     monkeypatch.setattr(
         history_index.HistoryIndex,
-        "spawns",
-        lambda self, **kwargs: (stale_active_row,),
+        "descendant_projection",
+        lambda self, roots, **kwargs: ((spawn_id, "p-root", False),),
     )
 
-    rows = spawn_api._discover_pending_spawns(root, "c9008")
-
-    assert rows == []
-
-
-def test_discovery_does_not_use_the_unfiltered_spawn_scan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, root = _runtime(tmp_path)
-    spawn_id = _spawn(root, "p-child")
-    history_index.HistoryIndex(root).rebuild()
-
-    def reject_unfiltered_scan(*args: object, **kwargs: object) -> None:
-        raise AssertionError("no-arg wait discovery loaded the global spawn scan")
-
-    monkeypatch.setattr(spawn_api, "indexed_spawn_scan", reject_unfiltered_scan)
-
-    rows = spawn_api._discover_pending_spawns(root, "c9008")
-
-    assert [row.id for row in rows] == [spawn_id]
+    assert spawn_api._discover_pending_spawns(root, ("p-root",)) == []

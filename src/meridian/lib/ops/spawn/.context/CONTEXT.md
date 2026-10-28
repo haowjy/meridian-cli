@@ -66,8 +66,11 @@ awareness) unless `yield_after_secs` is explicitly passed.
 ## No-Arg Wait Scoping
 
 When `spawn wait` is called with no explicit IDs (from inside a spawn):
-- Discovers the same active set as before: the primary's chat-owned descendants, or a nested
-  caller's transitive subtree. A nested wait still excludes siblings, ancestors, and the primary.
+- Discovers active spawns in the transitive subtrees of `owned_parent_ids` (the roots owed
+  results use) in one recursive index query: every primary generation of the chat for a primary,
+  so background work started before a continue is waited on; the caller's own subtree for a
+  nested caller. Peers that only share the chat, siblings, ancestors, and the primary are
+  excluded. A call without a spawn ID fails.
 - Adds terminal results still owed to the caller. A primary uses `owed.py`'s collection scope:
   background direct children of every primary generation for `MERIDIAN_CHAT_ID`, minus
   consumption and live leases read across those generations. A nested caller owns only its own

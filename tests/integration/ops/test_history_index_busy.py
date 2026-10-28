@@ -16,7 +16,7 @@ from sqlalchemy import select as sql_select
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink
-from meridian.lib.core.types import ChatId
+from meridian.lib.core.types import ChatId, SpawnId
 from meridian.lib.ops.spawn.models import SpawnWaitInput
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import history_index, spawn_store
@@ -212,6 +212,17 @@ def test_no_arg_wait_yields_when_discovery_remains_busy(
     project.mkdir()
     root = tmp_path / "runtime"
     _spawn(root)
+    spawn_store.start_spawn(
+        root,
+        spawn_id="p-caller",
+        chat_id="c9008",
+        owner_chat_id="c9008",
+        model="test",
+        agent="coder",
+        harness="pi",
+        kind="primary",
+        prompt="caller",
+    )
     history_index.HistoryIndex(root).rebuild()
     home = tmp_path / "home"
     home.mkdir()
@@ -240,7 +251,7 @@ def test_no_arg_wait_yields_when_discovery_remains_busy(
                 yield_after_secs=0.1,
                 observe=False,
             ),
-            ctx=RuntimeContext(chat_id=ChatId("c9008")),
+            ctx=RuntimeContext(chat_id=ChatId("c9008"), spawn_id=SpawnId("p-caller")),
             sink=sink,
         )
 
