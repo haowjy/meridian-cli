@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -31,8 +29,6 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     LifecycleObserver,
     LifecycleObserverTier,
-    SpawnFailure,
-    SpawnFailureCategory,
     register_observer,
 )
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -59,7 +55,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import RuntimePaths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
@@ -358,38 +354,6 @@ class SpawnApplicationService:
         """Check if status is terminal."""
         return is_terminal_spawn_status(status)
 
-    def require_not_terminal(self, record: SpawnRecord) -> None:
-        """Raise if spawn is already terminal."""
-        if self.is_terminal(record.status):
-            raise ValueError(f"Spawn is already {record.status}")
-
-    def require_not_finalizing(self, record: SpawnRecord) -> None:
-        """Raise if spawn is currently finalizing."""
-        if record.status == "finalizing":
-            raise ValueError("Spawn is finalizing")
-
-    def get_spawn_failure(self, spawn_id: SpawnId) -> SpawnFailure | None:
-        """Read the failure sentinel for a spawn, if it exists."""
-        record = self.get_spawn(spawn_id)
-        if record is None or record.status != "failed":
-            return None
-        sentinel_path = (
-            RuntimePaths.from_root_dir(self._runtime_root).spawns_dir
-            / str(spawn_id)
-            / "failure.json"
-        )
-        if not sentinel_path.exists():
-            return None
-        try:
-            data = json.loads(sentinel_path.read_text(encoding="utf-8"))
-            data["ts"] = datetime.fromisoformat(data["ts"])
-            category = data.get("category")
-            if isinstance(category, str):
-                data["category"] = SpawnFailureCategory(category)
-            return SpawnFailure(**data)
-        except Exception:
-            return None
-
     # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
 
     async def prepare(
@@ -489,9 +453,7 @@ class SpawnApplicationService:
                     harness_session_id=resolved_request.session.requested_harness_session_id,
                     control_root=launch_ctx.control_root.as_posix(),
                     task_cwd=(
-                        launch_ctx.task_cwd.as_posix()
-                        if launch_ctx.task_cwd is not None
-                        else None
+                        launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
                     ),
                     execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
                     launch_mode=payload.launch_mode,
@@ -656,9 +618,7 @@ class SpawnApplicationService:
         signal_outcome: SignalCancelOutcome | None = None
         delivery_finalizing = False
         if primary_metadata is not None and primary_metadata.managed_backend:
-            managed_outcome = await self._cancel_managed_primary(
-                spawn_id, record, primary_metadata
-            )
+            managed_outcome = await self._cancel_managed_primary(spawn_id, record, primary_metadata)
             delivery_finalizing = managed_outcome.finalizing
         else:
             from meridian.lib.streaming.signal_canceller import SignalCanceller
@@ -779,9 +739,7 @@ class SpawnApplicationService:
             cancel_exit_code=intent.exit_code if intent is not None else 130,
             cancel_error=intent.error if intent is not None else "cancelled",
             execution_exit_code=(
-                runner_exit.exit_code
-                if runner_exit is not None
-                else record.last_attempt_exit_code
+                runner_exit.exit_code if runner_exit is not None else record.last_attempt_exit_code
             ),
             execution_terminal_status=runner_exit.status if runner_exit is not None else None,
         )
@@ -1146,52 +1104,6 @@ class SpawnApplicationService:
                 else None
             ),
             spawn_id=spawn_id,
-        )
-
-    # ---- Metadata Updates (SEAM-6) ----
-
-    def update_metadata(
-        self,
-        spawn_id: SpawnId | str,
-        *,
-        control_root: str | None = None,
-        task_cwd: str | None = None,
-        execution_cwd: str | None = None,
-        desc: str | None = None,
-        work_id: str | None = None,
-        harness_session_id: str | None = None,
-    ) -> None:
-        """Update spawn metadata and emit spawn.updated.
-
-        SEAM-6.1: Persists update via spawn_store and emits spawn.updated.
-        SEAM-6.2: Does NOT transition lifecycle state.
-
-        Delegates to spawn_store.update_spawn(). Emits lifecycle event
-        so observers (SSE, WS, debug trace) see metadata changes.
-        """
-        # Only call store if at least one field is provided
-        if all(
-            v is None
-            for v in (
-                control_root,
-                task_cwd,
-                execution_cwd,
-                desc,
-                work_id,
-                harness_session_id,
-            )
-        ):
-            return
-
-        spawn_store.update_spawn(
-            self._runtime_root,
-            spawn_id,
-            control_root=control_root,
-            task_cwd=task_cwd,
-            execution_cwd=execution_cwd,
-            desc=desc,
-            work_id=work_id,
-            harness_session_id=harness_session_id,
         )
 
 

@@ -11,9 +11,6 @@ transport-neutral permission policy (`policy.py`) each harness compiles into its
 - **Guardrails all run, even after a failure**; failures collect into `GuardrailResult`.
 - **Guardrail env sanitization is a security boundary**: every `MERIDIAN_SECRET_*` key is
   stripped before any guardrail script runs, because repo scripts are untrusted.
-- **Don't hoist the lazy import in `budget.extract_cost_usd_from_json_line`**:
-  `safety.budget` → `harness.common` → `harness.adapter` → `launch.launch_types` →
-  `safety.policy` is a load-time cycle.
 - **`PermissionPolicy.network` is always resolved** (`Allow(deny)` or `Hosts(allow, deny)`,
   empty Hosts meaning deny); `SandboxDerivedNetwork` exists only on the bundle result until
   final sandbox precedence is applied. Nothing in `safety/` interprets harness-owned

@@ -9,16 +9,15 @@ from dataclasses import dataclass
 SELF_FORK_REF_SENTINEL = "__SELF__"
 SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})
 FORK_IDENTITY_ERROR = (
-    "--fork preserves launch identity. "
-    "Use --fork-fresh to change agent, model, or skills."
+    "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills."
 )
 FORK_INFERENCE_ERROR = (
-    "Cannot infer --fork target: not inside a Meridian-managed session. "
-    "Pass --fork REF explicitly."
+    "Cannot infer --fork target: not inside a Meridian-managed session, or -C targets "
+    "another project. Pass --fork REF explicitly."
 )
 FROM_INFERENCE_ERROR = (
-    "Cannot infer --from target: not inside a Meridian-managed session. "
-    "Pass --from REF explicitly."
+    "Cannot infer --from target: not inside a Meridian-managed session, or -C targets "
+    "another project. Pass --from REF explicitly."
 )
 _FORK_FRESH_CONFLICT = "Cannot combine --fork with --fork-fresh."
 _FORK_CONTINUE_CONFLICT = "Cannot combine --fork with --continue."
@@ -139,12 +138,6 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
     return spawn_id
 
 
-def resolve_fork_ref(raw_ref: str | None) -> str | None:
-    """Legacy wrapper. Prefer resolve_optional_ref."""
-
-    return resolve_optional_ref(raw_ref, flag_name="--fork")
-
-
 def validate_fork_mode(
     *,
     fork_from: str | None,
@@ -171,17 +164,13 @@ def validate_fork_mode(
     if fork_fresh_from is not None and context_from:
         raise ValueError(_FORK_FRESH_FROM_CONFLICT)
 
-    if (
-        fork_from is not None
-        and ((agent is not None and agent.strip()) or model.strip() or skills is not None)
+    if fork_from is not None and (
+        (agent is not None and agent.strip()) or model.strip() or skills is not None
     ):
         raise ValueError(FORK_IDENTITY_ERROR)
 
     resolved_context_from = (
-        tuple(
-            resolve_optional_ref(ref, flag_name="--from") or ref
-            for ref in context_from
-        )
+        tuple(resolve_optional_ref(ref, flag_name="--from") or ref for ref in context_from)
         if context_from
         else ()
     )

@@ -76,12 +76,9 @@ def _patch_lifecycle_service_with_hook(
     monkeypatch: pytest.MonkeyPatch,
     hook: LifecycleEventHook,
 ) -> None:
-    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
 
     def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
-        service = original_factory(project_root_arg, runtime_root)
-        service.register_hook(hook)
-        return service
+        return SpawnLifecycleService(runtime_root, hooks=[hook])
 
     monkeypatch.setattr(
         execute_init_module,
@@ -640,7 +637,9 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
 
 
 def test_deleted_tracked_native_file_preserves_launch_failure_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from meridian.lib.launch.request import SessionRequest
     from meridian.lib.state import session_store
@@ -653,20 +652,28 @@ def test_deleted_tracked_native_file_preserves_launch_failure_reason(
     store = tmp_path / "recorded" / "sessions"
     store.mkdir(parents=True)
     native = store / f"rollout-2026-01-01T00-00-00-{sid}.jsonl"
-    native.write_text('{}\n')
+    native.write_text("{}\n")
     chat = session_store.start_session(
-        runtime.authority.runtime_root, harness="codex", harness_session_id=sid,
-        model="gpt-5.4", native_store=str(store),
+        runtime.authority.runtime_root,
+        harness="codex",
+        harness_session_id=sid,
+        model="gpt-5.4",
+        native_store=str(store),
     ).chat_id
     session_store.stop_session(runtime.authority.runtime_root, chat)
     native.unlink()
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="continue"),
         request=SpawnRequest(
-            prompt="continue", model="gpt-5.4", harness="codex",
+            prompt="continue",
+            model="gpt-5.4",
+            harness="codex",
             session=SessionRequest(
-                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="codex",
-                continue_source_ref=chat, continue_source_tracked=True,
+                requested_harness_session_id=sid,
+                continue_chat_id=chat,
+                continue_harness="codex",
+                continue_source_ref=chat,
+                continue_source_tracked=True,
                 source_native_store=str(store),
             ),
         ),
@@ -683,7 +690,9 @@ def test_deleted_tracked_native_file_preserves_launch_failure_reason(
 
 @requires_pi_dist
 def test_tracked_pi_without_store_preserves_unbound_launch_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from meridian.lib.launch.request import SessionRequest
     from meridian.lib.state import session_store
@@ -694,17 +703,24 @@ def test_tracked_pi_without_store_preserves_unbound_launch_failure(
     stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.PI)
     sid = "12345678-1234-4234-8234-123456789abc"
     chat = session_store.start_session(
-        runtime.authority.runtime_root, harness="pi", harness_session_id=sid,
+        runtime.authority.runtime_root,
+        harness="pi",
+        harness_session_id=sid,
         model="gpt-5.4",
     ).chat_id
     session_store.stop_session(runtime.authority.runtime_root, chat)
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="continue"),
         request=SpawnRequest(
-            prompt="continue", model="gpt-5.4", harness="pi",
+            prompt="continue",
+            model="gpt-5.4",
+            harness="pi",
             session=SessionRequest(
-                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="pi",
-                continue_source_ref=chat, continue_source_tracked=True,
+                requested_harness_session_id=sid,
+                continue_chat_id=chat,
+                continue_harness="pi",
+                continue_source_ref=chat,
+                continue_source_tracked=True,
             ),
         ),
         runtime=runtime,

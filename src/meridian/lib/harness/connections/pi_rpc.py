@@ -335,13 +335,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             if not ack.done():
                 ack.cancel()
 
-    async def send_steer(self, text: str) -> None:
-        payload: dict[str, object] = {
-            "type": "steer",
-            "message": text,
-        }
-        await self._send_rpc_message(payload, event="steer")
-
     async def send_cancel(self) -> None:
         if self._state in {"stopping", "stopped", "failed"}:
             return

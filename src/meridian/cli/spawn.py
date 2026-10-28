@@ -1238,7 +1238,7 @@ def _spawn_ack(
         Parameter(name="spawn_id", show=False),
     ],
 ) -> None:
-    if get_global_options().directory_explicit:
+    if get_global_options().directory_explicit and not os.environ.get("MERIDIAN_SPAWN_ID"):
         raise ValueError("Spawn acknowledgement must run in the caller's project")
     result = ack_owed_sync(
         SpawnAckInput(spawn_ids=spawn_ids),

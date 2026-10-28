@@ -2,15 +2,10 @@
 
 `SignalCoordinator` is the process-global seam that installs handlers for the
 union of its registered receivers' target signals and dispatches each delivered
-signal to the receivers that target it. `SignalForwarder` forwards
-SIGINT/SIGTERM to a subprocess (streaming path); `SignalCallbackReceiver` invokes
+signal to the receivers that target it. `SignalCallbackReceiver` invokes
 a callback (e.g. the managed-primary launcher cancelling its TUI relay).
-
-Also includes process-group helpers for subprocess lifecycle management
-(formerly ``exec/process_groups.py``).
 """
 
-import asyncio
 import os
 import signal
 import time
@@ -18,70 +13,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from threading import Lock, RLock, current_thread, main_thread
 from types import FrameType
-from typing import Final, Protocol, Self, cast
-
-from meridian.lib.platform import IS_WINDOWS
-
-# ---------------------------------------------------------------------------
-# Process-group helpers (absorbed from exec/process_groups.py)
-# ---------------------------------------------------------------------------
-
-
-def signal_process_group(
-    process: asyncio.subprocess.Process,
-    signum: signal.Signals,
-) -> None:
-    """Send one signal to the subprocess process group.
-
-    On Windows, sends to the process directly because process groups are not
-    used for child launch isolation. On POSIX, sends to the process group.
-
-    The child may exit between returncode checks and signal delivery, so
-    ProcessLookupError/OSError are treated as expected races.
-    """
-
-    if process.returncode is not None:
-        return
-
-    pid = process.pid
-
-    try:
-        if IS_WINDOWS:
-            process.send_signal(signum)
-            return
-        pgid = os.getpgid(pid)
-        if pgid == pid:
-            os.killpg(pgid, signum)
-        else:
-            process.send_signal(signum)
-    except (ProcessLookupError, OSError):
-        return
-
-
-def force_kill_process(process: asyncio.subprocess.Process) -> None:
-    """Force-kill a process immediately, handling platform differences.
-
-    On Windows, signal.SIGKILL does not exist, so we use process.kill()
-    which calls TerminateProcess(). On POSIX, we send SIGKILL to the
-    process group to ensure all child processes are terminated.
-    """
-
-    if process.returncode is not None:
-        return
-
-    try:
-        if IS_WINDOWS:
-            process.kill()
-            return
-        # On POSIX, send SIGKILL to the process group
-        pgid = os.getpgid(process.pid)
-        if pgid == process.pid:
-            os.killpg(pgid, signal.SIGKILL)
-        else:
-            process.kill()
-    except (ProcessLookupError, OSError):
-        return
-
+from typing import Final, Protocol, cast
 
 # ---------------------------------------------------------------------------
 # Signal forwarding
@@ -100,31 +32,6 @@ def signal_to_exit_code(received_signal: signal.Signals | None) -> int | None:
     return None
 
 
-def map_process_exit_code(
-    *,
-    raw_return_code: int,
-    received_signal: signal.Signals | None,
-) -> int:
-    """Map raw subprocess return code + forwarded signal to meridian semantics."""
-
-    signaled_exit = signal_to_exit_code(received_signal)
-    if signaled_exit is not None:
-        return signaled_exit
-
-    if raw_return_code == 0:
-        return 0
-
-    if raw_return_code < 0:
-        try:
-            signum = signal.Signals(-raw_return_code)
-        except ValueError:
-            return 1
-        mapped = signal_to_exit_code(signum)
-        if mapped is not None:
-            return mapped
-    return 1
-
-
 class SignalReceiver(Protocol):
     """A sink registered with :class:`SignalCoordinator`.
 
@@ -137,43 +44,6 @@ class SignalReceiver(Protocol):
     def target_signals(self) -> tuple[signal.Signals, ...]: ...
 
     def forward_signal(self, signum: signal.Signals) -> None: ...
-
-
-class SignalForwarder:
-    """Scoped SIGINT/SIGTERM forwarding from parent process to child process."""
-
-    def __init__(self, process: asyncio.subprocess.Process) -> None:
-        self._process = process
-        self._received_signal: signal.Signals | None = None
-        self._seen_signal_count = 0
-
-    @property
-    def received_signal(self) -> signal.Signals | None:
-        return self._received_signal
-
-    @property
-    def target_signals(self) -> tuple[signal.Signals, ...]:
-        return TARGET_SIGNALS
-
-    def __enter__(self) -> Self:
-        signal_coordinator().register_receiver(self)
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        _ = (exc_type, exc, tb)
-        signal_coordinator().unregister_receiver(self)
-
-    def forward_signal(self, signum: signal.Signals) -> None:
-        """Forward one signal to the child and remember it for exit-code mapping."""
-
-        self._received_signal = signum
-        self._seen_signal_count += 1
-
-        signal_process_group(self._process, signum)
-
-        if self._seen_signal_count >= 2 and self._process.returncode is None:
-            # Second termination signal means "force stop now".
-            force_kill_process(self._process)
 
 
 class SignalCallbackReceiver:

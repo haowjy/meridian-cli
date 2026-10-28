@@ -104,7 +104,8 @@ prompt is valid for `--continue` and reference-only launches.
 - **No per-launch values in the system prompt**: a spawn's run ID, launching chat and
   session links go in the first user turn (`build_launch_facts_prompt()`) so sibling
   spawns send byte-identical system bytes. A primary's own chat ID and links stay in the
-  capability block (`--continue` replays no user turn). A `--goal` never creates a user
+  capability block (`--continue` replays no user turn); a primary gets no run-ID line,
+  since no caller holds it and the chat ID is its handle. A `--goal` never creates a user
   turn for a primary. Rationale and the task-dir pin rules:
   [.context/CONTEXT.md](.context/CONTEXT.md).
 - **Skills** come from the launch-bundle JSON, not from reading `.mars/skills/`;

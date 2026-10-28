@@ -76,8 +76,10 @@ from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
+from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.launch.errors import WorkTaskDirMissing
+from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -994,6 +996,24 @@ def _print_agent_root_help() -> None:
     print(render_root_help(agent_mode=True), end="")
 
 
+def _inherited_project_is(project_root: Path) -> bool:
+    """Whether the inherited ``MERIDIAN_PROJECT_DIR`` names *project_root*'s project.
+
+    The variable comes from another process: an identity that cannot be read
+    (bad ``meridian.toml``) counts as a different project. The target's own bad
+    config still raises from ``is_same_project``.
+    """
+
+    inherited_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
+    if not inherited_root:
+        return False
+    try:
+        resolve_project_identity(Path(inherited_root))
+    except ValueError:
+        return False
+    return is_same_project(Path(inherited_root), project_root)
+
+
 @contextmanager
 def _directory_env_scope(
     project_root: Path | None,
@@ -1003,16 +1023,24 @@ def _directory_env_scope(
 
     When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
     so the runtime layer derives from project identity instead of a stale override.
+    If ``-C`` also targets a different project than the inherited one, unset every
+    project-scoped variable (``env_registry``): the caller's spawn, chat, work and
+    task-dir name things in its own project, and no command, ops layer or child
+    launched from here may read them as the target's.
     """
 
-    keys = ["MERIDIAN_PROJECT_DIR"]
+    other_project = (
+        directory_explicit and project_root is not None and not _inherited_project_is(project_root)
+    )
+    dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
     if directory_explicit:
-        keys.append("_MERIDIAN_RUNTIME_DIR")
+        dropped.append("_MERIDIAN_RUNTIME_DIR")
+    keys = ["MERIDIAN_PROJECT_DIR", *dict.fromkeys(dropped)]
     saved = {key: os.environ.get(key) for key in keys}
+    for key in keys[1:]:
+        os.environ.pop(key, None)
     if project_root is not None:
         os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
-    if directory_explicit:
-        os.environ.pop("_MERIDIAN_RUNTIME_DIR", None)
     try:
         yield
     finally:
@@ -1029,8 +1057,12 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     # Bootstrap and dispatch enter separate invocation scopes; one warning cache
     # spans both so a command warns once per key.
-    with meridian_managed_env_default(), warning_cache_scope():
-        _main_impl(argv=argv)
+    caller_cwd = Path.cwd()
+    try:
+        with meridian_managed_env_default(), warning_cache_scope():
+            _main_impl(argv=argv)
+    finally:
+        os.chdir(caller_cwd)
 
 
 def _main_impl(argv: Sequence[str] | None = None) -> None:
@@ -1081,6 +1113,14 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         render_mode=options.render_mode,
     )
     suppress_events = effective_agent_mode and options.explicit_format is None
+    # Like ``git -C``: the -C directory is the caller's cwd for everything below,
+    # so no cwd-derived tier (task cwd, relative paths) lands in the shell's directory.
+    if (
+        options.directory_explicit
+        and options.project_root is not None
+        and options.project_root.is_dir()
+    ):
+        os.chdir(options.project_root)
     options = options.model_copy(
         update={
             "output": OutputConfig(

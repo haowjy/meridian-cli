@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
@@ -42,7 +42,6 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
-    SpawnFailure,
     SpawnFailureCategory,
     allocate_spawn_sequence,
     next_spawn_sequence,
@@ -214,10 +213,6 @@ class SpawnLifecycleService:
         self._hooks = hooks or []
         self._record: SpawnRecord | None = None
 
-    def register_hook(self, hook: LifecycleHook) -> None:
-        """Register an additional lifecycle hook after construction."""
-        self._hooks.append(hook)
-
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------
@@ -234,17 +229,13 @@ class SpawnLifecycleService:
             reservation, dispatch_events=dispatch_events, launch_lock=launch_lock
         )
 
-    def reserve(
-        self, reservation: SpawnReservation, *, launch_lock: LaunchSlot
-    ) -> str:
+    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> str:
         """Persist a spawn row without dispatching lifecycle events."""
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
 
     def announce(self, spawn_id: str) -> None:
         """Dispatch spawn.created and initial telemetry for a reserved row."""
-        with bind_lifecycle_correlation(
-            self._correlation(operation="announce", spawn_id=spawn_id)
-        ):
+        with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
             record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 raise ValueError(f"spawn row not found: {spawn_id}")
@@ -507,16 +498,9 @@ class SpawnLifecycleService:
                 snapshot = outcome.after
                 if self._owns_record(spawn_id):
                     self._record = snapshot
-                self._reconcile_failure_sentinel(
-                    snapshot,
-                    origin=origin,
-                    error=error,
-                )
                 event = self._build_event("spawn.finished", snapshot)
                 self._dispatch(event)
-                self._emit_telemetry_event_for_record(
-                    f"spawn.{snapshot.status}", snapshot
-                )
+                self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
 
     def mark_finalizing(self, spawn_id: str) -> bool:
@@ -627,38 +611,6 @@ class SpawnLifecycleService:
     ) -> TerminalOutcomeCategory:
         return _terminal_outcome_category(status=status, origin=origin, error=error)
 
-    def _build_terminal_failure_diagnostic(
-        self,
-        record: SpawnRecord,
-        *,
-        origin: TerminalOrigin | None = None,
-        error: str | None = None,
-    ) -> SpawnFailure:
-        terminal = record.terminal
-        terminal_origin = terminal.origin if terminal is not None else None
-        terminal_error = terminal.error if terminal is not None else None
-        outcome_category = _terminal_failure_category(
-            status=record.status,
-            origin=origin or terminal_origin,
-        )
-        correlation = self._correlation(
-            operation="finalize",
-            record=record,
-            event_type="spawn.finished",
-            outcome_category=outcome_category,
-        )
-        return SpawnFailure(
-            spawn_id=record.id,
-            ts=datetime.now(tz=UTC),
-            exit_code=terminal.exit_code if terminal is not None else None,
-            reason=terminal_error or error or terminal_origin or origin or "spawn failed",
-            category=outcome_category or SpawnFailureCategory.UNKNOWN_FAILURE,
-            status=record.status,
-            origin=terminal_origin or origin,
-            correlation=correlation.to_context(),
-            metadata={"origin": terminal_origin or origin},
-        )
-
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         """Load owner state once for workers that did not call start()."""
 
@@ -670,36 +622,6 @@ class SpawnLifecycleService:
 
     def _owns_record(self, spawn_id: str) -> bool:
         return self._record is not None and self._record.id == str(spawn_id)
-
-    def _read_owner_record_from_disk(self, spawn_id: str) -> SpawnRecord | None:
-        from meridian.lib.state.paths import RuntimePaths
-        from meridian.lib.state.spawn.repository import read_state
-
-        return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
-
-    def _reconcile_failure_sentinel(
-        self,
-        record: SpawnRecord,
-        *,
-        origin: TerminalOrigin | None = None,
-        error: str | None = None,
-    ) -> None:
-        from meridian.lib.state.failure_sentinel import (
-            delete_failure_sentinel,
-            write_failure_sentinel,
-        )
-
-        if record.status == "failed":
-            failure = self._build_terminal_failure_diagnostic(
-                record,
-                origin=origin,
-                error=error,
-            )
-            data = asdict(failure)
-            data["ts"] = failure.ts.isoformat()
-            write_failure_sentinel(self._runtime_root, record.id, data)
-            return
-        delete_failure_sentinel(self._runtime_root, record.id)
 
     def _dispatch(self, event: LifecycleEvent) -> None:
         correlation = LifecycleCorrelation(
@@ -927,8 +849,6 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     if terminal.error:
         payload["reason"] = terminal.error
     return payload
-
-
 
 
 # ---------------------------------------------------------------------------

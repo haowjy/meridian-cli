@@ -1,16 +1,14 @@
 """Fork materialization — sole owner of the adapter.fork_session callsite.
 
-Invariant I-3 (Single owners): materialize_fork() is the only callsite that
-invokes adapter.fork_session().  No other module may call fork_session()
-directly.
+Single owner: materialize_fork() is the only callsite that invokes
+adapter.fork_session().  No other module may call fork_session() directly.
 
-Invariant I-10 (Fork-after-row ordering): fork_session is invoked only after
-a spawn row exists for the current launch.  Callers MUST call start_spawn
-before materialize_fork().
+Fork-after-row ordering: fork_session is invoked only after a spawn row exists
+for the current launch.  Callers MUST call start_spawn before materialize_fork().
 
-Invariant I-11 (Fork lineage coherence): the spawn row's harness_session_id
-is written via update_spawn after forking — the start row MUST NOT
-pre-populate it.  materialize_fork() owns that update_spawn call.
+Fork lineage coherence: the spawn row's harness_session_id is written via
+update_spawn after forking — the start row MUST NOT pre-populate it.
+materialize_fork() owns that update_spawn call.
 """
 
 from __future__ import annotations

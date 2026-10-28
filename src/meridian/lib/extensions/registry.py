@@ -60,13 +60,6 @@ class ExtensionCommandRegistry:
         entry = self._commands.get(fqid)
         return _resolved(entry) if entry is not None else None
 
-    def get_by_cli(self, group: str, name: str) -> ExtensionCommandSpec | None:
-        """Look up a command by CLI group and subcommand name."""
-        fqid = self._cli_commands.get((group, name))
-        if fqid is None:
-            return None
-        return self.get(fqid)
-
     def list_for_cli_group(self, group: str) -> list[CommandEntry]:
         """Return a CLI group's entries, sorted by cli_name, without resolving them."""
         return sorted(

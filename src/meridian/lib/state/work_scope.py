@@ -32,10 +32,6 @@ class WorkScope:
         return self.kind == "work_item"
 
     @property
-    def is_ephemeral(self) -> bool:
-        return self.kind == "ambient_spawn"
-
-    @property
     def excluded_top_level_names(self) -> frozenset[str]:
         """Top-level scope entries that never count as user artifacts."""
 
@@ -79,9 +75,7 @@ def resolve_bound_work_scope(
         except ValueError:
             return None
         return WorkScope(kind="work_item", identifier=requested_work_id, root=root)
-    root = resolve_ambient_work_dir(
-        project_root, child_spawn_id, runtime_root=runtime_root
-    )
+    root = resolve_ambient_work_dir(project_root, child_spawn_id, runtime_root=runtime_root)
     return WorkScope(kind="ambient_spawn", identifier=child_spawn_id, root=root)
 
 
@@ -119,9 +113,7 @@ def resolve_work_scope_from_parts(
 
     if spawn_id is not None and project_root is not None:
         try:
-            root = resolve_ambient_work_dir(
-                project_root, spawn_id, runtime_root=runtime_root
-            )
+            root = resolve_ambient_work_dir(project_root, spawn_id, runtime_root=runtime_root)
         except ValueError:
             return None
         return WorkScope(kind="ambient_spawn", identifier=str(spawn_id), root=root)

@@ -29,8 +29,8 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
-from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write

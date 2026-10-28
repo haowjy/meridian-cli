@@ -29,7 +29,6 @@ from meridian.plugin_api import Hook as PluginHook
 
 if TYPE_CHECKING:
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
-    from meridian.lib.service_context import ApplicationContext
 
 
 class _HookRegistryLike(Protocol):
@@ -99,37 +98,6 @@ class HookDispatcher(LifecycleHook):
             self._project_root, env=self._env
         )
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
-
-    @classmethod
-    def from_application_context(
-        cls,
-        context: ApplicationContext,
-        *,
-        registry: _HookRegistryLike | None = None,
-        interval_tracker: _IntervalTrackerLike | None = None,
-        external_runner: _ExternalRunnerLike | None = None,
-        builtin_hooks: Mapping[str, BuiltinHook] | None = None,
-    ) -> HookDispatcher:
-        """Build a dispatcher from shared application context authority."""
-
-        authority = context.authority
-        project_root = context.project_root or (
-            authority.project_root if authority is not None else None
-        )
-        runtime_root = context.runtime_root or (
-            authority.runtime_root if authority is not None else None
-        )
-        if project_root is None:
-            raise ValueError("Hook dispatcher context is missing project_root.")
-        return cls(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            authority=authority,
-            registry=registry,
-            interval_tracker=interval_tracker,
-            external_runner=external_runner,
-            builtin_hooks=builtin_hooks,
-        )
 
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""

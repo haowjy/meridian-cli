@@ -83,9 +83,10 @@ def _build_resolved_skills_from_bundle(
             continue
         # Older bundle schema-4 producers omitted source_path. Keep the
         # reconstructed primary path only as their compatibility fallback.
-        source_path = entry.source_path or (
-            mars_root / ".mars" / "skills" / entry.name / "SKILL.md"
-        ).as_posix()
+        source_path = (
+            entry.source_path
+            or (mars_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        )
         loaded_skills.append(
             SkillContent(
                 name=entry.name,
@@ -148,17 +149,6 @@ class SurfacePolicyInput:
     @property
     def env_overrides(self) -> RuntimeOverrides:
         return self.layers[1] if len(self.layers) > 1 else RuntimeOverrides()
-
-    @property
-    def routing_layers(self) -> tuple[RuntimeOverrides, ...]:
-        return tuple(layer.routing_scope() for layer in (*self.layers, self.config_overrides))
-
-    @property
-    def execution_policy_layers(self) -> tuple[RuntimeOverrides, ...]:
-        return tuple(
-            layer.execution_policy_scope(self.supported_execution_policy_fields)
-            for layer in (*self.layers, self.config_overrides)
-        )
 
 
 @dataclass(frozen=True)
@@ -787,28 +777,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     )
 
 
-def resolve_policies(
-    *,
-    catalog: CatalogSession,
-    layers: tuple[RuntimeOverrides, ...],
-    config_overrides: RuntimeOverrides,
-    config: MeridianConfig,
-    harness_registry: HarnessRegistry,
-) -> ResolvedLaunchPolicy:
-    """Compatibility wrapper over the public shared launch policy boundary."""
-
-    return resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            catalog=catalog,
-            layers=layers,
-            config_overrides=config_overrides,
-            config=config,
-            harness_registry=harness_registry,
-        )
-    )
-
-
 __all__ = [
     "ModelSelectionContext",
     "ResolvedLaunchPolicy",
@@ -816,7 +784,6 @@ __all__ = [
     "SurfacePolicyInput",
     "match_model_policy",
     "resolve_launch_policy",
-    "resolve_policies",
     "resolve_policy_fields",
     "validate_harness_compatibility",
 ]

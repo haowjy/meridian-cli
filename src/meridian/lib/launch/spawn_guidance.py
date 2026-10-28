@@ -185,7 +185,7 @@ def build_capabilities_prompt(
         # `# Meridian run` block.
         lines.append(
             f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
+            "(`$MERIDIAN_CHAT_ID`); use it in names, and as the parent for handoff `--from`."
         )
 
     task_path = task_dir.as_posix()

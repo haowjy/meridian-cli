@@ -66,27 +66,6 @@ def test_atomic_write_text_fsyncs_and_replaces(
 
 
 @posix_only
-def test_atomic_write_bytes_fsyncs_and_replaces(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target = tmp_path / "state.bin"
-    target.write_bytes(b"before")
-    directory_fd = 999_002
-    fsync_calls = _capture_fsync_calls(
-        monkeypatch,
-        directory_path=target.parent,
-        directory_fd=directory_fd,
-    )
-
-    atomic_module.atomic_write_bytes(target, b"after")
-
-    assert target.read_bytes() == b"after"
-    assert directory_fd in fsync_calls
-    assert _tmp_candidates(target) == []
-
-
-@posix_only
 def test_append_text_line_fsyncs_new_file_directory_entry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

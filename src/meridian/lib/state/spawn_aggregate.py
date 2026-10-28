@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
-from meridian.lib.state.event_store import lock_file
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.process_scope_projection import scope_projection_lock_path

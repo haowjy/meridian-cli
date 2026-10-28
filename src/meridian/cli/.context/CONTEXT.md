@@ -159,9 +159,6 @@ it to the current session's spawn ID from `MERIDIAN_SPAWN_ID`. If
 - `--fork` → `FORK_INFERENCE_ERROR`: "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills."
 - `--from` → `FROM_INFERENCE_ERROR`
 
-`resolve_fork_ref(raw_ref)` is a legacy wrapper for `--fork` callers; prefer
-`resolve_optional_ref` with an explicit `flag_name`.
-
 ### Conflict Matrix: `validate_fork_mode()`
 
 All mutual exclusion checks for session-initiation flags live in one place.

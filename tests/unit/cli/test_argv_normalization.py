@@ -10,7 +10,6 @@ from meridian.cli.argv_normalization import (
     ForkModeResolution,
     canonicalize_argv,
     normalize_optional_value_flags,
-    resolve_fork_ref,
     resolve_optional_ref,
     validate_fork_mode,
 )
@@ -58,9 +57,7 @@ def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) ->
         (["mars", "--continue"], ["mars", "--continue"]),
     ],
 )
-def test_canonicalize_argv_routes_bare_continue(
-    argv: list[str], expected: list[str]
-) -> None:
+def test_canonicalize_argv_routes_bare_continue(argv: list[str], expected: list[str]) -> None:
     canonical = canonicalize_argv(argv)
 
     assert canonical == expected
@@ -86,15 +83,8 @@ def test_spawn_create_defers_runtime_write_until_policy_preparation() -> None:
 
 
 def test_positional_scanner_stops_at_passthrough_separator() -> None:
-    assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [
-        (0, "spawn")
-    ]
+    assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [(0, "spawn")]
     assert list(iter_positional_tokens(["--format", "--", "spawn"])) == []
-
-
-def test_resolve_fork_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p42")
-    assert resolve_fork_ref(SELF_FORK_REF_SENTINEL) == "p42"
 
 
 def test_resolve_optional_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,21 +92,16 @@ def test_resolve_optional_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> 
     assert resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from") == "p42"
 
 
-def test_resolve_fork_ref_self_sentinel_without_context_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-    with pytest.raises(ValueError, match=FORK_INFERENCE_ERROR):
-        resolve_fork_ref(SELF_FORK_REF_SENTINEL)
-
-
+@pytest.mark.parametrize(
+    ("flag_name", "message"),
+    [("--from", FROM_INFERENCE_ERROR), ("--fork", FORK_INFERENCE_ERROR)],
+)
 def test_resolve_optional_ref_self_sentinel_without_context_errors(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, flag_name: str, message: str
 ) -> None:
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-    with pytest.raises(ValueError, match=FROM_INFERENCE_ERROR):
-        resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from")
-
+    with pytest.raises(ValueError, match=message):
+        resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name=flag_name)
 
 
 def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
@@ -159,7 +144,6 @@ def test_validate_fork_mode_rejects_identity_override_agent() -> None:
             continue_from=None,
             agent="reviewer",
         )
-
 
 
 def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> None:

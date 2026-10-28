@@ -272,7 +272,7 @@ class LaunchContext:
     projected_content: ProjectedContent | None = None
     seed_harness_session_id: str | None = None
     seed_harness_session_args: tuple[str, ...] = ()
-    # I-13: adapter input transformations surface here instead of silently mutating.
+    # Adapter input transformations surface here instead of silently mutating.
     warnings: tuple[CompositionWarning, ...] = ()
     model_selection: ModelSelectionContext | None = None
 
@@ -1771,8 +1771,10 @@ def bind_launch_context(
         primary_chat_id = link_chat or None
     else:
         launching_chat_id = child_context_env.get("MERIDIAN_CHAT_ID", "").strip() or None
+    # A primary has no caller holding its spawn ID: the human addresses it by chat ID,
+    # which the capability block already names, so it gets no run-ID line.
     launch_facts = build_launch_facts_prompt(
-        spawn_id=child_context_env.get("MERIDIAN_SPAWN_ID"),
+        spawn_id=None if is_primary_launch else child_context_env.get("MERIDIAN_SPAWN_ID"),
         chat_id=launching_chat_id,
         work_link=None if is_primary_launch else bound_work_link,
         task_link=None if is_primary_launch else bound_task_link,

@@ -70,9 +70,6 @@ class LoadedConfig(BaseModel):
     dynamic: DynamicConfigSections
     sources: tuple[ConfigValueSource, ...] = ()
 
-    def source_for(self, path: tuple[str, ...]) -> ConfigValueSource | None:
-        return next((entry for entry in self.sources if entry.path == path), None)
-
 
 @dataclass(frozen=True)
 class _NormalizedConfigLayer:
@@ -417,9 +414,7 @@ def resolve_pi_harness_profile(
     """Resolve ``[harness.pi]`` with optional launch snapshot and env overrides."""
 
     profile = (
-        base_profile
-        if base_profile is not None
-        else load_launch_config(project_root).harness.pi
+        base_profile if base_profile is not None else load_launch_config(project_root).harness.pi
     )
 
     raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
@@ -491,9 +486,3 @@ def resolve_opencode_version_for_launch(
         except Exception:
             pass
     return str(load_config(project_root).harness.opencode.version)
-
-
-def resolve_pi_disable_managed_bash() -> bool:
-    """Resolve whether Meridian should skip Pi's managed bash extension."""
-
-    return resolve_pi_harness_profile().disable_managed_bash

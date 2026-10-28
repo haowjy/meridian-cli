@@ -19,12 +19,6 @@ class ProjectConfigState(BaseModel):
     write_path: Path
     path: Path | None = None
 
-    @property
-    def is_present(self) -> bool:
-        """Return True when project config exists on disk."""
-
-        return self.status == "present"
-
     @classmethod
     def from_project_paths(cls, project_paths: ProjectConfigPaths) -> "ProjectConfigState":
         """Build config state from resolved project paths."""

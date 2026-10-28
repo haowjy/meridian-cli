@@ -164,7 +164,7 @@ async def _prepare_execution_handoff(
         resolved_request = resolved_request.model_copy(
             update={"agent": session_context.resolved_agent_name}
         )
-        # I-10/I-11: spawn row AND chat row now both exist. Harnesses that
+        # Spawn row AND chat row now both exist. Harnesses that
         # declare MERIDIAN_MATERIALIZED_FORK fork here so the spawn row
         # receives the forked session ID via update_spawn (not pre-populated on
         # the start row). Other harnesses keep continue_fork native for launch

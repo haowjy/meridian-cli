@@ -336,7 +336,7 @@ new OS-specific home-directory branches.
 
 ### Atomic writes
 
-`atomic_write_text()` / `atomic_write_bytes()` write a same-directory temp file at runtime-state mode `0600`, fsync, then `os.replace()`; user-owned project files and work-item metadata use the preserve-mode writer in `lib/platform/atomic.py`. `atomic_publish_dir()` renames a complete same-volume stage to a nonexistent destination and fsyncs the parent. `append_text_line()` is binary so JSONL offsets stay stable. Enforced by `tests/contract/test_state_write_conformance.py`.
+`atomic_write_text()` writes a same-directory temp file at runtime-state mode `0600`, fsync, then `os.replace()`; user-owned project files and work-item metadata use the preserve-mode writer in `lib/platform/atomic.py`. `atomic_publish_dir()` renames a complete same-volume stage to a nonexistent destination and fsyncs the parent. `append_text_line()` is binary so JSONL offsets stay stable. Enforced by `tests/contract/test_state_write_conformance.py`.
 
 ## Related KB
 
@@ -389,7 +389,7 @@ Any writer into a destructible `spawns/<id>/` directory that can outlive deletio
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
 a missing published row through `published_artifact_lock()`; callback-only writers use
 `mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
-reaper diagnostics, failure sentinels, and harness journals all use it.
+reaper diagnostics, and harness journals all use it.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in

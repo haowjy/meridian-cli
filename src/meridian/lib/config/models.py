@@ -657,12 +657,6 @@ class MeridianConfig(ConfigModel):
             raise ValueError(f"Invalid startup timeout: expected float > 0, got {value!r}.")
         return float(value)
 
-    def default_model_for_harness(self, harness_id: str) -> str | None:
-        """Return configured default model for one harness ID."""
-
-        profile = self.harness_profile(harness_id)
-        return None if profile is None else profile.model
-
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""
 

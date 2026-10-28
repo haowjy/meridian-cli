@@ -206,10 +206,6 @@ class ProjectedContent:
     channels: ProjectionChannels
     """Per-category routing decisions for projection-manifest.json."""
 
-    def channel_manifest(self) -> dict[str, str]:
-        """Generate channel routing for projection-manifest.json (S-4d)."""
-        return self.channels.to_dict()
-
 
 def build_reference_routing(
     reference_items: tuple[ReferenceItem, ...],
@@ -305,9 +301,7 @@ def replace_capabilities_block(
         return guidance_blocks
     normalized = new_content.strip()
     return tuple(
-        replace(block, content=normalized)
-        if block.name == CAPABILITIES_BLOCK_NAME
-        else block
+        replace(block, content=normalized) if block.name == CAPABILITIES_BLOCK_NAME else block
         for block in guidance_blocks
     )
 

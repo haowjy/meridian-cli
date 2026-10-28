@@ -158,24 +158,8 @@ class WorkItem(BaseModel):
         return self.worktree.path
 
     @property
-    def worktree_branch(self) -> str | None:
-        return self.worktree.branch
-
-    @property
-    def worktree_repo_path(self) -> str | None:
-        return self.worktree.repo_path
-
-    @property
-    def worktree_name(self) -> str | None:
-        return self.worktree.name
-
-    @property
     def worktree_pending(self) -> bool:
         return self.worktree.pending
-
-    @property
-    def worktree_managed(self) -> bool:
-        return self.worktree.managed
 
 
 class StoredWorkItemState(BaseModel):

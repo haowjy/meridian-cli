@@ -229,17 +229,6 @@ class SpawnManager:
 
         self._event_hooks.setdefault(spawn_id, []).append(hook)
 
-    def unregister_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
-        """Remove one previously registered synchronous event hook."""
-
-        hooks = self._event_hooks.get(spawn_id)
-        if hooks is None:
-            return
-        with suppress(ValueError):
-            hooks.remove(hook)
-        if not hooks:
-            self._event_hooks.pop(spawn_id, None)
-
     def control_endpoint(self, spawn_id: SpawnId) -> str | None:
         """Return the current platform-aware control endpoint for one active spawn."""
 
