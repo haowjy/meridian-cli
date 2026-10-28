@@ -36,12 +36,16 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SessionRequest,
     SpawnRequest,
+    is_exact_continue_session,
 )
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.session_store import update_session_claude_config_dir
+from meridian.lib.state.session_store import (
+    update_session_claude_config_dir,
+    withdraw_unstarted_spawn_link,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from ..runtime import OperationRuntime
@@ -358,6 +362,10 @@ async def launch_prepared_spawn(
         )
     except Exception as exc:
         exc = _with_source_ref(exc, request.session)
+        if is_exact_continue_session(request.session) and request.session.continue_chat_id:
+            withdraw_unstarted_spawn_link(
+                runtime_root, request.session.continue_chat_id, str(spawn.spawn_id)
+            )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
