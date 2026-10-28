@@ -723,7 +723,6 @@ def list_spawns(
     runtime_root: Path,
     *,
     chat_id: str | None = None,
-    owner_chat_id: str | None = None,
     parent_id: str | None = None,
     work_id: str | None = None,
 ) -> SpawnScan:
@@ -741,10 +740,6 @@ def list_spawns(
         if record is not None:
             spawns.append(record)
 
-    if owner_chat_id is not None:
-        from meridian.lib.state.session_identity import spawn_owner_chat_id
-
-        spawns = [spawn for spawn in spawns if spawn_owner_chat_id(spawn) == owner_chat_id]
     if chat_id is not None:
         spawns = [spawn for spawn in spawns if spawn.chat_id == chat_id]
     if parent_id is not None:

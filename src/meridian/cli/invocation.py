@@ -24,6 +24,22 @@ from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 
 
+class Caller(BaseModel):
+    """The calling Meridian session, read from the env before ``-C`` can drop it.
+
+    Under a cross-project ``-C`` the env no longer carries the caller's IDs, so only a
+    message frame reads this: it names the sender and gives a reply that works from the
+    target. It is never written back into the environment, where the target project's
+    ops and children would take the caller's IDs as their own.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str
+    project_root: Path | None
+    """The caller's project, set only when it is not the target's: the reply needs ``-C``."""
+
+
 class GlobalOptions(BaseModel):
     """Top-level options that apply to all commands."""
 
@@ -40,6 +56,7 @@ class GlobalOptions(BaseModel):
     explicit_format: OutputFormat | None = None
     project_root: Path | None = None
     directory_explicit: bool = False
+    caller: Caller | None = None
 
 
 class Emitter(Protocol):

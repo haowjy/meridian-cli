@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -732,7 +732,6 @@ def run_harness_process(
         run_primary_process_with_capture
     ),
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
-    update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
     activate_work_fn: Callable[[Path, str, str], object] = activate_work,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
 ) -> ProcessOutcome:
@@ -783,6 +782,9 @@ def run_harness_process(
     native_primary_runtime_metadata = NativePrimaryRuntimeMetadata()
     child_env: dict[str, str] = {}
     startup_attempt_id = uuid.uuid4().hex
+    # The session's first event names the spawn that runs it. A crash between this
+    # reservation and the row write leaves a link to no row, which readers skip.
+    reserved_spawn_id = spawn_store.reserve_spawn_id(runtime_root)
     try:
         with LaunchSlot() as launch_lock, session_scope(
             runtime_root=runtime_root,
@@ -793,6 +795,7 @@ def run_harness_process(
             task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
             execution_cwd=str(execution_cwd),
             kind="primary",
+            spawn_id=str(reserved_spawn_id),
             startup_attempt_id=startup_attempt_id,
         ) as managed:
             chat_id = managed.chat_id
@@ -821,6 +824,7 @@ def run_harness_process(
                         SpawnReservation(
                             chat_id=chat_id,
                             session_metadata=session_metadata,
+                            spawn_id=str(reserved_spawn_id),
                             kind="primary",
                             prompt=preview_request.prompt,
                             harness_session_id=(
@@ -840,11 +844,10 @@ def run_harness_process(
                         launch_lock=launch_lock,
                     )
                 )
-                update_session_spawn_id_fn(
-                    runtime_root,
-                    chat_id,
-                    str(primary_spawn_id),
-                )
+                # The start event already names the spawn; the spawn's history ID only
+                # exists once its row is written, and the session listing matches
+                # archived primaries to their session by it.
+                update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
                 lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:
@@ -944,7 +947,6 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                managed = replace(managed, spawn_id=primary_spawn_id)
                 native_run = bind_entry(
                     managed,
                     launch_spec,

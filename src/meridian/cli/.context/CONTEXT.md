@@ -293,13 +293,29 @@ human-facing spawn output.
 ### Injected message frame
 
 `spawn message` (`cli/spawn_message.py`) posts text, not just a payload. It opens
-the message with a `[Meridian]` line naming the sender (`$MERIDIAN_SPAWN_ID`,
-read through `resolve_cli_observer_context(observe=True)` so a `-C` invocation
-claims no identity) and, when the sender's active record is a child spawn or a
-primary harness with an inbox port, the `meridian spawn message <id>` command
-that answers it. The chat id comes from the sender's own record, not
-`$MERIDIAN_CHAT_ID`, which names the root conversation. A session that receives
-an injection otherwise cannot tell which session sent it or where to reply.
+the message with a `[Meridian]` line naming the sender and, when the sender's active
+record is a child spawn or a primary harness with an inbox port, the
+`meridian spawn message <sender chat>` command that answers it. The reply names the
+chat because a primary's spawn ID changes on each `--continue`. The chat id comes from
+the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the root conversation.
+A session that receives a message otherwise cannot tell which session sent it or
+where to reply.
+
+Under `-C` into another project the caller's `MERIDIAN_*` IDs are dropped (#794), so
+the sender comes from `GlobalOptions.caller` (captured before the drop; see
+`../AGENTS.md`), never from the env. Its record is read with
+`resolve_runtime_root_for_read`, which creates no state in the sender's project, and the
+reply gains `-C <sender project root>`. Do not restore caller IDs into the env to fix a
+missing sender: children launched in the other project would inherit them.
+
+A chat ref goes to the run live in that chat now (`_message_target`): a running spawn
+whose `current_chat_id` is the chat, else the chat's owner if it still runs and is still
+in that chat. `current_chat_id` is the chat a run is in now; native `/resume` can move a
+running process into a chat some other run started, so the owner may not be the one
+listening. Every other command resolves a chat
+to its owner only; "who is live" is asked here and nowhere else (KB
+`decisions/chat-spawn-ownership.md`). `@` selectors are refused: they name finished
+spawns.
 
 The frame is message text, built once in the CLI, so the control-socket and
 primary-inbox routes carry it identically and every harness renders it. Do not

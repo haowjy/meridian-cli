@@ -864,6 +864,7 @@ def _reproject_capabilities_at_bind(
         work_link=work_link,
         paths_in_user_turn=paths_in_user_turn,
         chat_id=chat_id,
+        has_message_route=get_harness_bundle(harness.id).primary_inbox is not None,
     )
     refreshed_guidance = replace_capabilities_block(
         composed_content.guidance_blocks,

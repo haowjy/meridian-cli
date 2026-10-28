@@ -22,6 +22,7 @@ def test_from_harness_session_uuid_resolves_primary_spawn(tmp_path: Path) -> Non
         harness_session_id=harness_session_id,
         model="gpt-5.4",
         kind="primary",
+        spawn_id="p1",
     ).chat_id
     spawn_store.start_spawn(
         runtime_root,

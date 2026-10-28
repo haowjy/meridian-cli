@@ -27,7 +27,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian spawn message ID --message "text"` | Post a message to a running streaming spawn or supported primary inbox |
+| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session); `-C` reaches a session in another project |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
@@ -40,10 +40,16 @@ when that session bypasses permission prompts and `crossSessionInbound` is not
 `accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
 `~/.claude/settings.json`. This applies to every peer message, not only
 Meridian's; [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate)
-covers the values and the trade-off. Each injected
-message opens with a `[Meridian]` line naming the sending spawn and, when the
-sender can receive one, the `meridian spawn message <id>` command that answers
-it. Other primary harnesses
+covers the values and the trade-off. Chat and spawn IDs count per
+project, so a peer in another repo is addressed with `-C <repo>`. Each injected
+message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
+sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
+with `-C <sender project root>` when the sender is in another project. A primary whose
+harness has a message route states its own address in that form in its capabilities block.
+A chat ID means that chat's own session, never a child it launched; the same holds for
+`spawn show`, `cancel` and the other ref-taking commands. After a `/clear` or a resume
+of its native session, `spawn show` and `cancel` name the spawn that first owned the chat, while
+`spawn message` reaches the run that is live in it now. Other primary harnesses
 fail immediately because they do not yet expose a message route
 ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 

@@ -54,6 +54,7 @@ from meridian.cli.hooks_authority import (
     should_suppress_manual_hook_authority,
 )
 from meridian.cli.invocation import (
+    Caller,
     GlobalOptions,
     emit,
     get_global_options,
@@ -1018,7 +1019,7 @@ def _inherited_project_is(project_root: Path) -> bool:
 def _directory_env_scope(
     project_root: Path | None,
     directory_explicit: bool,
-) -> Generator[None, None, None]:
+) -> Generator[Caller | None, None, None]:
     """Set ``MERIDIAN_PROJECT_DIR`` and restore on exit.
 
     When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
@@ -1026,13 +1027,24 @@ def _directory_env_scope(
     If ``-C`` also targets a different project than the inherited one, unset every
     project-scoped variable (``env_registry``): the caller's spawn, chat, work and
     task-dir name things in its own project, and no command, ops layer or child
-    launched from here may read them as the target's.
+    launched from here may read them as the target's. The dropped caller is yielded
+    as a :class:`Caller` so a message frame can still name its sender.
     """
 
     other_project = (
         directory_explicit and project_root is not None and not _inherited_project_is(project_root)
     )
     dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
+    caller_spawn = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
+    caller_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
+    caller = (
+        Caller(
+            spawn_id=caller_spawn,
+            project_root=Path(caller_root) if other_project else None,
+        )
+        if caller_spawn
+        else None
+    )
     if directory_explicit:
         dropped.append("_MERIDIAN_RUNTIME_DIR")
     keys = ["MERIDIAN_PROJECT_DIR", *dict.fromkeys(dropped)]
@@ -1042,7 +1054,7 @@ def _directory_env_scope(
     if project_root is not None:
         os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
     try:
-        yield
+        yield caller
     finally:
         for key in keys:
             prior = saved[key]
@@ -1179,7 +1191,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
     )
-    with _directory_env_scope(project_root, options.directory_explicit):
+    with _directory_env_scope(project_root, options.directory_explicit) as caller:
         _install_cli_telemetry(
             telemetry_mode=(
                 StartupTelemetryMode.NONE
@@ -1201,7 +1213,13 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         _emit_usage_command_invoked(cleaned_args)
 
         active_sink = create_sink(options.output)
-        options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
+        options = options.model_copy(
+            update={
+                "project_root": project_root,
+                "sink": active_sink,
+                "caller": caller,
+            }
+        )
         with ExitStack() as invocation_stack:
             invocation_stack.enter_context(invocation_scope(options))
             invocation_stack.callback(flush_sink, active_sink)

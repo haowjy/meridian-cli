@@ -168,6 +168,9 @@ class SessionStartEvent(SessionSettings):
     context_from_chat_id: OptionalPersistedChatId = None
     context_from_history_id: uuid.UUID | None = None
     tmux_target: str | None = None
+    # The spawn that executed this generation, written at its start. Only the entry
+    # generation shares that spawn's history_id; a generation an observation created
+    # keeps its own, so readers matching generations to a spawn must check both.
     spawn_id: str | None = None
     model_selection_protocol: Literal[1] | None = None
 

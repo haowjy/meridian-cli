@@ -1432,6 +1432,7 @@ def get_or_create_observed_chat(
                 harness=harness,
                 native_store=native_store,
                 session_id=session_id,
+                spawn_id=spawn_id,
             )
             return row.model_copy(update={"current_chat_id": chat_id})
 
@@ -1456,6 +1457,7 @@ def _get_or_create_observed_chat_locked(
     harness: str,
     native_store: str,
     session_id: str,
+    spawn_id: str | None = None,
 ) -> str:
     """Materialize context, not a second live execution or a copy of its lineage.
 
@@ -1491,6 +1493,7 @@ def _get_or_create_observed_chat_locked(
         native_store=native_store,
         session_instance_id=generation,
         started_at=now,
+        spawn_id=spawn_id,
         **settings,
     )
     for event in (

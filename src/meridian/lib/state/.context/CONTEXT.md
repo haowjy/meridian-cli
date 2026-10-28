@@ -513,6 +513,30 @@ parent edges and native model observations from the journal; list consumers batc
 model lookups rather than scanning observations once per row.
 
 
+### Chat→spawn link
+
+A chat runs as one or more generations, one start event each: a launch, a
+`--continue`, or the new chat a running primary moves into after `/clear`. Every start
+event names the spawn that runs that generation (`spawn_id`) when it is written. `session_identity.chat_owner_spawn` relies on it: it returns the newest
+generation's spawn that has a row, with no scan and no fallback, so a writer that links
+late or not at all makes the chat unresolvable by chat ID.
+
+- Children write the spawn row first, then start the session.
+- The primary runner reserves its ID (`spawn_store.reserve_spawn_id`) before
+  `session_scope`, so the start event can carry it, and passes the same ID to
+  `SpawnReservation`. Its
+  post-start `update_session_spawn_id` stays: it is the only writer of the session's
+  `history_id`, which the session listing needs to hide archived primaries.
+- An observed (`/clear`) chat's start event names the observing run.
+
+A crash between reservation and row write leaves a link to no row; readers skip it.
+`history_id` is the relocation-stable ID of a spawn's history. Only the generation a
+spawn entered with shares it; a `/clear` chat keeps its own. A reader matching
+generations to a spawn therefore accepts a generation only when its `spawn_id` matches
+and its `history_id` is absent or equal to the spawn's.
+Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership.md`.
+
+
 ### Module map
 
 

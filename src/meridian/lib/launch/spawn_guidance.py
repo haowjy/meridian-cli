@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from meridian.lib.bundled_skills import list_bundled_skills
@@ -27,6 +28,11 @@ _GENERAL_CAPABILITIES: tuple[tuple[AgentMode | None, str], ...] = (
         "`--workspace`, or `--global`; read with `meridian session log`.",
     ),
     ("primary", "- Notify the human: `meridian notify`."),
+    (
+        "primary",
+        "- Message a running spawn or another live session: `meridian spawn message`; "
+        "read `meridian skills messaging__meridian`.",
+    ),
     (
         None,
         "- Validate Markdown links / inspect the link graph / validate Mermaid: "
@@ -119,6 +125,7 @@ def build_capabilities_prompt(
     task_link: Path | None = None,
     work_link: Path | None = None,
     paths_in_user_turn: bool = False,
+    has_message_route: bool,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
@@ -187,6 +194,14 @@ def build_capabilities_prompt(
             f"- `{resolved_chat_id}` — this conversation's chat "
             "(`$MERIDIAN_CHAT_ID`); use it in names, and as the parent for handoff `--from`."
         )
+        if has_message_route:
+            # Chat IDs count per project, so the bare ID is ambiguous to a peer in
+            # another repo; the command carries the project it belongs to.
+            lines.append(
+                "- To message this session from another session or repo: "
+                f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
+                f'{resolved_chat_id} --message "..."`.'
+            )
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()

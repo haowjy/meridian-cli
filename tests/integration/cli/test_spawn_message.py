@@ -130,7 +130,7 @@ async def test_claude_primary_posts_to_published_inbox(
     assert not receiver.is_alive()
     framed = (
         '[Meridian] Message from spawn p2 (chat c1). To answer, run '
-        '`meridian spawn message p2 --message "..."`.\n\nReply exactly ACK'
+        '`meridian spawn message c1 --message "..."`.\n\nReply exactly ACK'
     )
     assert received == [
         json.dumps(
