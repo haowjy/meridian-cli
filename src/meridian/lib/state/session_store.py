@@ -815,47 +815,6 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
     append_chat_rows(runtime_root, {chat_id: [event]})
 
 
-def withdraw_unstarted_spawn_link(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
-    """Undo `update_session_spawn_id` for a spawn whose session start never happened.
-
-    An exact continue publishes its successor on the chat's existing generation
-    before the session starts, so a racing continue sees the chat as busy. If the
-    start then fails, no generation names the successor and it never ran the chat:
-    restore the owner and `history_id` the chat had before the link. A successor
-    whose start event landed owns the chat and is left alone.
-    """
-
-    with session_writes(runtime_root):
-        rows = chat_rows(runtime_root, chat_id)
-        if any(isinstance(row, SessionStartEvent) and row.spawn_id == spawn_id for row in rows):
-            return
-        records: dict[str, SessionRecord] = {}
-        for row in rows:
-            project_session_event(records, row)
-        current = records.get(chat_id)
-        if current is None or current.spawn_id != spawn_id:
-            return
-        records = {}
-        for row in rows:
-            if not (isinstance(row, SessionUpdateEvent) and row.spawn_id == spawn_id):
-                project_session_event(records, row)
-        prior = records[chat_id]
-        append_chat_rows(
-            runtime_root,
-            {
-                chat_id: [
-                    SessionUpdateEvent(
-                        chat_id=ChatId(chat_id),
-                        harness_session_id=None,
-                        session_instance_id=current.session_instance_id,
-                        spawn_id=prior.spawn_id or "",
-                        history_id=prior.history_id,
-                    )
-                ]
-            },
-        )
-
-
 def update_session_launch_policy(
     runtime_root: Path,
     chat_id: str,
