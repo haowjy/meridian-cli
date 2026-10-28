@@ -23,6 +23,7 @@ from meridian.lib.core.types import (
     HarnessSessionId,
 )
 from meridian.lib.platform.locking import (
+    FileLockTimeout,
     acquire_file_lock,
     lock_file,
     release_file_lock,
@@ -605,7 +606,16 @@ def start_session(
         if not resolved_chat_id:
             resolved_chat_id = reserve_chat_id(runtime_root)
         lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-        handle = acquire_file_lock(lock_path)
+        try:
+            # Never wait: a live run keeps its entry chat's lock until it exits.
+            handle = acquire_file_lock(lock_path, timeout=0)
+        except FileLockTimeout:
+            lease = _read_session_lease_data(paths, resolved_chat_id)
+            holder = f" by pid {lease.owner_pid}" if lease and lease.owner_pid else ""
+            raise ValueError(
+                f"Chat {resolved_chat_id} is held{holder}; continue after it exits, "
+                f"or --fork {resolved_chat_id}"
+            ) from None
         event = SessionStartEvent(
             chat_id=ChatId(resolved_chat_id),
             kind=kind,
