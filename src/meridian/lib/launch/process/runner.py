@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -947,7 +947,6 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                managed = replace(managed, spawn_id=primary_spawn_id)
                 native_run = bind_entry(
                     managed,
                     launch_spec,
