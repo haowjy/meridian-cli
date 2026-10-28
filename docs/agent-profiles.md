@@ -273,11 +273,13 @@ catalog, with structured entries under `--json`. These binary-owned skills may n
 the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
 set `metadata.mode: primary`; its trigger then appears only when the agent profile declares
 `mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
-work-item, privilege-escalation, and prompt-authoring guidance use this lead-only gate,
-while session mining remains visible to every profile. The capabilities block likewise
+messaging, work-item, privilege-escalation, and prompt-authoring guidance use this
+lead-only gate, while session mining and Markdown validation remain visible to every
+profile. The capabilities block likewise
 shows `meridian notify` only to primary-mode profiles. Bundled skills are named
-`escalation__meridian`, `handoff__meridian`, `notify__meridian`,
-`prompt-authoring__meridian`, `sessions__meridian`, and `work__meridian`.
+`escalation__meridian`, `handoff__meridian`, `md-validation__meridian`,
+`messaging__meridian`, `notify__meridian`, `prompt-authoring__meridian`,
+`sessions__meridian`, and `work__meridian`.
 `prompt-authoring__meridian` covers writing agent profiles and skills in `.mars-src/`
 without a prompt package. The
 `name__meridian` suffix follows Mars's `name__source` collision spelling and stays
