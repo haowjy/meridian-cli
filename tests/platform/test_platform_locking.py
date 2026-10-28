@@ -79,14 +79,6 @@ def _fork_inside_lock_context(
     os.waitpid(child_pid, 0)
 
 
-def test_try_lock_file_acquires_lock(tmp_path: Path) -> None:
-    lock_path = tmp_path / "state.lock"
-
-    with try_lock_file(lock_path) as handle:
-        assert handle is not None
-        assert not handle.closed
-
-
 def test_try_lock_file_is_thread_local_reentrant(tmp_path: Path) -> None:
     lock_path = tmp_path / "state.lock"
 

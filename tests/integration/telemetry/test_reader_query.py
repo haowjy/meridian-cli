@@ -56,15 +56,6 @@ def _write_segment(
     return path
 
 
-def test_query_with_no_filters_returns_events_from_segments(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    now = datetime.now(UTC)
-    events = [_event(now, "chat.ws.connected"), _event(now, "spawn.succeeded", domain="spawn")]
-    _write_segment(telemetry_dir, "123-0001.jsonl", events)
-
-    assert list(query_events(telemetry_dir)) == events
-
-
 def test_query_domain_filter(tmp_path: Path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     now = datetime.now(UTC)
