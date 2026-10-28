@@ -90,6 +90,17 @@ _SPAWN_USAGE_EPILOGUE = (
     "If the launch was killed, reconcile with `meridian spawn wait` or\n"
     "`meridian status`.\n"
 )
+# Forms `resolve_spawn_reference` accepts; a chat resolves to the newest spawn of its
+# family, which is often a child it launched, not the chat's own session.
+_SPAWN_REF_FORMS = (
+    "spawn ID, chat ID (the newest spawn of that chat, which may be a child it launched), "
+    "or @latest / @last-failed / @last-completed"
+)
+# Forms `resolve_message_target` accepts: a chat names its own running session.
+_MESSAGE_REF_FORMS = (
+    "spawn ID, chat ID (that chat's running session), or @latest / @last-failed / "
+    "@last-completed"
+)
 _SPAWN_WAIT_HELP_EPILOGUE = (
     "Without spawn ids, discovers running descendants and finished background\n"
     "children whose results you have not consumed. Returns at most 32 already-\n"
@@ -578,7 +589,10 @@ def _spawn_create(
     ] = False,
     continue_from: Annotated[
         str | None,
-        Parameter(name="--continue", help="Continue from a previous spawn ID."),
+        Parameter(
+            name="--continue",
+            help="Continue a session ref: chat ID, spawn ID, or raw harness session ID.",
+        ),
     ] = None,
     fork_from: Annotated[
         str | None,
@@ -912,7 +926,7 @@ def _spawn_children(
         str | None,
         Parameter(
             name="spawn_id",
-            help="Parent spawn ID (defaults to MERIDIAN_SPAWN_ID).",
+            help=f"Parent: {_SPAWN_REF_FORMS} (defaults to MERIDIAN_SPAWN_ID).",
         ),
     ] = None,
 ) -> None:
@@ -930,7 +944,7 @@ def _spawn_show(
     emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help="One or more spawn IDs to show."),
+        Parameter(name="spawn_id", help=f"One or more refs to show: {_SPAWN_REF_FORMS}."),
     ],
     verbose: Annotated[
         bool,
@@ -971,7 +985,7 @@ def _spawn_status(
     emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help="One or more spawn IDs to show."),
+        Parameter(name="spawn_id", help=f"One or more refs to show: {_SPAWN_REF_FORMS}."),
     ],
     verbose: Annotated[
         bool,
@@ -1055,7 +1069,7 @@ def _spawn_stats(
     ] = None,
     session: Annotated[
         str | None,
-        Parameter(name="--session", help="Only include spawns for this session id."),
+        Parameter(name="--session", help="Only include spawns of this chat ID (cNN)."),
     ] = None,
     flat: Annotated[
         bool,
@@ -1077,7 +1091,14 @@ def _spawn_stats(
 
 def _spawn_cancel(
     emit: Emitter,
-    spawn_id: str,
+    spawn_id: Annotated[
+        str,
+        Parameter(
+            help=(
+                f"Spawn to cancel: {_SPAWN_REF_FORMS}."
+            )
+        ),
+    ],
     force: Annotated[
         bool,
         Parameter(
@@ -1119,7 +1140,7 @@ def _spawn_wait(
         Parameter(
             name="spawn_id",
             help=(
-                "Spawn IDs to wait for. Omit to discover running descendants and "
+                f"Refs to wait for ({_SPAWN_REF_FORMS}). Omit to discover running descendants and "
                 "unconsumed finished background children, then list children that "
                 "appeared while waiting."
             ),
@@ -1316,7 +1337,7 @@ def _spawn_done(
         str | None,
         Parameter(
             help=(
-                "Spawn whose current completion candidate to accept "
+                f"Spawn whose current completion candidate to accept: {_SPAWN_REF_FORMS} "
                 "(defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
@@ -1340,7 +1361,7 @@ def _spawn_rearm(
         str | None,
         Parameter(
             help=(
-                "Spawn whose current candidate to reject and rearm "
+                f"Spawn whose current candidate to reject and rearm: {_SPAWN_REF_FORMS} "
                 "(defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
@@ -1359,35 +1380,46 @@ def _spawn_rearm(
 
 
 def _spawn_message(
-    spawn_id: Annotated[
+    ref: Annotated[
         str,
-        Parameter(help="Spawn ID to message."),
+        Parameter(
+            help=(
+                f"Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
+                "use `-C <repo>` for a session elsewhere."
+            )
+        ),
     ],
     message: Annotated[
         str,
-        Parameter(
-            help=("Real user direction to forward mid-run."),
-        ),
+        Parameter(help="Message text. Put long content in a file and send its path."),
     ] = "",
 ) -> None:
     observer = resolve_cli_observer_context(observe=True)
+    peer = get_global_options().caller_peer
     asyncio.run(
         send_message(
-            spawn_id,
+            ref,
             message,
-            sender_spawn_id=str(observer.spawn_id) if observer.spawn_id else None,
+            sender_spawn_id=(
+                str(observer.spawn_id)
+                if observer.spawn_id
+                else peer.spawn_id
+                if peer is not None
+                else None
+            ),
+            sender_project_root=peer.project_root if peer is not None else None,
         )
     )
 
 
 def _spawn_inject_deprecated(
-    spawn_id: Annotated[
+    ref: Annotated[
         str,
-        Parameter(help="Spawn ID to inject into."),
+        Parameter(help=f"Session to message: {_MESSAGE_REF_FORMS}."),
     ],
     message: Annotated[
         str,
-        Parameter(help=("Real user direction to forward mid-run.")),
+        Parameter(help="Message text."),
     ] = "",
 ) -> None:
     print(
@@ -1395,7 +1427,7 @@ def _spawn_inject_deprecated(
         "next minor release; use `meridian spawn message`.",
         file=sys.stderr,
     )
-    _spawn_message(spawn_id, message)
+    _spawn_message(ref, message)
 
 
 def _spawn_log_removed(
@@ -1501,8 +1533,11 @@ def register_spawn_commands(app: App) -> None:
         _spawn_message,
         name="message",
         help=(
-            "Forward real user direction to a running spawn; self-generated "
-            "nudges waste its attention."
+            "Send a message into a running spawn or another live session: a subagent "
+            "you launched, or a peer primary session, by spawn ID or chat ID; "
+            "`-C <repo>` reaches a session in another project. The receiver sees who "
+            "sent it and how to reply. Don't use it to nudge your own running "
+            "subagents to hurry or check in."
         ),
     )
     registered.add("spawn.message")

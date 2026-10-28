@@ -24,6 +24,20 @@ from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 
 
+class CallerPeer(BaseModel):
+    """The calling Meridian session, kept when ``-C`` drops its env for another project.
+
+    Only a message frame reads it, so the target can name its sender and give a
+    reply that works from there. It is never written back into the environment:
+    the target project's ops and children must not see the caller's IDs as theirs.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str
+    project_root: Path
+
+
 class GlobalOptions(BaseModel):
     """Top-level options that apply to all commands."""
 
@@ -40,6 +54,7 @@ class GlobalOptions(BaseModel):
     explicit_format: OutputFormat | None = None
     project_root: Path | None = None
     directory_explicit: bool = False
+    caller_peer: CallerPeer | None = None
 
 
 class Emitter(Protocol):

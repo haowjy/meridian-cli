@@ -57,6 +57,9 @@ session-initiation handling: `.context/CONTEXT.md`.
   An unreadable inherited `MERIDIAN_PROJECT_DIR` counts as another project. `-C` is also
   the caller's cwd (`os.chdir` in `_main_impl`, restored in `main()`), like `git -C`, so the
   `ambient-cwd` task-cwd tier never sees the shell's directory.
+  The one exception is the dropped caller itself: `_directory_env_scope` yields it as
+  `CallerPeer` into `GlobalOptions.caller_peer` (never back into the env), and only
+  `spawn message` reads it, to name the sender and a `-C <sender root>` reply in the frame.
 - **Fork/from/continue conflicts live in `validate_fork_mode()`** (`argv_normalization.py`),
   consumed by `spawn.py` and `primary_launch.py` via `ForkModeResolution`. The
   `--fork` + model/agent/skills identity lock is CLI policy, not an ops invariant.
