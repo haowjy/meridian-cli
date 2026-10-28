@@ -6,6 +6,25 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-10-28
+
+### Added
+- `meridian spawn message` takes a chat ID (`c…`) and reaches whichever run is live in that chat. Add `-C <repo>` to reach a session in another project.
+- Each primary's capabilities block shows its own address as one command another session can paste: `meridian -C <repo> spawn message <chat> --message "..."`.
+- New bundled skill `messaging__meridian`: when to message another session, how to address it, and how to reply.
+
+### Changed
+- A chat ID in `spawn show`, `status`, `children`, `wait`, `cancel`, `done`, `rearm`, `report`, `--continue`, `--fork` and `--from` now means that chat's own session. Before, it meant the newest spawn the chat had launched, so `spawn cancel cNN` could cancel a child instead of the session you named.
+- A message sent with `-C` into another project now names its sender and gives the exact reply command. Before, it arrived as "no sender identity; no reply address".
+- `spawn message` is listed in `meridian -h`. Its help, and the help of every command that takes a spawn ref, lists the ref forms that command accepts.
+- `meridian --continue <chat>` and `spawn --continue <chat>` refuse while that chat's run is still live, including a chat the run left with `/clear`. Before, a second harness process could attach to the same native session.
+
+### Deprecated
+- `spawn message --spawn-id` and `spawn inject --spawn-id`: pass the ref positionally. Both still work and print a warning.
+
+### Fixed
+- `spawn show`, `cancel` and `--continue` on a chat created by `/clear` resolve to the run that created it, for chats written by this build or later.
+
 ## [0.16.3] - 2026-10-27
 
 ### Fixed
