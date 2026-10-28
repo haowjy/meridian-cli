@@ -43,6 +43,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import (
+    ChatBusyError,
     update_session_claude_config_dir,
     withdraw_unstarted_spawn_link,
 )
@@ -94,7 +95,7 @@ def _log_launch_failure_without_traceback(
     spawn_id: SpawnId,
     exc: Exception,
 ) -> None:
-    if isinstance(exc, (LaunchUserInputError, NativeIdentityError)):
+    if isinstance(exc, (LaunchUserInputError, NativeIdentityError, ChatBusyError)):
         logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
         return
     logger.exception(message, spawn_id=str(spawn_id))

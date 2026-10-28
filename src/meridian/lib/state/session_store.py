@@ -561,6 +561,10 @@ def _discard_expected_session_lock(
         del _SESSION_LOCK_HANDLES[key]
 
 
+class ChatBusyError(ValueError):
+    """A session start refused because a live run holds the chat."""
+
+
 def start_session(
     runtime_root: Path,
     harness: str,
@@ -617,7 +621,7 @@ def start_session(
                 and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
                 else ""
             )
-            raise ValueError(
+            raise ChatBusyError(
                 f"Chat {resolved_chat_id} is held{holder}; continue after it exits, "
                 f"or --fork {resolved_chat_id}"
             ) from None
@@ -660,7 +664,7 @@ def start_session(
                     excluding_spawn_id=spawn_id,
                 )
                 if observer is not None:
-                    raise ValueError(f"Chat {resolved_chat_id} is in use by live run {observer}")
+                    raise ChatBusyError(f"Chat {resolved_chat_id} is in use by live run {observer}")
                 outcome = bind(existing.key_fields(), event.key_fields())
                 if isinstance(outcome, Conflict):
                     report_conflict(event.chat_id, outcome, "start")
