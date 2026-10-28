@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1384,12 +1384,15 @@ class HistoryIndex:
 
     def descendant_projection(
         self,
-        root_spawn_id: str,
+        root_spawn_ids: Sequence[str],
         *,
         active_only: bool = False,
         deadline: float | None = None,
     ) -> tuple[tuple[str, str | None, bool], ...]:
-        """Return the indexed transitive subtree, retaining archived ancestry.
+        """Return the indexed transitive subtrees of every root, retaining archived ancestry.
+
+        One recursive query anchors on all roots at once; the roots themselves are
+        never returned.
 
         The query context performs one bounded catch-up before taking the shared
         database lock.  Callers must authoritatively read every returned loose
@@ -1402,14 +1405,15 @@ class HistoryIndex:
                 SELECT local_id, parent, archive_id IS NOT NULL, active,
                        ',' || local_id || ','
                   FROM records
-                 WHERE parent = :root AND local_id != :root
+                 WHERE parent IN (SELECT value FROM json_each(:roots))
+                   AND local_id NOT IN (SELECT value FROM json_each(:roots))
                 UNION ALL
                 SELECT child.local_id, child.parent,
                        child.archive_id IS NOT NULL, child.active,
                        subtree.path || child.local_id || ','
                   FROM records AS child
                   JOIN subtree ON child.parent = subtree.local_id
-                 WHERE child.local_id != :root
+                 WHERE child.local_id NOT IN (SELECT value FROM json_each(:roots))
                    AND instr(subtree.path, ',' || child.local_id || ',') = 0
             )
             SELECT local_id, parent, archived
@@ -1422,7 +1426,8 @@ class HistoryIndex:
             return tuple(
                 (str(row[0]), str(row[1]) if row[1] is not None else None, bool(row[2]))
                 for row in db.execute(
-                    statement, {"root": root_spawn_id, "active_only": active_only}
+                    statement,
+                    {"roots": json.dumps(list(root_spawn_ids)), "active_only": active_only},
                 )
             )
 

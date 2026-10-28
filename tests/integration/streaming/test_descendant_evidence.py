@@ -234,6 +234,6 @@ def test_descendant_projection_stops_when_indexed_parent_edges_cycle(tmp_path: P
     start_row(tmp_path, "p1", HarnessId.PI, "p2")
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
 
-    assert HistoryIndex(tmp_path).descendant_projection("p1") == (
+    assert HistoryIndex(tmp_path).descendant_projection(("p1",)) == (
         ("p2", "p1", False),
     )
