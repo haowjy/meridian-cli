@@ -319,16 +319,37 @@ def resolve_run_sources(
     return tuple(sources)
 
 
+def resolve_capture_source(
+    *, project_root: Path, runtime_root: Path, spawn_id: str
+) -> SessionLogTarget:
+    """The exact native source of a terminal spawn's own bound generation, for capture."""
+    row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+    if row is None:
+        raise ValueError(f"Spawn '{spawn_id}' not found")
+    if (
+        row.record_mode == "historical"
+        or row.status not in TERMINAL_SPAWN_STATUSES
+        or row.history_id is None
+    ):
+        raise ValueError("Capture preparation requires an identified terminal record")
+    # Use only this aggregate and its exact session generation. A current chat,
+    # inferred harness or post-launch file discovery cannot establish binding.
+    session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
+    key = session.native_key() if session else None
+    if key is None or session is None:
+        raise NativeSessionUnavailable(row.id, "unbound")
+    return _native_target(key, session)
+
+
 def _resolve_from_spawn_id(
     *,
     project_root: Path,
     runtime_root: Path,
     spawn_id: str,
-    purpose: Literal["display", "capture"] = "display",
     deadline: float | None = None,
 ) -> SessionLogTarget:
     row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-    if row is None and purpose == "display":
+    if row is None:
         indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
         if indexed is not None:
             return _indexed_target(
@@ -336,21 +357,6 @@ def _resolve_from_spawn_id(
             )
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
-
-    if purpose == "capture":
-        if (
-            row.record_mode == "historical"
-            or row.status not in TERMINAL_SPAWN_STATUSES
-            or row.history_id is None
-        ):
-            raise ValueError("Capture preparation requires an identified terminal record")
-        # Use only this aggregate and its exact session generation. A current chat,
-        # inferred harness or post-launch file discovery cannot establish binding.
-        session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
-        key = session.native_key() if session else None
-        if key is None or session is None:
-            raise NativeSessionUnavailable(row.id, "unbound")
-        return _native_target(key, session)
 
     if row.record_mode == "historical":
         return _restored_target(runtime_root, row, ref=spawn_id)
@@ -416,17 +422,7 @@ def resolve_transcript_source(
     project_root: Path,
     runtime_root: Path | None,
     deadline: float | None = None,
-    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
-    if purpose == "capture":
-        if runtime_root is None or file_path or not is_spawn_id(ref.strip()):
-            raise ValueError("Native capture requires an exact local spawn reference")
-        return _resolve_from_spawn_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_id=ref.strip(),
-            purpose=purpose,
-        )
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
 
@@ -468,6 +464,7 @@ __all__ = [
     "SessionLogTarget",
     "TranscriptSource",
     "native_source_label",
+    "resolve_capture_source",
     "resolve_run_sources",
     "resolve_transcript_source",
 ]

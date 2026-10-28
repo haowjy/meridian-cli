@@ -338,15 +338,13 @@ def archive_history(
                 )
                 continue
             if not apply:
-                from meridian.lib.ops.session_target import resolve_transcript_source
+                from meridian.lib.ops.session_target import resolve_capture_source
 
                 try:
-                    resolve_transcript_source(
-                        ref=candidate.id,
-                        file_path=None,
+                    resolve_capture_source(
                         project_root=project_root or root,
                         runtime_root=root,
-                        purpose="capture",
+                        spawn_id=candidate.id,
                     )
                 except (ValueError, OSError, RuntimeError) as exc:
                     capture_errors[candidate.id] = str(exc)
@@ -743,7 +741,7 @@ def materialize_native_history(
     spawn_id: str,
 ) -> tuple[str, str]:
     from meridian.lib.harness.transcript_capture import native_capture
-    from meridian.lib.ops.session_target import resolve_transcript_source
+    from meridian.lib.ops.session_target import resolve_capture_source
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
     from meridian.lib.state.history_codec import transcript_header
@@ -774,12 +772,8 @@ def materialize_native_history(
         for stale in iter_atomic_temp_paths(spawn_dir, NATIVE_SNAPSHOT_FILENAME):
             stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
-        target = resolve_transcript_source(
-            ref=spawn_id,
-            file_path=None,
-            project_root=project_root,
-            runtime_root=root,
-            purpose="capture",
+        target = resolve_capture_source(
+            project_root=project_root, runtime_root=root, spawn_id=spawn_id
         )
         source = target.source
         observation = native_capture(
