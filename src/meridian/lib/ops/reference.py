@@ -153,7 +153,7 @@ def _resolve_spawn_reference(
             runtime_root, target, project_root, target.harness_session_id,
             spawn_id=target.spawn_id,
         )
-        return replace(selected, source_spawn_id=row.id)
+        return replace(selected, source_spawn_id=row.id, source_goal=row.goal)
     if target_chat_id != row.chat_id:
         # A missing selected chat never falls back to an older conversation.
         raise NativeSessionUnavailable(ref, "unbound")
