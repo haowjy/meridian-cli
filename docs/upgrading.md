@@ -417,9 +417,10 @@ release and Mars 0.18.4 against projects last synced by this build.
 ## Meridian-owned operational skills
 
 Guidance whose subject is Meridian itself now ships with the CLI instead of a
-prompt package. Every agent sees a short trigger for `sessions__meridian`;
-profiles declaring `mode: primary` also see `escalation__meridian`,
-`handoff__meridian`, `notify__meridian`, `prompt-authoring__meridian`, and
+prompt package. Every agent sees short triggers for `sessions__meridian` and
+`md-validation__meridian` (the `kg` and `mermaid` validators' mechanics); profiles
+declaring `mode: primary` also see `escalation__meridian`, `handoff__meridian`,
+`messaging__meridian`, `notify__meridian`, `prompt-authoring__meridian`, and
 `work__meridian`. The `name__meridian` suffix follows
 Mars's `name__source` collision spelling, and every bundled skill uses it so a
 skill does not change names between profiles. The agent reads applicable guidance
