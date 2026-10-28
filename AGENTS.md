@@ -12,8 +12,9 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 
 **NEVER merge a PR into `main` without explicit human approval in the current
 conversation.** Stop at draft→ready with a `release:*` label. Approval to merge
-one PR does not carry to the next. The same gate applies to merging into a
-`release/v<X>.<Y>.0` branch. Merging lanes into a task branch is fine.
+one PR does not carry to the next. Two exceptions go straight to `main` without
+approval: docs-only changes, and tiny, obvious bug fixes. Merging lanes into a task
+branch, or your reviewed part PRs into a `release/v<X>.<Y>.0` branch, needs no approval.
 
 **NEVER use `--no-verify` on git push** unless explicitly instructed.
 
@@ -66,8 +67,8 @@ release job renders them, so never edit `CHANGELOG.md` in a PR. Title upgrade
 notes in `docs/upgrading.md` by topic; the changelog entry that links to them
 dates them.
 
-Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) need no PR: push them straight to
-`main`. A direct push to `main` releases nothing.
+Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) and tiny, obvious bug fixes need no
+PR: push them straight to `main`. A direct push to `main` releases nothing.
 
 PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
 `release:*` label before merging; no label defaults to RC.

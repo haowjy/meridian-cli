@@ -47,8 +47,9 @@ merge to `main` on their own.
    nothing, so those PRs need no release label. Copy their changelog sections into the
    release PR's `## Changelog`: only commits on `main`'s first-parent history reach the
    renderer, so part PRs merged into the release branch never render on their own.
-3. Merging a part PR into the release branch needs the human's approval, as a merge to
-   `main` does.
+3. The agent leading the release merges its part PRs into the release branch once each
+   passes its own review and CI, without asking. Merging the release PR to `main` needs the
+   human's approval.
 4. When the last part lands and the combined change passes the full gate, mark the
    release PR ready and, with approval, merge it; CI releases everything once.
 
