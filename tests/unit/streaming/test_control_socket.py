@@ -15,31 +15,26 @@ from tests.conftest import posix_only
 
 
 @posix_only
-def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root(
+@pytest.mark.parametrize("kind", ["control", "app"])
+def test_socket_paths_are_bounded_and_deterministic_for_long_runtime_root(
+    kind: str,
     monkeypatch: pytest.MonkeyPatch,
     _isolate_control_sockets: Path,
 ) -> None:
-    monkeypatch.setattr(control_socket_module, "_POSIX_SOCKET_ROOT", _isolate_control_sockets)
     runtime_root = Path.cwd() / ("pathologically-long-runtime-root-" * 10)
-
-    first = control_socket_path(runtime_root, "spawn-one")
-    repeated = control_socket_path(runtime_root, "spawn-one")
-    second = control_socket_path(runtime_root, "spawn-two")
-
-    assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
-    assert first.parent == Path("/tmp") / f"meridian-{os.getuid()}"
-    assert first == repeated
-    assert first != second
-
-
-@posix_only
-def test_bounded_app_socket_path_is_deterministic_for_long_runtime_root() -> None:
-    runtime_root = Path.cwd() / ("pathologically-long-runtime-root-" * 10)
-
-    first = bounded_socket_path(runtime_root, "app")
-    repeated = bounded_socket_path(runtime_root, "app")
-
     assert len(os.fsencode(runtime_root)) > UNIX_SOCKET_PATH_MAX_BYTES
+
+    if kind == "control":
+        monkeypatch.setattr(control_socket_module, "_POSIX_SOCKET_ROOT", _isolate_control_sockets)
+        first = control_socket_path(runtime_root, "spawn-one")
+        repeated = control_socket_path(runtime_root, "spawn-one")
+        second = control_socket_path(runtime_root, "spawn-two")
+        assert first.parent == Path("/tmp") / f"meridian-{os.getuid()}"
+        assert first != second
+    else:
+        first = bounded_socket_path(runtime_root, "app")
+        repeated = bounded_socket_path(runtime_root, "app")
+
     assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
     assert first == repeated
 

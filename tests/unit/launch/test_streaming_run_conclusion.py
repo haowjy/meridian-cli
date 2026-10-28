@@ -1,6 +1,8 @@
 # qa-validated: pi-rpc-quiescence
 import signal
 
+import pytest
+
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -67,19 +69,16 @@ def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     assert facts.cancellation_observed is True
 
 
-def test_inactivity_terminal_outcome_success_when_durable_report_recovered() -> None:
-    exit_override, failure_reason = _inactivity_terminal_outcome(
-        _extraction_with_report("recovered report"),
-    )
+@pytest.mark.parametrize(
+    ("report", "exit_override", "failure_reason"),
+    [("recovered report", 0, None), (None, None, "stalled")],
+    ids=["durable-report", "missing-report"],
+)
+def test_inactivity_terminal_outcome(
+    report: str | None,
+    exit_override: int | None,
+    failure_reason: str | None,
+) -> None:
+    outcome = _inactivity_terminal_outcome(_extraction_with_report(report))
 
-    assert exit_override == 0
-    assert failure_reason is None
-
-
-def test_inactivity_terminal_outcome_stalled_without_durable_report() -> None:
-    exit_override, failure_reason = _inactivity_terminal_outcome(
-        _extraction_with_report(None),
-    )
-
-    assert exit_override is None
-    assert failure_reason == "stalled"
+    assert outcome == (exit_override, failure_reason)

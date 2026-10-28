@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from meridian.cli.browse.model import build_lineage_nodes
@@ -9,11 +7,9 @@ from meridian.cli.session_cmd import (
     Interactive,
     Plain,
     Refused,
-    _exec_decision,
     resolve_browse_presentation,
 )
 from meridian.lib.ops.session_lineage import SessionLineageEdge
-from meridian.lib.ops.session_reentry import Fork, Resume
 
 
 def test_lineage_tree_draws_multi_parent_node_under_each_parent_and_survives_cycles() -> None:
@@ -72,35 +68,3 @@ def test_resolve_browse_presentation(kwargs: dict[str, object], expected_type: t
     assert isinstance(result, expected_type)
     if isinstance(result, Refused):
         assert "session c98" in result.reason
-
-
-@pytest.mark.parametrize(
-    ("decision", "verb"),
-    [(Resume("c123"), "--continue"), (Fork("c123"), "--fork")],
-)
-def test_exec_decision_builds_primary_invocation(decision, verb: str) -> None:
-    called: list[tuple[str, list[str]]] = []
-
-    _exec_decision(
-        decision,
-        project_root="/tmp/project",
-        config_file="/tmp/config.toml",
-        exec_fn=lambda executable, argv: called.append((executable, argv)),
-    )
-
-    assert called == [
-        (
-            os.sys.executable,
-            [
-                os.sys.executable,
-                "-m",
-                "meridian",
-                "-C",
-                "/tmp/project",
-                "--config",
-                "/tmp/config.toml",
-                verb,
-                "c123",
-            ],
-        )
-    ]

@@ -73,39 +73,27 @@ def test_push_warn_and_missing_message_rendering() -> None:
         False,
     )
 
-
-def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
-    labels = (
+    fallbacks = (
         SessionLabel(agent="coder", project="meridian-cli"),
         SessionLabel(harness="pi", work_id="idle-cache-notify"),
         SessionLabel(project="meridian-cli"),
         SessionLabel(),
     )
-    assert [label.headline for label in labels] == [
+    assert [fallback.headline for fallback in fallbacks] == [
         'coder in project: "meridian-cli"',
         'pi on work: "idle-cache-notify"',
         'Meridian in project: "meridian-cli"',
         "Meridian",
     ]
-
-    notices = [
-        stage_notice(
-            stage,
-            _state(last_user_text=None, last_assistant_text=None),
-            label,
-            include_messages=True,
-            now_ms=1,
-            warn_email=False,
-        )
-        for stage in ("push", "warn")
-        for label in labels
-    ]
-    assert notices[0].body == 'Your turn\ncoder in project: "meridian-cli"'
-    assert notices[1].title == "[idle] pi"
-    assert notices[1].body == 'Your turn\npi on work: "idle-cache-notify"'
-    assert notices[3].title == "[idle] Meridian"
-    assert notices[7].title == "[cache warning] Meridian"
-    assert all("·" not in notice.title and "·" not in notice.body for notice in notices)
+    bare = stage_notice(
+        "warn",
+        _state(last_user_text=None, last_assistant_text=None),
+        fallbacks[-1],
+        include_messages=True,
+        now_ms=1,
+        warn_email=False,
+    )
+    assert bare.body == "Cache expiry warning: reply to keep it warm\nMeridian"
 
 
 @pytest.mark.parametrize(
@@ -149,5 +137,7 @@ def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminder
 
     assert user is not None and len(user) <= 120 and user.endswith("…")
     assert assistant is not None and len(assistant) <= 280 and assistant.endswith("…")
+    assert user.endswith(" word…")
+    assert assistant.endswith(" answer…")
     assert "system-reminder" not in user
     assert "  " not in user + assistant

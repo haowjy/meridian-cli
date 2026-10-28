@@ -30,104 +30,65 @@ def _policy(
     )
 
 
-def test_evaluate_continue_when_stream_not_silent() -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-
-    assert policy.evaluate() == LivenessDecision.CONTINUE
-    assert policy.healthy is True
-
-
-def test_evaluate_suppress_when_turn_in_flight_and_silent(
+@pytest.mark.parametrize(
+    ("setup", "pid", "silent", "alive", "expected", "healthy"),
+    [
+        pytest.param(None, 4242, False, None, LivenessDecision.CONTINUE, True, id="active"),
+        pytest.param("turn", 4242, True, True, LivenessDecision.SUPPRESS, True, id="turn"),
+        pytest.param("request", 4242, True, True, LivenessDecision.SUPPRESS, True, id="request"),
+        pytest.param(
+            None, 4242, True, True, LivenessDecision.STREAM_STALLED, False, id="stalled"
+        ),
+        pytest.param(None, 4242, True, False, LivenessDecision.BACKEND_DEAD, False, id="dead"),
+        pytest.param(
+            "turn", 4242, True, False, LivenessDecision.BACKEND_DEAD, False, id="dead-stale-turn"
+        ),
+        pytest.param(None, None, True, None, LivenessDecision.BACKEND_DEAD, False, id="no-pid"),
+        pytest.param(
+            "awaiting-done",
+            4242,
+            True,
+            True,
+            LivenessDecision.SUPPRESS,
+            True,
+            id="awaiting-done-alive",
+        ),
+        pytest.param(
+            "awaiting-done",
+            4242,
+            True,
+            False,
+            LivenessDecision.BACKEND_DEAD,
+            False,
+            id="awaiting-done-dead",
+        ),
+    ],
+)
+def test_evaluate_decides_liveness(
+    setup: str | None,
+    pid: int | None,
+    silent: bool,
+    alive: bool | None,
+    expected: LivenessDecision,
+    healthy: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = FakeClock(start=0.0)
-    policy = _policy(clock)
+    policy = _policy(clock, pid=pid)
     policy.mark_activity()
-    policy.signal_turn_started("turn-1")
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+    if setup == "turn":
+        policy.signal_turn_started("turn-1")
+    elif setup == "request":
+        policy.signal_request_in_flight("rpc:1")
+    elif setup == "awaiting-done":
+        policy.set_awaiting_done(True)
+    if silent:
+        clock.advance(11.0)
+    if alive is not None:
+        monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: alive)
 
-    assert policy.evaluate() == LivenessDecision.SUPPRESS
-    assert policy.healthy is True
-
-
-def test_evaluate_suppress_when_request_in_flight_and_silent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    policy.signal_request_in_flight("rpc:1")
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-
-    assert policy.evaluate() == LivenessDecision.SUPPRESS
-    assert policy.healthy is True
-
-
-def test_evaluate_stream_stalled_when_idle_silent_and_pid_alive(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-
-    assert policy.evaluate() == LivenessDecision.STREAM_STALLED
-    assert policy.healthy is False
-
-
-def test_evaluate_backend_dead_when_idle_silent_and_pid_dead(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
-
-    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
-    assert policy.healthy is False
-
-
-def test_evaluate_backend_dead_when_silent_with_stale_active_turn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    policy.signal_turn_started("turn-1")
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
-
-    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
-    assert policy.healthy is False
-
-
-def test_evaluate_backend_dead_when_pid_missing() -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock, pid=None)
-    policy.mark_activity()
-    clock.advance(11.0)
-
-    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
-
-
-def test_evaluate_awaiting_done_suppresses_stream_stall_when_backend_alive(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    policy.set_awaiting_done(True)
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-
-    assert policy.evaluate() == LivenessDecision.SUPPRESS
-    assert policy.healthy is True
+    assert policy.evaluate() == expected
+    assert policy.healthy is healthy
 
 
 def test_close_classification_ignores_interleaved_awaiting_done_health_probe(
@@ -144,20 +105,6 @@ def test_close_classification_ignores_interleaved_awaiting_done_health_probe(
     policy.set_awaiting_done(True)
     assert policy.evaluate() == LivenessDecision.SUPPRESS
     assert policy.classify_close_stream() == LivenessDecision.STREAM_STALLED
-
-
-def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = FakeClock(start=0.0)
-    policy = _policy(clock)
-    policy.mark_activity()
-    policy.set_awaiting_done(True)
-    clock.advance(11.0)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
-
-    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
-    assert policy.healthy is False
 
 
 async def test_wait_for_activity_returns_read_completed_at_the_deadline(

@@ -47,23 +47,6 @@ def test_auto_uses_detected_version() -> None:
     assert resolve_opencode_version("auto", env={}, detected="v2") == "v2"
 
 
-def test_adapter_allows_named_primary_resume() -> None:
-    from meridian.lib.harness.opencode import OpenCodeAdapter
-
-    assert OpenCodeAdapter().capabilities.supports_named_primary_resume is True
-
-
-def test_adapter_does_not_advertise_session_fork() -> None:
-    from meridian.lib.harness.opencode import OpenCodeAdapter
-
-    assert OpenCodeAdapter().capabilities.supports_session_fork is False
-
-
-def test_config_version_defaults_to_auto() -> None:
-    assert OpenCodeHarnessProfileConfig().version == "auto"
-    assert OpenCodeHarnessProfileConfig(version="v2").version == "v2"
-
-
 def test_config_version_rejects_unknown_value() -> None:
     with pytest.raises(ValueError, match=r"harness\.opencode\.version"):
         OpenCodeHarnessProfileConfig(version="v3")

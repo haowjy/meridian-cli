@@ -1,6 +1,8 @@
 # qa-validated: orchestrator-opencode-fallback-runtime
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -148,23 +150,33 @@ def test_compile_launch_params_timeout_excludes_profile_defaults() -> None:
     assert result.execution_policy.timeout == 40.0
 
 
-def test_compile_launch_params_model_derived_harness_beats_policy_harness_override() -> None:
-    """Model-derived harness beats policy harness when model has higher precedence."""
-    alias = _alias_entry()
-    profile_rule = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"harness": "claude"},
-    )
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {
+            "profile_model_policies": (
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gptmini",
+                    overrides={"harness": "claude"},
+                ),
+            )
+        },
+        {"profile_routing_harness": "claude"},
+    ],
+    ids=["policy-rule", "profile-routing"],
+)
+def test_compile_launch_params_model_derived_harness_beats_profile(
+    profile: dict[str, object],
+) -> None:
+    """Model-derived harness beats policy and profile harness at lower precedence."""
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),
-        profile_model_policies=(profile_rule,),
-        alias_entry=alias,
+        alias_entry=_alias_entry(),
+        **profile,  # type: ignore[arg-type]
     )
 
-    result = compile_launch_params(request)
-
-    assert result.harness == "codex"
+    assert compile_launch_params(request).harness == "codex"
 
 
 def test_compile_launch_params_first_match_wins_no_ambiguity_error() -> None:
@@ -251,14 +263,3 @@ def test_resident_rearm_budget_resolves_cli_env_profile_config_precedence() -> N
     assert ResolvedExecutionPolicy().resident_rearm_budget is None
 
 
-def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        profile_routing_harness="claude",
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.harness == "codex"
