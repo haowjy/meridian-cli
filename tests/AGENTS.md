@@ -18,6 +18,16 @@ Before adding one, extend or replace the test that already covers the same behav
 delete a weaker duplicate in the same change. Every test runs in every full gate, and
 integration tests that spawn processes cost seconds each.
 
+**No flaky tests.** A test that fails intermittently, in CI or under load, is made
+deterministic or deleted. Never raise its timeout, add a retry or `flaky` marker, or skip it
+under load. Before deleting one, temporarily break the product behaviour it guards, run the
+full suite, and revert: if nothing else fails, it is the only coverage, so make it
+deterministic instead. Deterministic means: a test whose outcome depends on elapsed time gets
+its time from `support/fakes.FakeClock` (no local clock stubs); a wait polls the condition
+under test with no deadline of its own (the 60 s pytest-timeout, `timeout_method = "signal"`,
+is the hang guard); no fixed sleep before an assertion; no path shared between tests. A
+flake can be a product bug: check the product before blaming the test.
+
 ## Running
 
 ```bash

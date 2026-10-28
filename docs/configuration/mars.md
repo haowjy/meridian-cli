@@ -225,7 +225,9 @@ Per-field, strongest to weakest:
 6. Config-level defaults
 7. Model alias defaults
 
-Local Mars overrides win over project Mars config for overlay values.
+Local Mars overrides win over project Mars config for overlay values, and the Mars user
+`config.toml` sits below both: `config.toml < mars.toml < mars.local.toml < CLI`
+(file locations: [User `config.toml`](../upgrading.md#user-configtoml-now-applies-mars-0233)).
 
 ### Observability
 

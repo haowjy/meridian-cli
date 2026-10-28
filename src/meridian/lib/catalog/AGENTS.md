@@ -7,6 +7,13 @@ filesystem skill catalog. Mars subprocess integration, resolution pipeline, and 
 
 ## Rules
 
+- **Read what Mars wrote, never Mars's config files.** Parsing `mars.toml` misses
+  `mars.local.toml` and the user `config.toml`. Routing and per-launch policy come from the
+  launch bundle; aliases from `mars models aliases --json` (else `.mars/models-merged.json`);
+  which harnesses got native agents from `.mars/native-agents.json` (`agent_copy.py`).
+  Checking that a `mars.toml` exists to find the root is fine. When Mars exposes no output
+  for a fact, add one in mars-agents (`../mars-agents`) and bump Meridian's bundled
+  `mars-agents` pin, since Meridian runs the Mars installed beside it.
 - **Zero builtin aliases.** Every alias → model-id mapping comes from mars packages
   (`.mars/models-merged.json`); never hardcode one here.
 - **`mars_roots.py` is the only package-root decider.** Project content follows Mars's
