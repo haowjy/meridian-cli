@@ -24,7 +24,11 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
+from meridian.lib.state.history_index import (
+    HistoryIndex,
+    HistoryIndexIncomplete,
+    indexed_spawn_scan,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
@@ -156,8 +160,12 @@ def locate_run(
     assert located.chat is not None
     chat_id = located.chat.chat_id
     # Only running rows can hold a chat, so read the index for those, never every
-    # spawn's state file.
-    running = HistoryIndex(located.runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
+    # spawn's state file. Following a native /resume is best effort: when the index
+    # can't answer in time, name the owner rather than fail the command.
+    try:
+        running = HistoryIndex(located.runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
+    except HistoryIndexIncomplete:
+        running = ()
     occupant = session_identity.live_observer_for_chat(
         located.runtime_root, chat_id, records=running
     )
