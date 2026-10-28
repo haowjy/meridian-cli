@@ -78,6 +78,41 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
+## Mars 0.24.0
+
+Meridian pins `mars-agents==0.24.0`, up from 0.23.4. Run `meridian mars sync` after upgrading
+(and `meridian mars --user sync` for a user root).
+
+### MCP servers move to the files harnesses read
+
+Mars now writes MCP servers where each harness reads them: Claude in the project's `.mcp.json`,
+Codex in `.codex/config.toml`, and Pi in `.pi/mcp.json`. It no longer writes `.claude/.mcp.json`
+or `.codex/codex_mcp.json`, which neither harness read; the next `meridian mars sync` removes
+Mars's entries from them and deletes a file only if that leaves it empty. Meridian itself
+passes no MCP flags, so a spawn sees the servers its harness finds from its working directory.
+
+- Claude asks you to approve a project `.mcp.json` server the first time you run `claude` there.
+- A spawn launched with `--task-dir` sees `.mcp.json` only if the checkout has it: commit the
+  file, or run `meridian mars sync` in that checkout.
+- A server that ships its own files (`${MARS_MCP_DIR}`) is written with an absolute path, so a
+  committed `.mcp.json` shows per-machine diffs.
+- Mars keeps a same-named MCP entry it did not write and warns; `meridian mars sync --force`
+  adopts it. Remote servers (`url`, `headers`) are supported in `mcp.toml`.
+
+### Selection and diagnostics
+
+- A skill's own `skills:` frontmatter no longer pulls other skills; an agent's `skills` still do.
+- `meridian mars outdated` fails when the dependency graph cannot resolve, and
+  `meridian doctor` reports that as `updates_check_failed`. A dependency overridden by
+  `mars.local.toml` shows `?` and is not counted as an available update.
+- Diagnostic codes renamed: `mcp-invalid-name` is `mcp.name-invalid`,
+  `plugin-codex-mcp-env-rename` is `mcp-lossy`; `import.mcp-not-converted` is gone.
+- Hook config files (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`)
+  are written through symlinks, keep their permissions and key order, and end with a newline.
+
+Mars's [0.24.0 release notes](https://github.com/haowjy/mars-agents/releases/tag/v0.24.0) list
+the rest.
+
 ## Mars 0.23.4
 
 Meridian pins `mars-agents==0.23.4`, up from 0.20.2. Two profile keys moved
