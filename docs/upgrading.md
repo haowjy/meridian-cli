@@ -34,11 +34,13 @@ later `work done` or `work reopen` refuses when both locations exist and names b
 reconcile them by hand. If a permission rule pins the real work-item or checkout path,
 grant `sessions/<chat>/` instead, because harness path rules do not follow symlinks.
 
-## Mars 0.22.0
+## Mars 0.23.4
 
-Meridian pins `mars-agents==0.22.0`, up from 0.20.2. Two profile keys moved
-(`resident-rearm-budget` and `meridian-capabilities`), and a changed MCP merge rule may need
-a rename; the rest needs nothing from you.
+Meridian pins `mars-agents==0.23.4`, up from 0.20.2. Two profile keys moved
+(`resident-rearm-budget` and `meridian-capabilities`), and three changes may alter what you
+get without an edit: a user `config.toml` now applies keys it once ignored, narrowed
+dependencies contribute MCP servers, and a direct dependency's default-visibility MCP servers
+now register. The rest needs nothing from you.
 
 **After upgrading, run `meridian mars sync`** (and `meridian mars --user sync` if you use a user
 root). Launches do not sync, so until you do, installed profiles keep the old top-level keys,
@@ -98,10 +100,34 @@ over, and where both set a key the `meridian-cli` value wins and the old one is 
 - Unmanaged content at `<target>/hooks/<name>/` no longer fails sync. It warns, stays untouched,
   and withholds that target's hook entry; `meridian mars sync --force` adopts and overwrites it.
 
+### User `config.toml` now applies (Mars 0.23.3)
+
+The user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`)
+now accepts the same `[settings]`, `[models]`, `[agents]` and `[skills]` sections as
+`mars.local.toml`, so one file can replace per-project copies. Precedence, lowest to highest:
+user `config.toml` < `mars.toml` < `mars.local.toml` < CLI. `[overrides]` is rejected there
+with an error pointing to the project's `mars.local.toml`.
+
+A key that Mars once ignored with a warning, such as `default_model` under `[settings]`, now
+takes effect. If your user `config.toml` holds a stale value of that kind, it starts applying
+after the upgrade; remove or fix it. Unknown keys no longer warn, as in `mars.local.toml`.
+
+### Default-visibility MCP servers register (Mars 0.23.4)
+
+A direct dependency's MCP servers with the default `local` visibility are now registered for
+its consumer; before, only `exported` servers were. After `meridian mars sync`, every
+default-visibility server from a direct dependency appears in your MCP config, and one with the
+same name as a hand-written entry replaces it, so rename your entry to keep it. Transitive
+dependencies still contribute only `exported` servers.
+
+Smaller fixes: `mars check` reads dependency model aliases from `mars.lock` (0.23.2) and Claude
+plugin import link warnings are accurate (0.23.1); `mars build plugin` registers agents in the
+OpenCode plugin (0.23.0, package authors only).
+
 Mars's docs also stopped describing `.agents/` as a default target: with nothing linked, sync
 writes only to `.mars/`, and `meridian mars link DIR` adds a target. Meridian never depended on
 `.agents/`. The MCP filter fix landed in Mars 0.20.5, and `${MARS_MCP_DIR}` and the hooks change
-in 0.20.4. Mars's [0.20.3 through 0.22.0](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
+in 0.20.4. Mars's [0.20.3 through 0.23.4](https://github.com/meridian-flow/mars-agents/blob/main/CHANGELOG.md)
 changelog lists the rest, including plugin-build fixes that affect only package authors.
 
 ## Mars 0.20.0 (schema v1)
@@ -177,7 +203,7 @@ In a project whose `mars.toml` declares `[package]`, `migrate` rewrites the pack
   [`[settings.meridian.fanout]`](configuration/mars.md#fan-out-agent-routing), MCP grants as
   `mcp(server): allow` entries in `tools`.
 - **Moved:** `resident-rearm-budget` and `meridian-capabilities` now live under
-  `harness-overrides.meridian-cli`. See [Mars 0.22.0](#mars-0220).
+  `harness-overrides.meridian-cli`. See [Mars 0.23.4](#mars-0234).
 
 A package you publish with `[package] schema = 1` is read strictly: a removed key fails sync with
 exit 2 and changes nothing. `mars migrate` also adds `requires-mars = ">=0.20.0"` to a package
