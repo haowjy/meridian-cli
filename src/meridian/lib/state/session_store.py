@@ -25,6 +25,7 @@ from meridian.lib.core.types import (
     HarnessSessionId,
 )
 from meridian.lib.platform.locking import (
+    FileLockTimeout,
     acquire_file_lock,
     lock_file,
     release_file_lock,
@@ -96,6 +97,7 @@ from meridian.lib.utils.json_shapes import (
 _SESSION_CHAT_ID_FIELD = re.compile(rb'"chat_id"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Only ``\u00XX`` escapes can spell a letter of ``chat_id`` (c h a t _ i d).
 _ESCAPED_CHAT_ID_KEY_LETTER = re.compile(rb"\\u00(?:6[13489]|74|5[fF])")
+_CHAT_LOCK_WAIT_SECONDS = 2.0
 
 
 def _row_may_select_chat(raw: bytes, chat_ids: Collection[str]) -> bool:
@@ -602,7 +604,23 @@ def start_session(
         if not resolved_chat_id:
             resolved_chat_id = reserve_chat_id(runtime_root)
         lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-        handle = acquire_file_lock(lock_path)
+        try:
+            # A live run keeps its entry chat's lock until it exits, so never wait on it;
+            # the short wait covers `doctor`'s brief hold and an owner mid-exit.
+            handle = acquire_file_lock(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS)
+        except FileLockTimeout:
+            lease = _read_session_lease_data(paths, resolved_chat_id)
+            holder = (
+                f" by pid {lease.owner_pid}"
+                if lease
+                and lease.owner_pid
+                and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
+                else ""
+            )
+            raise ValueError(
+                f"Chat {resolved_chat_id} is held{holder}; continue after it exits, "
+                f"or --fork {resolved_chat_id}"
+            ) from None
         event = SessionStartEvent(
             chat_id=ChatId(resolved_chat_id),
             kind=kind,

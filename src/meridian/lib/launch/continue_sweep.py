@@ -89,24 +89,36 @@ def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
     )
 
 
-def _live_owner_error(spawn_id: str, owner_id: str) -> ValueError:
+def _live_owner_error(
+    runtime_root: Path, spawn_id: str, owner_id: str, chat_id: str | None
+) -> ValueError:
     if owner_id != spawn_id:
         return ValueError(
             f"{spawn_id} was continued as {owner_id}, which is still running; "
             f"use spawn message {owner_id}, --fork {owner_id}, or spawn cancel {owner_id}"
+        )
+    row = read_state(runtime_root / "spawns", owner_id, include_prompt=False)
+    moved_to = row.continue_chat_id or row.current_chat_id if row is not None else None
+    if chat_id and moved_to and moved_to != chat_id:
+        # The owner keeps its entry chat's lifetime lock until it exits.
+        return ValueError(
+            f"{spawn_id} moved to {moved_to} but still holds {chat_id} until it exits; "
+            f"continue after it exits, or --fork {chat_id}"
         )
     return ValueError(
         f"{spawn_id} is still running; use spawn message {spawn_id} or --fork {spawn_id}"
     )
 
 
-def _busy_owner_error(runtime_root: Path, spawn_id: str, owner_id: str) -> ValueError:
+def _busy_owner_error(
+    runtime_root: Path, spawn_id: str, owner_id: str, chat_id: str | None
+) -> ValueError:
     if _recorded_runner_dead(runtime_root, owner_id):
         return ValueError(
             f"{owner_id}'s launch lock is held by a repair or another continue; "
             "retry in a moment"
         )
-    return _live_owner_error(spawn_id, owner_id)
+    return _live_owner_error(runtime_root, spawn_id, owner_id, chat_id)
 
 
 def sweep_before_continue(
@@ -122,7 +134,7 @@ def sweep_before_continue(
         for owner_id in owner_ids:
             lock_free = shared_try(runtime_root / "spawns" / owner_id / "launch.lock")
             if lock_free is False:
-                raise _busy_owner_error(runtime_root, spawn_id, owner_id)
+                raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id)
             if lock_free is None and is_live(runtime_root, owner_id):
                 raise _legacy_live_error(owner_id)
         return
@@ -134,7 +146,7 @@ def sweep_before_continue(
             except NotFound:
                 continue
             except Busy as exc:
-                raise _busy_owner_error(runtime_root, spawn_id, owner_id) from exc
+                raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id) from exc
         for handle in handles:
             sweep_scopes(runtime_root, handle)
 
