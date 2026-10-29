@@ -560,6 +560,9 @@ async def run_streaming_spawn(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
 
         outcome = await completion_task

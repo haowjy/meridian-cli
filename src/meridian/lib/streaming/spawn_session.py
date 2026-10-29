@@ -49,3 +49,5 @@ class SpawnSession:
     authoritative_stop_outcome: DrainOutcome | None = None
     terminal_published: bool = False
     cleanup_task: asyncio.Task[None] | None = None
+    # Monotonic time a budgeted ``stop_spawn`` must be done by; the teardown stop honors it.
+    stop_deadline: float | None = None

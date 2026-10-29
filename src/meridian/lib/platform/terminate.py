@@ -11,6 +11,7 @@ from contextlib import suppress
 
 import psutil
 
+from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
 from meridian.lib.platform.process_scope.fallback import terminate_tree as _terminate_tree
 
 _UNSET_EPOCH = 0.0
@@ -92,7 +93,7 @@ def terminate_tree_sync(
         for proc in alive:
             with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 proc.kill()
-        psutil.wait_procs(alive, timeout=1.0)
+        psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
 
 
 __all__ = ["terminate_tree", "terminate_tree_sync"]
