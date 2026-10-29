@@ -15,7 +15,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.spawn.owed import consume_result_if_shown
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.paths import LaunchPaths, spawn_report_files
 from meridian.lib.state.spawn_status import read_derived
 
 
@@ -85,6 +85,9 @@ class ReportShowOutput(BaseModel):
     spawn_id: str
     status: str
     report: str
+    report_path: str
+    """Deprecated: the current run's report file, kept in JSON for one release. The path is an
+    internal layout and goes in the next minor release."""
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -105,6 +108,9 @@ class ReportSearchResult(BaseModel):
 
     spawn_id: str
     snippet: str
+    report_path: str
+    """Deprecated: the file this hit came from, kept in JSON for one release. The path is an
+    internal layout and goes in the next minor release."""
 
 
 class ReportSearchOutput(BaseModel):
@@ -143,6 +149,7 @@ def report_show_sync(
         spawn_id=spawn_id,
         status=status,
         report=report,
+        report_path=report_path.as_posix(),
     )
     consume_result_if_shown(
         observe=payload.observe,
@@ -187,19 +194,19 @@ def report_search_sync(
 
     matches: list[ReportSearchResult] = []
     for row in rows:
-        spawn_id = row.id
-        report_path = LaunchPaths.for_row(runtime_root, row).report
-        if not report_path.is_file():
-            continue
-        report = report_path.read_text(encoding="utf-8", errors="ignore")
-        if query and query.lower() not in report.lower():
-            continue
-        matches.append(
-            ReportSearchResult(
-                spawn_id=spawn_id,
-                snippet=_report_snippet(report, query=query),
+        # Every run's report is searchable; a spawn matches once, by its newest matching run.
+        for report_path in spawn_report_files(runtime_root, row.id):
+            report = report_path.read_text(encoding="utf-8", errors="ignore")
+            if query and query.lower() not in report.lower():
+                continue
+            matches.append(
+                ReportSearchResult(
+                    spawn_id=row.id,
+                    snippet=_report_snippet(report, query=query),
+                    report_path=report_path.as_posix(),
+                )
             )
-        )
+            break
         if len(matches) >= limit:
             break
 
