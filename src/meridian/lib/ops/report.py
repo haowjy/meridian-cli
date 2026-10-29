@@ -85,9 +85,6 @@ class ReportShowOutput(BaseModel):
     spawn_id: str
     status: str
     report: str
-    report_path: str
-    """Deprecated: the current run's report file, kept in JSON for one release. The path is an
-    internal layout and goes in the next minor release."""
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -108,9 +105,6 @@ class ReportSearchResult(BaseModel):
 
     spawn_id: str
     snippet: str
-    report_path: str
-    """Deprecated: the file this hit came from, kept in JSON for one release. The path is an
-    internal layout and goes in the next minor release."""
 
 
 class ReportSearchOutput(BaseModel):
@@ -149,7 +143,6 @@ def report_show_sync(
         spawn_id=spawn_id,
         status=status,
         report=report,
-        report_path=report_path.as_posix(),
     )
     consume_result_if_shown(
         observe=payload.observe,
@@ -203,7 +196,6 @@ def report_search_sync(
                 ReportSearchResult(
                     spawn_id=row.id,
                     snippet=_report_snippet(report, query=query),
-                    report_path=report_path.as_posix(),
                 )
             )
             break

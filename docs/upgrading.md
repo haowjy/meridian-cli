@@ -31,9 +31,11 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
   `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths.
   The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search`
   and `spawn wait` no longer prints a report path (the `spawn wait` table drops its `report`
-  column). `report_path` stays in the JSON of `spawn show`, `spawn status`,
+  column). `report_path` stayed in the JSON of `spawn show`, `spawn status`,
   `spawn report show` and `spawn report search` (the current run's report; a search hit's own
-  file) but is deprecated and goes in the next minor release. `log_path` was never in the JSON.
+  file) until v0.20.0 removed it (see
+  [JSON output no longer includes `report_path`](#json-output-no-longer-includes-report_path)).
+  `log_path` was never in the JSON.
   A run that wrote no report shows none; it never shows an earlier run's.
 - An earlier run's report is still reachable: `spawn report search` looks in every run's
   report and names the spawn by ID, and `meridian session log pN` reads the conversation.
@@ -67,6 +69,18 @@ the v0.18.0 index until you run `meridian session index rebuild`.
 
 **Pi.** Restart long-lived Pi sessions after upgrading. A Pi session started before the upgrade
 can hide an earlier run's result after a continue, and marks it delivered without showing it.
+
+## JSON output no longer includes `report_path`
+
+v0.18.0 and v0.19.x kept `report_path` in the JSON of `spawn show`, `spawn status`,
+`spawn report show` and `spawn report search` while the human output stopped printing it.
+v0.20.0 removes the field; the rest of each payload is unchanged. The value was the current
+run's report file, or for a search hit that hit's own file, under the internal
+`spawns/pN/launches/<n>/` layout.
+
+Read a report with `meridian spawn report show pN` and find one with
+`meridian spawn report search`; neither needs the path. Scripts that read the JSON should
+drop the key, not build the path.
 
 ## New spawns start running
 
