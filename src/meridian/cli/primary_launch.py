@@ -285,6 +285,7 @@ def run_primary_launch(
                     continue_ref=resume_target,
                     harness_hint=harness,
                 )
+                continue_source_chat_id = resolved_continue.source_chat_id
             continue_warning = redirect_notice
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
