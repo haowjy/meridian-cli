@@ -144,7 +144,7 @@ def _resolve_spawn_reference(
 
     # One selection, one resolution path: the continue target's session record
     # owns settings/work whether a hook, a verified exit or the entry chose it.
-    target_chat_id = session_identity.resolve_continue_chat_id(runtime_root, row)
+    target_chat_id = row.continue_chat_id
     target = session_store.chat_record(runtime_root, target_chat_id) if (
         target_chat_id
     ) else None
@@ -154,7 +154,7 @@ def _resolve_spawn_reference(
             spawn_id=target.spawn_id,
         )
         return replace(selected, source_spawn_id=row.id, source_goal=row.goal)
-    if target_chat_id is None and (row.unstarted_chatless_child or row.chat_is_caller_placeholder):
+    if target_chat_id is None and (row.has_no_session_of_its_own):
         raise ValueError(
             f"{ref} never started a session; nothing to continue, use --fork or a new spawn"
         )

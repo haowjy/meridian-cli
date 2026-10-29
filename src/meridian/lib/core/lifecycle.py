@@ -51,6 +51,7 @@ from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
 if TYPE_CHECKING:
@@ -143,6 +144,7 @@ class LifecycleEvent:
     # Spawn context (always present)
     spawn_id: str
     parent_id: str | None
+    # Whose spawn: the owner's chat, not the child's own session chat.
     chat_id: str | None
     work_id: str | None
 
@@ -589,7 +591,7 @@ class SpawnLifecycleService:
         return LifecycleCorrelation(
             spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
-            chat_id=(record.chat_id or record.owner_chat_id) if record is not None else None,
+            chat_id=spawn_owner_chat_id(record) if record is not None else None,
             work_id=record.work_id if record is not None else None,
             agent=record.agent if record is not None else None,
             model=record.model if record is not None else None,
@@ -732,7 +734,7 @@ class SpawnLifecycleService:
             timestamp=datetime.now(tz=UTC),
             spawn_id=record.id,
             parent_id=record.parent_id,
-            chat_id=record.chat_id or record.owner_chat_id,
+            chat_id=spawn_owner_chat_id(record),
             work_id=record.work_id,
             agent=record.agent,
             kind=record.kind,

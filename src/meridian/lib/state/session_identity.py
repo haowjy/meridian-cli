@@ -93,7 +93,7 @@ def session_records_for_spawns(
     """
     # A row with no session of its own (chat-less by design, or a legacy placeholder
     # chat) has none to find; only older chat-less rows still need the full scan.
-    records = tuple(row for row in records if not _has_no_session_of_its_own(row))
+    records = tuple(row for row in records if not row.has_no_session_of_its_own)
     if not records:
         return {}
     chats = {row.chat_id for row in records if row.chat_id}
@@ -131,25 +131,6 @@ def session_records_for_spawns(
                 raise ValueError(f"Session identity conflicts with history: {record.id}")
             result[record.id] = session
     return result
-
-
-def _has_no_session_of_its_own(row: SpawnRecord) -> bool:
-    return row.unstarted_chatless_child or row.chat_is_caller_placeholder
-
-
-def resolve_continue_chat_id(runtime_root: Path, row: SpawnRecord) -> str | None:
-    """The chat ``--continue`` or ``--from`` resumes for one spawn, or None if it has none.
-
-    A legacy placeholder row names the caller's chat, so its session is found the
-    only way it can be: the newest generation whose start event names the spawn.
-    Single-spawn callers only; batch readers use ``row.continue_chat_id`` and read
-    such rows as unbound.
-    """
-    chat_id = row.continue_chat_id
-    if chat_id is not None or not row.chat_is_caller_placeholder:
-        return chat_id
-    record = get_session_record_for_spawn(runtime_root, row.id)
-    return record.chat_id if record is not None else None
 
 
 def native_identity_candidates(
@@ -235,11 +216,11 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    if row is None or row.unstarted_chatless_child:
+    if row is None or row.has_no_session_of_its_own:
         return None
     entry_chat_id = spawn_exact_chat_id(row)
-    # An older chat-less row or a legacy placeholder chat names no session itself:
-    # only a generation whose start event names this spawn can be its own.
+    # An older chat-less row (app spawn, pre-v3) names no session itself: only a
+    # generation whose start event names this spawn can be its own.
     generations = (
         session_store.chat_generations(runtime_root, entry_chat_id)
         if entry_chat_id
@@ -304,7 +285,6 @@ __all__ = [
     "get_session_record_for_spawn",
     "live_observer_for_chat",
     "native_identity_candidates",
-    "resolve_continue_chat_id",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",

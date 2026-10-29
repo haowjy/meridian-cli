@@ -285,19 +285,15 @@ def _indexed_target(
         )
     if row.record_mode == "historical":
         return _restored_target(runtime_root, row, ref=ref)
-    return _spawn_target(
-        row=row,
-        record_for=_stored_record(runtime_root),
-        chat_id=session_identity.resolve_continue_chat_id(runtime_root, row),
-    )
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
 def _spawn_target(
-    *,
-    row: SpawnRecord,
-    record_for: Callable[[str], session_store.SessionRecord | None],
-    chat_id: str | None,
+    *, row: SpawnRecord, record_for: Callable[[str], session_store.SessionRecord | None]
 ) -> SessionLogTarget:
+    if row.chat_id is None:
+        raise NativeSessionUnavailable(row.id, "unbound")
+    chat_id = row.continue_chat_id
     record = record_for(chat_id) if chat_id else None
     if record is None:
         raise NativeSessionUnavailable(row.id, "unbound")
@@ -313,9 +309,7 @@ def resolve_run_sources(
     row: SpawnRecord, sessions: Mapping[str, session_store.SessionRecord]
 ) -> tuple[TranscriptSource, ...]:
     """Every exact native source holding a run's turns: its log chat and its entry chat."""
-    sources = [
-        _spawn_target(row=row, record_for=sessions.get, chat_id=row.continue_chat_id).source
-    ]
+    sources = [_spawn_target(row=row, record_for=sessions.get).source]
     if row.entry_chat_id is not None and row.entry_chat_id != row.continue_chat_id:
         entry = sessions.get(row.entry_chat_id)
         if entry is None:
@@ -349,11 +343,7 @@ def resolve_capture_source(
 def _spawn_source(runtime_root: Path, row: SpawnRecord) -> SessionLogTarget:
     if row.record_mode == "historical":
         return _restored_target(runtime_root, row, ref=row.id)
-    return _spawn_target(
-        row=row,
-        record_for=_stored_record(runtime_root),
-        chat_id=session_identity.resolve_continue_chat_id(runtime_root, row),
-    )
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
 def _indexed_or_untracked(

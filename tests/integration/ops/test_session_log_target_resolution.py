@@ -133,6 +133,7 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.4",
         agent="coder",
         harness="codex",

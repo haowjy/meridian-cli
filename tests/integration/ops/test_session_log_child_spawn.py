@@ -178,6 +178,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
             runtime_root,
             spawn_id="p42",
             chat_id=child_chat_id,
+            owner_chat_id="c9011",
             model="gpt-5.4",
             agent="coder",
             harness="codex",

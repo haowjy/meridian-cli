@@ -180,41 +180,29 @@ class SpawnRecord(SpawnStateFields):
     prompt: str | None = None
 
     @property
-    def chat_is_caller_placeholder(self) -> bool:
-        """A child row whose ``chat_id`` is the caller's chat, not a session of its own.
+    def has_no_session_of_its_own(self) -> bool:
+        """A child that never started a session, so its ``chat_id`` is not evidence of one.
 
-        Releases before v0.18.0 reserved a fresh child with its caller's chat and
-        rebound it when the session started, which also sets ``session_instance_id``.
-        A child with no ``session_instance_id`` and ``chat_id`` equal to its owner
-        chat never started a session; before v0.5.0 even one that ran kept the
-        placeholder. Its ``chat_id`` is not evidence of a session.
+        This build reserves a fresh child with no chat (``owner_chat_id`` still names
+        the caller). Earlier builds reserved it with the caller's chat as a
+        placeholder. v0.3.2 through v0.4.5 rebound ``chat_id`` after the session
+        started and v0.5.0 and later bind it atomically with ``session_instance_id``,
+        so either way a child with no ``session_instance_id`` and a chat that is its
+        owner's (or none, with an owner) never started. A crash between the start
+        event and the rebind in v0.3.2 through v0.4.5 leaves the same shape and
+        reads as unbound, like rows from before v0.3.2. Older chat-less rows
+        (app spawns, pre-v3) have no owner and are not matched.
         """
-        return (
-            self.kind == "child"
-            and self.chat_id is not None
-            and not self.session_instance_id
-            and self.chat_id == (self.owner_chat_id or self.chat_id)
-        )
-
-    @property
-    def unstarted_chatless_child(self) -> bool:
-        """A child this build reserved with no chat that has not started its session.
-
-        ``owner_chat_id`` is what separates it from older chat-less rows (app
-        spawns, pre-v3 rows), which have neither chat and may still hold a session
-        that only the session log names.
-        """
-        return (
-            self.kind == "child"
-            and self.chat_id is None
-            and self.owner_chat_id is not None
-            and not self.session_instance_id
-        )
+        if self.kind != "child" or self.session_instance_id:
+            return False
+        if self.chat_id is None:
+            return self.owner_chat_id is not None
+        return self.chat_id == (self.owner_chat_id or self.chat_id)
 
     @property
     def entry_chat_id(self) -> str | None:
         """The chat this launch runs or will resume; None if it has no session yet."""
-        return None if self.chat_is_caller_placeholder else self.chat_id
+        return None if self.has_no_session_of_its_own else self.chat_id
 
     @property
     def continue_chat_id(self) -> str | None:
