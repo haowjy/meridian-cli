@@ -34,6 +34,10 @@ directory they fail before Mars can create a marker. `meridian mars init` is the
 explicit exception: it writes only `mars.toml`; the next Meridian runtime write
 mints the committed `[project] id` in `meridian.toml`.
 
+## What a package installs
+
+A Mars package can install agents, skills, hooks, and MCP servers. `meridian mars sync` renders a package's hooks into each enabled harness's own config (for example `.claude/settings.local.json`, `.codex/hooks.json`, `.opencode/plugins/`, `.pi/extensions/`). These are harness hooks, separate from Meridian's event [hooks](../hooks.md). The package author declares them in `hooks/<name>/hook.toml`; see the [Mars reference](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ## Project routing defaults
 
 ```toml

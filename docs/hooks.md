@@ -1,5 +1,7 @@
 # Hooks
 
+This page covers Meridian's own event hooks. Mars packages can also install harness hooks (Claude, Codex, OpenCode, Pi); see [Mars configuration](configuration/mars.md#what-a-package-installs).
+
 Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, delivering notifications, or any custom script you want wired to the agent lifecycle.
 
 ## Commands

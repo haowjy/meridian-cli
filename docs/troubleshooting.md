@@ -207,6 +207,15 @@ If `report.md` exists and looks complete, the work product is likely usable even
 
 The process was killed externally (SIGTERM/SIGKILL). Check `meridian spawn show ID` — if status is `succeeded`, the signal hit during cleanup and no retry is needed. Otherwise check for OOM or external kill, then retry.
 
+## A package's hook doesn't run
+
+Check these first:
+
+- **Codex:** it runs a project's hooks only in a trusted project, and asks you to review new or moved handlers with `/hooks`.
+- **Invalid hook in a dependency:** Mars keeps the last good install and warns `hook-invalid-kept`. Run `meridian mars sync` and read the warning.
+
+Mars documents the hook format and per-harness behavior in its [reference](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ## Config not taking effect
 
 Config resolution precedence: CLI flag > ENV var > YAML profile > project config > user config > harness default.
