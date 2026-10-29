@@ -327,7 +327,7 @@ bypass-mode primary holds the message for approval).
 
 ### `--metadata` flag
 
-`_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
+`_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report command) while still including report body and transcript pointer.
 
 Pattern: compact default → `--metadata` inline accounting → `spawn show` full record.
 
