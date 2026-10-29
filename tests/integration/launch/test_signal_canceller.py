@@ -27,6 +27,7 @@ from meridian.lib.streaming.control_socket import (
     socket_directory,
 )
 from meridian.lib.streaming.signal_canceller import SignalCanceller
+from tests.support.launch_paths import launch_paths
 
 
 def _start_spawn(
@@ -192,6 +193,8 @@ async def test_signal_canceller_app_lane_uses_manager_stop_spawn(
     assert calls == [(spawn_id, "cancelled", 130, "cancelled")]
     assert outcome.status == "cancelled"
     assert outcome.origin == "runner"
+
+
 @pytest.mark.asyncio
 async def test_signal_canceller_runnerless_cancel_preserves_running_row(
     tmp_path: Path,
@@ -403,9 +406,9 @@ async def test_cancel_cli_spawn_legacy_path_uses_tree_termination_with_started_e
         _capture_tree,
     )
 
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root, grace_seconds=2.0
-    ).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(runtime_root=runtime_root, grace_seconds=2.0).cancel(
+        SpawnId(spawn_id)
+    )
 
     assert captured and captured[0][0] == 99
     assert captured[0][1] > 0.0
@@ -436,9 +439,9 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
         lambda *_args, **_kwargs: None,
     )
 
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root, grace_seconds=0.0
-    ).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(runtime_root=runtime_root, grace_seconds=0.0).cancel(
+        SpawnId(spawn_id)
+    )
 
     assert outcome.finalizing is True
     assert outcome.status == "finalizing"
@@ -479,9 +482,9 @@ async def test_cancel_cli_spawn_does_not_run_legacy_worker_fallback_after_runner
         _unexpected_worker_signal,
     )
 
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root, grace_seconds=0.0
-    ).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(runtime_root=runtime_root, grace_seconds=0.0).cancel(
+        SpawnId(spawn_id)
+    )
 
     assert runner_signals == [777]
     assert outcome.finalizing is True
@@ -508,8 +511,8 @@ async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
         owner_policy="session_owned",
     )
     for scope in (first_backend, second_backend, session_backend):
-        record_scope(runtime_root, SpawnId(spawn_id), scope)
-    mark_scope_released(runtime_root, SpawnId(spawn_id), first_backend.release_id)
+        record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
+    mark_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), first_backend.release_id)
     terminated_release_ids: list[str] = []
 
     def _terminate_scope(scope: ProcessScopeSnapshot, **kwargs: object) -> CleanupResult:
@@ -531,25 +534,23 @@ async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
     )
     monkeypatch.setattr(
         "meridian.lib.core.process_cleanup.psutil.Process",
-        lambda _pid: type(
-            "LiveProc", (), {"create_time": lambda self: 1_700_000_000.0}
-        )(),
+        lambda _pid: type("LiveProc", (), {"create_time": lambda self: 1_700_000_000.0})(),
     )
     monkeypatch.setattr(
         "meridian.lib.core.process_cleanup.terminate_scope_sync",
         _terminate_scope,
     )
 
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root, grace_seconds=0.0
-    ).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(runtime_root=runtime_root, grace_seconds=0.0).cancel(
+        SpawnId(spawn_id)
+    )
 
     assert first_backend.scope_id == second_backend.scope_id
     assert terminated_release_ids == [second_backend.release_id]
     assert is_scope_released(
-        runtime_root, SpawnId(spawn_id), second_backend.release_id
+        launch_paths(runtime_root, SpawnId(spawn_id)), second_backend.release_id
     )
     assert not is_scope_released(
-        runtime_root, SpawnId(spawn_id), session_backend.release_id
+        launch_paths(runtime_root, SpawnId(spawn_id)), session_backend.release_id
     )
     assert outcome.status == "finalizing"

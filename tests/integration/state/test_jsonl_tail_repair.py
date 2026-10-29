@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.state.jsonl import (
@@ -18,15 +17,17 @@ from meridian.lib.state.jsonl import (
 )
 from meridian.lib.state.spawn_store import start_spawn
 from tests.conftest import posix_only
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
 def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawn"
-    spawn_dir.mkdir()
-    journal_path = spawn_dir / "permission_requests.jsonl"
+    launch = launch_paths(tmp_path, "s-1")
+    spawn_dir = launch.dir
+    spawn_dir.mkdir(parents=True)
+    journal_path = launch.permission_requests
     complete_row = {
         "seq": 0,
         "request_id": "req-1",
@@ -47,7 +48,7 @@ def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> N
         + torn_tail
     )
 
-    broker = PermissionBroker(spawn_dir=spawn_dir)
+    broker = PermissionBroker(launch=launch)
     assert [transition.seq for transition in broker.list_transitions()] == [0]
 
     next_row = {
@@ -77,7 +78,7 @@ def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> N
     ]
     assert all(json.loads(line) for line in journal_lines)
 
-    reloaded = PermissionBroker(spawn_dir=spawn_dir)
+    reloaded = PermissionBroker(launch=launch)
     assert [transition.seq for transition in reloaded.list_transitions()] == [0, 1]
 
 
@@ -115,7 +116,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
         + b'{"seq":1,"spawn_id":"s-1","action_id":"ca-1","action":"inject","status":"request'
     )
 
-    coordinator = ControlActionCoordinator(spawn_id=SpawnId("s-1"), spawn_dir=spawn_dir)
+    coordinator = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, "s-1"))
     assert coordinator._transition_seq == 1
 
     async def _noop_send() -> object:
@@ -139,7 +140,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     assert 1 in seqs
     assert len(seqs) == len(set(seqs))
 
-    reloaded = ControlActionCoordinator(spawn_id=SpawnId("s-1"), spawn_dir=spawn_dir)
+    reloaded = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, "s-1"))
     assert reloaded._transition_seq > 1
 
 

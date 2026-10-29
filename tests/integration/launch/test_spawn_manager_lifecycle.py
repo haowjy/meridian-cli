@@ -32,6 +32,7 @@ from meridian.lib.streaming.types import InjectResult
 from meridian.lib.telemetry import init_telemetry
 from tests.support.async_determinism import assert_still_pending
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
+from tests.support.launch_paths import launch_paths
 
 
 def _build_config(
@@ -328,8 +329,7 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
         drain_plan=DrainPlan(),
         control_actions=ControlActionCoordinator(
-            spawn_id=spawn_id,
-            spawn_dir=manager._spawn_dir(spawn_id),
+            launch=launch_paths(manager.runtime_root, spawn_id)
         ),
     )
 
@@ -423,8 +423,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
         drain_plan=DrainPlan(),
         control_actions=ControlActionCoordinator(
-            spawn_id=spawn_id,
-            spawn_dir=manager._spawn_dir(spawn_id),
+            launch=launch_paths(manager.runtime_root, spawn_id)
         ),
     )
 

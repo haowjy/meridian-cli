@@ -34,6 +34,7 @@ from tests.integration.launch.streaming_runner_support import (
     streaming_runner_module,
 )
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -237,9 +238,8 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
     attempt = await asyncio.wait_for(
         streaming_runner_module._run_streaming_attempt(
             run=run,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, run.spawn_id),
             launch_mode=FOREGROUND_LAUNCH_MODE,
-            log_dir=tmp_path / "logs",
             manager=HangingStartupManager(),  # type: ignore[arg-type]
             config=ConnectionConfig(
                 spawn_id=run.spawn_id,
@@ -347,9 +347,8 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
     attempt = await asyncio.wait_for(
         streaming_runner_module._run_streaming_attempt(
             run=run,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, run.spawn_id),
             launch_mode=FOREGROUND_LAUNCH_MODE,
-            log_dir=tmp_path / "logs",
             manager=manager,  # type: ignore[arg-type]
             config=ConnectionConfig(
                 spawn_id=run.spawn_id,

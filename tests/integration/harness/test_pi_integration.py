@@ -23,10 +23,10 @@ from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
-    LaunchPaths,
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 _PI_HELP_SURFACE = (
@@ -71,8 +71,7 @@ async def _start_existing_pi_connection(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> None:
-    LaunchPaths.for_row(config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root), config.spawn_id).dir.mkdir(
+    config.resolve_launch().dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -419,8 +418,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         event.event_type == "meridian.lifecycle.parse_error" for event in non_phase_events
     )
     stderr_log = (
-        LaunchPaths.for_row(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir
-        / "stderr.log"
+        launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir / "stderr.log"
     )
     stderr_text = stderr_log.read_text(encoding="utf-8")
     assert plain_stderr in stderr_text
@@ -439,9 +437,9 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     persisted = []
     record = pi_lifecycle.record
 
-    def record_and_read(runtime_root, spawn_id, event):
-        record(runtime_root, spawn_id, event)
-        persisted.append(pi_lifecycle.read(runtime_root, spawn_id))
+    def record_and_read(launch, event):
+        record(launch, event)
+        persisted.append(pi_lifecycle.read(launch))
 
     monkeypatch.setattr(pi_lifecycle, "record", record_and_read)
     configure_pi_extension_projection(monkeypatch, tmp_path)
@@ -462,7 +460,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
-        "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
+        '      printf \'%s\\n\' \'{"type":"agent_settled","aborted":false}\'\n'
         "      ;;\n"
         '    *\'"type":"abort"\'*)\n'
         "      exit 0\n"
@@ -573,7 +571,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
             "      printf '%s\n' "
             '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
-            "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
+            '      printf \'%s\\n\' \'{"type":"agent_settled","aborted":false}\'\n'
         )
     else:
         prompt_handler = "      sleep 30\n"
@@ -797,8 +795,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     stderr_log = (
-        LaunchPaths.for_row(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir
-        / "stderr.log"
+        launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir / "stderr.log"
     )
     stderr_log.parent.mkdir(parents=True)
     stderr_log.write_text(f"{prior_launch_stderr}\n", encoding="utf-8")

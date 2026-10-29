@@ -1,10 +1,7 @@
 """Bounded Pi lifecycle diagnostics, independent of transcript persistence."""
 
-from pathlib import Path
-
 from pydantic import BaseModel
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import (
@@ -22,15 +19,11 @@ class PiLifecycle(BaseModel):
     error: str | None = None
 
 
-def read(runtime_root: Path, spawn_id: SpawnId | str) -> PiLifecycle:
-    path = LaunchPaths.for_row(runtime_root, spawn_id).pi_lifecycle
-    return read_model(path, PiLifecycle) or PiLifecycle()
+def read(launch: LaunchPaths) -> PiLifecycle:
+    return read_model(launch.pi_lifecycle, PiLifecycle) or PiLifecycle()
 
 
-def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> None:
-    resolved_spawn_id = SpawnId(str(spawn_id))
-    path = LaunchPaths.for_row(runtime_root, resolved_spawn_id).pi_lifecycle
-
+def record(launch: LaunchPaths, event: PiLifecycle) -> None:
     def update(prior: PiLifecycle | None) -> tuple[PiLifecycle, None]:
         prior = prior or PiLifecycle()
         status_rank = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
@@ -49,10 +42,10 @@ def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> N
 
     try:
         mutate_model(
-            path,
+            launch.pi_lifecycle,
             PiLifecycle,
             update,
-            lock=published_artifact_lock(runtime_root, resolved_spawn_id),
+            lock=published_artifact_lock(launch.runtime_root, launch.spawn_id),
             exclude_none=True,
         )
     except PublishedArtifactUnavailable:

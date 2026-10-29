@@ -12,9 +12,9 @@ from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import (
     HISTORY_FILENAME,
-    LaunchPaths,
     resolve_project_runtime_root_for_write,
 )
+from tests.support.launch_paths import launch_paths
 
 
 def _write_spawn_output(
@@ -36,7 +36,7 @@ def _write_primary_meta(
     *,
     managed_backend: bool = True,
 ) -> None:
-    meta_path = LaunchPaths.for_row(runtime_root, spawn_id).primary_meta
+    meta_path = launch_paths(runtime_root, spawn_id).primary_meta
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, object] = {"managed_backend": managed_backend}
     if managed_backend:

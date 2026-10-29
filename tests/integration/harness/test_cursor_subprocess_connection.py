@@ -16,8 +16,8 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import LaunchPaths
 from tests.support.executables import prepend_fake_executables
+from tests.support.launch_paths import launch_paths
 
 _MINTED_ID = "550e8400-e29b-41d4-a716-446655440000"
 _RESUMED_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
@@ -50,7 +50,7 @@ def _install_cursor(
         f"    printf '%s\\n' '{_MINTED_ID}'\n"
         f"    exit {create_chat_exit}\n"
         "fi\n"
-        "printf '%s\\n' '{\"type\":\"system\",\"sessionId\":\"fake-agent\"}'\n"
+        'printf \'%s\\n\' \'{"type":"system","sessionId":"fake-agent"}\'\n'
         "while :; do :; done\n",
         encoding="utf-8",
     )
@@ -76,9 +76,7 @@ async def _wait_for_commands(
     while loop.time() < deadline:
         if command_log.exists():
             try:
-                commands = [
-                    json.loads(line) for line in command_log.read_text().splitlines()
-                ]
+                commands = [json.loads(line) for line in command_log.read_text().splitlines()]
             except json.JSONDecodeError:
                 commands = []
             if len(commands) >= count and all(
@@ -100,9 +98,7 @@ def _start_record(runtime_root: Path, spawn_id: SpawnId) -> None:
         harness="cursor",
         prompt="hello",
     )
-    LaunchPaths.for_row(runtime_root, spawn_id).dir.mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
 
 
 async def _start(
@@ -133,7 +129,7 @@ async def _start(
             harness_id=HarnessId.CURSOR,
             prompt="hello",
             control_root=tmp_path,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, spawn_id),
             child_env=child_env,
             session_id_observer=record_session,
         ),
@@ -198,9 +194,7 @@ async def test_cursor_nonzero_create_chat_falls_back_to_unresumed_agent(
 
     connection = await _start(tmp_path, SpawnId("p-cursor-fallback"))
     assert connection.session_id is None
-    assert spawn_store.get_spawn(
-        tmp_path, SpawnId("p-cursor-fallback")
-    ).harness_session_id is None
+    assert spawn_store.get_spawn(tmp_path, SpawnId("p-cursor-fallback")).harness_session_id is None
     commands = await _wait_for_commands(
         command_log,
         count=2,
@@ -228,9 +222,10 @@ async def test_cursor_hung_create_chat_is_killed_then_launches_unresumed(
         timeout=1.0,
     )
     assert connection.session_id is None
-    assert spawn_store.get_spawn(
-        tmp_path, SpawnId("p-cursor-hung-create-chat")
-    ).harness_session_id is None
+    assert (
+        spawn_store.get_spawn(tmp_path, SpawnId("p-cursor-hung-create-chat")).harness_session_id
+        is None
+    )
 
     pid = int(create_chat_pid.read_text())
     with pytest.raises(ProcessLookupError):

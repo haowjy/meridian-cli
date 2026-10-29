@@ -1,4 +1,5 @@
 """Claude preparation reads the recorded file, never an ambient same-ID decoy."""
+
 import json
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.parametrize("missing", [False, True])
@@ -33,15 +35,21 @@ def test_recorded_claude_source_preparation(
     destination = tmp_path / "destination"
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CLAUDE)
     session = SessionRequest(
-        requested_harness_session_id=sid, source_native_store=str(store),
-        continue_source_tracked=True, continue_source_ref="c1",
+        requested_harness_session_id=sid,
+        source_native_store=str(store),
+        continue_source_tracked=True,
+        continue_source_ref="c1",
     )
+
     def prepare() -> None:
         adapter.prepare_prelaunch(
-            runtime_root=tmp_path, spawn_id=SpawnId("p1"), session=session,
-            child_cwd=cwd, child_env={"CLAUDE_CONFIG_DIR": str(destination)},
+            launch=launch_paths(tmp_path, SpawnId("p1")),
+            session=session,
+            child_cwd=cwd,
+            child_env={"CLAUDE_CONFIG_DIR": str(destination)},
             resolved_harness_session_id=sid,
         )
+
     target = destination / "projects" / project_slug(cwd) / f"{sid}.jsonl"
     if missing:
         with pytest.raises(NativeSessionUnavailable) as caught:

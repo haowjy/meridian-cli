@@ -6,14 +6,13 @@ import json
 import os
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
@@ -32,9 +31,7 @@ logger = structlog.get_logger(__name__)
 
 
 def append_runner_lifecycle_event(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    path: Path,
+    launch: LaunchPaths,
     *,
     clock: Clock,
     event: str,
@@ -52,10 +49,10 @@ def append_runner_lifecycle_event(
     }
     try:
         mutate_published_spawn_artifact(
-            runtime_root,
-            spawn_id,
+            launch.runtime_root,
+            launch.spawn_id,
             lambda: append_text_line(
-                path,
+                launch.runner_lifecycle,
                 json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
             ),
         )
@@ -67,31 +64,16 @@ def append_runner_lifecycle_event(
 class LifecycleLog:
     """Destination and clock for runner-owned lifecycle evidence."""
 
-    runtime_root: Path
-    spawn_id: SpawnId
-    path: Path
+    launch: LaunchPaths
     clock: Clock
 
     @classmethod
-    def for_spawn(
-        cls,
-        runtime_root: Path,
-        spawn_id: SpawnId,
-        *,
-        clock: Clock | None = None,
-    ) -> LifecycleLog:
-        return cls(
-            runtime_root,
-            spawn_id,
-            LaunchPaths.for_row(runtime_root, spawn_id).runner_lifecycle,
-            clock if clock is not None else RealClock(),
-        )
+    def for_launch(cls, launch: LaunchPaths, *, clock: Clock | None = None) -> LifecycleLog:
+        return cls(launch, clock if clock is not None else RealClock())
 
     def __call__(self, *, event: str, phase: str, **details: object) -> None:
         append_runner_lifecycle_event(
-            self.runtime_root,
-            self.spawn_id,
-            self.path,
+            self.launch,
             clock=self.clock,
             event=event,
             phase=phase,

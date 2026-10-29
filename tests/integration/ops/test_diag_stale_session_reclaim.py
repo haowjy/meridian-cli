@@ -18,6 +18,7 @@ from meridian.lib.platform.process_scope.base import (
 )
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.process_scope_projection import record_scope
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -108,7 +109,7 @@ def _create_primary_spawn_with_scope(
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(runtime_root, SpawnId(spawn_id), scope)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
     return scope
 
 

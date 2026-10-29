@@ -76,6 +76,7 @@ class PreparedExecutionHandoff:
     """Result of successful spawn preparation. Owns session scope cleanup."""
 
     resolved_request: SpawnRequest
+    launch: LaunchPaths
     launch_context: LaunchContext
     session_context: _SessionExecutionContext
     session_exit_stack: ExitStack
@@ -119,6 +120,7 @@ async def _prepare_execution_handoff(
     local_stack = ExitStack()
     request_before_session = request
     try:
+        launch = spawn_store.read_launch_paths(runtime_root, spawn.spawn_id)
         harness_id = HarnessId(request.harness or "")
         harness_adapter = runtime.harness_registry.get_subprocess_harness(harness_id)
         resolved_session = _resolve_session_continuation(
@@ -249,9 +251,7 @@ async def _prepare_execution_handoff(
         launch_context = materialize_launch_context(launch_context)
         try:
             _write_params_json(
-                project_paths,
-                runtime_root,
-                spawn.spawn_id,
+                launch,
                 request_metadata=request_metadata,
                 binding=launch_context.binding,
             )
@@ -262,7 +262,7 @@ async def _prepare_execution_handoff(
                 exc_info=True,
             )
         write_projection_artifacts(
-            launch=LaunchPaths.for_row(runtime_root, spawn.spawn_id),
+            launch=launch,
             launch_context=launch_context,
             surface="spawn",
         )
@@ -271,6 +271,7 @@ async def _prepare_execution_handoff(
         local_stack = ExitStack()
         return PreparedExecutionHandoff(
             resolved_request=launch_context.resolved_request,
+            launch=launch,
             launch_context=launch_context,
             session_context=session_context,
             session_exit_stack=handoff_stack,
@@ -301,7 +302,7 @@ async def _invoke_runner(
         request=handoff.resolved_request,
         launch_context=handoff.launch_context,
         project_root=project_paths.project_root,
-        runtime_root=runtime_root,
+        launch=handoff.launch,
         session_attempt=handoff.session_context.attempt,
         event_observer=event_observer,
         stream_stdout_to_terminal=stream_stdout_to_terminal,
@@ -394,8 +395,7 @@ async def launch_prepared_spawn(
                         )
 
                 maybe_prelaunch_state = prepare_prelaunch(
-                    runtime_root=runtime_root,
-                    spawn_id=spawn.spawn_id,
+                    launch=handoff.launch,
                     session=handoff.resolved_request.session,
                     child_cwd=handoff.launch_context.control_root,
                     child_env=child_env,

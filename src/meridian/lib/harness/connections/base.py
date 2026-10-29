@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
+from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
@@ -292,7 +293,7 @@ class ConnectionConfig:
     prompt: str
     control_root: Path
     child_env: dict[str, str]
-    runtime_root: Path | None = None
+    launch: LaunchPaths | None = None
     task_cwd: Path | None = None
     timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
@@ -306,6 +307,21 @@ class ConnectionConfig:
     pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
     session_id_observer: Callable[[str], None] | None = None
+
+    @property
+    def id(self) -> SpawnId:
+        """Lets a config stand in for the spawn row when it carries no ``launch``."""
+
+        return self.spawn_id
+
+    def resolve_launch(self, runtime_root: Path | None = None) -> LaunchPaths:
+        """The launch's paths. The runner supplies ``launch``; a config built without one
+        (passthrough probes, tests) resolves a runtime root from ``control_root``."""
+
+        if self.launch is not None:
+            return self.launch
+        root = runtime_root or resolve_project_runtime_root_for_write(self.control_root)
+        return LaunchPaths.for_row(root, self)
 
 
 def validate_prompt_size(config: ConnectionConfig) -> None:

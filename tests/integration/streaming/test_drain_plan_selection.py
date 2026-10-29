@@ -23,6 +23,7 @@ from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_drain_teardown import PiDrainSessionTeardown
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 from tests.support.resident_drain import FakeResidentBackendControl
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ def _select_plan(
         ),
     )
     return manager._select_drain_plan(
-        spawn_id=SpawnId(f"p-{harness_id}"),
+        launch=launch_paths(manager.runtime_root, f"p-{harness_id}"),
         receiver=receiver,
         config=ConnectionConfig(
             spawn_id=SpawnId(f"p-{harness_id}"),
@@ -114,7 +115,7 @@ def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
     plan = _select_plan(manager, harness_id=HarnessId.PI)
     assert isinstance(plan.coordinator, PiDrainCoordinator)
 
-    for sink in get_harness_bundle(HarnessId.PI).event_sinks(tmp_path, SpawnId("p-pi")):
+    for sink in get_harness_bundle(HarnessId.PI).event_sinks(launch_paths(tmp_path, "p-pi")):
         manager.register_event_hook(SpawnId("p-pi"), sink)
 
     for phase, status in (
@@ -214,7 +215,7 @@ def test_late_pi_phase_cannot_recreate_deleted_spawn(tmp_path):
 
     spawn = SpawnId("p1")
     start_row(tmp_path, spawn, HarnessId.PI, None)
-    sinks = get_harness_bundle(HarnessId.PI).event_sinks(tmp_path, spawn)
+    sinks = get_harness_bundle(HarnessId.PI).event_sinks(launch_paths(tmp_path, spawn))
     assert delete_published_spawn(tmp_path, spawn, can_delete=lambda row: row is not None)
     for sink in sinks:
         sink(
@@ -225,4 +226,4 @@ def test_late_pi_phase_cannot_recreate_deleted_spawn(tmp_path):
             )
         )
     assert not (tmp_path / "spawns" / spawn).exists()
-    assert pi_lifecycle.read(tmp_path, spawn).phase is None
+    assert pi_lifecycle.read(launch_paths(tmp_path, spawn)).phase is None

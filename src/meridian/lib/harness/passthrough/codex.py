@@ -6,9 +6,10 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.paths import LaunchPaths
 
 from .base import PassthroughError, TuiCommandBuilder
 
@@ -58,7 +59,7 @@ class CodexPassthrough:
     def build_config(
         self,
         *,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         spec: ResolvedLaunchSpec,
         control_root: Path,
         task_cwd: Path | None,
@@ -66,7 +67,8 @@ class CodexPassthrough:
     ) -> ConnectionConfig:
         ws_bind_host = "127.0.0.1"
         return ConnectionConfig(
-            spawn_id=spawn_id,
+            spawn_id=launch.spawn_id,
+            launch=launch,
             harness_id=HarnessId.CODEX,
             prompt=spec.prompt,
             control_root=control_root,

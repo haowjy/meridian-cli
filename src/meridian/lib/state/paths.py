@@ -361,14 +361,14 @@ def resolve_work_scratch_dir_for_project(
 
 def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return the spawn directory. Spawn-level files (``state.json``, ``launch.lock``,
-    ``scope.json``, ``observed-spawns.json``, the reaper claim, the control socket) live
-    here for every launch; per-launch files go through ``LaunchPaths``."""
+    ``scope.json``, ``observed-spawns.json``, the reaper claim, the ambient ``work/``
+    directory) live here for every launch; per-launch files go through ``LaunchPaths``."""
 
     return runtime_root / "spawns" / str(spawn_id)
 
 
 # Per-launch file names. This module is the only place they appear as literals
-# (tests/AGENTS.md "source gates": scripts/check_launch_paths.py enforces it).
+# (``meridian.dev.check_launch_paths``, part of the fast gate, enforces it).
 HISTORY_FILENAME = "history.jsonl"  # retired runner stream; never written
 RETIRED_RUNNER_STREAM_FILENAMES: tuple[str, ...] = (HISTORY_FILENAME, "last-observed-event.json")
 NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
@@ -379,6 +379,7 @@ PI_RUNTIME_META_FILENAME = "pi_runtime_meta.json"
 BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
 BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
 BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
+REAPER_CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"  # spawn-level
 # Files the archive skips. Older builds still write the legacy ones; remove with
 # legacy_runner_alive once no lockless rows remain.
 RETENTION_EXCLUDED_FILENAMES = frozenset(
@@ -387,7 +388,7 @@ RETENTION_EXCLUDED_FILENAMES = frozenset(
         "finalize-evidence.json",
         "launch-boundary.jsonl",
         PROCESS_SCOPES_FILENAME,
-        "reaper_cleanup_claim.json",
+        REAPER_CLEANUP_CLAIM_FILENAME,
         "restored-from.json",
     }
 )
@@ -395,19 +396,37 @@ RETENTION_EXCLUDED_FILENAMES = frozenset(
 
 @dataclass(frozen=True)
 class LaunchPaths:
-    """Every per-launch file of one launch, reached only through this class.
+    """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
 
-    Today a launch directory is the spawn directory. Build one with ``for_row``;
-    construct directly only where a caller was handed the launch directory itself
-    (a runner or connection that receives ``spawn_dir``).
+    This module is the only place that constructs it (``for_row`` today; P5a adds
+    ``for_launch``); everything else is handed one by the launch's owner. Today a launch
+    directory is the spawn directory, so ``n`` is unused. Spawn-level files stay on
+    ``resolve_spawn_dir``.
     """
 
-    dir: Path
+    runtime_root: Path
+    spawn_id: SpawnId
+    n: int | None
 
     @classmethod
-    def for_row(cls, runtime_root: Path, row: SpawnId | str | _HasId) -> Self:
-        spawn_id = row if isinstance(row, str) else row.id
-        return cls(resolve_spawn_dir(runtime_root, spawn_id))
+    def for_row(cls, runtime_root: Path, row: _HasId) -> Self:
+        """The launch a published row names. The only way to reach an existing launch."""
+
+        return cls(runtime_root, SpawnId(str(row.id)), None)
+
+    @classmethod
+    def for_launch(cls, runtime_root: Path, spawn_id: SpawnId) -> Self:
+        """A launch its owner is about to publish, named by the ID it reserved.
+
+        Only the launch-lock holder that reserved ``spawn_id`` calls this, before the
+        row exists. P5a assigns ``n`` here.
+        """
+
+        return cls(runtime_root, spawn_id, None)
+
+    @property
+    def dir(self) -> Path:
+        return resolve_spawn_dir(self.runtime_root, self.spawn_id)
 
     @property
     def starting_prompt(self) -> Path:
@@ -485,8 +504,13 @@ class LaunchPaths:
     def accepted_signals(self) -> Path:
         return self.dir / "accepted-signals.json"
 
-    def signal(self, kind: str) -> Path:
-        return self.dir / f"{kind}.signal"
+    @property
+    def done_signal(self) -> Path:
+        return self.dir / "done.signal"
+
+    @property
+    def rearm_signal(self) -> Path:
+        return self.dir / "rearm.signal"
 
     @property
     def control_actions(self) -> Path:
@@ -517,8 +541,15 @@ class LaunchPaths:
         return self.dir / BG_WORKER_REQUEST_FILENAME
 
     @property
-    def ambient_work(self) -> Path:
-        return self.dir / "work"
+    def permission_requests(self) -> Path:
+        return self.dir / "permission_requests.jsonl"
+
+
+def staged_starting_prompt(stage_dir: Path) -> Path:
+    """Where ``start_spawn`` writes the prompt inside its staging directory, before the
+    directory is renamed into place as the spawn directory."""
+
+    return stage_dir / STARTING_PROMPT_FILENAME
 
 
 def resolve_ambient_work_dir(
@@ -530,7 +561,7 @@ def resolve_ambient_work_dir(
     """Resolve the ambient artifact directory for a spawn (pure path math, no mkdir)."""
 
     resolved_root = runtime_root or resolve_project_runtime_root(project_root)
-    return LaunchPaths.for_row(resolved_root, spawn_id).ambient_work
+    return resolve_spawn_dir(resolved_root, spawn_id) / "work"
 
 
 def observed_spawns_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:

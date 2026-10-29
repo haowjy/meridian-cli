@@ -24,7 +24,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -265,7 +265,7 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
         spawn: Any,
         **kwargs: object,
     ) -> int:
-        runtime_root = cast("Path", kwargs["runtime_root"])
+        runtime_root = cast("LaunchPaths", kwargs["launch"]).runtime_root
         spawn_store.finalize_spawn(
             runtime_root,
             str(spawn.spawn_id),

@@ -32,10 +32,11 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
-from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
 from tests.support.launch import build_launch_context
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import FakePiConnection, pi_event
 from tests.support.pi_extensions import configure_pi_extension_projection
 
@@ -151,7 +152,7 @@ class _ReportThenHangConnection:
         project_root = self._project_root
         assert project_root is not None
         runtime_root = resolve_project_runtime_root_for_write(project_root)
-        spawn_dir = LaunchPaths.for_row(runtime_root, self._spawn_id).dir
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nWatchdog fallback completed.\n",
@@ -295,7 +296,7 @@ class _OpenCodeTerminalWithScopeConnection:
         project_root = self._project_root
         assert project_root is not None
         runtime_root = resolve_project_runtime_root_for_write(project_root)
-        spawn_dir = LaunchPaths.for_row(runtime_root, self._spawn_id).dir
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
         yield RawHarnessEvent(
@@ -431,13 +432,13 @@ class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
         project_root = self._project_root
         assert project_root is not None
         runtime_root = resolve_project_runtime_root_for_write(project_root)
-        spawn_dir = LaunchPaths.for_row(runtime_root, self._spawn_id).dir
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nGuardrail input completed.\n",
             encoding="utf-8",
         )
-        write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
+        write_spawn_signal(launch_paths(type(self).runtime_root, self._spawn_id), "done")
         yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
@@ -546,6 +547,6 @@ async def _execute_with_context(
         request=request,
         launch_context=launch_context,
         project_root=project_root,
-        runtime_root=runtime_root,
+        launch=launch_paths(runtime_root, run.spawn_id),
         **kwargs,
     )

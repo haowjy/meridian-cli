@@ -27,6 +27,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 HELP = (
@@ -329,7 +330,7 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
                 request=ctx.request,
                 launch_context=ctx,
                 project_root=root,
-                runtime_root=ctx.runtime_root,
+                launch=launch_paths(ctx.runtime_root, run.spawn_id),
                 session_attempt=managed,
             ),
             20,
@@ -423,7 +424,7 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                     request=ctx.request,
                     launch_context=ctx,
                     project_root=root,
-                    runtime_root=ctx.runtime_root,
+                    launch=launch_paths(ctx.runtime_root, run.spawn_id),
                     session_attempt=managed.attempt,
                 ),
                 20,

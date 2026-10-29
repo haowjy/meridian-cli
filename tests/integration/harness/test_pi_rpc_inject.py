@@ -26,8 +26,8 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.spawn import execute as spawn_execute_module
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 
 _PI_BUSY_REJECTION = (
     "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') "
@@ -247,8 +247,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         assert outcome.status == "succeeded"
         assert "Message delivered" in capsys.readouterr().out
         assert received_messages == [
-            "[Meridian] Message with no sender identity; it has no reply "
-            "address.\n\nSECOND"
+            "[Meridian] Message with no sender identity; it has no reply address.\n\nSECOND"
         ]
     finally:
         if not launch_task.done():
@@ -288,9 +287,7 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
         harness="pi",
         prompt="FIRST",
     )
-    LaunchPaths.for_row(tmp_path, spawn_id).dir.mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(tmp_path, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -304,7 +301,7 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, spawn_id),
             child_env={
                 "PATH": os.environ["PATH"],
                 "PI_RPC_INBOUND_LOG": str(inbound_log),
@@ -356,9 +353,7 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
         harness="pi",
         prompt="FIRST",
     )
-    LaunchPaths.for_row(tmp_path, spawn_id).dir.mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(tmp_path, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -372,7 +367,7 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, spawn_id),
             child_env={
                 "PATH": os.environ["PATH"],
                 "PI_RPC_INBOUND_LOG": str(inbound_log),

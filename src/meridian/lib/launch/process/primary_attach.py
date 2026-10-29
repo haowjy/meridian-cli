@@ -22,7 +22,7 @@ import psutil
 import structlog
 
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -190,28 +190,27 @@ class PrimaryAttachLauncher:
     def __init__(
         self,
         *,
-        spawn_id: SpawnId,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         connection: HarnessConnection[Any],
         tui_command_builder: TuiCommandBuilder,
         process_launcher: ProcessLauncher,
-        runtime_root: Path | None = None,
+        durable: bool = True,
         on_running: Callable[[ProcessIdentity], None] | None = None,
         fold: AttemptFold | None = None,
         session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
-        self._spawn_id = spawn_id
-        self._spawn_dir = spawn_dir
+        self._launch = launch
+        self._spawn_id = launch.spawn_id
         self._connection = connection
         self._tui_command_builder = tui_command_builder
         self._process_launcher = process_launcher
-        self._runtime_root = runtime_root
+        self._durable = durable
         self._on_running = on_running
         self._harness_bundle = get_harness_bundle(connection.harness_id)
         self._fold = fold or self._harness_bundle.extractor.create_fold()
         self._event_hooks: tuple[Callable[[RawHarnessEvent], None], ...] = (self._fold,)
-        if runtime_root is not None:
-            self._event_hooks += self._harness_bundle.event_sinks(runtime_root, spawn_id)
+        if durable:
+            self._event_hooks += self._harness_bundle.event_sinks(launch)
         self._facts = self._fold.facts
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata(managed_backend=True)
@@ -249,8 +248,7 @@ class PrimaryAttachLauncher:
             env=MappingProxyType(dict(env)),
             tmux_pane=env.get("TMUX_PANE"),
             tui_alive=lambda: not launch_task.done(),
-            spawn_dir=self._spawn_dir,
-            spawn_id=self._spawn_id,
+            launch=self._launch,
         )
         error_reporter = idle_sidecar.SensorErrorReporter(ctx)
         try:
@@ -309,8 +307,8 @@ class PrimaryAttachLauncher:
     ) -> PrimaryAttachOutcome:
         """Execute the full primary attach lifecycle."""
 
-        if self._runtime_root is None:
-            self._spawn_dir.mkdir(parents=True, exist_ok=True)
+        if not self._durable:
+            self._launch.dir.mkdir(parents=True, exist_ok=True)
         self._signal_cancel_requested = False
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -370,7 +368,7 @@ class PrimaryAttachLauncher:
             telemetry.clear()
             with (
                 native_sigint_shield(self._process_launcher),
-                tui_terminal_window(LaunchPaths(self._spawn_dir).launcher_log) as window,
+                tui_terminal_window(self._launch.launcher_log) as window,
             ):
                 try:
                     running_process = self._process_launcher.start(
@@ -510,12 +508,7 @@ class PrimaryAttachLauncher:
 
         with self._metadata_lock:
             metadata = self._metadata.to_primary_metadata()
-        write_primary_metadata(
-            self._spawn_dir,
-            metadata,
-            runtime_root=self._runtime_root,
-            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
-        )
+        write_primary_metadata(self._launch, metadata, guarded=self._durable)
 
     async def _consume_live_events(self) -> None:
         """Update activity and run inline hooks (fold, sinks) for each live event."""
@@ -608,10 +601,9 @@ class PrimaryAttachLauncher:
                 owner_id=owner_id,
             )
 
-        record_scope(self._spawn_dir.parent.parent, self._spawn_id, scope_snapshot)
+        record_scope(self._launch, scope_snapshot)
 
     def _record_tui_scope(self, identity: ProcessIdentity, session_id: str | None) -> None:
-        runtime_root = self._spawn_dir.parent.parent
         owner_id = (session_id or "").strip() or str(self._spawn_id)
         snapshot = scope_from_identity(
             identity,
@@ -621,7 +613,7 @@ class PrimaryAttachLauncher:
             owner_policy="session_owned",
         )
         self._tui_scope_snapshot = snapshot
-        record_scope(runtime_root, self._spawn_id, snapshot)
+        record_scope(self._launch, snapshot)
 
     async def _stop_tui_launch_task(
         self,

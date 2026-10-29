@@ -56,35 +56,23 @@ def read_stored_spawn_row(
     return spawn_store.get_spawn(resolved_runtime_root, spawn_id)
 
 
-def read_report(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str | None, str | None]:
-    """Return a report's path and stripped body."""
+def read_report(launch: LaunchPaths | None) -> tuple[str | None, str | None]:
+    """Return a report's path and stripped body; ``None`` launch means no runtime root."""
 
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
+    if launch is None:
         return None, None
-    report_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).report
+    report_path = launch.report
     if not report_path.is_file():
         return None, None
     text = report_path.read_text(encoding="utf-8", errors="ignore")
     return report_path.as_posix(), text.strip() or None
 
 
-def read_report_summary(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str | None, str | None]:
+def read_report_summary(launch: LaunchPaths | None) -> tuple[str | None, str | None]:
     """Read at most the byte window needed for a 500-character report prefix."""
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
+    if launch is None:
         return None, None
-    report_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).report
+    report_path = launch.report
     if not report_path.is_file():
         return None, None
     # A UTF-8 code point uses at most four bytes. Ignoring an incomplete trailing
@@ -185,45 +173,26 @@ def extract_last_assistant_message(stderr_text: str) -> str | None:
     return _truncate_log_message(last_message)
 
 
-def _read_running_log_details(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> tuple[str, str | None]:
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
+def _read_running_log_details(launch: LaunchPaths | None) -> tuple[str, str | None]:
+    if launch is None:
         return "", None
-    stderr_path = LaunchPaths.for_row(resolved_runtime_root, spawn_id).stderr_log
+    stderr_path = launch.stderr_log
     if not stderr_path.is_file():
         return stderr_path.as_posix(), None
     stderr_text = stderr_path.read_text(encoding="utf-8", errors="ignore")
     return stderr_path.as_posix(), extract_last_assistant_message(stderr_text)
 
 
-def _latest_pi_lifecycle_phase(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> str | None:
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
+def _latest_pi_lifecycle_phase(launch: LaunchPaths | None) -> str | None:
+    if launch is None:
         return None
-    lifecycle = pi_lifecycle.read(resolved_runtime_root, spawn_id)
-    return lifecycle.phase
+    return pi_lifecycle.read(launch).phase
 
 
-def _pi_cleanup_telemetry(
-    project_root: Path,
-    spawn_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> _PiCleanupTelemetry:
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
+def _pi_cleanup_telemetry(launch: LaunchPaths | None) -> _PiCleanupTelemetry:
+    if launch is None:
         return _PiCleanupTelemetry(None, None, None, None)
-    lifecycle = pi_lifecycle.read(resolved_runtime_root, spawn_id)
+    lifecycle = pi_lifecycle.read(launch)
     return _PiCleanupTelemetry(
         status=lifecycle.cleanup_status,
         phase=lifecycle.cleanup_phase,
@@ -232,10 +201,10 @@ def _pi_cleanup_telemetry(
     )
 
 
-def denied_requests(runtime_root: Path, spawn_id: str) -> tuple[DeniedRequestOutput, ...]:
+def denied_requests(launch: LaunchPaths) -> tuple[DeniedRequestOutput, ...]:
     """The calls the spawn's model made that were refused, from its permission journal."""
 
-    journal = PermissionJournal(LaunchPaths.for_row(runtime_root, spawn_id).dir)
+    journal = PermissionJournal(launch)
     return tuple(
         DeniedRequestOutput(
             request_id=record.request_id,
@@ -268,36 +237,22 @@ def detail_from_row(
     include_report_body: bool,
     runtime_root: Path | None = None,
 ) -> SpawnDetailOutput:
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    launch = (
+        None if resolved_runtime_root is None else LaunchPaths.for_row(resolved_runtime_root, row)
+    )
     if include_report_body:
-        report_path, report_body = read_report(
-            project_root,
-            row.id,
-            runtime_root=runtime_root,
-        )
+        report_path, report_body = read_report(launch)
         report_summary = report_body[:500] if report_body else None
     else:
-        report_path, report_summary = read_report_summary(
-            project_root,
-            row.id,
-            runtime_root=runtime_root,
-        )
+        report_path, report_summary = read_report_summary(launch)
         report_body = None
 
     last_message: str | None = None
     log_path: str | None = None
     if is_active_spawn_status(row.status):
-        log_path, last_message = _read_running_log_details(
-            project_root,
-            row.id,
-            runtime_root=runtime_root,
-        )
-    cleanup_telemetry = _pi_cleanup_telemetry(
-        project_root,
-        row.id,
-        runtime_root=runtime_root,
-    )
-
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+        log_path, last_message = _read_running_log_details(launch)
+    cleanup_telemetry = _pi_cleanup_telemetry(launch)
 
     terminal = row.terminal
     return SpawnDetailOutput(
@@ -333,11 +288,7 @@ def detail_from_row(
         report_summary=report_summary,
         report_body=report_body,
         harness_session_id=row.harness_session_id,
-        pi_lifecycle_phase=_latest_pi_lifecycle_phase(
-            project_root,
-            row.id,
-            runtime_root=runtime_root,
-        ),
+        pi_lifecycle_phase=_latest_pi_lifecycle_phase(launch),
         pi_cleanup_status=cleanup_telemetry.status,
         pi_cleanup_phase=cleanup_telemetry.phase,
         pi_cleanup_reason=cleanup_telemetry.reason,

@@ -16,6 +16,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.spawn_store import start_spawn
+from tests.support.launch_paths import launch_paths
 
 HELP = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
@@ -67,7 +68,7 @@ async def rpc_process(
         harness_id=HarnessId.PI,
         prompt=prompt,
         control_root=root,
-        runtime_root=runtime_root,
+        launch=launch_paths(runtime_root, spawn_id),
         pi_session_role="spawned",
         child_env={**os.environ, "MERIDIAN_PI_BINARY": str(shim)},
     )
@@ -260,16 +261,15 @@ async def test_live_budget_stops_on_sum_of_pi_message_costs(tmp_path: Path) -> N
             attempt = await asyncio.wait_for(
                 _run_streaming_attempt(
                     run=run,
-                    runtime_root=runtime_root,
+                    launch=launch_paths(runtime_root, spawn_id),
                     launch_mode="foreground",
-                    log_dir=runtime_root / "spawns" / str(spawn_id),
                     manager=manager,
                     config=ConnectionConfig(
                         spawn_id=spawn_id,
                         harness_id=HarnessId.PI,
                         prompt="FIRST",
                         control_root=tmp_path,
-                        runtime_root=runtime_root,
+                        launch=launch_paths(runtime_root, spawn_id),
                         child_env={},
                     ),
                     run_spec=ResolvedLaunchSpec(

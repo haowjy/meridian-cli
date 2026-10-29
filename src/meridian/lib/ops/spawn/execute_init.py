@@ -9,7 +9,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
-from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
@@ -369,15 +369,13 @@ def _params_payload(
 
 
 def _write_params_json(
-    project_paths: ProjectConfigPaths,
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     *,
     request_metadata: ParamsRequestMetadata,
     binding: ResolvedLaunchBinding | None = None,
 ) -> None:
     """Write resolved execution params to the spawn directory."""
-    params_path = LaunchPaths.for_row(runtime_root, spawn_id).params
+    params_path = launch.params
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = _params_payload(request_metadata, binding=binding)
     atomic_write_text(params_path, json.dumps(params_payload, indent=2) + "\n")

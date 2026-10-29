@@ -20,6 +20,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -163,7 +164,7 @@ def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(runtime_root, SpawnId("p2"), scope)
+    record_scope(launch_paths(runtime_root, SpawnId("p2")), scope)
     claim_active_spawn_scopes(runtime_root, SpawnId("p2"))
     spawn_store.finalize_spawn(
         runtime_root,

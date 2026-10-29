@@ -9,6 +9,7 @@ import psutil
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -83,7 +84,8 @@ def release_managed_primary_scopes(
     if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
         return
 
-    metadata = read_primary_metadata(runtime_root, str(spawn_id))
+    launch = LaunchPaths.for_row(runtime_root, record)
+    metadata = read_primary_metadata(launch)
     if metadata is not None:
         if metadata.managed_backend:
             terminate_managed_primary_processes(metadata, include_launcher=False)
@@ -99,7 +101,7 @@ def release_managed_primary_scopes(
     )
     from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 
-    if read_scopes_from_disk(runtime_root, spawn_id):
+    if read_scopes_from_disk(launch):
         # Phase-3 scope records: use sequenced managed-primary teardown.
         cancel_managed_primary(runtime_root, record, grace_seconds=5.0)
     else:

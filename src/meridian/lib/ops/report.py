@@ -39,7 +39,7 @@ def _resolve_spawn(
     project_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None = None,
-) -> tuple[str, str, Path]:
+) -> tuple[str, str, LaunchPaths]:
     resolved_ctx = runtime_context(ctx)
     resolved_spawn = _resolve_target_spawn_id(
         project_root,
@@ -52,14 +52,7 @@ def _resolve_spawn(
     row = read_derived(runtime_root, resolved_spawn)
     if row is None:
         raise ValueError(f"Spawn '{resolved_spawn}' not found")
-    return resolved_spawn, row.status, runtime_root
-
-
-def _report_path(project_root: Path, *, spawn_id: str) -> Path:
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        raise ValueError(f"Report for spawn '{spawn_id}' not found")
-    return LaunchPaths.for_row(runtime_root, spawn_id).report
+    return resolved_spawn, row.status, LaunchPaths.for_row(runtime_root, row)
 
 
 def _report_snippet(text: str, *, query: str) -> str:
@@ -139,12 +132,12 @@ def report_show_sync(
     )
     project_root = resolve_project_root_resolution(explicit_project_root).project_root
     resolved_ctx = runtime_context(ctx)
-    spawn_id, status, runtime_root = _resolve_spawn(
+    spawn_id, status, launch = _resolve_spawn(
         project_root=project_root,
         spawn_id=payload.spawn_id,
         ctx=resolved_ctx,
     )
-    report_path = LaunchPaths.for_row(runtime_root, spawn_id).report
+    report_path = launch.report
     if not report_path.is_file():
         raise ValueError(f"Report for spawn '{spawn_id}' not found")
     report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
@@ -156,7 +149,7 @@ def report_show_sync(
     )
     consume_result_if_shown(
         observe=payload.observe,
-        runtime_root=runtime_root,
+        runtime_root=launch.runtime_root,
         caller=resolved_ctx,
         spawn_id=spawn_id,
         status=status,
@@ -177,21 +170,27 @@ def report_search_sync(
     limit = payload.limit if payload.limit > 0 else 20
     query = payload.query.strip()
 
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    explicit_id: str | None = None
     if payload.spawn_id is not None and payload.spawn_id.strip():
-        spawn_ids = (resolve_spawn_target(project_root, payload.spawn_id.strip()),)
+        explicit_id = resolve_spawn_target(project_root, payload.spawn_id.strip())
     elif resolved_ctx.spawn_id is not None:
-        spawn_ids = (resolve_spawn_target(project_root, str(resolved_ctx.spawn_id)),)
+        explicit_id = resolve_spawn_target(project_root, str(resolved_ctx.spawn_id))
+
+    if runtime_root is None:
+        if explicit_id is not None:
+            raise ValueError(f"Report for spawn '{explicit_id}' not found")
+        return ReportSearchOutput(results=())
+    if explicit_id is None:
+        rows = tuple(reversed(indexed_spawn_scan(runtime_root).records))
     else:
-        runtime_root = resolve_runtime_root_for_read(project_root)
-        if runtime_root is None:
-            return ReportSearchOutput(results=())
-        spawn_ids = tuple(
-            row.id for row in reversed(indexed_spawn_scan(runtime_root).records)
-        )
+        explicit_row = read_derived(runtime_root, explicit_id)
+        rows = () if explicit_row is None else (explicit_row,)
 
     matches: list[ReportSearchResult] = []
-    for spawn_id in spawn_ids:
-        report_path = _report_path(project_root, spawn_id=spawn_id)
+    for row in rows:
+        spawn_id = row.id
+        report_path = LaunchPaths.for_row(runtime_root, row).report
         if not report_path.is_file():
             continue
         report = report_path.read_text(encoding="utf-8", errors="ignore")

@@ -15,7 +15,6 @@ from meridian.lib.core.native_identity import (
     NativeObservationBatch,
     Operation,
 )
-from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.control_socket import UNIX_SOCKET_PATH_MAX_BYTES
 
@@ -50,10 +49,10 @@ class _Record(BaseModel):
         )
 
 
-def claude_boundary_journal_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def claude_boundary_journal_path(launch: LaunchPaths) -> Path:
     """Return the launch-owned Claude SessionStart journal path."""
 
-    return LaunchPaths.for_row(runtime_root, spawn_id).claude_boundary.resolve()
+    return launch.claude_boundary.resolve()
 
 
 def _parse_record(line: bytes) -> _Record | None:

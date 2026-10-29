@@ -1539,7 +1539,7 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    launch_paths = LaunchPaths.for_row(runtime_root, bindings.spawn_id)
+    launch_paths = LaunchPaths.for_launch(runtime_root, SpawnId(bindings.spawn_id))
     report_artifact_path = launch_paths.report
     system_prompt_path = launch_paths.system_prompt
     logical_task_cwd = project_paths.execution_cwd.resolve()

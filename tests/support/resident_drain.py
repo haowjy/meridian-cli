@@ -35,6 +35,7 @@ from meridian.lib.streaming.drain_policy import (
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import NoopControlServer
 
 
@@ -193,8 +194,7 @@ async def awaiting_done_coordinator(
     resident_backend = connection.resident_backend
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=resident_backend,
@@ -204,7 +204,7 @@ async def awaiting_done_coordinator(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
@@ -312,8 +312,7 @@ async def coordinator_with_clock(
     poll_seconds: float = 5.0,
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -323,7 +322,7 @@ async def coordinator_with_clock(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(

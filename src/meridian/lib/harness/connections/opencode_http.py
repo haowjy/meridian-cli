@@ -83,10 +83,6 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import (
-    LaunchPaths,
-    resolve_project_runtime_root_for_write,
-)
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
@@ -1058,20 +1054,17 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = dict(config.child_env)
-        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
-            config.control_root
-        )
-        self._stderr_log_path = LaunchPaths.for_row(runtime_root, config.spawn_id).stderr_log
+        launch = config.resolve_launch()
+        self._stderr_log_path = launch.stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
         handle = await launch_managed_backend(
             ManagedBackendConfig(
-                spawn_id=config.spawn_id,
+                launch=launch,
                 harness_id=self.harness_id,
                 command=tuple(command),
                 cwd=config.control_root,
                 env=env,
-                control_root=config.control_root,
                 grace_seconds=self._STOP_GRACE_SECONDS,
             ),
             stderr=self._stderr_handle,

@@ -25,7 +25,7 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy, HistorySnapshot
-from meridian.lib.state.paths import resolve_spawn_dir
+from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
@@ -189,7 +189,7 @@ def _protected(
     for record in records.values():
         if record.record_mode == "historical":
             continue
-        scopes = read_scope_projection(root, SpawnId(record.id))
+        scopes = read_scope_projection(LaunchPaths.for_row(root, record))
         if (
             record.status not in TERMINAL_SPAWN_STATUSES
             or record.chat_id in active_chats
@@ -633,8 +633,7 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
     )
     from meridian.lib.state.paths import NATIVE_SNAPSHOT_FILENAME
 
-    spawn_dir = resolve_spawn_dir(root, candidate.id)
-    transcript = canonical_transcript_path(spawn_dir)
+    transcript = canonical_transcript_path(LaunchPaths.for_row(root, candidate))
     if transcript is not None and transcript.name == NATIVE_SNAPSHOT_FILENAME:
         state = published_snapshot_state(transcript, history_id=candidate.history_id)
         if state == "complete":
@@ -690,7 +689,7 @@ def _native_session_owners(
                 native_ids.add(session.harness_session_id.strip())
         if harness not in harnesses or session_id not in native_ids:
             continue
-        scopes = read_scope_projection(root, SpawnId(row.id))
+        scopes = read_scope_projection(LaunchPaths.for_row(root, row))
         if row.status not in TERMINAL_SPAWN_STATUSES:
             live_owner = live_owner or spawn_owner(row.id)
             continue
@@ -751,7 +750,6 @@ def materialize_native_history(
         complete_published_snapshot,
         write_snapshot,
     )
-    from meridian.lib.state.paths import NATIVE_SNAPSHOT_FILENAME, LaunchPaths
     from meridian.lib.state.spawn_aggregate import (
         PublishedArtifactUnavailable,
         published_artifact_lock,
@@ -761,15 +759,14 @@ def materialize_native_history(
         state = read_state(root / "spawns", spawn_id, include_prompt=False)
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
-        snapshot = LaunchPaths.for_row(root, spawn_id).native_transcript
+        snapshot = LaunchPaths.for_row(root, state).native_transcript
         if snapshot.is_file():
             validation = complete_published_snapshot(snapshot, history_id=state.history_id)
             if validation.state != "complete" or validation.header is None:
                 raise ValueError("Published native snapshot is corrupt")
             return validation.header.harness, validation.header.native_session_id
         # Remove stale staging temps left by a previous interrupted capture.
-        spawn_dir = resolve_spawn_dir(root, spawn_id)
-        for stale in iter_atomic_temp_paths(spawn_dir, NATIVE_SNAPSHOT_FILENAME):
+        for stale in iter_atomic_temp_paths(snapshot.parent, snapshot.name):
             stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
         target = resolve_capture_source(

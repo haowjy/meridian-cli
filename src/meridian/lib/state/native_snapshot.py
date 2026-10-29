@@ -432,9 +432,9 @@ def read_snapshot(
         raise
 
 
-def canonical_transcript_path(spawn_dir: Path) -> Path | None:
+def canonical_transcript_path(launch: LaunchPaths) -> Path | None:
     """Return a sealed native snapshot if one exists for this spawn."""
-    snapshot = LaunchPaths(spawn_dir).native_transcript
+    snapshot = launch.native_transcript
     return snapshot if snapshot.is_file() else None
 
 

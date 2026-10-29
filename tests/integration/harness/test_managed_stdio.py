@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 from tests.support.async_determinism import wait_until
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -58,7 +59,7 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
                     prompt="test",
                     control_root=tmp_path,
                     child_env={},
-                    runtime_root=runtime_root,
+                    launch=launch_paths(runtime_root, spawn_id),
                 ),
                 harness_id=HarnessId.PI,
                 command=(sys.executable, "-c", "import time; time.sleep(60)"),
@@ -111,7 +112,7 @@ async def test_managed_stdio_cleans_surviving_group_after_leader_exit(tmp_path: 
             harness_id=HarnessId.PI,
             prompt="test",
             control_root=tmp_path,
-            runtime_root=runtime_root,
+            launch=launch_paths(runtime_root, spawn_id),
             child_env={},
         ),
         harness_id=HarnessId.PI,

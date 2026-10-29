@@ -17,13 +17,14 @@ from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _execute_with_context,
     _FakeControlSocketServer,
 )
 from tests.integration.launch.test_streaming_runner_seed import _ClaudeSeedPersistenceConnection
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -152,7 +153,7 @@ async def test_streaming_initial_identity(
         assert row.terminal is not None
         assert row.terminal.error == "entry_mismatch"
         assert starts == []
-        lifecycle = LaunchPaths.for_row(runtime_root, run.spawn_id).dir
+        lifecycle = launch_paths(runtime_root, run.spawn_id).dir
         facts = [
             json.loads(line)
             for line in (lifecycle / "runner-lifecycle.jsonl").read_text().splitlines()

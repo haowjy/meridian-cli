@@ -487,7 +487,7 @@ def retained_chat_facts(
             continue
         local.add(spawn_id)
         fact.add_spawn(spawn)
-        launch = LaunchPaths(spawns_dir / spawn_id)
+        launch = LaunchPaths.for_row(runtime_root, spawn)
         fact.add_texts(
             read_prompt(spawns_dir, spawn_id),
             _read_text(launch.report),

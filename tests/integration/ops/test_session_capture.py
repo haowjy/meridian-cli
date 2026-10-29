@@ -25,6 +25,7 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
+from tests.support.launch_paths import launch_paths
 
 
 def _snapshot_path(root: Path, key: str) -> Path:
@@ -208,10 +209,9 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
 def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     write_primary_metadata(
-        root / "spawns" / key,
+        launch_paths(root, key),
         PrimaryMetadata(managed_backend=True, harness_session_id="other-native"),
-        runtime_root=root,
-        spawn_id=key,
+        guarded=True,
     )
     target = resolve_capture_source(project_root=project, runtime_root=root, spawn_id=key)
     assert target.source.session_id == "exact-native"
@@ -501,13 +501,13 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(root, SpawnId(owner), scope)
+    record_scope(launch_paths(root, SpawnId(owner)), scope)
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     with pytest.raises(NativeCaptureDeferred, match="active owner"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
     assert not tuple((root / "spawns" / key).glob(".native-transcript.jsonl.*.tmp"))
-    mark_scope_released(root, SpawnId(owner), scope.release_id)
+    mark_scope_released(launch_paths(root, SpawnId(owner)), scope.release_id)
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
 
@@ -566,10 +566,9 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
     )
     if binding == "sidecar":
         write_primary_metadata(
-            root / "spawns" / owner,
+            launch_paths(root, owner),
             PrimaryMetadata(managed_backend=True, harness_session_id="exact-native"),
-            runtime_root=root,
-            spawn_id=owner,
+            guarded=True,
         )
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     try:

@@ -14,6 +14,7 @@ from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.state.spawn_store import read_launch_paths
 
 
 async def finalize_launch_failure(
@@ -27,7 +28,7 @@ async def finalize_launch_failure(
         record_identity_failure(
             error,
             phase="launch_failure",
-            lifecycle=LifecycleLog.for_spawn(runtime_root, spawn_id),
+            lifecycle=LifecycleLog.for_launch(read_launch_paths(runtime_root, spawn_id)),
         )
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     return await service.complete_spawn(

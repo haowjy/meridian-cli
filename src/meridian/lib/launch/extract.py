@@ -13,7 +13,7 @@ from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
     classify_durable_report_text,
 )
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
@@ -54,14 +54,14 @@ class FinalizeExtraction(BaseModel):
 
 def _persist_report(
     *,
-    log_dir: Path,
+    launch: LaunchPaths,
     extracted: ExtractedReport,
     text_capped: bool,
 ) -> Path | None:
     if extracted.content is None:
         return None
 
-    target = LaunchPaths(log_dir).report
+    target = launch.report
     if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
         heading = (
             "# Spawn failed" if extracted.source in {"failure_reason", "pi_failure"} else "# Report"
@@ -99,8 +99,7 @@ def enrich_finalize(
     extractor: SpawnExtractor,
     facts: AttemptFacts,
     native_key: NativeKey | None = None,
-    spawn_id: SpawnId,
-    log_dir: Path,
+    launch: LaunchPaths,
     model_id: str | None = None,
     harness_id: HarnessId | str | None = None,
     project_root: Path | None = None,
@@ -109,7 +108,7 @@ def enrich_finalize(
     """Spawn all extraction steps and return one enriched finalization payload."""
 
     if facts.incomplete:
-        structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(spawn_id))
+        structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(launch.spawn_id))
     usage = (
         estimate_usage_cost(
             model_id=(model_id or "").strip() or None,
@@ -122,11 +121,11 @@ def enrich_finalize(
     )
     harness_session_id = facts.first_session_id
     if facts.permission_denials:
-        journal = PermissionJournal(log_dir)
+        journal = PermissionJournal(launch)
         for denial in facts.permission_denials:
             journal.record_denial(denial)
     report = extract_or_fallback_report(
-        log_dir,
+        launch,
         facts=facts,
         load_native_text=partial(extractor.read_native_turn, native_key, facts.native_turn_ids)
         if native_key is not None
@@ -134,7 +133,7 @@ def enrich_finalize(
         failure_reason=failure_reason,
     )
     report_path = _persist_report(
-        log_dir=log_dir,
+        launch=launch,
         extracted=report,
         text_capped=facts.report_text_capped,
     )

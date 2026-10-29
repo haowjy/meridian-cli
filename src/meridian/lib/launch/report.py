@@ -1,7 +1,6 @@
 """Report precedence over attempt-local facts and exact native replies."""
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -25,13 +24,13 @@ def _is_terminal_control_frame(text: str) -> bool:
 
 
 def extract_or_fallback_report(
-    spawn_dir: Path,
+    launch: LaunchPaths,
     *,
     facts: AttemptFacts,
     load_native_text: Callable[[], str | None] | None = None,
     failure_reason: str | None = None,
 ) -> ExtractedReport:
-    report_path = LaunchPaths(spawn_dir).report
+    report_path = launch.report
     try:
         report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
     except OSError:

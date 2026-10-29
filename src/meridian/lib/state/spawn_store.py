@@ -34,7 +34,12 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import LaunchPaths, RuntimePaths, normalize_path_for_write
+from meridian.lib.state.paths import (
+    LaunchPaths,
+    RuntimePaths,
+    normalize_path_for_write,
+    staged_starting_prompt,
+)
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
 )
@@ -343,7 +348,7 @@ def start_spawn(
         staging_dir = ensure_spawn_staging_dir(paths)
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
-        atomic_write_text(LaunchPaths(stage_dir).starting_prompt, prompt)
+        atomic_write_text(staged_starting_prompt(stage_dir), prompt)
         stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
@@ -739,6 +744,19 @@ def list_spawns(
         spawns = [spawn for spawn in spawns if spawn.work_id == work_id]
 
     return SpawnScan.ordered(spawns, quarantines)
+
+
+def read_launch_paths(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchPaths:
+    """Read the published row once and return its launch's paths.
+
+    For a launch owner that has just published (or adopted) a spawn and holds only the ID;
+    read surfaces use the row they already hold.
+    """
+
+    row = get_spawn(runtime_root, spawn_id)
+    if row is None:
+        raise ValueError(f"spawn row not found: {spawn_id}")
+    return LaunchPaths.for_row(runtime_root, row)
 
 
 def get_spawn(

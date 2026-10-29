@@ -14,10 +14,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.state.paths import (
-    LaunchPaths,
-    resolve_project_runtime_root_for_write,
-)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
@@ -56,11 +52,8 @@ async def dispatch_start(
         await connection_ref["connection"].inject_runtime_event(event)
 
     if config.harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
-        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
-            config.control_root
-        )
         request_handler = PermissionBroker(
-            spawn_dir=LaunchPaths.for_row(runtime_root, config.spawn_id).dir,
+            launch=config.resolve_launch(),
             event_sink=_runtime_event_sink,
             auto_reject_runtime_requests=True,
             harness_id=config.harness_id.value,

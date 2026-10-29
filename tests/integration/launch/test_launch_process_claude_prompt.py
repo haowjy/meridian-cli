@@ -405,8 +405,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
 
     def fail_managed(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -417,8 +416,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
-            spawn_id,
-            spawn_dir,
+            launch,
             control_root,
             task_cwd,
             env,

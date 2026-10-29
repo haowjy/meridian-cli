@@ -21,10 +21,6 @@ from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.launch_gate import LaunchGate
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import (
-    LaunchPaths,
-    resolve_project_runtime_root_for_write,
-)
 
 STDIO_STDERR_TAIL_MAX_BYTES: Final[int] = 16 * 1024
 
@@ -178,10 +174,7 @@ async def launch_managed_stdio(
 ) -> ManagedStdioProcess:
     """Launch and register a spawn-lifetime stdio child process."""
 
-    runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
-        config.control_root
-    )
-    stderr_log_path = LaunchPaths.for_row(runtime_root, config.spawn_id).stderr_log
+    stderr_log_path = config.resolve_launch().stderr_log
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
     gate = LaunchGate(grace_seconds=kill_grace_seconds)
@@ -211,15 +204,13 @@ async def launch_managed_stdio(
             process.pid, kill_and_reap=lambda: kill_and_reap_unowned_process(process)
         )
         scope_handle = await register_spawn_owned_process(
-            spawn_id=config.spawn_id,
-            control_root=config.control_root,
+            launch=config.resolve_launch(),
             process=process,
             scope_id="stdio",
             role="harness_stdio",
             identity=identity,
             gate=gate,
-            runtime_root=config.runtime_root,
-            persist=config.runtime_root is not None,
+            persist=config.launch is not None,
         )
         gate.open()
     except BaseException:

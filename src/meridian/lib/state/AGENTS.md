@@ -40,11 +40,19 @@ against a recreated inode (split-brain).
 - **Per-launch files**: reach `report.md`, `stderr.log`, `output.jsonl`, `params.json`,
   prompts, `primary_meta.json`, `process_scopes.json`, signals, `control_actions.jsonl`,
   debug and runner logs, and the harness boundary files only through `LaunchPaths`
-  (`paths.py`; build with `for_row`, construct directly only from a launch directory you
-  were handed). Spawn-level files (`state.json`, `launch.lock`, `scope.json`,
-  `observed-spawns.json`, `reaper_cleanup_claim.json`, the control socket) stay joined to
-  the spawn directory. `meridian.dev.check_launch_paths` (fast gate) rejects a per-launch
-  file name written as a literal anywhere else.
+  (`paths.py`). It is the launch's identity (`runtime_root`, `spawn_id`, `n`) plus its
+  files, and only `paths.py` constructs it (`for_row(runtime_root, row)` for an existing
+  launch, `for_launch` for the owner about to publish one). The launch-lock holder builds
+  it once and hands it down (launch context, `ConnectionConfig.launch`,
+  `PreparedSpawn.launch`); read surfaces build it from the row they hold; an external
+  ID-only command reads the row once (`spawn_store.read_launch_paths`). Functions take a
+  `LaunchPaths`, never a `log_dir`/`spawn_dir` path, and never recover the runtime root or
+  spawn ID by slicing a directory path. Spawn-level files (`state.json`, `launch.lock`,
+  `scope.json`, `observed-spawns.json`, `reaper_cleanup_claim.json`, the ambient `work/`
+  directory, the control socket) stay joined to `resolve_spawn_dir`: nothing a user sees
+  resets on a continue. `meridian.dev.check_launch_paths` (fast gate) rejects a per-launch
+  file name written as a literal (or a literal ending in one) and any `LaunchPaths(...)`
+  call outside `paths.py`.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

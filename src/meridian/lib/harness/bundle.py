@@ -8,7 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
 
-from meridian.lib.core.types import HarnessId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.extractors.base import HarnessExtractor
@@ -27,6 +27,7 @@ from meridian.lib.safety.policy import (
     EnforcementReport,
     PermissionPolicy,
 )
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -99,7 +100,7 @@ class HarnessProjectionPorts(Generic[SpecT]):
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
-EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
+EventSinks = Callable[[LaunchPaths], tuple[Callable[[RawHarnessEvent], None], ...]]
 PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
 
 
@@ -119,9 +120,7 @@ class PrimaryInbox(Protocol):
     ) -> str: ...
 
 
-def _no_event_sinks(
-    runtime_root: Path, spawn_id: SpawnId
-) -> tuple[Callable[[RawHarnessEvent], None], ...]:
+def _no_event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], None], ...]:
     return ()
 
 

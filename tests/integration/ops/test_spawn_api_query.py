@@ -27,10 +27,11 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import Applied
+from tests.support.launch_paths import launch_paths
 
 
 def _state_root(project_root: Path) -> Path:
@@ -86,7 +87,7 @@ def _write_primary_meta(
     backend_pid: int | None = None,
     tui_pid: int | None = None,
 ) -> None:
-    meta_path = LaunchPaths.for_row(runtime_root, spawn_id).primary_meta
+    meta_path = launch_paths(runtime_root, spawn_id).primary_meta
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(
         json.dumps(

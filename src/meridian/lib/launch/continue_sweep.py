@@ -14,8 +14,10 @@ from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire, shared_try
 from meridian.lib.state.liveness import is_process_dead_with_birth
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
 from meridian.lib.state.session_store import chat_record
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, spawn_lock_path
 from meridian.lib.state.spawn_status import is_live, legacy_runner_alive
 
@@ -62,20 +64,18 @@ def _group_gone(pgid: int) -> bool:
     return False
 
 
-def _owner_ids(runtime_root: Path, spawn_id: str, chat_id: str | None) -> tuple[str, ...]:
+def _owners(runtime_root: Path, spawn_id: str, chat_id: str | None) -> tuple[SpawnRecord, ...]:
     source = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
     chat = chat_record(runtime_root, chat_id) if chat_id else None
     current_id = chat.spawn_id.strip() if chat and chat.spawn_id else ""
-    owner_ids: list[str] = []
-    if (
-        current_id
-        and current_id != spawn_id
-        and read_state(runtime_root / "spawns", current_id, include_prompt=False) is not None
-    ):
-        owner_ids.append(current_id)
+    owners: list[SpawnRecord] = []
+    if current_id and current_id != spawn_id:
+        current = read_state(runtime_root / "spawns", current_id, include_prompt=False)
+        if current is not None:
+            owners.append(current)
     if source is not None:
-        owner_ids.append(spawn_id)
-    return tuple(owner_ids)
+        owners.append(source)
+    return tuple(owners)
 
 
 def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
@@ -129,9 +129,10 @@ def sweep_before_continue(
     dry_run: bool = False,
 ) -> None:
     """Refuse a live chat owner; release only safely swept scopes, never status."""
-    owner_ids = _owner_ids(runtime_root, spawn_id, chat_id)
+    owners = _owners(runtime_root, spawn_id, chat_id)
     if dry_run:
-        for owner_id in owner_ids:
+        for owner in owners:
+            owner_id = owner.id
             lock_free = shared_try(runtime_root / "spawns" / owner_id / "launch.lock")
             if lock_free is False:
                 raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id)
@@ -139,22 +140,22 @@ def sweep_before_continue(
                 raise _legacy_live_error(owner_id)
         return
     with ExitStack() as stack:
-        handles: list[LaunchHandle] = []
-        for owner_id in owner_ids:
+        held: list[tuple[SpawnRecord, LaunchHandle]] = []
+        for owner in owners:
             try:
-                handles.append(stack.enter_context(_acquire_source(runtime_root, owner_id)))
+                held.append((owner, stack.enter_context(_acquire_source(runtime_root, owner.id))))
             except NotFound:
                 continue
             except Busy as exc:
-                raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id) from exc
-        for handle in handles:
-            sweep_scopes(runtime_root, handle)
+                raise _busy_owner_error(runtime_root, spawn_id, owner.id, chat_id) from exc
+        for owner, handle in held:
+            sweep_scopes(LaunchPaths.for_row(runtime_root, owner), handle)
 
 
-def sweep_scopes(runtime_root: Path, handle: LaunchHandle) -> None:
+def sweep_scopes(launch: LaunchPaths, handle: LaunchHandle) -> None:
     """Containment requires an exclusive launch capability, not guessed liveness."""
     spawn_id = handle.spawn_id
-    projection = read_scope_projection(runtime_root, spawn_id)
+    projection = read_scope_projection(launch)
     for scope in projection.scopes:
         if scope.release_id in projection.released_ids:
             continue
@@ -178,4 +179,4 @@ def sweep_scopes(runtime_root: Path, handle: LaunchHandle) -> None:
                     f"Cannot safely sweep PID {scope.root_pid}: {result.skip_reason}; "
                     f"use --fork {spawn_id}"
                 )
-        mark_scope_released(runtime_root, spawn_id, scope.release_id)
+        mark_scope_released(launch, scope.release_id)

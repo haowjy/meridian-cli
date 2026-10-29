@@ -16,6 +16,7 @@ from meridian.lib.ops.session_archive import (
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
+from tests.support.launch_paths import launch_paths
 
 OLD = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 RUNNER_FILES = (
@@ -292,11 +293,11 @@ def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(root, SpawnId(key), scope)
+    record_scope(launch_paths(root, SpawnId(key)), scope)
     spawn_store.finalize_spawn(root, key, "succeeded", 0, origin="runner", finished_at=OLD)
     assert prune(project, apply=True).skipped == {"live_scope": (key,)}
     assert (root / "spawns" / key / "history.jsonl").is_file()
-    mark_scope_released(root, SpawnId(key), scope.release_id)
+    mark_scope_released(launch_paths(root, SpawnId(key)), scope.release_id)
     assert [row.spawn_id for row in prune(project).pruned] == [key]
 
 

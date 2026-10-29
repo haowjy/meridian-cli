@@ -27,7 +27,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import managed_backend, managed_stdio
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.state.spawn_store import start_spawn
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LaunchPaths, resolve_project_runtime_root_for_write
 
 root = Path(sys.argv[1])
 mode = sys.argv[2]
@@ -74,7 +74,7 @@ async def run():
                 prompt="",
                 control_root=root,
                 child_env={},
-                runtime_root=runtime,
+                launch=LaunchPaths(runtime, spawn, None),
             ),
             harness_id=HarnessId.PI,
             command=command,
@@ -93,7 +93,8 @@ async def run():
         managed_backend.register_spawn_owned_process = register
         handle = await managed_backend.launch_managed_backend(
             managed_backend.ManagedBackendConfig(
-                spawn, HarnessId.CODEX, backend_command, root, os.environ.copy(), root, 0.1
+                LaunchPaths(runtime, spawn, None), HarnessId.CODEX, backend_command, root,
+                os.environ.copy(), 0.1,
             ),
             stderr=asyncio.subprocess.DEVNULL,
         )

@@ -36,6 +36,7 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.integration.launch.test_launch_process_opencode import _build_primary_launch_context
 from tests.integration.launch.test_primary_attach import FakeProcessLauncher
 from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 _SERVER_PASSWORD = "s3cret-v2-password"
 _V2_SESSION_ID = "ses_v2_e2e"
@@ -186,8 +187,8 @@ def test_project_config_v2_drives_managed_primary_attach(
 
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     spawn_id = SpawnId("p-v2-managed-primary")
-    spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    launch = launch_paths(runtime_root, spawn_id)
+    process_launcher = FakeProcessLauncher(spawn_dir=launch.dir)
 
     captured_endpoints: list[Any] = []
 
@@ -199,8 +200,7 @@ def test_project_config_v2_drives_managed_primary_attach(
 
     outcome = runner_module.run_primary_attach(
         harness_id=HarnessId.OPENCODE,
-        spawn_id=spawn_id,
-        spawn_dir=spawn_dir,
+        launch=launch,
         control_root=tmp_path,
         task_cwd=None,
         env=child_env,

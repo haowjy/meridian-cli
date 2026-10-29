@@ -59,27 +59,24 @@ def _resolve_background_execution_cwd(
     return project_root.as_posix()
 
 
-def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
+def _cleanup_background_runtime_artifacts(launch: LaunchPaths) -> None:
     """Remove non-durable launcher artifacts after terminal completion."""
-    launch = LaunchPaths(log_dir)
     for target in (launch.background_stdout, launch.background_stderr, launch.bg_worker_request):
         with suppress(FileNotFoundError):
             target.unlink()
 
 
-def _persist_bg_worker_request(log_dir: Path, payload: BackgroundWorkerLaunchRequest) -> None:
-    """Write background worker launch request to the spawn log directory."""
+def _persist_bg_worker_request(launch: LaunchPaths, payload: BackgroundWorkerLaunchRequest) -> None:
+    """Write background worker launch request to the launch's files."""
 
-    params_path = LaunchPaths(log_dir).bg_worker_request
-    atomic_write_text(params_path, payload.model_dump_json(indent=2) + "\n")
+    atomic_write_text(launch.bg_worker_request, payload.model_dump_json(indent=2) + "\n")
 
 
-def _load_bg_worker_request(log_dir: Path) -> BackgroundWorkerLaunchRequest:
-    """Load background worker launch request from the spawn log directory."""
+def _load_bg_worker_request(launch: LaunchPaths) -> BackgroundWorkerLaunchRequest:
+    """Load background worker launch request from the launch's files."""
 
-    params_path = LaunchPaths(log_dir).bg_worker_request
     return BackgroundWorkerLaunchRequest.model_validate_json(
-        params_path.read_text(encoding="utf-8")
+        launch.bg_worker_request.read_text(encoding="utf-8")
     )
 
 
@@ -202,7 +199,7 @@ def _background_worker_main(
     with launch_lock:
         prepared = prepare_for_runtime_write(project_root)
         project_paths = resolve_project_config_paths(project_root=prepared.project_root)
-        log_dir: Path | None = None
+        launch: LaunchPaths | None = None
         try:
             install(
                 TelemetryPlan(
@@ -212,10 +209,10 @@ def _background_worker_main(
                 )
             )
             register_spawn_telemetry_observer()
-            log_dir = LaunchPaths.for_row(runtime_root, spawn_id).dir
+            launch = spawn_store.read_launch_paths(runtime_root, spawn_id)
 
             try:
-                launch_request = _load_bg_worker_request(log_dir)
+                launch_request = _load_bg_worker_request(launch)
             except Exception as exc:
                 error = f"Failed to load background worker request: {exc}"
                 finalize_launch_failure_sync(
@@ -227,7 +224,7 @@ def _background_worker_main(
                 logger.error(
                     "Failed to load background worker request.",
                     spawn_id=str(spawn_id),
-                    log_dir=log_dir.as_posix(),
+                    log_dir=launch.dir.as_posix(),
                     exc_info=True,
                 )
                 return 1
@@ -252,8 +249,8 @@ def _background_worker_main(
             logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
             return 1
         finally:
-            if log_dir is not None:
-                _cleanup_background_runtime_artifacts(log_dir)
+            if launch is not None:
+                _cleanup_background_runtime_artifacts(launch)
 
 
 if __name__ == "__main__":

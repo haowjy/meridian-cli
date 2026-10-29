@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessConnection,
@@ -25,6 +25,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.paths import LaunchPaths
 
 from .base import PassthroughError, TuiCommandBuilder
 
@@ -76,14 +77,15 @@ class OpenCodePassthrough:
     def build_config(
         self,
         *,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         spec: ResolvedLaunchSpec,
         control_root: Path,
         task_cwd: Path | None,
         env: dict[str, str],
     ) -> ConnectionConfig:
         return ConnectionConfig(
-            spawn_id=spawn_id,
+            spawn_id=launch.spawn_id,
+            launch=launch,
             harness_id=HarnessId.OPENCODE,
             prompt=spec.prompt,
             control_root=control_root,

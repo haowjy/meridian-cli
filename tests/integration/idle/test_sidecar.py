@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.codex_idle import pane_busy
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
@@ -23,6 +23,7 @@ from meridian.lib.notify import RouteReport, RouteResult
 from meridian.lib.state.idle_store import IdleStore
 from meridian.plugin_api.types import HookEventName, Notification
 from tests.support.async_determinism import wait_until
+from tests.support.launch_paths import launch_paths
 
 
 class Clock:
@@ -132,8 +133,7 @@ def context(
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         tmux_pane=None,
         tui_alive=lambda: alive[0],
-        spawn_dir=tmp_path / "p1",
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, "p1"),
     )
 
 
@@ -384,7 +384,7 @@ async def test_sidecar_continues_after_one_event_handler_failure(tmp_path: Path)
     state = store.read("codex", "session-1")
     assert state is not None
     assert state.last_turn_id is None
-    assert "transient store failure" in (tmp_path / "p1" / "debug.jsonl").read_text(
+    assert "transient store failure" in (launch_paths(tmp_path, "p1").debug).read_text(
         encoding="utf-8"
     )
 
@@ -421,7 +421,7 @@ async def test_sidecar_drops_events_for_another_session_and_records_once(tmp_pat
     await task
 
     assert store.read("codex", "other-session") is None
-    debug = (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8")
+    debug = (launch_paths(tmp_path, "p1").debug).read_text(encoding="utf-8")
     assert debug.count("idle.session_mismatch") == 1
 
 
@@ -442,7 +442,7 @@ async def test_sidecar_contains_base_exception_from_sensor(tmp_path: Path) -> No
         )
     )
 
-    debug_path = tmp_path / "p1" / "debug.jsonl"
+    debug_path = launch_paths(tmp_path, "p1").debug
     await wait_until(debug_path.exists, description="sensor error record")
     alive[0] = False
     await task

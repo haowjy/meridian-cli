@@ -36,10 +36,11 @@ from meridian.lib.safety.policy import (
     parse_network_policy,
 )
 from meridian.lib.state import spawn_store, work_repository, work_store
-from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 
 def _set_caller_guardrail(
@@ -152,7 +153,7 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
     ] == [allowed.spawn_id]
     assert list((spawns_dir / ".staging").iterdir()) == []
 
-    allowed_log_dir = LaunchPaths.for_row(prepared.runtime_root, allowed.spawn_id).dir
+    allowed_log_dir = launch_paths(prepared.runtime_root, allowed.spawn_id).dir
     params = json.loads((allowed_log_dir / "params.json").read_text(encoding="utf-8"))
     assert params["phase"] == "request"
     assert params["model"] == "gemini-2.5-pro"

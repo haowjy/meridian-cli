@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast, get_args
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -28,21 +27,14 @@ class ResidentSignals:
     rearm: bool = False
 
 
-def spawn_signal_path(runtime_root: Path, spawn_id: SpawnId | str, kind: SpawnSignalKind) -> Path:
+def spawn_signal_path(launch: LaunchPaths, kind: SpawnSignalKind) -> Path:
     """Return the authoritative path for a resident spawn signal file."""
 
-    return LaunchPaths.for_row(runtime_root, spawn_id).signal(kind)
-
-
-def _accepted_signals_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the file where a runner declares which signals its drain plan reads."""
-
-    return LaunchPaths.for_row(runtime_root, spawn_id).accepted_signals
+    return launch.done_signal if kind == "done" else launch.rearm_signal
 
 
 def write_accepted_signals(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
+    launch: LaunchPaths,
     kinds: Iterable[SpawnSignalKind],
 ) -> None:
     """Declare the signals this spawn's drain plan consumes.
@@ -53,16 +45,13 @@ def write_accepted_signals(
 
     payload = json.dumps(sorted(kinds))
     mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
-        lambda: atomic_write_text(_accepted_signals_path(runtime_root, spawn_id), payload),
+        launch.runtime_root,
+        launch.spawn_id,
+        lambda: atomic_write_text(launch.accepted_signals, payload),
     )
 
 
-def read_accepted_signals(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-) -> frozenset[SpawnSignalKind] | None:
+def read_accepted_signals(launch: LaunchPaths) -> frozenset[SpawnSignalKind] | None:
     """Return the declared signals, or ``None`` when the runner hasn't declared any.
 
     ``None`` covers a plan not chosen yet, a runner that predates the file, and an
@@ -70,9 +59,7 @@ def read_accepted_signals(
     """
 
     try:
-        raw: object = json.loads(
-            _accepted_signals_path(runtime_root, spawn_id).read_text(encoding="utf-8")
-        )
+        raw: object = json.loads(launch.accepted_signals.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(raw, list):
@@ -84,8 +71,7 @@ def read_accepted_signals(
 
 
 def write_spawn_signal(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
+    launch: LaunchPaths,
     kind: SpawnSignalKind,
     *,
     can_write: Callable[[SpawnRecord], bool] | None = None,
@@ -97,24 +83,20 @@ def write_spawn_signal(
 
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
+        launch.runtime_root,
+        launch.spawn_id,
         lambda: atomic_write_text(
-            spawn_signal_path(runtime_root, spawn_id, kind),
+            spawn_signal_path(launch, kind),
             f"{timestamp}\n",
         ),
         can_mutate=can_write,
     )
 
 
-def consume_spawn_signal(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    kind: SpawnSignalKind,
-) -> bool:
+def consume_spawn_signal(launch: LaunchPaths, kind: SpawnSignalKind) -> bool:
     """Delete a signal file if present, tolerating races and crash leftovers."""
 
-    path = spawn_signal_path(runtime_root, spawn_id, kind)
+    path = spawn_signal_path(launch, kind)
     if not path.exists():
         return False
     with suppress(FileNotFoundError):
@@ -123,10 +105,10 @@ def consume_spawn_signal(
     return False
 
 
-def consume_resident_signals(runtime_root: Path, spawn_id: SpawnId | str) -> ResidentSignals:
+def consume_resident_signals(launch: LaunchPaths) -> ResidentSignals:
     """Consume resident done/rearm signal files in a single coordination call."""
 
     return ResidentSignals(
-        done=consume_spawn_signal(runtime_root, spawn_id, "done"),
-        rearm=consume_spawn_signal(runtime_root, spawn_id, "rearm"),
+        done=consume_spawn_signal(launch, "done"),
+        rearm=consume_spawn_signal(launch, "rearm"),
     )

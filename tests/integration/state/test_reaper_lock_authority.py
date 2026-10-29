@@ -28,6 +28,7 @@ from meridian.lib.state.reaper_cleanup_claim import (
     claim_active_spawn_scopes,
     cleanup_claim_path,
 )
+from tests.support.launch_paths import launch_paths
 
 
 def _active_spawn(
@@ -149,9 +150,8 @@ def test_reaper_cleans_managed_primary_fallback_processes(tmp_path: Path) -> Non
     backend, backend_birth = _sleep_process()
     tui, tui_birth = _sleep_process()
     try:
-        spawn_dir = runtime_root / "spawns" / spawn_id
         write_primary_metadata(
-            spawn_dir,
+            launch_paths(runtime_root, spawn_id),
             PrimaryMetadata(
                 managed_backend=True,
                 backend_pid=backend.pid,
@@ -205,7 +205,7 @@ def test_terminal_lockless_cleanup_claim_is_swept(tmp_path: Path) -> None:
             job_name=None,
             degraded_reason=None,
         )
-        record_scope(runtime_root, SpawnId("p1"), scope)
+        record_scope(launch_paths(runtime_root, SpawnId("p1")), scope)
         claim_active_spawn_scopes(runtime_root, SpawnId("p1"))
         spawn_store.finalize_spawn(
             runtime_root,

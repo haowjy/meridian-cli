@@ -11,6 +11,7 @@ from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
 from meridian.lib.state.idle_store import IdleState
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
+from tests.support.launch_paths import launch_paths
 
 
 def _project_roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -220,7 +221,7 @@ def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> 
         prompt="primary",
     )
     primary_meta.write_primary_metadata(
-        runtime_root / "spawns" / "p42",
+        launch_paths(runtime_root, "p42"),
         primary_meta.PrimaryMetadata(
             managed_backend=True,
             harness_session_id=harness_session_id,

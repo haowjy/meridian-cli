@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.platform import IS_WINDOWS, pty
-from meridian.lib.state.paths import LaunchPaths
+from tests.support.launch_paths import launch_paths
 
 
 def _run_script_in_pty(script_path: Path, *args: Path) -> str:
@@ -56,7 +56,8 @@ def _run_script_in_pty(script_path: Path, *args: Path) -> str:
 def test_primary_tui_window_captures_launcher_threads_and_children(
     tmp_path: Path,
 ) -> None:
-    diagnostics_path = LaunchPaths(tmp_path).launcher_log
+    diagnostics_path = launch_paths(tmp_path, "p1").launcher_log
+    diagnostics_path.parent.mkdir(parents=True)
     script_path = tmp_path / "exercise_window.py"
     script_path.write_text(
         textwrap.dedent(
@@ -138,7 +139,8 @@ def test_primary_tui_window_captures_launcher_threads_and_children(
 def test_tui_window_reports_new_diagnostics_when_exception_escapes(
     tmp_path: Path,
 ) -> None:
-    diagnostics_path = LaunchPaths(tmp_path).launcher_log
+    diagnostics_path = launch_paths(tmp_path, "p1").launcher_log
+    diagnostics_path.parent.mkdir(parents=True)
     script_path = tmp_path / "exercise_exception_pointer.py"
     script_path.write_text(
         textwrap.dedent(
@@ -175,7 +177,8 @@ def test_tui_window_does_not_report_diagnostics_when_exception_adds_nothing(
     tmp_path: Path,
     prior_diagnostics: str | None,
 ) -> None:
-    diagnostics_path = LaunchPaths(tmp_path).launcher_log
+    diagnostics_path = launch_paths(tmp_path, "p1").launcher_log
+    diagnostics_path.parent.mkdir(parents=True)
     script_path = tmp_path / "exercise_exception_without_diagnostics.py"
     script_path.write_text(
         textwrap.dedent(
@@ -207,7 +210,8 @@ def test_tui_window_does_not_report_diagnostics_when_exception_adds_nothing(
 
 @pytest.mark.skipif(IS_WINDOWS, reason="POSIX PTY contract")
 def test_pty_relay_owns_terminal_fds_after_window_closes(tmp_path: Path) -> None:
-    diagnostics_path = LaunchPaths(tmp_path).launcher_log
+    diagnostics_path = launch_paths(tmp_path, "p1").launcher_log
+    diagnostics_path.parent.mkdir(parents=True)
     gate_path = tmp_path / "release-child"
     script_path = tmp_path / "exercise_relay_ownership.py"
     sink_paths = [tmp_path / f"reused-{index}.bin" for index in range(3)]

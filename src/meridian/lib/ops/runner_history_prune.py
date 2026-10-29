@@ -29,7 +29,7 @@ from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy
-from meridian.lib.state.paths import RETIRED_RUNNER_STREAM_FILENAMES, resolve_spawn_dir
+from meridian.lib.state.paths import RETIRED_RUNNER_STREAM_FILENAMES, LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
@@ -144,7 +144,7 @@ def _judge(
         return _Verdict(skip="recent")
     if row.run_boundary is not None and row.run_boundary.status != "verified":
         return _Verdict(skip="exit_unresolved")
-    scopes = read_scope_projection(root, SpawnId(row.id))
+    scopes = read_scope_projection(LaunchPaths.for_row(root, row))
     if any(
         scope_liveness(scope)["likely_serving"]
         for scope in scopes.scopes

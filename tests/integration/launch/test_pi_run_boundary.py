@@ -23,6 +23,7 @@ from tests.integration.launch.test_pi_identity_launch import (
     install_shim,
     pi_runtime,  # noqa: F401
 )
+from tests.support.launch_paths import launch_paths
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -461,8 +462,7 @@ async def test_rpc_post_attempt_boundary(
     )
     env = dict(ctx.binding.environment.final_env)
     prepared = ctx.harness.prepare_prelaunch(
-        runtime_root=ctx.runtime_root,
-        spawn_id=SpawnId("p42"),
+        launch=launch_paths(ctx.runtime_root, "p42"),
         session=ctx.request.session,
         child_cwd=root,
         child_env=env,
@@ -499,7 +499,7 @@ async def test_rpc_post_attempt_boundary(
                 request=ctx.request,
                 launch_context=ctx,
                 project_root=root,
-                runtime_root=ctx.runtime_root,
+                launch=launch_paths(ctx.runtime_root, run.spawn_id),
                 session_attempt=managed,
             ),
             20,
@@ -622,7 +622,7 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
             request=ctx.request,
             launch_context=ctx,
             project_root=root,
-            runtime_root=ctx.runtime_root,
+            launch=launch_paths(ctx.runtime_root, run.spawn_id),
             session_attempt=SessionAttempt(
                 ctx.runtime_root,
                 chat_id,

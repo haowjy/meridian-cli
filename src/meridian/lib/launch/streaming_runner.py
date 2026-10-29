@@ -583,9 +583,8 @@ async def run_streaming_spawn(
 async def _run_streaming_attempt(
     *,
     run: Spawn,
-    runtime_root: Path,
+    launch: LaunchPaths,
     launch_mode: LaunchMode,
-    log_dir: Path,
     manager: SpawnManager,
     config: ConnectionConfig,
     run_spec: ResolvedLaunchSpec,
@@ -686,7 +685,7 @@ async def _run_streaming_attempt(
             timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
         watchdog_task = asyncio.create_task(
             _report_watchdog(
-                report_path=LaunchPaths(log_dir).report,
+                report_path=launch.report,
                 completion_event=completion_event,
                 manager=manager,
                 spawn_id=run.spawn_id,
@@ -849,7 +848,7 @@ async def execute_with_streaming(
     request: SpawnRequest,
     launch_context: LaunchContext,
     project_root: Path,
-    runtime_root: Path,
+    launch: LaunchPaths,
     budget: Budget | None = None,
     space_spent_usd: float = 0.0,
     guardrails: tuple[Path, ...] = (),
@@ -869,6 +868,7 @@ async def execute_with_streaming(
     """
 
     _ = stream_stderr_to_terminal
+    runtime_root = launch.runtime_root
     resolved_clock = clock or RealClock()
     started_at = resolved_clock.monotonic()
     started_at_epoch = resolved_clock.time()
@@ -879,22 +879,16 @@ async def execute_with_streaming(
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
     runner_phase = ["setup"]
-    lifecycle_path: Path | None = None
     lifecycle: LifecycleLog | None = None
     lifecycle_active = [False]
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = LaunchPaths.for_row(runtime_root, run.spawn_id).dir
-        lifecycle = LifecycleLog.for_spawn(runtime_root, run.spawn_id, clock=resolved_clock)
-        lifecycle_path = lifecycle.path
+        lifecycle = LifecycleLog.for_launch(launch, clock=resolved_clock)
 
         def _record_lifecycle(event: str, **details: object) -> None:
-            assert lifecycle_path is not None
             _append_runner_lifecycle_event(
-                runtime_root,
-                run.spawn_id,
-                lifecycle_path,
+                launch,
                 clock=resolved_clock,
                 event=event,
                 phase=runner_phase[0],
@@ -973,7 +967,7 @@ async def execute_with_streaming(
 
             tracer = DebugTracer(
                 spawn_id=str(run.spawn_id),
-                debug_path=LaunchPaths(log_dir).debug,
+                debug_path=launch.debug,
                 echo_stderr=stream_stdout_to_terminal,
             )
 
@@ -989,7 +983,7 @@ async def execute_with_streaming(
             prompt=spec.prompt,
             control_root=control_root,
             child_env=child_env,
-            runtime_root=runtime_root,
+            launch=launch,
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             timeout_seconds=timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
@@ -1089,9 +1083,8 @@ async def execute_with_streaming(
 
                         attempt = await _run_streaming_attempt(
                             run=run,
-                            runtime_root=runtime_root,
+                            launch=launch,
                             launch_mode=resolved_launch_mode,
-                            log_dir=log_dir,
                             manager=manager,
                             config=config,
                             run_spec=spec,
@@ -1126,7 +1119,7 @@ async def execute_with_streaming(
                         )
                         conclusion.failure_reason = attempt.start_error
                         _append_text_to_stderr_log(
-                            stderr_path=LaunchPaths(log_dir).stderr_log,
+                            stderr_path=launch.stderr_log,
                             text=attempt.start_error,
                         )
                     attempt_cancelled = False
@@ -1170,8 +1163,7 @@ async def execute_with_streaming(
                         extractor=harness_bundle.extractor,
                         facts=facts,
                         native_key=native_run.entry.complete(),
-                        spawn_id=run.spawn_id,
-                        log_dir=log_dir,
+                        launch=launch,
                         model_id=run.model,
                         harness_id=resolved_harness_id,
                         project_root=project_root,
@@ -1253,7 +1245,7 @@ async def execute_with_streaming(
                                 conclusion.exit_code = 1
                                 conclusion.failure_reason = "guardrail_failed"
                                 _append_text_to_stderr_log(
-                                    stderr_path=LaunchPaths(log_dir).stderr_log,
+                                    stderr_path=launch.stderr_log,
                                     text=_guardrail_failure_text(guardrail_result.failures),
                                 )
         except asyncio.CancelledError:
@@ -1266,11 +1258,9 @@ async def execute_with_streaming(
         if lifecycle is not None:
             record_identity_failure(exc, lifecycle=lifecycle, phase=runner_phase[0])
     except Exception as exc:
-        if lifecycle_path is not None:
+        if lifecycle is not None:
             _append_runner_lifecycle_event(
-                runtime_root,
-                run.spawn_id,
-                lifecycle_path,
+                launch,
                 clock=resolved_clock,
                 event="exception",
                 phase=runner_phase[0],
@@ -1286,11 +1276,9 @@ async def execute_with_streaming(
         )
     finally:
         runner_phase[0] = "finalizing"
-        if lifecycle_path is not None:
+        if lifecycle is not None:
             _append_runner_lifecycle_event(
-                runtime_root,
-                run.spawn_id,
-                lifecycle_path,
+                launch,
                 clock=resolved_clock,
                 event="finalizing",
                 phase=runner_phase[0],
@@ -1337,11 +1325,9 @@ async def execute_with_streaming(
 
         runner_phase[0] = "completed"
         lifecycle_active[0] = False
-        if lifecycle_path is not None:
+        if lifecycle is not None:
             _append_runner_lifecycle_event(
-                runtime_root,
-                run.spawn_id,
-                lifecycle_path,
+                launch,
                 clock=resolved_clock,
                 event="runner_completed",
                 phase=runner_phase[0],

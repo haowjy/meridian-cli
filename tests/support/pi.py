@@ -33,6 +33,7 @@ from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrai
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import FakeClock, wait_until
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -244,8 +245,7 @@ class PiDrainScenario:
         if cleanup_callback is None and cleanup_configured:
             cleanup_callback = cleanup
         coordinator = PiDrainCoordinator.for_connection(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch_paths(runtime_root, spawn_id),
             receiver=connection,
             session_role="spawned",
             child_wave_timeout_seconds=child_wave_timeout_seconds,
@@ -335,7 +335,7 @@ class PiDrainScenario:
         write_pi_bash_record(self.runtime_root, self.spawn_id, running=running)
 
     def done(self) -> None:
-        write_spawn_signal(self.runtime_root, self.spawn_id, "done")
+        write_spawn_signal(launch_paths(self.runtime_root, self.spawn_id), "done")
 
 
 async def start_pi_manager(

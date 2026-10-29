@@ -12,6 +12,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -151,7 +152,7 @@ def native_identity_candidates(
         value.strip()
         for value in (
             row.harness_session_id,
-            read_primary_harness_session_id(runtime_root, row.id)
+            read_primary_harness_session_id(LaunchPaths.for_row(runtime_root, row))
             if row.kind == "primary"
             else None,
             session.harness_session_id if session else None,
@@ -193,7 +194,7 @@ def live_observer_for_chat(
             session_instance_id=row.session_instance_id,
         ):
             return row.id
-        scopes = read_scope_projection(runtime_root, SpawnId(row.id))
+        scopes = read_scope_projection(LaunchPaths.for_row(runtime_root, row))
         if any(
             scope_liveness(scope)["likely_serving"]
             for scope in scopes.scopes

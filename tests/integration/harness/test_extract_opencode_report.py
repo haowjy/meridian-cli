@@ -10,6 +10,7 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
+from tests.support.launch_paths import launch_paths
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_v2_db_session,
@@ -116,8 +117,7 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(recorded), session),
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path / "run",
+        launch=launch_paths(tmp_path / "run", SpawnId("p1")),
     )
     assert extraction.report.content == "owned native reply"
     assert extraction.harness_session_id == session
@@ -134,8 +134,7 @@ def test_opencode_v1_native_store_supplies_report_when_v1_has_no_turn_event(tmp_
         facts=AttemptFacts(),
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(db), "ses_v1"),
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path / "run",
+        launch=launch_paths(tmp_path / "run", SpawnId("p1")),
     )
     assert extraction.report.content == "ALPHA-OC-8f31bc"
 
@@ -173,8 +172,7 @@ def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(tmp_path / "absent.db"), "ses_owned"),
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p1")),
     )
     assert extraction.report.content == "streamed reply"
 
@@ -183,15 +181,16 @@ def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
 def test_unreadable_native_db_cannot_break_report_precedence(tmp_path: Path, explicit):
     db = tmp_path / "corrupt.db"
     db.write_bytes(b"not sqlite")
+    launch = launch_paths(tmp_path, SpawnId("p1"))
     if explicit:
-        (tmp_path / "report.md").write_text("explicit report")
+        launch.dir.mkdir(parents=True)
+        launch.report.write_text("explicit report")
     facts = AttemptFacts(final_text="stream report", native_turn_ids=("owned",))
     result = enrich_finalize(
         facts=facts,
         extractor=OPENCODE_EXTRACTOR,
         native_key=NativeKey("opencode", str(db), "ses_owned"),
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch,
     )
     assert result.report.content == ("explicit report" if explicit else "stream report")
 

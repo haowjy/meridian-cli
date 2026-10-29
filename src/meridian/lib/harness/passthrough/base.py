@@ -6,9 +6,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.paths import LaunchPaths
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
 
@@ -23,7 +23,7 @@ class TuiPassthrough(Protocol):
     def build_config(
         self,
         *,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         spec: ResolvedLaunchSpec,
         control_root: Path,
         task_cwd: Path | None,

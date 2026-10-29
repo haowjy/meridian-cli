@@ -26,7 +26,7 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import write_accepted_signals
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
@@ -132,12 +132,13 @@ class SpawnManager:
         """Start one connection and register durable drain/control resources."""
 
         spawn_id = config.spawn_id
+        launch = config.resolve_launch(self._runtime_root)
         if spawn_id in self._sessions:
             msg = f"Spawn {spawn_id} is already active"
             raise ValueError(msg)
         if event_hook is not None:
             self.register_event_hook(spawn_id, event_hook)
-        for sink in get_harness_bundle(config.harness_id).event_sinks(self._runtime_root, spawn_id):
+        for sink in get_harness_bundle(config.harness_id).event_sinks(launch):
             self.register_event_hook(spawn_id, sink)
 
         started_monotonic = time.monotonic()
@@ -150,7 +151,7 @@ class SpawnManager:
 
             tracer = _DebugTracer(
                 spawn_id=str(spawn_id),
-                debug_path=LaunchPaths(self._spawn_dir(spawn_id)).debug,
+                debug_path=launch.debug,
             )
 
         connection: HarnessConnection[Any] | None = None
@@ -185,7 +186,7 @@ class SpawnManager:
             await control_server.start()
 
             drain_plan = self._select_drain_plan(
-                spawn_id=spawn_id,
+                launch=launch,
                 receiver=connection,
                 config=config,
             )
@@ -193,7 +194,7 @@ class SpawnManager:
                 drain_plan = drain_plan.with_policy(resolved_policy)
             # Declare once, before any event drains, which `spawn done`/`rearm`
             # signals this plan consumes; the CLI refuses the rest.
-            write_accepted_signals(self._runtime_root, spawn_id, drain_plan.accepted_signals)
+            write_accepted_signals(launch, drain_plan.accepted_signals)
             drain_task = asyncio.create_task(
                 self._drain_loop(
                     spawn_id,
@@ -213,10 +214,7 @@ class SpawnManager:
                 raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
                 teardown=drain_plan.teardown,
                 drain_plan=drain_plan,
-                control_actions=ControlActionCoordinator(
-                    spawn_id=spawn_id,
-                    spawn_dir=self._spawn_dir(spawn_id),
-                ),
+                control_actions=ControlActionCoordinator(launch=launch),
             )
         except BaseException:
             await reap_on_ownership_transfer_failure(_cleanup_unregistered_start)
@@ -264,15 +262,14 @@ class SpawnManager:
     def _select_drain_plan(
         self,
         *,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         receiver: HarnessConnection[Any],
         config: ConnectionConfig,
     ) -> DrainPlan:
         """Choose drain-loop configuration before entering the loop."""
         return build_drain_plan(
             project_root=self._project_root,
-            runtime_root=self._runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             receiver=receiver,
             config=config,
             emit_event=self.emit_event,
@@ -835,9 +832,6 @@ class SpawnManager:
                     "event_dropped",
                     data={"event_type": event.raw.event_type, "reason": "queue_full"},
                 )
-
-    def _spawn_dir(self, spawn_id: SpawnId) -> Path:
-        return resolve_spawn_dir(self._runtime_root, spawn_id)
 
     async def _cleanup_completed_session(
         self,
