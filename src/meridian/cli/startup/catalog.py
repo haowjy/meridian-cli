@@ -322,11 +322,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Send a message to a running spawn.",
         default_output_mode="text",
     ),
-    _write_runtime(
-        ("spawn", "inject"),
-        "Deprecated: use `spawn message`.",
-        default_output_mode="text",
-    ),
     _read_runtime(
         ("spawn", "children"),
         "List child spawns.",

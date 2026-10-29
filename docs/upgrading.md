@@ -31,9 +31,11 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
   `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths.
   The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search`
   and `spawn wait` no longer prints a report path (the `spawn wait` table drops its `report`
-  column). `report_path` stays in the JSON of `spawn show`, `spawn status`,
+  column). `report_path` stayed in the JSON of `spawn show`, `spawn status`,
   `spawn report show` and `spawn report search` (the current run's report; a search hit's own
-  file) but is deprecated and goes in the next minor release. `log_path` was never in the JSON.
+  file) until v0.20.0 removed it (see
+  [JSON output no longer includes `report_path`](#json-output-no-longer-includes-report_path)).
+  `log_path` was never in the JSON.
   A run that wrote no report shows none; it never shows an earlier run's.
 - An earlier run's report is still reachable: `spawn report search` looks in every run's
   report and names the spawn by ID, and `meridian session log pN` reads the conversation.
@@ -68,12 +70,24 @@ the v0.18.0 index until you run `meridian session index rebuild`.
 **Pi.** Restart long-lived Pi sessions after upgrading. A Pi session started before the upgrade
 can hide an earlier run's result after a continue, and marks it delivered without showing it.
 
+## JSON output no longer includes `report_path`
+
+v0.18.0 and v0.19.x kept `report_path` in the JSON of `spawn show`, `spawn status`,
+`spawn report show` and `spawn report search` while the human output stopped printing it.
+v0.20.0 removes the field; the rest of each payload is unchanged. The value was the current
+run's report file, or for a search hit that hit's own file, under the internal
+`spawns/pN/launches/<n>/` layout.
+
+Read a report with `meridian spawn report show pN` and find one with
+`meridian spawn report search`; neither needs the path. Scripts that read the JSON should
+drop the key, not build the path.
+
 ## New spawns start running
 
 A new spawn is `running` from the moment it exists. It no longer shows `queued` before its
-runner starts or `finalizing` while it writes its outcome. `--status queued` and
-`--status finalizing` (and `--view queued`) still parse, with a deprecation warning, and are
-removed in the next minor release. Rows written by older builds keep those statuses.
+runner starts or `finalizing` while it writes its outcome. v0.20.0 removes the
+`--status queued`, `--status finalizing` and `--view queued` filters: they now fail as
+unsupported. Rows written by older builds keep those statuses.
 
 ## Removed hook names and keys
 
@@ -197,8 +211,7 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
 running in that chat now; `-C` addresses a session in another project. Chat and spawn
 IDs count per project.
 
-`--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
-and works until the next minor release. Pass the ref positionally instead.
+`--spawn-id` on `spawn message` was removed in v0.20.0; pass the ref positionally instead.
 
 ## Mars 0.26.1
 
@@ -1692,10 +1705,9 @@ is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 
 ## Spawn message rename
 
-`meridian spawn inject` is now `meridian spawn message`. Scripts using the old
-spelling keep working: it warns on stderr and runs the same command until the
-next minor release. Each message also opens with a `[Meridian]` line naming the
-sending spawn and chat and, when the sender can receive one, the
+`meridian spawn inject` is now `meridian spawn message`. v0.20.0 removed the old
+spelling; scripts must use `spawn message`. Each message also opens with a `[Meridian]`
+line naming the sending spawn and chat and, when the sender can receive one, the
 `meridian spawn message <sender chat ID>` command that answers it, with
 `-C <sender project root>` when the sender is in another project. Anything that parses the
 delivered text sees that line first; the text you sent follows a blank line.

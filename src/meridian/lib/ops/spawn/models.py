@@ -957,9 +957,6 @@ class SpawnDetailOutput(BaseModel):
     reasoning_tokens: int | None = None
     cost_usd: float | None
     cost_is_estimate: bool = False
-    report_path: str | None = None
-    """Deprecated: the current run's report file, kept in JSON for one release. Use
-    ``spawn report show``; the path is an internal layout and goes in the next minor release."""
     report_summary: str | None
     report_body: str | None
     harness_session_id: str | None = None
@@ -1099,8 +1096,6 @@ class SpawnDetailOutput(BaseModel):
             wire["cache_creation_input_tokens"] = self.cache_creation_input_tokens
         if self.reasoning_tokens is not None:
             wire["reasoning_tokens"] = self.reasoning_tokens
-        if self.report_path is not None:
-            wire["report_path"] = self.report_path
         if self.report_summary is not None:
             wire["report_summary"] = self.report_summary
         if self.report_body is not None:
