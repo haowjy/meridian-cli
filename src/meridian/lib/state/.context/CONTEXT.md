@@ -439,13 +439,14 @@ which would unlock the worker too. Harnesses never inherit this descriptor.
 `LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
 requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
-Explicit continue resolves the named spawn's current chat owner, takes that
-owner's lock before the named source lock, and sweeps their birth-verified scopes
-before creating another row. An exact-continue parent publishes the new row as
-the chat owner while its launch lock is still held; a background worker confirms
-that pointer after hand-off. Lockless legacy rows alone use
-`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
-the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
+Explicit continue keeps the spawn's ID: `launch/continue_launch.py` resolves the spawn that
+owns the target chat (an older spawn of the chat, or a chat ref, reopens that owner and refuses
+when it would change the owner's parent or kind), takes its launch lock, writes the last
+launch's derived outcome, sweeps its birth-verified scopes and resolves a leftover reaper
+claim; then `reopen_spawn` commits the next launch under the same lock, which the runner
+inherits (in-process for a primary or foreground child, a duplicated fd for `--bg`). Lockless
+legacy rows alone use `legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert
+under the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
 This does not change v3 status authority.
 
 
@@ -564,10 +565,11 @@ spawn"); resume, read and `--from` still work on the chat.
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
 - An exact continue writes no link until its session starts: the start event is the only
-  writer of a chat's owner. Until then `spawn show`, `wait`, `cancel` and
-  `message` by chat ID name the previous run (a short window; once the row exists but its
-  session has not started they can act on a finished run), and a racing continue is
-  refused by the chat lock (`ChatBusyError`) in its worker.
+  writer of a chat's owner, and a reopen's link names the same spawn. Until then the row
+  (launch K+1, running, `chat_id` the target, no `session_instance_id`) resolves to the newest
+  generation linked to it in that chat. A racing continue of the same spawn is refused at its
+  launch lock; one that loses the chat to a native `/resume` takeover finds the chat lock held
+  (`ChatBusyError`), and its runner writes the launch `failed` with that error.
 - A spawn row's `chat_id` is the chat its launch runs or will resume, never the caller's.
   An exact continue reserves it with the continue target, so a continue refused before
   its session starts still resumes that chat. A fresh child is reserved with

@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -38,11 +40,12 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
+from meridian.lib.launch.continue_launch import ContinueHold, begin_continue
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
+    reject_continue_policy_overrides,
 )
-from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
@@ -534,6 +537,7 @@ def _execute_prepared_spawn_create(
     *,
     sink: OutputSink | None,
     on_spawn_id: Callable[[str], None] | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
     if preparation.depth_exceeded is not None:
         return preparation.depth_exceeded
@@ -602,6 +606,7 @@ def _execute_prepared_spawn_create(
             request=prepared_request,
             runtime=runtime,
             ctx=resolved_context,
+            hold=hold,
         )
     else:
         result = execute_spawn_blocking(
@@ -611,6 +616,7 @@ def _execute_prepared_spawn_create(
             ctx=resolved_context,
             prepared=prepared_surface,
             on_spawn_id=on_spawn_id,
+            hold=hold,
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
@@ -2213,44 +2219,22 @@ def _prompt_for_follow_up(
 def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
-    rejected: list[str] = []
-    if payload.skills:
-        rejected.append("--skills")
-    if payload.approval is not None:
-        rejected.append("--approval")
-    if payload.sandbox is not None:
-        rejected.append("--sandbox")
-    if payload.network.mode is not None:
-        rejected.append("--network")
-    if payload.network.allow:
-        rejected.append("--network-allow")
-    if payload.network.deny:
-        rejected.append("--network-deny")
-    if payload.effort is not None:
-        rejected.append("--effort")
-    if payload.autocompact is not None:
-        rejected.append("--autocompact")
-    if payload.autocompact_pct is not None:
-        rejected.append("--autocompact-pct")
-    if payload.passthrough_args:
-        rejected.append("--")
-    if payload.env:
-        rejected.append("--env")
-    if payload.work.strip():
-        rejected.append("--work")
-    if payload.task_dir is not None and payload.task_dir.strip():
-        rejected.append("--task-dir")
-    if rejected:
-        flags = ", ".join(rejected)
-        if "--task-dir" in rejected:
-            raise ValueError(
-                "Cannot use --task-dir with spawn --continue. "
-                "Use --fork --task-dir to diverge work location."
-            )
-        raise ValueError(
-            f"Cannot use policy-changing option(s) with spawn --continue: {flags}. "
-            "Use --fork-fresh to change launch identity or policy."
-        )
+    reject_continue_policy_overrides(
+        {
+            "--skills": bool(payload.skills),
+            "--approval": payload.approval is not None,
+            "--sandbox": payload.sandbox is not None,
+            "--network": payload.network.mode is not None,
+            "--network-allow": bool(payload.network.allow),
+            "--network-deny": bool(payload.network.deny),
+            "--effort": payload.effort is not None,
+            "--autocompact": payload.autocompact is not None,
+            "--autocompact-pct": payload.autocompact_pct is not None,
+            "--": bool(payload.passthrough_args),
+            "--env": bool(payload.env),
+            "--task-dir": payload.task_dir is not None and bool(payload.task_dir.strip()),
+        }
+    )
 
 
 def _build_continue_create_input(
@@ -2295,7 +2279,7 @@ def _build_continue_create_input(
         skills=continue_contract.skills,
         goal=resolved_goal,
         desc=payload.desc,
-        work=continue_contract.work_id or "",
+        work=payload.work.strip() or continue_contract.work_id or "",
         task_dir=continue_contract.task_dir,
         caller_cwd=payload.caller_cwd,
         launch_policy_snapshot=continue_contract.launch_policy_snapshot,
@@ -2529,13 +2513,25 @@ def spawn_continue_sync(
     )
     if isinstance(preparation, SpawnActionOutput):
         return _with_command(preparation, "spawn.continue")
-    sweep_before_continue(
-        runtime_root,
-        resolved_spawn_id,
+    if preparation.depth_exceeded is not None:
+        return _with_command(preparation.depth_exceeded, "spawn.continue")
+    hold = begin_continue(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        named=source_spawn,
+        named_by_spawn_ref=parse_ref(payload.spawn_id.strip()).kind in {"spawn", "selector"},
         chat_id=resolved_reference.source_chat_id,
+        parent_id=str(preparation.resolved_context.spawn_id or "") or None,
+        kind="child",
+        caller_spawn_id=str(preparation.resolved_context.spawn_id or "") or None,
         dry_run=payload.dry_run,
     )
-    result = _execute_prepared_spawn_create(preparation, sink=sink)
+    with hold.slot if hold is not None else nullcontext():
+        result = _execute_prepared_spawn_create(preparation, sink=sink, hold=hold)
+    if hold is not None and hold.notice:
+        result = result.model_copy(
+            update={"warning": _merge_warnings(result.warning, hold.notice)}
+        )
     return _with_command(result, "spawn.continue")
 
 

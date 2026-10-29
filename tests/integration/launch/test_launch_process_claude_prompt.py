@@ -414,6 +414,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,

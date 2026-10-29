@@ -119,8 +119,9 @@ def _record_spawn_create(
         ctx: object = None,
         prepared: object = None,
         on_spawn_id: object = None,
+        hold: object = None,
     ) -> SpawnActionOutput:
-        _ = (runtime, ctx, prepared, on_spawn_id)
+        _ = (runtime, ctx, prepared, on_spawn_id, hold)
         calls.append((payload, request))
         return SpawnActionOutput(
             command="spawn.create",
@@ -287,7 +288,7 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
 
 
 @pytest.mark.parametrize("operation", ["continue", "fork"])
-def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
+def test_spawn_continue_refuses_replayed_passthrough_before_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -319,9 +320,9 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
     )
 
     def _must_not_sweep(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("delegation refusal must precede the continue sweep")
+        raise AssertionError("delegation refusal must precede taking the launch lock")
 
-    monkeypatch.setattr(spawn_api, "sweep_before_continue", _must_not_sweep)
+    monkeypatch.setattr(spawn_api, "begin_continue", _must_not_sweep)
 
     if operation == "continue":
         result = spawn_api.spawn_continue_sync(
@@ -367,7 +368,6 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
         ({"autocompact_pct": 35}, "--autocompact-pct", "--fork-fresh"),
         ({"passthrough_args": ("--custom",)}, "--", "--fork-fresh"),
         ({"env": ("NAME=value",)}, "--env", "--fork-fresh"),
-        ({"work": "other-work"}, "--work", "--fork-fresh"),
         ({"task_dir": "../other"}, "--task-dir", "--fork --task-dir"),
     ],
 )
@@ -677,3 +677,36 @@ def test_spawn_fork_uses_recovered_session_id(
         )
     assert (exc.value.ref, exc.value.reason) == ("p33", "unbound")
     assert not calls
+
+
+def test_continue_of_a_pre_upgrade_chain_reopens_its_newest_spawn(tmp_path: Path) -> None:
+    """Older builds minted a successor per continue: p1 continued as p2 in chat c9001. Naming
+    p1 reopens p2, unless that would change p2's parent."""
+    from meridian.lib.launch.continue_launch import begin_continue
+
+    runtime_root = _state_root(tmp_path)
+    _seed_spawn(runtime_root, spawn_id="p1", harness_session_id="session-1")
+    _seed_spawn(runtime_root, spawn_id="p2", harness_session_id="session-1")
+    named = spawn_store.get_spawn(runtime_root, "p1")
+    assert named is not None
+
+    def begin(parent_id: str | None) -> object:
+        return begin_continue(
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            named=named,
+            named_by_spawn_ref=True,
+            chat_id="c9001",
+            parent_id=parent_id,
+            kind="child",
+            caller_spawn_id=parent_id,
+            dry_run=False,
+        )
+
+    with pytest.raises(ValueError, match="p2 under a different caller"):
+        begin("p7")
+    hold = begin(None)
+    assert hold is not None
+    with hold.slot:  # type: ignore[attr-defined]
+        assert hold.spawn.id == "p2"  # type: ignore[attr-defined]
+        assert hold.notice == "p1's conversation continues as p2"  # type: ignore[attr-defined]

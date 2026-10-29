@@ -97,6 +97,7 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
+from .compiler import ProvenanceLevel
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
@@ -119,7 +120,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
-from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_model_selection
+from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_selection
 from .prompt import (
     build_goal_instruction,
     build_primary_preamble,
@@ -1437,15 +1438,19 @@ def prepare_launch_surface(
         assert original is not None
         resolved_request = resolved_request.model_copy(
             update={
-                "launch_policy_snapshot": overlay_continue_model_selection(
+                "launch_policy_snapshot": overlay_continue_selection(
                     original,
                     harness=str(policies.harness),
                     model_selection=model_selection,
+                    execution_policy=execution_policy,
                     selection_report=policies.selection_report,
                     field_provenance={
                         **original.field_provenance,
-                        "model_source": policies.field_provenance.model_source.value,
-                        "harness_source": policies.field_provenance.harness_source.value,
+                        **{
+                            key: value.value
+                            for key, value in asdict(policies.field_provenance).items()
+                            if value is ProvenanceLevel.CLI
+                        },
                     },
                 ),
             }

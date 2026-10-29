@@ -240,7 +240,7 @@ class SpawnLifecycleService:
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
 
     def announce(self, spawn_id: str) -> None:
-        """Dispatch spawn.created and initial telemetry for a reserved row."""
+        """Dispatch spawn.created (a first launch only) and spawn.started for a launch's row."""
         with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
             record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
             if record is None:
@@ -298,11 +298,60 @@ class SpawnLifecycleService:
                 self._dispatch_spawn_started_events(status=reservation.status)
             return launch
 
+    def reopen(
+        self,
+        reservation: SpawnReservation,
+        *,
+        launch_lock: LaunchSlot,
+        dispatch_events: bool = True,
+    ) -> SpawnRecord:
+        """Start the next launch of the spawn ``launch_lock`` holds; return its new row.
+
+        ``reservation`` carries what the launch is told, as for ``start``: its model and
+        paths replace the last launch's. The spawn's history, agent, skills and policy stay;
+        ``desc`` and ``work_id`` replace the spawn's own only when set. Dispatches
+        ``spawn.started`` (never ``spawn.created``).
+        """
+        store = _spawn_store()
+        handle = launch_lock.handle
+        with bind_lifecycle_correlation(
+            self._correlation(operation="reopen", spawn_id=str(handle.spawn_id))
+        ):
+            row = store.reopen_spawn(
+                handle,
+                self._runtime_root,
+                store.LaunchInput(
+                    chat_id=reservation.chat_id,
+                    prompt=reservation.prompt,
+                    kind=reservation.kind,
+                    model=reservation.session_metadata.model,
+                    control_root=reservation.control_root,
+                    task_cwd=reservation.task_cwd,
+                    execution_cwd=reservation.execution_cwd,
+                    owner_chat_id=reservation.owner_chat_id,
+                    parent_id=reservation.parent_id,
+                    goal=reservation.goal,
+                    harness_session_id=reservation.harness_session_id,
+                    launch_mode=reservation.launch_mode,
+                    worker_pid=reservation.worker_pid,
+                    runner_pid=reservation.runner_pid,
+                    runner_created_at_epoch=None,
+                ),
+                desc=reservation.desc,
+                work_id=reservation.work_id,
+                clock=reservation.clock,
+            )
+            self._record = row
+            if dispatch_events:
+                self._dispatch_spawn_started_events(status=row.status)
+            return row
+
     def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
         assert self._record is not None
-        event = self._build_event("spawn.created", self._record)
-        self._dispatch(event)
-        self._emit_telemetry_event("spawn.created", self._record)
+        if self._record.launch_number == _spawn_store().FIRST_LAUNCH:
+            event = self._build_event("spawn.created", self._record)
+            self._dispatch(event)
+            self._emit_telemetry_event("spawn.created", self._record)
         if status == "running":
             event = self._build_event("spawn.started", self._record)
             self._dispatch(event)

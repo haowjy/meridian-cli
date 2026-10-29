@@ -136,7 +136,7 @@ def _claim_reaper_cleanup(
     )
 
 
-def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
+def resolve_cleanup_claim(runtime_root: Path, record: SpawnRecord) -> None:
     """Resolve a durable claim once, retaining failed targets for doctor to retry."""
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
@@ -157,7 +157,7 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
 
 def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
     if is_terminal_spawn_status(record.status):
-        _cleanup_claimed_scopes(runtime_root, record)
+        resolve_cleanup_claim(runtime_root, record)
     return record
 
 

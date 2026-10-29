@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -196,6 +197,26 @@ def _reject_exact_continue_agent_override(
             "Cannot combine exact continue with agent opt-out (--agent ''). "
             "Use --fork-fresh to change launch identity."
         )
+
+
+def reject_continue_policy_overrides(given: Mapping[str, bool]) -> None:
+    """Refuse the options an exact continue cannot take, as each path defines them.
+
+    ``given`` maps each flag the calling path refuses to whether the caller passed it. The
+    sets differ by path (a primary accepts approval, sandbox, effort and the like and applies
+    them; a child refuses them), so each caller lists only its own.
+    """
+    rejected = [flag for flag, present in given.items() if present]
+    if not rejected:
+        return
+    if "--task-dir" in rejected:
+        raise ValueError(
+            "Cannot use --task-dir with --continue. Use --fork --task-dir to diverge work location."
+        )
+    raise ValueError(
+        f"Cannot use policy-changing option(s) with --continue: {', '.join(rejected)}. "
+        "Use --fork-fresh to change launch identity or policy."
+    )
 
 
 def _fallback_conversation_intent(
@@ -455,4 +476,5 @@ __all__ = [
     "ContinueReplaySource",
     "build_continue_replay_contract",
     "continue_replay_source_from_reference",
+    "reject_continue_policy_overrides",
 ]

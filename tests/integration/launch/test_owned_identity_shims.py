@@ -86,6 +86,7 @@ def test_owned_event_pins_store(
         launcher,
         on_running,
         session_id_observer,
+        usage_seed,
     ):
         # Replace the external backend/TUI transport, not identity parsing or persistence.
         process = subprocess.Popen(
@@ -276,6 +277,7 @@ def test_primary_later_switch_has_one_conflict(tmp_path, monkeypatch):
         launcher,
         on_running,
         observer,
+        usage_seed,
     ):
         observer("entry-thread")
         on_running(ProcessIdentity(1234, 100.0, 1234))

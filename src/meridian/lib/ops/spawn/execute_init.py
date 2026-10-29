@@ -18,6 +18,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import ModelId
+from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
@@ -229,14 +230,24 @@ def _reserve_spawn(
     reservation: SpawnReservation,
     launch_lock: LaunchSlot,
     runtime: OperationRuntime,
+    hold: ContinueHold | None = None,
     ctx: RuntimeContext | None = None,
 ) -> _SpawnContext:
-    """Persist only the durable spawn row — no work-item creation or lifecycle events."""
+    """Persist only the durable spawn row — no work-item creation or lifecycle events.
+
+    ``hold``: a continue's hold on a finished spawn; its next launch is written instead.
+    """
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
-    launch = service.reserve(reservation, launch_lock=launch_lock)
+    work_id = reservation.work_id
+    if hold is not None:
+        row = service.reopen(reservation, launch_lock=launch_lock, dispatch_events=False)
+        launch = LaunchPaths.for_row(runtime_root, row)
+        work_id = row.work_id
+    else:
+        launch = service.reserve(reservation, launch_lock=launch_lock)
     spawn = Spawn(
         spawn_id=launch.spawn_id,
         prompt=reservation.prompt,
@@ -247,7 +258,7 @@ def _reserve_spawn(
         spawn=spawn,
         launch=launch,
         current_depth=resolved_context.depth,
-        work_id=reservation.work_id,
+        work_id=work_id,
     )
 
 

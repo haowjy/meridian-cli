@@ -92,6 +92,12 @@ requires the complete recorded native key; no legacy hint repair is allowed.
 
 ### Exact Continue Replay
 
+A continue keeps the spawn's ID. `continue_launch.begin_continue` (steps 1-4: pick the spawn that
+owns the chat, take its launch lock, end and sweep the last launch, pre-check the cycle and the
+chat) returns a `ContinueHold`; the caller prepares, then `lifecycle.reopen` commits the next
+launch and the same lock becomes the runner's. `launch/` imports nothing from `ops/` here: callers
+pass the resolved row and target chat in.
+
 Primary `meridian --continue` and subagent `spawn --continue` are exact
 continuations. `continue_replay.py` owns the launch-level seam:
 `ContinueReplaySource` normalizes the resolved reference shape, and
@@ -502,7 +508,8 @@ and captures stdlib warnings; structlog bypasses it and would leak to stderr.
 A run holds its entry chat's lifetime lock (`sessions/<chat>.lock`) until it exits, even after
 `/clear` moves it to another chat. `start_session` waits at most two seconds for that lock (long enough for `doctor`'s brief hold or an owner mid-exit) and then raises
 `ValueError("Chat cN is held ...")`, so `--continue cN` never hangs on a live owner. The continue
-sweep refuses such an owner earlier, and says so when the owner has moved to another chat.
+refuses such an owner earlier (`continue_launch.begin_continue`: the spawn's launch lock is held),
+and says so when the owner has moved to another chat.
 
 `session_scope()` in `session_scope.py` is the context manager for session lifetime.
 Its `finally` block has a two-phase teardown — both phases always run:

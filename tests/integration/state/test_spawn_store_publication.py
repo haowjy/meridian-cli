@@ -29,12 +29,12 @@ from meridian.lib.state.paths import LaunchPaths, RuntimePaths, launch_archive, 
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, read_state, scan_spawn_ids
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_store import (
     LaunchInput,
     finalize_spawn,
     gc_abandoned_stages,
     get_spawn,
-    remove_spawn_events,
     reopen_spawn,
     start_spawn,
     update_spawn,
@@ -384,7 +384,7 @@ def test_start_spawn_explicit_id_collision_preserves_existing_row(tmp_path: Path
     assert row.prompt == "hello"
 
 
-def test_remove_spawn_events_rejects_staging_container(tmp_path: Path) -> None:
+def test_delete_published_spawn_rejects_staging_container(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)
     staged_row = paths.spawns_dir / ".staging" / "p7-123-deadbeef"
@@ -393,13 +393,13 @@ def test_remove_spawn_events_rejects_staging_container(tmp_path: Path) -> None:
     staged_state.write_text("in progress\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="Invalid spawn ID"):
-        remove_spawn_events(runtime_root, ".staging")
+        delete_published_spawn(runtime_root, ".staging", can_delete=lambda _row: True)
 
     assert staged_state.read_text(encoding="utf-8") == "in progress\n"
 
 
-def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> None:
-    """Rollback deletion must coordinate with an in-flight spawn writer."""
+def test_delete_published_spawn_cannot_leave_writer_ghost_row(tmp_path: Path) -> None:
+    """Deletion must coordinate with an in-flight spawn writer."""
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawn_id = str(_start_test_spawn(runtime_root, spawn_id="p7", status="queued"))
@@ -418,7 +418,11 @@ def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> No
     writer.start()
     assert writer_holds_lock.wait(timeout=5)
 
-    deletion = threading.Thread(target=remove_spawn_events, args=(runtime_root, spawn_id))
+    deletion = threading.Thread(
+        target=delete_published_spawn,
+        args=(runtime_root, spawn_id),
+        kwargs={"can_delete": lambda _row: True},
+    )
     deletion.start()
     deletion.join(timeout=0.2)
     allow_writer.set()
@@ -432,7 +436,8 @@ def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> No
 
 def _reopening(**overrides: Any) -> LaunchInput:
     fields: dict[str, Any] = dict(
-        chat_id="c1", prompt="x", kind="child", owner_chat_id=None, parent_id=None, goal=None,
+        chat_id="c1", prompt="x", kind="child", model="gpt-5.4", control_root=None,
+        task_cwd=None, execution_cwd=None, owner_chat_id=None, parent_id=None, goal=None,
         harness_session_id=None, launch_mode=None, worker_pid=None, runner_pid=None,
         runner_created_at_epoch=None,
     )
@@ -492,11 +497,11 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
             ),
         )
         with acquire_lock(runtime_root, "p9") as handle:
-            with pytest.raises(ValueError, match="different parent"):
+            with pytest.raises(ValueError, match="one of its descendants"):
                 reopen_spawn(
                     handle,
                     runtime_root,
-                    _reopening(parent_id="p1"),
+                    _reopening(parent_id="p9"),
                 )
             with pytest.raises(ValueError, match="--goal cannot be empty"):
                 reopen_spawn(
@@ -505,10 +510,8 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
                     _reopening(goal=" "),
                 )
             assert not (legacy_dir / "launches").exists()  # refused before any write
-            reopened = reopen_spawn(
-                handle, runtime_root, _reopening(prompt="again")
-            )
-        assert reopened.dir == legacy_dir / "launches" / "2"
+            reopened = reopen_spawn(handle, runtime_root, _reopening(prompt="again"))
+        assert LaunchPaths.for_row(runtime_root, reopened).dir == legacy_dir / "launches" / "2"
         archived = launch_archive(runtime_root, "p9", 1)
         assert json.loads(archived.read_text())["v"] == 3
         after = get_spawn(runtime_root, "p9")

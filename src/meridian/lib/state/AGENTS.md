@@ -63,22 +63,26 @@ against a recreated inode (split-brain).
   `LaunchPaths(...)` construction, alias or `replace` copy outside `paths.py`, a `reserved`
   call outside `spawn_store`, a `preview` call outside the two dry-run entry points, and an
   import of a private `paths.py` name.
-- **Next launch**: `spawn_store.reopen_spawn(handle, runtime_root, LaunchInput)` is the only
-  writer of `launch` on an existing row. It needs the launch lock (`LaunchHandle`), requires
-  K's outcome, copies K's row to `launch_archive(root, id, K)` under the state lock, folds
-  K's usage into `prior_usage` (`PriorUsage.plus`), and returns the new `LaunchPaths`. It
-  refuses a `parent_id` different from the row's: re-parenting needs the cycle-checked
-  transaction under `spawns_flock` that is not written yet. It has no CLI caller yet.
-  `LaunchInput` (validates goal, resolves the runner's start time) feeds the one builder
-  `_launch_fields` that `start_spawn` and `reopen_spawn` share; add a per-launch field
-  there. A launch's `TerminalFacts` usage must be that launch's own, or the `prior_usage`
-  fold double counts. Claude and Codex report session-cumulative usage, so a launch stores
-  the harness's raw running total as `TerminalFacts.harness_cumulative` (opaque here);
-  `reopen_spawn` carries it to `prior_usage.harness_cumulative`, and the runner that owns
-  the new launch seeds its extractor with it (`create_fold(seed)`, subtract per model). No
-  stored total (a v3 row, a crashed launch with nothing earlier) seeds zero. Only the
-  streaming runner passes the seed so far; the primary paths start fresh spawns, and
-  must pass the row's seed when continue reopens a primary.
+- **Next launch**: `spawn_store.reopen_spawn(handle, runtime_root, LaunchInput)` is
+  the only writer of `launch` on an existing row, and a continue's commit
+  ([`launch/continue_launch.py`](../launch/continue_launch.py) takes the lock and ends the last
+  launch first). It needs the launch lock (`LaunchHandle`), requires K's outcome, copies K's row
+  to `launch_archive(root, id, K)` under the state lock, folds K's usage into `prior_usage`
+  (`PriorUsage.plus`), and returns the new row. A continue moves the spawn under its caller: a
+  changed `parent_id` takes `spawns_flock` across the ancestor walk
+  (`reject_continue_cycle`: to the end of the stored chain, visited set only, since
+  re-parenting makes chains longer than any depth), the check and the write; then the
+  caller's wait pin for the spawn is dropped. `desc` and `work_id` replace the spawn's only
+  when given. `LaunchInput` (validates goal, resolves the runner's start time)
+  feeds the one builder `_launch_fields` that `start_spawn` and `reopen_spawn` share; add a
+  per-launch field there (it already carries the model and the three paths, which a
+  continue may change). A launch's `TerminalFacts` usage must be that launch's own, or the
+  `prior_usage` fold double counts. Claude and Codex report session-cumulative usage, so a
+  launch stores the harness's raw running total as `TerminalFacts.harness_cumulative` (opaque
+  here); `reopen_spawn` carries it to `prior_usage.harness_cumulative`, and the runner that
+  owns the new launch seeds its extractor with it (`create_fold(seed)`, subtract per model),
+  from the row it committed: the streaming, primary and black-box runners all do. No stored
+  total (a v3 row, a crashed launch with nothing earlier) seeds zero.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

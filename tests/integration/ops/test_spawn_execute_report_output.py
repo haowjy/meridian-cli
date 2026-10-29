@@ -363,7 +363,7 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
 
 
-def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
+def test_prepare_then_reserve_graceful_prep_failure_leaks_nothing_with_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -404,7 +404,7 @@ def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
     assert [event.get("t") for event in sink.events] == []
 
 
-def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
+def test_prepare_then_reserve_happy_path_announces_once_with_normalized_work_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -455,7 +455,7 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     assert start_events[0]["id"] == result.spawn_id
 
 
-def test_reserve_then_prepare_background_happy_path_announces_once_with_normalized_work_id(
+def test_prepare_then_reserve_background_happy_path_announces_once_with_normalized_work_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -543,7 +543,7 @@ def test_execute_spawn_blocking_persists_unified_work_id_precedence(
     assert row.work_id == "from-request"
 
 
-def test_reserve_then_prepare_materializes_context_from_work(
+def test_prepare_then_reserve_materializes_context_from_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
