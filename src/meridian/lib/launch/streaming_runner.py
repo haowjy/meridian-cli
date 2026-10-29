@@ -51,6 +51,7 @@ from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
+    RUNNER_HEARTBEAT_SECONDS,
     SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
@@ -394,6 +395,18 @@ async def _report_watchdog(
     return True
 
 
+async def _runner_heartbeat(*, launch: LaunchPaths, completion_event: asyncio.Event) -> None:
+    """Touch the runner's lifecycle log while the turn runs.
+
+    A turn can go minutes without the runner writing a file, and a dead launch's derived
+    ``finished_at`` is the newest mtime of ``LaunchPaths.runner_activity``; without this it
+    would read as the start.
+    """
+    while not await _wait_for_event_or_timeout(completion_event, RUNNER_HEARTBEAT_SECONDS):
+        with suppress(OSError):
+            os.utime(launch.runner_lifecycle)
+
+
 async def _inactivity_watchdog(
     *,
     last_event_at: list[float],
@@ -610,6 +623,7 @@ async def _run_streaming_attempt(
     budget_task: asyncio.Task[bool] | None = None
     watchdog_task: asyncio.Task[bool] | None = None
     inactivity_task: asyncio.Task[bool] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
     consume_task: asyncio.Task[None] | None = None
     completion_event = asyncio.Event()
     budget_signal = asyncio.Event()
@@ -693,6 +707,9 @@ async def _run_streaming_attempt(
                 manager=manager,
                 spawn_id=run.spawn_id,
             )
+        )
+        heartbeat_task = asyncio.create_task(
+            _runner_heartbeat(launch=launch, completion_event=completion_event)
         )
         if config.harness_id == HarnessId.CURSOR:
             inactivity_task = asyncio.create_task(
@@ -806,6 +823,7 @@ async def _run_streaming_attempt(
             budget_task,
             watchdog_task,
             inactivity_task,
+            heartbeat_task,
             consume_task,
         ):
             if task is not None and not task.done():

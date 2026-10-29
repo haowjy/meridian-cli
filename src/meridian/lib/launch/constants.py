@@ -11,6 +11,8 @@ POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS: Final[float] = 1.0
 REPORT_WATCHDOG_POLL_SECONDS: Final[float] = 1.0
 REPORT_WATCHDOG_GRACE_SECONDS: Final[float] = 60.0
 SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS: Final[float] = 5.0
+# How often a streaming runner touches its lifecycle log so a crashed launch has a recent mtime.
+RUNNER_HEARTBEAT_SECONDS: Final[float] = 5.0
 CURSOR_INACTIVITY_TIMEOUT_SECONDS: Final[float] = 300.0
 
 BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
@@ -89,5 +91,6 @@ __all__ = [
     "PRIMARY_BASE_COMMAND_PI",
     "REPORT_WATCHDOG_GRACE_SECONDS",
     "REPORT_WATCHDOG_POLL_SECONDS",
+    "RUNNER_HEARTBEAT_SECONDS",
     "SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS",
 ]
