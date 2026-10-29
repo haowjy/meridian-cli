@@ -47,6 +47,7 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -77,7 +78,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
-from meridian.lib.state.spawn_store import SpawnScan
+from meridian.lib.state.spawn_store import SpawnScan, read_spawn_counter
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,16 @@ LINEAGE = Table(
     Column("history_id", Text),
 )
 Index("lineage_parent", LINEAGE.c.parent)
+# A spawn's background launches that a continue moved past while the parent had not yet
+# consumed them (state.json ``owed_launches``); owed discovery unions these with current children.
+OWED_LAUNCHES = Table(
+    "owed_launches",
+    INDEX_SCHEMA,
+    Column("local_id", Text, nullable=False, primary_key=True),
+    Column("n", Integer, nullable=False, primary_key=True),
+    Column("parent", Text, nullable=False),
+)
+Index("owed_launch_parent", OWED_LAUNCHES.c.parent)
 WORK_CHATS = Table(
     "work_chats",
     INDEX_SCHEMA,
@@ -207,6 +218,12 @@ CURSORS = Table(
     # Sorted JSON list of unsupported session versions already passed by the cursor.
     Column("unsupported", Text),
 )
+
+# The ``spawns`` cursor records how far into the shared spawn-ID counter this index has looked,
+# so IDs an older build reserved after the build are found.
+# Reserved-but-unpublished IDs (primaries, restores) retried on later catch-ups; the newest
+# survive, so an ID whose start failed for good cannot grow the set without bound.
+MAX_UNPUBLISHED_SPAWN_IDS = 128
 
 
 def _metadata_match(
@@ -534,10 +551,19 @@ class HistoryIndex:
             return active  # Unchanged: rewriting would only cost a FULL-sync commit.
         db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
         db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+        db.execute(delete(OWED_LAUNCHES).where(OWED_LAUNCHES.c.local_id == key))
         if old:
             self._refresh(db, old[0])
         if record is None:
             return False
+        if record.owed_launches:
+            db.execute(
+                insert(OWED_LAUNCHES),
+                [
+                    {"local_id": key, "n": owed.n, "parent": owed.parent_id}
+                    for owed in record.owed_launches
+                ],
+            )
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
         if db.exec_driver_sql(
             "SELECT 1 FROM locations WHERE history_id = ? AND kind = 'spawn'", (history_id,)
@@ -880,7 +906,7 @@ class HistoryIndex:
         Active loose spawns are provisional anyway, and the session log keeps a
         cursor, so both are cheap. Sessions project without their writer lock;
         busy spawn sources wait for the next catch-up. Spawns an older build creates
-        after this projection was built need a rebuild.
+        are found through the shared ID counter (``_discover_new_spawns``).
         """
         marked = {marker.source.name for marker in target}
         sources = [
@@ -893,7 +919,7 @@ class HistoryIndex:
             if key
         ]
         sources.append(HistorySource(kind="sessions"))
-        active: list[str] = []
+        active: list[str] = self._discover_new_spawns(db, marked)
         for source in sources:
             if source.name in marked:
                 continue
@@ -908,6 +934,53 @@ class HistoryIndex:
                 continue
         db.commit()
         return active
+
+    def _discover_new_spawns(self, db: Connection, marked: set[str]) -> list[str]:
+        """Project spawns whose IDs the shared counter passed since the last look.
+
+        An older build reserves IDs from the same counter but marks no queue of this
+        schema. The cost per catch-up is one small file read plus work for new IDs; IDs
+        reserved before their directory exists stay in the cursor's retry set.
+        """
+        row = db.exec_driver_sql(
+            "SELECT extent, tail FROM cursors WHERE source = 'spawns'"
+        ).first()
+        counter = read_spawn_counter(self.root)
+        if row is None or (counter == row[0] and not row[1]):
+            return []
+        seen = row[0] or 0
+        stored: list[int] = json.loads(row[1] or "[]")
+        candidates = {*stored, *range(seen + 1, counter + 1)}
+        active: list[str] = []
+        unpublished: list[int] = []
+        for number in sorted(candidates):
+            key = f"p{number}"
+            if not (self.root / "spawns" / key / "state.json").is_file():
+                unpublished.append(number)
+                continue
+            if HistorySource(kind="spawn", key=key).name in marked:
+                continue  # The marker drain projects it.
+            try:
+                with lock_file(
+                    HistorySource(kind="spawn", key=key).lock_path(self.root), timeout=0
+                ):
+                    if self._spawn(db, key):
+                        active.append(key)
+            except FileLockTimeout:
+                unpublished.append(number)
+        if counter > seen or unpublished[-MAX_UNPUBLISHED_SPAWN_IDS:] != stored:
+            self._write_spawn_cursor(db, max(counter, seen), unpublished)
+        db.commit()
+        return active
+
+    @staticmethod
+    def _write_spawn_cursor(db: Connection, counter: int, unpublished: list[int]) -> None:
+        retry = json.dumps(unpublished[-MAX_UNPUBLISHED_SPAWN_IDS:]) if unpublished else None
+        db.exec_driver_sql(
+            "INSERT OR REPLACE INTO cursors (source, inode, extent, tail, unsupported) "
+            "VALUES ('spawns', NULL, ?, ?, NULL)",
+            (counter, retry),
+        )
 
     def _rebuild_locked(
         self, *, reset: bool, deadline: float
@@ -932,11 +1005,19 @@ class HistoryIndex:
                 db.execute(
                     insert(META).values(version=SCHEMA_VERSION, generation=generation, build=build)
                 )
-                for key in scan_spawn_ids(self.root / "spawns"):
+                counter = read_spawn_counter(self.root)  # Before the scan: later IDs are rechecked.
+                scanned = scan_spawn_ids(self.root / "spawns")
+                for key in scanned:
                     with _source_lock(
                         HistorySource(kind="spawn", key=key).lock_path(self.root), deadline
                     ):
                         self._spawn(db, key)
+                numbers = {int(key[1:]) for key in scanned if is_spawn_id(key)}
+                self._write_spawn_cursor(
+                    db,
+                    counter,
+                    list(range(max(numbers, default=0) + 1, counter + 1)),
+                )
                 for kind in ("sessions", "catalog"):
                     source = HistorySource(kind=kind)
                     with _source_lock(source.lock_path(self.root), deadline):

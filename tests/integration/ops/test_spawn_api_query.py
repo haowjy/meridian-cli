@@ -596,7 +596,7 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
         harness="codex",
         prompt="hello",
     ).spawn_id
-    report_path = runtime_root / "spawns" / str(spawn_id) / "report.md"
+    report_path = launch_paths(runtime_root, str(spawn_id)).report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("report body\n", encoding="utf-8")
     spawn_store.finalize_spawn(
@@ -621,7 +621,7 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
     )
 
-    assert status_detail.report_path == report_path.as_posix()
+    assert status_detail.report_summary is not None
     assert status_detail.report_body is None
     assert reported_status_detail.report_body == "report body"
     assert show_detail.report_body == "report body"
@@ -660,7 +660,7 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
         harness="pi",
         prompt="hello",
     ).spawn_id
-    lifecycle_path = runtime_root / "spawns" / str(pi_id) / "pi-lifecycle.json"
+    lifecycle_path = launch_paths(runtime_root, str(pi_id)).pi_lifecycle
     lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
     lifecycle_path.write_text(
         json.dumps(

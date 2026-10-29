@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.event_hooks import run_event_hooks
@@ -20,6 +20,9 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 ExtractorSpecT = TypeVar("ExtractorSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -41,6 +44,9 @@ class AttemptFold:
     """One attempt's fold cursor. The registered extractor itself is stateless."""
 
     extractor: SpawnExtractor
+    seed: Mapping[str, JsonValue] | None = None
+    """``harness_cumulative`` of the launch before this one (``None``: nothing carries over).
+    Only harnesses whose reports are cumulative over a resumed session read it."""
     facts: AttemptFacts = field(default_factory=AttemptFacts)
     scope_session_id: str | None = None
     usage_is_specific: bool = False

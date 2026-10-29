@@ -19,7 +19,7 @@ import {
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile } from "../../shared/schemas";
+import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile, totalDurationSecs } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -267,7 +267,7 @@ export class SpawnWatchRuntime {
         eligible.push({
           id: row.id, kind: "spawn", status: row.status, reportPath: resolveReportPath(row),
           label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
-          duration: formatDurationSecs(row.terminal.duration_secs),
+          duration: formatDurationSecs(totalDurationSecs(row)),
           exitCode: row.terminal.exit_code,
           error: row.terminal.error ?? undefined,
         });
@@ -394,7 +394,7 @@ export class SpawnWatchRuntime {
     const reportPath = item.reportPath;
     const report = await readBoundedReport(reportPath);
     const frame = spawnNotificationFrame(item, report.text);
-    if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(reportPath);
+    if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(item.id);
     return renderNotificationFrame(frame, maxBytes);
   }
 
@@ -596,7 +596,6 @@ function notificationOutcome(item: NotificationItem): string {
 }
 
 function spawnNotificationFrame(item: SpawnNotificationItem, report: string | null): NotificationFrame {
-  const reportPath = item.reportPath;
   const details = [`Worker: ${item.label}`];
   if (item.error) details.push(`Failure: ${item.error}`);
   details.push("", report || "No durable report content was published.");
@@ -604,13 +603,13 @@ function spawnNotificationFrame(item: SpawnNotificationItem, report: string | nu
     prefix: `${item.id} ${item.status} (${notificationOutcome(item)})`,
     detail: details.join("\n"),
     truncationNotice: `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
-    lookup: `Full report: ${reportPath}\nTranscript: meridian session log ${item.id}`,
+    lookup: `Full report: meridian spawn report show ${item.id}\nTranscript: meridian session log ${item.id}`,
   };
 }
 
-function spawnReportTruncationNotice(reportPath: string): string {
+function spawnReportTruncationNotice(id: string): string {
   return [
-    `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`,
+    `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: meridian spawn report show ${id}]`,
     `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
   ].join("\n");
 }
@@ -633,8 +632,7 @@ function mandatoryNotificationBytes(item: NotificationItem): number {
     ? spawnNotificationFrame(item, null)
     : bashNotificationFrame(item);
   if (item.kind === "spawn") {
-    const reportPath = item.reportPath;
-    frame.truncationNotice = spawnReportTruncationNotice(reportPath);
+    frame.truncationNotice = spawnReportTruncationNotice(item.id);
   }
   return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);
 }
@@ -676,7 +674,7 @@ function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
 function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
   const lines = [
-    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.terminal?.duration_secs))}`,
+    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(totalDurationSecs(row)))}`,
     dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
   ];
   if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
@@ -688,7 +686,7 @@ function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
 const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.id) : theme.fg("dim", row.id)) : row.id) },
   { header: "STATUS", width: 14, render: (row, theme) => (theme ? formatSpawnStatus(row, theme) : String(row.status ?? "")) },
-  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.terminal?.duration_secs)) : formatDurationSecs(row.terminal?.duration_secs)), align: "right" },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(totalDurationSecs(row))) : formatDurationSecs(totalDurationSecs(row))), align: "right" },
   { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
   { header: "MODEL", width: 24, render: (row, theme) => (theme ? theme.fg("dim", String(row.model ?? "")) : String(row.model ?? "")) },
   { header: "← BASH", width: 10, render: (row, theme) => (theme ? theme.fg("dim", String(row.originating_bash_id ?? "")) : String(row.originating_bash_id ?? "")) },

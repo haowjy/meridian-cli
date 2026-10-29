@@ -37,7 +37,7 @@ from meridian.lib.state.native_snapshot import (
     complete_published_snapshot,
     read_snapshot,
 )
-from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir, row_launch_subdir
 from meridian.lib.state.retention_digest import (
     canonical,
     digest,
@@ -45,7 +45,7 @@ from meridian.lib.state.retention_digest import (
     stored_record_digest,
 )
 from meridian.lib.state.session_store import SessionRecord
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
 from meridian.lib.utils.json_shapes import json_object
 
@@ -218,10 +218,26 @@ def _is_reserved_atomic_temp(name: str) -> bool:
     )
 
 
+def required_members(
+    names: Iterable[str], launch: LaunchRef | None, *, has_prompt: bool
+) -> tuple[str, tuple[str, ...]]:
+    """The transcript member and the members a retained record cannot lack.
+
+    The transcript and prompt belong to the current launch, so they sit in its directory
+    (``launches/<n>/`` for a v4 row, the top level for a v3 row).
+    """
+    sub = row_launch_subdir(launch).as_posix()
+    prefix = "" if sub == "." else sub + "/"
+    transcript = prefix + canonical_transcript_member(
+        name.removeprefix(prefix) for name in names if name.startswith(prefix)
+    )
+    prompt = (prefix + LAUNCH_FILE_NAMES.starting_prompt,) if has_prompt else ()
+    return transcript, ("state.json", transcript, *prompt)
+
+
 def inventory(directory: Path) -> tuple[Member, ...]:
     if directory.is_symlink():
         raise ValueError("Retained record directory must not be a symlink")
-    has_native_snapshot = (directory / LAUNCH_FILE_NAMES.native_snapshot).is_file()
     members: list[Member] = []
     for path in sorted(directory.rglob("*")):
         relative = path.relative_to(directory).as_posix()
@@ -235,7 +251,10 @@ def inventory(directory: Path) -> tuple[Member, ...]:
             raise ValueError(f"Non-regular or hard-linked retained file: {path}")
         if (
             path.name in LAUNCH_FILE_NAMES.retention_excluded
-            or (has_native_snapshot and path.name in LAUNCH_FILE_NAMES.retired_runner_stream)
+            or (
+                path.name in LAUNCH_FILE_NAMES.retired_runner_stream
+                and (path.parent / LAUNCH_FILE_NAMES.native_snapshot).is_file()
+            )
             or path.suffix in {".lock", ".sock", ".sentinel"}
             or _is_reserved_atomic_temp(path.name)
         ):
@@ -248,19 +267,19 @@ def inventory(directory: Path) -> tuple[Member, ...]:
                 size += len(chunk)
         members.append(Member(name=relative, size=size, sha256=checksum.hexdigest()))
     names = {member.name for member in members}
-    transcript = canonical_transcript_member(names)
-    required = {"state.json", transcript}
     if "state.json" not in names:
         raise ValueError("A retained record requires state.json")
     stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
-    if stored.prompt_length is not None:
-        required.add(LAUNCH_FILE_NAMES.starting_prompt)
+    transcript, required_files = required_members(
+        names, stored.launch, has_prompt=stored.prompt_length is not None
+    )
+    required = set(required_files)
     if not required <= names:
         missing = sorted(required - names)
         raise ValueError(f"Missing required retained record member: {missing}")
-    if transcript == LAUNCH_FILE_NAMES.native_snapshot:
+    if PurePosixPath(transcript).name == LAUNCH_FILE_NAMES.native_snapshot:
         validation = complete_published_snapshot(
-            directory / LAUNCH_FILE_NAMES.native_snapshot, history_id=stored.history_id
+            directory / transcript, history_id=stored.history_id
         )
         if validation.state != "complete":
             raise ValueError("Incomplete or corrupt native snapshot")
@@ -319,9 +338,10 @@ def capture_record(
         raise ValueError("Session history identity differs from its aggregate")
     files = inventory(directory)
     stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
-    transcript = canonical_transcript_member(member.name for member in files)
-    required = ("state.json", transcript) + (
-        (LAUNCH_FILE_NAMES.starting_prompt,) if stored.prompt_length is not None else ()
+    _, required = required_members(
+        (member.name for member in files),
+        stored.launch,
+        has_prompt=stored.prompt_length is not None,
     )
     original = (
         restored_record(directory, files, session) if state.record_mode == "historical" else None
@@ -462,10 +482,12 @@ def verify_archive(
             stored = StoredSpawnState.model_validate_json(
                 _member_bytes(archive, prefix + "aggregate/state.json", limit=_MAX_METADATA)
             )
-            transcript = canonical_transcript_member(m.name for m in record.files)
-            required = {"state.json", transcript}
-            if stored.prompt_length is not None:
-                required.add(LAUNCH_FILE_NAMES.starting_prompt)
+            transcript, required_files = required_members(
+                (m.name for m in record.files),
+                stored.launch,
+                has_prompt=stored.prompt_length is not None,
+            )
+            required = set(required_files)
             if set(record.required_files) != required or not required <= {
                 m.name for m in record.files
             }:
@@ -825,8 +847,10 @@ def iter_archived_events(
     record = next((r for r in manifest.records if r.history_id == history_id), None)
     if record is None:
         raise ValueError(f"Archive has no transcript for {history_id}")
-    member_name = canonical_transcript_member(m.name for m in record.files)
-    if member_name != LAUNCH_FILE_NAMES.native_snapshot:
+    member_name, _ = required_members(
+        (m.name for m in record.files), record.state.launch, has_prompt=False
+    )
+    if PurePosixPath(member_name).name != LAUNCH_FILE_NAMES.native_snapshot:
         raise ValueError("Legacy runner-history archive members are inert, not transcripts")
     name = record_member(history_id, "aggregate", member_name)
     expected = next((member for member in manifest.members if member.name == name), None)

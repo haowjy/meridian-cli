@@ -503,7 +503,7 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
     assert capsys.readouterr().err == ""
     debug_records = [
         json.loads(line)
-        for line in (spawn_dir / "debug.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in _launch_of(spawn_dir).debug.read_text(encoding="utf-8").splitlines()
     ]
     assert {record["data"]["phase"] for record in debug_records} == {
         "events",
@@ -1409,7 +1409,7 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
     await launcher._consume_live_events()
     assert facts.final_text == "primary report"
     assert facts.usage.input_tokens == 7
-    phase = json.loads((tmp_path / "spawns" / spawn_id / "pi-lifecycle.json").read_text())
+    phase = json.loads(launch_paths(tmp_path, spawn_id).pi_lifecycle.read_text())
     assert phase["phase"] == "cleanup_completed"
 
 
@@ -1439,7 +1439,7 @@ async def test_managed_attach_persists_one_tui_scope_before_real_exec(
     # The child reads the durable sidecar itself, before emitting any result.
     program = (
         "import json,pathlib,os; "
-        f"p=pathlib.Path({str(spawn_dir / 'process_scopes.json')!r}); "
+        f"p=pathlib.Path({str(launch_paths(tmp_path, spawn_id).process_scopes)!r}); "
         "scopes=[s for s in json.loads(p.read_text())['scopes'] if s['scope_id']=='tui']; "
         "assert len(scopes)==1 and scopes[0]['root_pid']==os.getpid(); "
         "assert scopes[0]['owner_policy']=='session_owned'; "

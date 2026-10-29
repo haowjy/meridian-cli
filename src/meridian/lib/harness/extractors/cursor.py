@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.common import coerce_optional_int, extract_text, iter_nested_dicts
@@ -15,6 +15,9 @@ from .base import (
     HarnessExtractor,
     session_from_mapping_with_keys,
 )
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 _SESSION_ID_KEYS: tuple[str, ...] = (
     "session_id",
@@ -36,8 +39,8 @@ class CursorHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return _find_session_id(event.payload)
 
-    def create_fold(self) -> AttemptFold:
-        return CursorFold(self)
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold:
+        return CursorFold(self, seed=seed)
 
 
 class CursorFold(AttemptFold):

@@ -49,10 +49,12 @@ export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): st
 
 /**
  * Mirrors ``LaunchPaths.report``: the one place the extension names a per-launch file.
- * Takes the parsed spawn state so the launch it names is the one resolved.
+ * Takes the parsed spawn state so the launch it names is the one resolved: a v4 row's
+ * launch lives in ``launches/<n>/``, a v3 row's (``launch`` absent) in the spawn directory.
  */
 export function resolveReportPath(row: SpawnStateFile): string {
-  return path.join(resolveSpawnsDir(), row.id, "report.md");
+  const launchDir = row.launch === undefined ? [] : ["launches", String(row.launch.n)];
+  return path.join(resolveSpawnsDir(), row.id, ...launchDir, "report.md");
 }
 
 /** legacy-observed-spawns (#719): Old location, read-only in the Pi extension. */

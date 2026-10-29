@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import HarnessFailure
@@ -15,6 +15,9 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 
 def _usage_from_message(message: Mapping[str, object]) -> TokenUsage | None:
@@ -137,8 +140,8 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             return session_id.strip()
         return None
 
-    def create_fold(self) -> AttemptFold:
-        return PiFold(self)
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold:
+        return PiFold(self, seed=seed)
 
 
 class PiFold(AttemptFold):

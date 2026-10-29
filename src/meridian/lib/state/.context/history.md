@@ -65,8 +65,10 @@ as unknown evidence and does not complete while the error persists).
 Writers of an older build still mutate shared authority during the overlap. Catch-up
 re-reads every active loose spawn and the session-log cursor without a marker, so
 runners that finish and primaries that stop after an upgrade still project. Spawns
-an older build creates after this projection was built, or archive changes it
-makes, need `session index rebuild`. The older index misses this build's writes.
+an older build creates are found through the shared `spawn-id-counter`: catch-up
+compares it to the `spawns` cursor and projects the IDs between (IDs reserved before
+their directory exists stay in the cursor's retry set). Archive changes an older build
+makes need `session index rebuild`. The older index misses this build's writes.
 The older index skips unsupported session rows and keeps projecting later ones, so
 it still discovers its own sessions. The session cursor stores the skipped versions,
 and every catch-up and rebuild warns from it, not only the pass that crossed the

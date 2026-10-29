@@ -201,7 +201,7 @@ def launch_primary(
     preview_context = bind_launch_context(
         prepared=prepared,
         bindings=RuntimeBindings(
-            launch=LaunchPaths.preview(Path(runtime.runtime_root), "dry-run-primary"),
+            launch=LaunchPaths.preview(Path(runtime.runtime_root)),
             runtime_work_id=effective_work_id,
             dry_run=True,
         ),

@@ -50,7 +50,7 @@ def _load_report_text(project_root: Path, row: SpawnRecord) -> str | None:
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         return None
-    _, report_text = read_report(LaunchPaths.for_row(runtime_root, row))
+    report_text = read_report(LaunchPaths.for_row(runtime_root, row))
     return report_text
 
 

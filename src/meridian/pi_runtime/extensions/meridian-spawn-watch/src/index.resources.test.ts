@@ -155,7 +155,7 @@ describe("bounded result delivery", () => {
     expect(Buffer.byteLength(first.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
     for (const id of first.details.work_ids) {
       expect(first.content).toContain(`${id} succeeded (exit 0`);
-      expect(first.content).toContain(`/spawns/${id}/report.md`);
+      expect(first.content).toContain(`meridian spawn report show ${id}`);
       expect(first.content).toContain(`meridian session log ${id}`);
     }
     expect(first.content.match(/Optional spawn details truncated/g)).toHaveLength(32);
@@ -214,7 +214,7 @@ describe("bounded result delivery", () => {
     expect(fixture.notices[0]!.details.work_ids).toEqual(["p001", "p002", "b001"]);
     expect(Buffer.byteLength(fixture.notices[0]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
     expect(fixture.notices[0]!.content).toContain("p001 succeeded (exit 0");
-    expect(fixture.notices[0]!.content).toContain(`Full report: ${reportPath}`);
+    expect(fixture.notices[0]!.content).toContain("Full report: meridian spawn report show p001");
     expect(fixture.notices[0]!.content).toContain("p002 succeeded (exit 0");
     expect(fixture.notices[0]!.content).toContain("Background bash b001 exited (exit 7");
     expect(fixture.notices[0]!.content).toContain('bash_manage({action: "output", bash_id: "b001"})');

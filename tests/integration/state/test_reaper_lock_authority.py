@@ -117,7 +117,7 @@ def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
 async def test_cancel_dead_runner_with_report_keeps_the_completion(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    (runtime_root / "spawns" / spawn_id / "report.md").write_text(
+    launch_paths(runtime_root, spawn_id).report.write_text(
         "# Finished\n\nCompleted before the runner crashed.\n",
         encoding="utf-8",
     )

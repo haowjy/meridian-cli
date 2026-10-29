@@ -36,7 +36,8 @@ SpawnStateFields
 origin) but does not repeat status. When `status` is terminal, `terminal`
 must not be `None`; when `status` is active or `unknown`, `terminal` must
 be `None`. `StoredSpawnState` uses `extra="forbid"`, so unknown fields on a
-v3 row are quarantined, never silently accepted.
+v3 or v4 row are quarantined, never silently accepted. `v: 4` appears exactly when
+`launch` does; a v3 row never carries `launch`, `prior_usage` or `owed_launches`.
 
 **Legacy rows (`v: 2` or missing).** `legacy.py` upgrades known pre-v3 shapes
 in memory at the parse boundary, BEFORE the strict model validates: flat

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int, extract_text
@@ -13,6 +13,9 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 
 class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -27,8 +30,8 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                 return value.strip()
         return None
 
-    def create_fold(self) -> AttemptFold:
-        return ClaudeFold(self)
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold:
+        return ClaudeFold(self, seed=seed)
 
 
 def _permission_denial_detail(tool: str, tool_input: object) -> str:
@@ -41,6 +44,51 @@ def _permission_denial_detail(tool: str, tool_input: object) -> str:
     return tool
 
 
+_USAGE_KEYS = {
+    "input_tokens": ("inputTokens", "input_tokens"),
+    "output_tokens": ("outputTokens", "output_tokens"),
+    "cache_read_input_tokens": ("cacheReadInputTokens", "cache_read_input_tokens"),
+    "cache_creation_input_tokens": ("cacheCreationInputTokens", "cache_creation_input_tokens"),
+}
+
+
+def _usage_values(rows: list[Mapping[str, object]]) -> dict[str, int]:
+    """Each token field summed over ``rows``; fields no row reports are left out."""
+    values: dict[str, int] = {}
+    for field, keys in _USAGE_KEYS.items():
+        known = [
+            n
+            for row in rows
+            if (n := coerce_optional_int(row.get(keys[0], row.get(keys[1])))) is not None
+        ]
+        if known:
+            values[field] = sum(known)
+    return values
+
+
+def _token_usage(
+    values: dict[str, int], cost: float | None, cumulative: dict[str, JsonValue] | None = None
+) -> TokenUsage:
+    return TokenUsage(
+        input_tokens=values.get("input_tokens"),
+        output_tokens=values.get("output_tokens"),
+        cache_read_input_tokens=values.get("cache_read_input_tokens"),
+        cache_creation_input_tokens=values.get("cache_creation_input_tokens"),
+        total_cost_usd=cost,
+        harness_cumulative=cumulative,
+    )
+
+
+def _dict_rows(raw: object) -> dict[str, Mapping[str, object]]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(name): cast("Mapping[str, object]", row)
+        for name, row in cast("dict[object, object]", raw).items()
+        if isinstance(row, dict)
+    }
+
+
 class ClaudeFold(AttemptFold):
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
         facts = self.facts
@@ -48,54 +96,7 @@ class ClaudeFold(AttemptFold):
             text = extract_text(payload.get("result"))
             if text:
                 self.set_text(text, "claude_result")
-            model_usage = payload.get("modelUsage")
-            usage: object = (
-                cast("dict[str, object]", model_usage)
-                if isinstance(model_usage, dict)
-                else payload.get("usage")
-            )
-            if isinstance(usage, dict):
-                usage = cast("dict[str, object]", usage)
-                rows = [cast("dict[str, object]", x) for x in usage.values() if isinstance(x, dict)]
-                if not rows:
-                    rows = [usage]
-                fields = {
-                    "input_tokens": ("inputTokens", "input_tokens"),
-                    "output_tokens": ("outputTokens", "output_tokens"),
-                    "cache_read_input_tokens": ("cacheReadInputTokens", "cache_read_input_tokens"),
-                    "cache_creation_input_tokens": (
-                        "cacheCreationInputTokens",
-                        "cache_creation_input_tokens",
-                    ),
-                }
-                values: dict[str, int | None] = {}
-                for field, keys in fields.items():
-                    numbers = [
-                        coerce_optional_int(row.get(keys[0], row.get(keys[1]))) for row in rows
-                    ]
-                    known = [n for n in numbers if n is not None]
-                    previous = getattr(facts.usage, field, None) if self.usage_is_specific else None
-                    values[field] = (sum(known) + (previous or 0)) if known else previous
-                cost = coerce_optional_float(payload.get("total_cost_usd"))
-                if cost is None:
-                    costs = [coerce_optional_float(row.get("costUSD")) for row in rows]
-                    known_costs = [c for c in costs if c is not None]
-                    cost = (
-                        sum(known_costs)
-                        if known_costs
-                        else (facts.usage.total_cost_usd if facts.usage else None)
-                    )
-                self.usage_is_specific = True
-                facts.usage = TokenUsage(
-                    input_tokens=values["input_tokens"],
-                    output_tokens=values["output_tokens"],
-                    cache_read_input_tokens=values["cache_read_input_tokens"],
-                    cache_creation_input_tokens=values["cache_creation_input_tokens"],
-                    total_cost_usd=cost,
-                )
-            elif (cost := coerce_optional_float(payload.get("total_cost_usd"))) is not None:
-                self.usage_is_specific = True
-                facts.usage = TokenUsage(total_cost_usd=cost)
+            self._fold_result_usage(payload)
             raw_denials = payload.get("permission_denials")
             if isinstance(raw_denials, list):
                 recorded = {denial.request_id for denial in facts.permission_denials}
@@ -126,6 +127,41 @@ class ClaudeFold(AttemptFold):
             text = extract_text(payload.get("content")) or extract_text(payload.get("message"))
             if text:
                 self.set_text(text, "claude_assistant")
+
+    def _fold_result_usage(self, payload: Mapping[str, object]) -> None:
+        """Fold one ``result`` event's usage into this launch's facts.
+
+        ``modelUsage`` (a row per model, subagents included) and ``total_cost_usd`` are
+        cumulative over the whole Claude session, earlier launches of a resumed session
+        too. This launch's usage is that cumulative minus the seed (the previous launch's
+        stored cumulative; empty for a fresh launch), per model, so tokens and cost are
+        exact. The cumulative itself is kept for the next launch. A ``result`` without
+        ``modelUsage`` carries no usage this fold uses.
+        """
+        rows = _dict_rows(payload.get("modelUsage"))
+        cost = coerce_optional_float(payload.get("total_cost_usd"))
+        if not rows:
+            return
+        if cost is None:
+            costs = [coerce_optional_float(row.get("costUSD")) for row in rows.values()]
+            known_costs = [c for c in costs if c is not None]
+            cost = sum(known_costs) if known_costs else None
+        seed_rows = _dict_rows(self.seed.get("modelUsage") if self.seed else None)
+        seed_cost = coerce_optional_float(self.seed.get("cost") if self.seed else None) or 0.0
+        own: dict[str, int] = {}
+        for model, row in rows.items():
+            seed_values = _usage_values([seed_rows[model]]) if model in seed_rows else {}
+            for field, value in _usage_values([row]).items():
+                own[field] = own.get(field, 0) + max(0, value - seed_values.get(field, 0))
+        self.usage_is_specific = True
+        self.facts.usage = _token_usage(
+            own,
+            None if cost is None else max(0.0, cost - seed_cost),
+            {
+                "modelUsage": cast("dict[str, JsonValue]", dict(rows)),
+                "cost": cost,
+            },
+        )
 
 
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()

@@ -84,7 +84,6 @@ class ReportShowOutput(BaseModel):
 
     spawn_id: str
     status: str
-    report_path: str
     report: str
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -105,7 +104,6 @@ class ReportSearchResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn_id: str
-    report_path: str
     snippet: str
 
 
@@ -120,7 +118,7 @@ class ReportSearchOutput(BaseModel):
             return "(no matching reports)"
         from meridian.lib.core.formatting import tabular
 
-        return tabular([[item.spawn_id, item.report_path, item.snippet] for item in self.results])
+        return tabular([[item.spawn_id, item.snippet] for item in self.results])
 
 
 def report_show_sync(
@@ -144,7 +142,6 @@ def report_show_sync(
     result = ReportShowOutput(
         spawn_id=spawn_id,
         status=status,
-        report_path=report_path.as_posix(),
         report=report,
     )
     consume_result_if_shown(
@@ -199,7 +196,6 @@ def report_search_sync(
         matches.append(
             ReportSearchResult(
                 spawn_id=spawn_id,
-                report_path=report_path.as_posix(),
                 snippet=_report_snippet(report, query=query),
             )
         )

@@ -32,7 +32,7 @@ def _run_fake_claude_spawn(tmp_path: Path, *, explicit_report: str | None) -> di
     fake_bin.mkdir()
     report_command = ""
     if explicit_report is not None:
-        report_path = runtime_root / "spawns" / "p1" / "report.md"
+        report_path = runtime_root / "spawns" / "p1" / "launches" / "1" / "report.md"
         report_command = (
             'if [ -n "$MERIDIAN_SPAWN_ID" ]; then\n'
             f"mkdir -p {shlex.quote(str(report_path.parent))}\n"

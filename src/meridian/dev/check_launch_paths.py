@@ -8,6 +8,8 @@ Fails when, outside ``state/paths.py`` (Python) and ``shared/pi_state_paths.ts``
   (``for_row`` in ``paths.py`` is the only way to a published launch);
 - ``LaunchPaths.reserved(...)`` is called outside ``state/spawn_store.py``, the code that
   assigns ``n``;
+- ``LaunchPaths.preview()`` is called outside the two dry-run entry points
+  (``ops/spawn/prepare.py``, ``launch/__init__.py``): a preview names no real spawn;
 - a private name (``_X``) is imported from ``paths.py`` (code that recognizes a per-launch
   name uses ``LAUNCH_FILE_NAMES``);
 - the retired ``resolve_spawn_log_dir`` reappears.
@@ -34,6 +36,10 @@ _ALLOWED = {
     _SRC / "pi_runtime" / "extensions" / "shared" / "pi_state_paths.ts",
 }
 _RESERVE_ALLOWED = _SRC / "lib" / "state" / "spawn_store.py"
+_PREVIEW_ALLOWED = {
+    _SRC / "lib" / "ops" / "spawn" / "prepare.py",
+    _SRC / "lib" / "launch" / "__init__.py",
+}
 _PATHS_MODULE = "meridian.lib.state.paths"
 _RETIRED_IDENTIFIER = "resolve_spawn_log_dir"
 
@@ -44,7 +50,7 @@ def per_launch_names() -> frozenset[str]:
     The retired ``history.jsonl`` is not gated: Claude's own config dir has a file of the
     same name that ``claude_sessions`` reads.
     """
-    probe = LaunchPaths.preview(Path("/probe"), "p1")
+    probe = LaunchPaths.preview(Path("/probe"))
     names = {
         value.name
         for attr in dir(LaunchPaths)
@@ -100,6 +106,13 @@ def _python_structure(path: Path) -> Iterator[tuple[int, str]]:
                 and path != _RESERVE_ALLOWED
             ):
                 yield node.lineno, "LaunchPaths.reserved(...) is spawn_store's: it assigns n"
+            if (
+                isinstance(target, ast.Attribute)
+                and target.attr == "preview"
+                and _is_launch_paths(target.value)
+                and path not in _PREVIEW_ALLOWED
+            ):
+                yield node.lineno, "LaunchPaths.preview() is for the dry-run entry points only"
         elif isinstance(node, ast.Assign) and _is_launch_paths(node.value):
             yield node.lineno, "LaunchPaths is aliased; construct nothing outside state/paths.py"
         elif isinstance(node, ast.ImportFrom) and node.module == _PATHS_MODULE:

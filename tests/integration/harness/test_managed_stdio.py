@@ -72,7 +72,7 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
 
         assert len(launched) == 1
         await asyncio.wait_for(launched[0].wait(), timeout=1.0)
-        stderr_log = runtime_root / "spawns" / str(spawn_id) / "stderr.log"
+        stderr_log = launch_paths(runtime_root, str(spawn_id)).stderr_log
         assert stderr_log.resolve() not in {
             Path(open_file.path).resolve() for open_file in psutil.Process().open_files()
         }

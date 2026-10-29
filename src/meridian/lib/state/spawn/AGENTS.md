@@ -1,4 +1,4 @@
-# state/spawn/ — Spawn Domain Models and V3 Persistence
+# state/spawn/ — Spawn Domain Models and V3/V4 Persistence
 
 Domain types, disk persistence, and pure transitions for per-spawn state files; the
 substrate under `spawn_store.py`. Locking, lock order, and the mutation seam:
@@ -6,7 +6,7 @@ substrate under `spawn_store.py`. Locking, lock order, and the mutation seam:
 
 - `model.py` — `SpawnRecord` (starting prompt is reconstructed from `starting-prompt.md`,
   not stored in `state.json`), `TerminalFacts`, `SpawnOrigin`.
-- `repository.py` — strict on-disk v3 `StoredSpawnState` and the locked mutation result
+- `repository.py` — strict on-disk `StoredSpawnState` (v3, or v4 when `launch` is present) and the locked mutation result
   (`Applied` / `Declined` / `Missing`). A persistence leaf; cross-leaf operations belong
   in `spawn_aggregate.py`.
 - `legacy.py` — one-shot v2→v3 in-memory upgrade. Reads never rewrite legacy rows; unknown

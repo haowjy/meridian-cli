@@ -299,7 +299,7 @@ def bind_create_payload_context(
     return bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
-            launch=LaunchPaths.preview(Path(artifacts.preview_runtime.runtime_root), "dry-run"),
+            launch=LaunchPaths.preview(Path(artifacts.preview_runtime.runtime_root)),
             dry_run=True,
             plan_overrides=artifacts.plan_overrides,
         ),

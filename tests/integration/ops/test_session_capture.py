@@ -26,7 +26,7 @@ from tests.support.launch_paths import launch_paths
 
 
 def _snapshot_path(root: Path, key: str) -> Path:
-    return root / "spawns" / key / LAUNCH_FILE_NAMES.native_snapshot
+    return launch_paths(root, key).native_transcript
 
 
 def _assert_sealed_snapshot(path: Path, *, contains: str, excludes: str | None = None) -> None:
@@ -336,7 +336,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     )
     assert session_stop_maintenance(project, str(old_run)) is None
     _assert_not_captured(root, str(old_run))
-    assert not tuple((root / "spawns" / old_run).glob(".native-transcript.jsonl.*.tmp"))
+    assert not tuple(launch_paths(root, old_run).dir.glob(".native-transcript.jsonl.*.tmp"))
 
     session_store.stop_session(root, "c1")
     spawn_store.finalize_spawn(
@@ -503,7 +503,7 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
     with pytest.raises(NativeCaptureDeferred, match="active owner"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
-    assert not tuple((root / "spawns" / key).glob(".native-transcript.jsonl.*.tmp"))
+    assert not tuple(launch_paths(root, key).dir.glob(".native-transcript.jsonl.*.tmp"))
     mark_scope_released(launch_paths(root, SpawnId(owner)), scope.release_id)
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
@@ -539,7 +539,7 @@ def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
     with pytest.raises(NativeCaptureDeferred, match="active owner"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
-    assert not tuple((root / "spawns" / key).glob(".native-transcript.jsonl.*.tmp"))
+    assert not tuple(launch_paths(root, key).dir.glob(".native-transcript.jsonl.*.tmp"))
 
 
 @pytest.mark.parametrize("binding", ["state", "sidecar"])
@@ -695,7 +695,8 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
         native_store=str(native_root),
     )
     session_store.stop_session(root, "c2")
-    (root / "spawns" / key / "history.jsonl").write_text(json.dumps({"type": "runner-only"}) + "\n")
+    runner_history = launch_paths(root, key).dir / LAUNCH_FILE_NAMES.history
+    runner_history.write_text(json.dumps({"type": "runner-only"}) + "\n")
 
     dry_run = archive_history(
         root,
@@ -756,7 +757,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
         {"event_type": "legacy.runner.boundary", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
-    legacy = root / "spawns" / legacy_key / "history.jsonl"
+    legacy = launch_paths(root, legacy_key).dir / LAUNCH_FILE_NAMES.history
     legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
     result = archive_history(
         root,
@@ -782,14 +783,15 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
     restored_ids = restore_archive(
         tmp_path / "restored-runtime", archive_path, (str(legacy_state.history_id),)
     )
-    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0]
     from meridian.lib.state.retention_archive import inventory
 
     # Byte inventory is the only supported interpretation of legacy members.
-    original_member = next(m for m in inventory(legacy.parent) if m.name == "history.jsonl")
-    restored_member = next(
-        m for m in inventory(restored_history.parent) if m.name == "history.jsonl"
+    member_name = f"launches/1/{LAUNCH_FILE_NAMES.history}"
+    original_member = next(
+        m for m in inventory(legacy.parents[2]) if m.name == member_name
     )
+    restored_member = next(m for m in inventory(restored_history) if m.name == member_name)
     assert restored_member == original_member
     with pytest.raises(ValueError, match="members are inert"):
         list(iter_archived_events(archive_path, legacy_state.history_id))
@@ -965,7 +967,7 @@ def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
 
 def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
-    stale_snapshot = root / "spawns" / key / ".native-transcript.jsonl.deadbeef.tmp"
+    stale_snapshot = launch_paths(root, key).dir / ".native-transcript.jsonl.deadbeef.tmp"
     stale_snapshot.write_text("partial snapshot")
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")

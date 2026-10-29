@@ -913,7 +913,6 @@ class SpawnDetailOutput(BaseModel):
     reasoning_tokens: int | None = None
     cost_usd: float | None
     cost_is_estimate: bool = False
-    report_path: str | None
     report_summary: str | None
     report_body: str | None
     harness_session_id: str | None = None
@@ -923,7 +922,6 @@ class SpawnDetailOutput(BaseModel):
     pi_cleanup_reason: str | None = None
     pi_cleanup_error: str | None = None
     last_message: str | None = None
-    log_path: str | None = None
     last_attempt_exited_at: str | None = None
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
@@ -965,8 +963,8 @@ class SpawnDetailOutput(BaseModel):
             return ""
         return f"\n\n{report_text}"
 
-    def report_table_value(self) -> str:
-        return self.report_path or "-"
+    def _has_report(self) -> bool:
+        return self.report_summary is not None or self.report_body is not None
 
     def report_section(self) -> str | None:
         report_text = self._normalized_report_body()
@@ -1054,8 +1052,6 @@ class SpawnDetailOutput(BaseModel):
             wire["cache_creation_input_tokens"] = self.cache_creation_input_tokens
         if self.reasoning_tokens is not None:
             wire["reasoning_tokens"] = self.reasoning_tokens
-        if self.report_path is not None:
-            wire["report_path"] = self.report_path
         if self.report_summary is not None:
             wire["report_summary"] = self.report_summary
         if self.report_body is not None:
@@ -1140,8 +1136,8 @@ class SpawnDetailOutput(BaseModel):
             lines.append(f"Work: {work_value}")
         if self._has_distinct_task_cwd():
             lines.append(self._task_dir_line())
-        if self.report_path is not None:
-            lines.append(f"Report: {self.report_path}")
+        if self._has_report():
+            lines.append(f"Report: meridian spawn report show {self.spawn_id}")
         failure_line = self._failure_line_for_compact_or_moderate()
         if failure_line is not None:
             label, value = failure_line
@@ -1244,11 +1240,16 @@ class SpawnDetailOutput(BaseModel):
                 None if self.reasoning_tokens is None else str(self.reasoning_tokens),
             ),
             ("Cost", cost_value),
-            ("Report", self.report_path),
+            (
+                "Report",
+                f"meridian spawn report show {self.spawn_id}" if self._has_report() else None,
+            ),
             ("Last message", self.last_message),
             (
                 "Progress",
-                f"meridian session log {self.spawn_id}" if self.log_path else None,
+                f"meridian session log {self.spawn_id}"
+                if is_active_spawn_status(self.status)
+                else None,
             ),
             (
                 "Transcript",
@@ -1427,14 +1428,13 @@ class SpawnWaitMultiOutput(BaseModel):
 
         from meridian.lib.core.formatting import tabular
 
-        rows = [["spawn_id", "status", "duration", "exit", "report"]]
+        rows = [["spawn_id", "status", "duration", "exit"]]
         rows.extend(
             [
                 run.spawn_id,
                 run.status,
                 f"{run.duration_secs:.1f}s" if run.duration_secs is not None else "-",
                 str(run.exit_code) if run.exit_code is not None else "-",
-                run.report_table_value(),
             ]
             for run in spawns
         )

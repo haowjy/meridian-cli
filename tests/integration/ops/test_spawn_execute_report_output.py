@@ -28,6 +28,7 @@ from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -121,7 +122,7 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         spawn = cast("Any", kwargs["spawn"])
         runtime_root = Path(cast("Path", kwargs["runtime_root"]))
         spawn_id = str(spawn.spawn_id)
-        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path = launch_paths(runtime_root, spawn_id).report
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
         chat_id = session_store.start_session(
@@ -185,7 +186,7 @@ def test_execute_spawn_blocking_without_native_key_omits_transcript_hint(
         spawn = cast("Any", kwargs["spawn"])
         runtime_root = Path(cast("Path", kwargs["runtime_root"]))
         spawn_id = str(spawn.spawn_id)
-        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path = launch_paths(runtime_root, spawn_id).report
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
         spawn_store.finalize_spawn(
@@ -296,7 +297,7 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert result.spawn_id is not None
     authority = resolve_runtime_authority_for_write(tmp_path / "repo")
     assert authority.runtime_root is not None
-    params_path = authority.runtime_root / "spawns" / result.spawn_id / "params.json"
+    params_path = launch_paths(authority.runtime_root, result.spawn_id).params
     params = json.loads(params_path.read_text(encoding="utf-8"))
     spawn_row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
     assert spawn_row is not None

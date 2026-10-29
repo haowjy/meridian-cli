@@ -78,6 +78,7 @@ def apply_finalize(
             (usage.cost_is_estimate if usage is not None else False)
             or (record.terminal.cost_is_estimate if record.terminal is not None else False)
         ),
+        harness_cumulative=usage.harness_cumulative if usage is not None else None,
         error=error,
         origin=origin,
         managed_scopes_pending=managed_scopes_pending,
