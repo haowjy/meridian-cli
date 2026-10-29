@@ -136,12 +136,11 @@ class ClaudeFold(AttemptFold):
         too. This launch's usage is that cumulative minus the seed (the previous launch's
         stored cumulative; empty for a fresh launch), per model, so tokens and cost are
         exact. The cumulative itself is kept for the next launch. A ``result`` without
-        ``modelUsage`` falls back to its per-turn ``usage``, which adds up across turns.
+        ``modelUsage`` carries no usage this fold uses.
         """
         rows = _dict_rows(payload.get("modelUsage"))
         cost = coerce_optional_float(payload.get("total_cost_usd"))
         if not rows:
-            self._fold_turn_usage(payload.get("usage"), cost)
             return
         if cost is None:
             costs = [coerce_optional_float(row.get("costUSD")) for row in rows.values()]
@@ -163,24 +162,6 @@ class ClaudeFold(AttemptFold):
                 "cost": cost,
             },
         )
-
-    def _fold_turn_usage(self, turn: object, cost: float | None) -> None:
-        turn_values = (
-            _usage_values([cast("dict[str, object]", turn)]) if isinstance(turn, dict) else {}
-        )
-        previous = self.facts.usage if self.usage_is_specific else None
-        if turn_values:
-            self.usage_is_specific = True
-            self.facts.usage = _token_usage(
-                {
-                    field: value + (getattr(previous, field, None) or 0)
-                    for field, value in turn_values.items()
-                },
-                cost,
-            )
-        elif cost is not None:
-            self.usage_is_specific = True
-            self.facts.usage = TokenUsage(total_cost_usd=cost)
 
 
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()

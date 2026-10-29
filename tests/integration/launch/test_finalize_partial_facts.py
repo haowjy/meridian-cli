@@ -24,7 +24,8 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     output = tmp_path / "output.jsonl"
     output.write_bytes(
         b'\xff\n{"type":"broken"}\n'
-        b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
+        b'{"type":"result","result":"surviving report",'
+        b'"modelUsage":{"m":{"inputTokens":7}}}\n'
     )
     extractor = ClaudeHarnessExtractor()
     fold = DriftingFold(extractor)
@@ -138,7 +139,14 @@ def test_fold_failure_drops_generic_usage_but_keeps_later_harness_total(tmp_path
         specific,
         ("assistant", {"usage": {"input_tokens": 3}}),
         ("broken", {}),
-        ("result", {"result": "done", "total_cost_usd": 1.25, "usage": {"input_tokens": 9}}),
+        (
+            "result",
+            {
+                "result": "done",
+                "total_cost_usd": 1.25,
+                "modelUsage": {"m": {"inputTokens": 9, "costUSD": 1.25}},
+            },
+        ),
     )
     usage = _finalize(tmp_path, extractor, specific.facts).usage
     assert usage is not None

@@ -516,7 +516,8 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
         _ = command, cwd, env, launcher_diagnostics_path
         output_log_path.write_bytes(
             b'\xff\n{"type":"broken"}\n'
-            b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
+            b'{"type":"result","result":"surviving report",'
+            b'"modelUsage":{"m":{"inputTokens":7}}}\n'
         )
         on_child_started(ProcessIdentity(445, 100.0, 445))
         return PrimaryProcessResult(0, 445, None)
