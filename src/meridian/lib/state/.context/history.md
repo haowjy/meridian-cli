@@ -85,7 +85,7 @@ uses the runtime.
 
 `history_index.py` classifies schema through read-only SQLite before entering the
 existing catch-up gate. A missing index builds automatically, with an under-lock
-recheck. Every caller gives that cold build its own 15-second initialization budget,
+recheck. Every caller gives that cold build its own 60-second initialization budget,
 separate from any caller deadline, and exhaustion is sticky: the failure is latched in
 `history-index-init-failure-v<schema>.json`; manual publication clears it. Failed marker cleanup warns; warm catch-up retries it under the
 same gate after verifying schema/generation. Status and cache-only reads never
