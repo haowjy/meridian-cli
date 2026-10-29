@@ -21,8 +21,11 @@ returning `Violation`s that carry a path relative to the scanned root and a sent
 naming the rule; `main()` prints them and exits 1. Keep the allowlists and their
 justification strings.
 
-The step is read-only, deterministic and runs before the tests in both gates, so keep it
-under a couple of seconds: a rule parses only the modules that spell its construct
-(`PythonSource.mentions`), and the text of a module cannot miss a node its AST holds.
+The step is read-only, deterministic and runs before the tests in both gates
+(`scripts/preflight.sh` fast and full), so keep it under a couple of seconds: a rule may skip modules that don't mention its marker
+(`PythonSource.mentions`) only when the marker is an identifier token, which the source
+must spell as written. A rule over a string value or a dotted name parses every module:
+implicit concatenation, escapes, spaces and line continuations change the text without
+changing the AST (the comment above `_RAW_WRITE_MARKERS` in `lints.py`).
 `tests/unit/dev/test_lints.py` plants one violation per rule in a temporary tree, so a
 rule that stops firing fails the suite.
