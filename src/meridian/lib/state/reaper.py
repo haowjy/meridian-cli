@@ -234,7 +234,9 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
         def claim_cleanup(stored: SpawnRecord) -> None:
             # Runs only after this pass won the dead-launch claim.
             _claim_reaper_cleanup(
-                runtime_root, stored, read_primary_metadata(runtime_root, stored.id)
+                runtime_root,
+                stored,
+                read_primary_metadata(LaunchPaths.for_row(runtime_root, stored)),
             )
             claimed_ids.add(stored.id)
 
