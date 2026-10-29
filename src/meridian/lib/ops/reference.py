@@ -16,7 +16,7 @@ from meridian.lib.ops.reference_recovery import (
     recover_harness_session_id,
 )
 from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -170,9 +170,7 @@ def _resolve_spawn_reference(
     )
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
-        source_execution_cwd = resolve_spawn_log_dir(
-            project_root, ref, runtime_root=runtime_root
-        ).as_posix()
+        source_execution_cwd = LaunchPaths.for_row(runtime_root, row).dir.as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
     bound_session = session_identity.get_session_record_for_spawn(runtime_root, row.id)

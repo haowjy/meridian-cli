@@ -59,7 +59,7 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
-        )
+        ).spawn_id
     )
 
 
@@ -80,7 +80,7 @@ def test_spawn_path_fields_are_normalized_at_write_boundary(
             control_root="project/./root/",
             task_cwd=None,
             execution_cwd="project/root/../initial-task/",
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -276,7 +276,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
                         harness="codex",
                         prompt="hello",
                         spawn_id=spawn_id,
-                    )
+                    ).spawn_id
                 )
             )
         except BaseException as exc:
@@ -396,7 +396,7 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
             harness="claude",
             prompt="hello",
             launch_policy_snapshot=snapshot,
-        )
+        ).spawn_id
     )
 
     spawn_dir = runtime_root / "spawns" / spawn_id
@@ -422,7 +422,7 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
             agent="coder",
             harness="codex",
             prompt="hello",
-        )
+        ).spawn_id
     )
     paths = RuntimePaths.from_root_dir(runtime_root)
     state_path = paths.spawns_dir / spawn_id / "state.json"
@@ -515,7 +515,7 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
             prompt="world",
             desc="desc-2",
             work_id="w2",
-        )
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
@@ -549,7 +549,7 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
             agent="coder",
             harness="codex",
             prompt="world",
-        )
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 

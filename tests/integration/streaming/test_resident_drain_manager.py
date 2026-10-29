@@ -22,6 +22,7 @@ from tests.support.async_determinism import (
     assert_still_pending,
     wait_until,
 )
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
@@ -335,8 +336,8 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
 
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
     await next_turn_boundary(subscriber)
-    write_spawn_signal(tmp_path, spawn_id, "done")
-    write_spawn_signal(tmp_path, spawn_id, "rearm")
+    write_spawn_signal(launch_paths(tmp_path, spawn_id), "done")
+    write_spawn_signal(launch_paths(tmp_path, spawn_id), "rearm")
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
@@ -353,7 +354,7 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
             await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         await next_turn_boundary(subscriber)
-        write_spawn_signal(tmp_path, spawn_id, "done")
+        write_spawn_signal(launch_paths(tmp_path, spawn_id), "done")
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         outcome = await completion
         assert outcome is not None
@@ -716,7 +717,7 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         facts = fold.facts
         assert facts.final_text == "Done."
         assert facts.completion_text == "Resident report."
-        report = extract_or_fallback_report(tmp_path / "spawns" / str(spawn_id), facts=facts)
+        report = extract_or_fallback_report(launch_paths(tmp_path, spawn_id), facts=facts)
         assert report.content == "Resident report."
         assert report.source == "assistant_message"
     finally:

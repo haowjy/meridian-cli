@@ -22,6 +22,7 @@ from meridian.lib.state.process_scope_projection import (
     record_scope,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from tests.support.launch_paths import launch_paths
 
 
 def _persist_spawn(
@@ -98,7 +99,7 @@ def test_terminate_spawn_scopes_reads_persisted_scopes_and_marks_released(
     record = _persist_spawn(tmp_path)
     scopes = [_scope("backend", pid=101), _scope("worker", pid=202)]
     for scope in scopes:
-        record_scope(tmp_path, SpawnId(record.id), scope)
+        record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
     terminate_calls: list[tuple[int, float, str, str]] = []
 
     def _terminate_scope_sync(
@@ -122,7 +123,7 @@ def test_terminate_spawn_scopes_reads_persisted_scopes_and_marks_released(
         (202, 10.0, "reaper", "worker"),
     ]
     assert all(
-        is_scope_released(tmp_path, SpawnId(record.id), scope.release_id)
+        is_scope_released(launch_paths(tmp_path, SpawnId(record.id)), scope.release_id)
         for scope in scopes
     )
 
@@ -142,8 +143,8 @@ def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease
         pid=202,
     )
     for scope in (released, leased):
-        record_scope(tmp_path, SpawnId(record.id), scope)
-    mark_scope_released(tmp_path, SpawnId(record.id), released.release_id)
+        record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
+    mark_scope_released(launch_paths(tmp_path, SpawnId(record.id)), released.release_id)
     monkeypatch.setattr(
         process_cleanup.psutil,
         "Process",
@@ -161,7 +162,7 @@ def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease
         ("released", "already_released"),
         ("leased", "active_session_lease"),
     ]
-    assert not is_scope_released(tmp_path, SpawnId(record.id), leased.release_id)
+    assert not is_scope_released(launch_paths(tmp_path, SpawnId(record.id)), leased.release_id)
 
 
 def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
@@ -234,7 +235,7 @@ def test_session_lease_cleanup_uses_birth_checked_os_liveness(
         pid=12345,
         root_created_at_epoch=root_created_at_epoch,
     )
-    record_scope(tmp_path, SpawnId(record.id), scope)
+    record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
     monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: process_factory())
     terminated: list[str] = []
 
@@ -255,6 +256,6 @@ def test_session_lease_cleanup_uses_birth_checked_os_liveness(
 
     assert (result.skip_reason == "active_session_lease") is expected_skip
     assert terminated == ([] if expected_skip else [scope.release_id])
-    assert is_scope_released(tmp_path, SpawnId(record.id), scope.release_id) is (
+    assert is_scope_released(launch_paths(tmp_path, SpawnId(record.id)), scope.release_id) is (
         not expected_skip
     )

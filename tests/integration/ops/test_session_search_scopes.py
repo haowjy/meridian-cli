@@ -235,7 +235,7 @@ def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) ->
     root = get_project_home("large-history")
     key = spawn_store.start_spawn(
         root, chat_id="c1", harness="codex", model="test", agent="", prompt="query"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     (root / "spawns" / key / "history.jsonl").write_text(
         json.dumps({"payload": {"text": "early needle"}}) + "\n"
@@ -298,7 +298,7 @@ def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monke
             agent="",
             prompt="hello",
             kind="primary",
-        )
+        ).spawn_id
     )
     session_store.update_session_spawn_id(root, chat, key)
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
@@ -360,7 +360,7 @@ def test_damaged_metadata_index_only_affects_work_scoped_search(
                 agent="",
                 prompt="hello",
                 harness_session_id="11111111-1111-1111-1111-111111111111",
-            )
+            ).spawn_id
         )
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, chat)

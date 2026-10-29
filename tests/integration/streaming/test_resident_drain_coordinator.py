@@ -14,6 +14,7 @@ from meridian.lib.streaming.drain_policy import (
 )
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
@@ -58,8 +59,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -89,7 +89,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     assert decision.emit_turn_boundary is True
     assert connection.fake_resident_backend.awaiting_done_values == [True]
 
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     clock.advance(30.0)
     expired = await coordinator.handle_timeout()
 
@@ -112,8 +112,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -145,7 +144,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         terminal,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     evidence_readable = True
     await coordinator.handle_timeout()
     recovered = await _after_refresh(coordinator)
@@ -167,8 +166,7 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -229,8 +227,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -248,7 +245,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     )
     assert waiting.emit_turn_boundary is True
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     rearmed = await coordinator.handle_timeout()
     assert rearmed.recorded_outcome is None
     await coordinator.wait_for_aux_wake()
@@ -285,7 +282,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
         False,
     ]
 
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     requested = await coordinator.handle_timeout()
     await coordinator.handle_terminal_event(
         resident_event(HarnessId.CODEX, "turn/completed", {}),
@@ -438,7 +435,7 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     connection = FakeResidentConnection(HarnessId.OPENCODE)
     coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     requested = await coordinator.handle_terminal_event(
         resident_event(HarnessId.OPENCODE, "agent_end", {}),
         TerminalEventOutcome(status="succeeded", exit_code=0),

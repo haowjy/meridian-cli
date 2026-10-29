@@ -15,7 +15,7 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
-    reserve_spawn_id,
+    reserve_launch,
     start_spawn,
     update_spawn,
 )
@@ -59,7 +59,7 @@ class _HarnessUpdatePayload(TypedDict):
 
 
 def _reserve_spawn_id_worker(runtime_root_str: str) -> str:
-    return str(reserve_spawn_id(Path(runtime_root_str)))
+    return str(reserve_launch(Path(runtime_root_str)).spawn_id)
 
 
 def _concurrent_update_worker(
@@ -143,7 +143,7 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
             agent="coder",
             harness="codex",
             prompt="hello",
-        )
+        ).spawn_id
     )
 
     payloads: list[_ExecutionUpdatePayload | _HarnessUpdatePayload] = [
@@ -188,7 +188,7 @@ def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_pat
                 prompt="hello",
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     external = finalize_spawn(
         runtime_root,

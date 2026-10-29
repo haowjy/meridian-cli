@@ -55,7 +55,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import (
     APP_LAUNCH_MODE,
     LaunchMode,
@@ -120,7 +120,7 @@ def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
 
     from meridian.lib.state.primary_meta import read_primary_metadata
 
-    metadata = read_primary_metadata(runtime_root, record.id)
+    metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, record))
     return bool(
         metadata is not None
         and metadata.managed_backend
@@ -236,6 +236,7 @@ class PreparedSpawn:
     """
 
     spawn_id: SpawnId
+    launch: LaunchPaths
     launch_context: LaunchContext
     connection_config: ConnectionConfig
     resolved_model: str
@@ -392,10 +393,11 @@ class SpawnApplicationService:
 
         effective_work_id = (payload.work_id or "").strip() or None
 
-        final_spawn_id = await asyncio.to_thread(
-            spawn_store.reserve_spawn_id,
+        reserved_launch = await asyncio.to_thread(
+            spawn_store.reserve_launch,
             self._runtime_root,
         )
+        final_spawn_id = reserved_launch.spawn_id
         config_env = _config_snapshot_env(payload.runtime.config_snapshot)
         request_env = dict(prepared_surface.request.env)
         resolved_env = {**config_env, **request_env}
@@ -403,7 +405,7 @@ class SpawnApplicationService:
             bind_spawn_launch_context,
             prepared=prepared_surface,
             bindings=RuntimeBindings(
-                spawn_id=str(final_spawn_id),
+                launch=reserved_launch,
                 runtime_work_id=effective_work_id,
                 dry_run=False,
                 plan_overrides=resolved_env,
@@ -438,7 +440,7 @@ class SpawnApplicationService:
             skills=resolved_request.skills,
             skill_paths=resolved_request.skill_paths,
         )
-        persisted_spawn_id = SpawnId(
+        published_launch = (
             await asyncio.to_thread(
                 self._lifecycle.start,
                 SpawnReservation(
@@ -464,16 +466,15 @@ class SpawnApplicationService:
                 launch_lock=launch_lock,
             )
         )
-        if persisted_spawn_id != final_spawn_id:
+        if published_launch != reserved_launch:
             raise RuntimeError(
-                f"Reserved spawn ID {final_spawn_id} but persisted {persisted_spawn_id}"
+                f"Reserved launch {reserved_launch} but published {published_launch}"
             )
         # The spawn dir exists only now, and the bound launch may reference files in it
         # (``system-prompt.md``), so a prepared spawn is launchable without caller help.
+        launch = published_launch
         write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(
-                launch_ctx.project_root, persisted_spawn_id, runtime_root=self._runtime_root
-            ),
+            launch=launch,
             launch_context=launch_ctx,
             surface="spawn",
         )
@@ -512,12 +513,11 @@ class SpawnApplicationService:
                 reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             )
         connection_config = ConnectionConfig(
-            spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.binding.run_params.prompt,
             control_root=launch_ctx.control_root,
             child_env=child_env,
-            runtime_root=launch_ctx.runtime_root,
+            launch=launch,
             task_cwd=connection_task_cwd,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resolve_resident_deadline_seconds(
@@ -536,6 +536,7 @@ class SpawnApplicationService:
 
         return PreparedSpawn(
             spawn_id=final_spawn_id,
+            launch=launch,
             launch_context=launch_ctx,
             connection_config=connection_config,
             resolved_model=resolved_model,
@@ -614,7 +615,7 @@ class SpawnApplicationService:
 
         from meridian.lib.state.primary_meta import read_primary_metadata
 
-        primary_metadata = read_primary_metadata(self._runtime_root, str(spawn_id))
+        primary_metadata = read_primary_metadata(LaunchPaths.for_row(self._runtime_root, record))
         signal_outcome: SignalCancelOutcome | None = None
         delivery_finalizing = False
         if primary_metadata is not None and primary_metadata.managed_backend:
@@ -732,8 +733,7 @@ class SpawnApplicationService:
         runner_exit = record.runner_exit
         resolved = resolve_completion_cancel_precedence(
             durable_report_completion=spawn_report_has_durable_completion(
-                self._runtime_root,
-                str(spawn_id),
+                LaunchPaths.for_row(self._runtime_root, record)
             ),
             cancel_requested=True,
             cancel_exit_code=intent.exit_code if intent is not None else 130,
@@ -1083,10 +1083,10 @@ class SpawnApplicationService:
                 read_scopes_from_disk,
             )
 
-            scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
-            for scope in scopes:
+            launch = LaunchPaths.for_row(self._runtime_root, record)
+            for scope in read_scopes_from_disk(launch):
                 if scope.owner_policy == "spawn_owned":
-                    mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
+                    mark_scope_released(launch, scope.release_id)
         return CompleteSpawnOutcome(
             wrote=isinstance(outcome, Applied),
             transitioned=(

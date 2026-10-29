@@ -85,8 +85,9 @@ Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
 `explicitly_ignored_fields`. Enforced at import time by `launch_spec.py:_enforce_spawn_params_accounting()`. Adding a field to `SpawnParams` without updating all adapters → `ImportError` on startup. This is not documentation — it is enforcement.
 
 The spawn report path is no longer a `SpawnParams` field. It is derived once in
-`bind_launch_context` from `resolve_spawn_log_dir(project_root, spawn_id)`; the
-spawn log dir is the single authority for both `report.md` (codex `-o` target,
+`bind_launch_context` from `RuntimeBindings.launch`, the launch the caller reserved or
+published; the
+launch directory is the single authority for both `report.md` (codex `-o` target,
 set on the codex `ResolvedLaunchSpec` at bind) and `system-prompt.md` (Claude's
 `prompt_file_path`, set at bind).
 

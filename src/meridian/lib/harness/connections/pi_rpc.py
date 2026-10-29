@@ -191,10 +191,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError(f"Connection can only start from 'created', got '{self._state}'")
 
         validate_prompt_size(config)
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._tracer = config.debug_tracer
         self._startup_emitter = StartupPhaseEmitter(
-            str(config.spawn_id),
+            str(config.launch.spawn_id),
             harness_id=config.harness_id.value,
             model=spec.model,
             agent=spec.agent_name,

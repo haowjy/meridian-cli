@@ -77,8 +77,7 @@ def test_owned_event_pins_store(
 
     def attach(
         harness_id,
-        spawn_id,
-        log_dir,
+        launch,
         control_root,
         task_cwd,
         env,
@@ -99,8 +98,8 @@ def test_owned_event_pins_store(
         on_running(ProcessIdentity(process.pid, child_birth_epoch(process.pid), None))
         stdout, _stderr = process.communicate(timeout=5)
         assert process.returncode == 0
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "output.jsonl").write_text(stdout)
+        launch.dir.mkdir(parents=True, exist_ok=True)
+        launch.output.write_text(stdout)
         payload = json.loads(stdout)
         native_id = get_harness_bundle(harness_id).extractor.detect_session_id_from_event(
             RawHarnessEvent(event_type=payload["type"], harness_id=str(harness_id), payload=payload)
@@ -268,8 +267,7 @@ def test_primary_later_switch_has_one_conflict(tmp_path, monkeypatch):
 
     def attach(
         harness_id,
-        spawn_id,
-        log_dir,
+        launch,
         control_root,
         task_cwd,
         env,

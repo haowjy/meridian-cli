@@ -23,10 +23,11 @@ from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 _PI_HELP_SURFACE = (
@@ -71,16 +72,14 @@ async def _start_existing_pi_connection(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> None:
-    resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    ).mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    launch = config.launch
+    if spawn_store.get_spawn(launch.runtime_root, launch.spawn_id) is None:
+        _publish_manager_spawn(launch.runtime_root, launch.spawn_id)
     await connection.start(config, spec)
+
+
+def _launch(project_root: Path, spawn_id: SpawnId) -> LaunchPaths:
+    return launch_paths(resolve_project_runtime_root_for_write(project_root), spawn_id)
 
 
 def _publish_manager_spawn(runtime_root: Path, spawn_id: SpawnId) -> None:
@@ -238,7 +237,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=SpawnId("p-pi-direct-runtime"),
+            launch=_launch(tmp_path, SpawnId("p-pi-direct-runtime")),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -309,7 +308,7 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=SpawnId("p-pi-redacted-argv"),
+            launch=_launch(tmp_path, SpawnId("p-pi-redacted-argv")),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -394,7 +393,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=_launch(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -423,12 +422,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         event.event_type == "meridian.lifecycle.parse_error" for event in non_phase_events
     )
     stderr_log = (
-        resolve_spawn_log_dir(
-            tmp_path,
-            spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
-        )
-        / "stderr.log"
+        launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id).dir / "stderr.log"
     )
     stderr_text = stderr_log.read_text(encoding="utf-8")
     assert plain_stderr in stderr_text
@@ -447,9 +441,9 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     persisted = []
     record = pi_lifecycle.record
 
-    def record_and_read(runtime_root, spawn_id, event):
-        record(runtime_root, spawn_id, event)
-        persisted.append(pi_lifecycle.read(runtime_root, spawn_id))
+    def record_and_read(launch, event):
+        record(launch, event)
+        persisted.append(pi_lifecycle.read(launch))
 
     monkeypatch.setattr(pi_lifecycle, "record", record_and_read)
     configure_pi_extension_projection(monkeypatch, tmp_path)
@@ -494,7 +488,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
 
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=_launch(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello auto prompt",
             control_root=tmp_path,
@@ -615,7 +609,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=_launch(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello startup",
             control_root=tmp_path,
@@ -687,7 +681,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=_launch(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -752,7 +746,7 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=SpawnId("p-pi-task-cwd"),
+            launch=_launch(tmp_path, SpawnId("p-pi-task-cwd")),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=control_root,
@@ -804,22 +798,15 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    stderr_log = (
-        resolve_spawn_log_dir(
-            tmp_path,
-            spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
-        )
-        / "stderr.log"
-    )
-    stderr_log.parent.mkdir(parents=True)
+    _publish_manager_spawn(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
+    stderr_log = _launch(tmp_path, spawn_id).stderr_log
     stderr_log.write_text(f"{prior_launch_stderr}\n", encoding="utf-8")
 
     connection = PiRpcConnection()
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=_launch(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -872,7 +859,7 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=SpawnId("p-pi-malformed-first-event"),
+            launch=_launch(tmp_path, SpawnId("p-pi-malformed-first-event")),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -925,7 +912,7 @@ async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
-            spawn_id=SpawnId("p-pi-exit-before-first-event"),
+            launch=_launch(tmp_path, SpawnId("p-pi-exit-before-first-event")),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
@@ -970,7 +957,7 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
         await _start_existing_pi_connection(
             connection,
             ConnectionConfig(
-                spawn_id=SpawnId("p-pi-runtime-resolution-error"),
+                launch=_launch(tmp_path, SpawnId("p-pi-runtime-resolution-error")),
                 harness_id=HarnessId.PI,
                 prompt="hello",
                 control_root=tmp_path,

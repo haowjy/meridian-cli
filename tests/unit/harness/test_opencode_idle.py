@@ -15,6 +15,7 @@ from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessE
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, IdleEvent, IdleSensorContext
 from meridian.lib.harness.permission_broker import PermissionTransition, _transition_to_event
+from tests.support.launch_paths import launch_paths
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -43,7 +44,7 @@ def _context(
         env=env,
         tmux_pane="%7",
         tui_alive=lambda: True,
-        spawn_dir=tmp_path,
+        launch=launch_paths(tmp_path, "p1"),
     )
 
 

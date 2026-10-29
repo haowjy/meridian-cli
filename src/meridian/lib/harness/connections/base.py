@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
+from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
@@ -287,12 +288,11 @@ class ConnectionConfig:
     knowable while establishing the connection.
     """
 
-    spawn_id: SpawnId
+    launch: LaunchPaths
     harness_id: HarnessId
     prompt: str
     control_root: Path
     child_env: dict[str, str]
-    runtime_root: Path | None = None
     task_cwd: Path | None = None
     timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None

@@ -60,7 +60,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
@@ -719,7 +719,7 @@ def spawn_list_sync(
         activity: str | None = None
         surfaced_activity: str | None = None
         if kind == "primary":
-            metadata = read_primary_surface_metadata(runtime_root, row.id)
+            metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
             managed_backend = metadata.managed_backend
             activity = metadata.activity
             surfaced_activity = _surface_primary_activity(row.status, activity)
@@ -992,7 +992,7 @@ def spawn_show_sync(
     backend_port: int | None = None
     harness_session_id: str | None = None
     if kind == "primary":
-        metadata = read_primary_surface_metadata(runtime_root, spawn_id)
+        metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
         managed_backend = metadata.managed_backend
         activity = metadata.activity
         backend_pid = metadata.backend_pid
@@ -1009,7 +1009,7 @@ def spawn_show_sync(
     surfaced_activity = _surface_primary_activity(row.status, activity)
     result = detail.model_copy(
         update={
-            "denied_requests": denied_requests(runtime_root, spawn_id),
+            "denied_requests": denied_requests(LaunchPaths.for_row(runtime_root, row)),
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,
@@ -1233,13 +1233,13 @@ def _resolve_caller_spawn_id(spawn_id: str | None, ctx: RuntimeContext | None) -
     return candidate
 
 
-def _resolve_signal_spawn_id(
+def _resolve_signal_spawn(
     *,
     project_root: Path,
     runtime_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None,
-) -> str:
+) -> SpawnRecord:
     candidate = _resolve_caller_spawn_id(spawn_id, ctx)
     resolved_spawn_id = resolve_spawn_target(
         project_root,
@@ -1251,7 +1251,7 @@ def _resolve_signal_spawn_id(
         raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
     if record.record_mode == "historical":
         raise ValueError("Historical records have no live process ownership")
-    return resolved_spawn_id
+    return record
 
 
 def _signal_refusal(
@@ -1311,12 +1311,14 @@ def _spawn_signal_sync(
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     try:
-        resolved_spawn_id = _resolve_signal_spawn_id(
+        target = _resolve_signal_spawn(
             project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=payload.spawn_id,
             ctx=ctx,
         )
+        resolved_spawn_id = target.id
+        launch = LaunchPaths.for_row(runtime_root, target)
         refusal: str | None = None
         reported = False
 
@@ -1324,14 +1326,13 @@ def _spawn_signal_sync(
             # Decided under the published-artifact lock that guards the write.
             nonlocal refusal, reported
             row = read_derived(runtime_root, stored.id) or stored
-            accepted = read_accepted_signals(runtime_root, stored.id)
+            accepted = read_accepted_signals(launch)
             refusal = _signal_refusal(row, kind, accepted)
             reported = accepted is not None
             return refusal is None
 
         if not write_spawn_signal(
-            runtime_root,
-            resolved_spawn_id,
+            launch,
             kind,
             can_write=consumer_reads_signal,
         ):

@@ -32,6 +32,7 @@ from tests.integration.state.conftest import (
     fake_managed_primary_birth_liveness,
     recording_managed_primary_terminations,
 )
+from tests.support.launch_paths import launch_paths
 
 
 def _patch_spawn_cancel_runtime_resolution(
@@ -182,8 +183,7 @@ async def test_cancel_descendants_sweeps_dead_child_scope(tmp_path: Path) -> Non
     sleeper = subprocess.Popen(["sleep", "30"])
     try:
         record_scope(
-            runtime_root,
-            SpawnId("p2"),
+            launch_paths(runtime_root, SpawnId("p2")),
             ProcessScopeSnapshot(
                 scope_id="harness",
                 owner_policy="spawn_owned",

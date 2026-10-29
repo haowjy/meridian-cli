@@ -14,11 +14,10 @@ from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_db_session_with_parts,
@@ -597,7 +596,7 @@ def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
 
 
 def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
-    history_path = runtime_root / "spawns" / spawn_id / HISTORY_FILENAME
+    history_path = runtime_root / "spawns" / spawn_id / LAUNCH_FILE_NAMES.history
     history_path.write_text(
         json.dumps(
             {

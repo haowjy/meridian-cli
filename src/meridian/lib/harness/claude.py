@@ -103,6 +103,7 @@ from meridian.lib.safety.policy import (
     NetworkPolicy,
     network_allows_local_services,
 )
+from meridian.lib.state.paths import LaunchPaths
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
@@ -357,8 +358,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def prepare_prelaunch(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -383,9 +383,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         return HarnessPrelaunchState(
             env_overrides={
-                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
-                    claude_boundary_journal_path(runtime_root, spawn_id)
-                ),
+                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(claude_boundary_journal_path(launch)),
                 "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
                 "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
             }

@@ -27,6 +27,7 @@ from meridian.lib.streaming.control_socket import (
     socket_directory,
 )
 from meridian.lib.streaming.signal_canceller import SignalCanceller
+from tests.support.launch_paths import launch_paths
 
 
 def _start_spawn(
@@ -51,7 +52,7 @@ def _start_spawn(
             runner_pid=runner_pid,
             worker_pid=worker_pid,
             started_at=started_at,
-        )
+        ).spawn_id
     )
 
 
@@ -508,8 +509,8 @@ async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
         owner_policy="session_owned",
     )
     for scope in (first_backend, second_backend, session_backend):
-        record_scope(runtime_root, SpawnId(spawn_id), scope)
-    mark_scope_released(runtime_root, SpawnId(spawn_id), first_backend.release_id)
+        record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
+    mark_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), first_backend.release_id)
     terminated_release_ids: list[str] = []
 
     def _terminate_scope(scope: ProcessScopeSnapshot, **kwargs: object) -> CleanupResult:
@@ -547,9 +548,9 @@ async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
     assert first_backend.scope_id == second_backend.scope_id
     assert terminated_release_ids == [second_backend.release_id]
     assert is_scope_released(
-        runtime_root, SpawnId(spawn_id), second_backend.release_id
+        launch_paths(runtime_root, SpawnId(spawn_id)), second_backend.release_id
     )
     assert not is_scope_released(
-        runtime_root, SpawnId(spawn_id), session_backend.release_id
+        launch_paths(runtime_root, SpawnId(spawn_id)), session_backend.release_id
     )
     assert outcome.status == "finalizing"

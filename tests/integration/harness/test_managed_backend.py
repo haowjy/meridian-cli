@@ -20,6 +20,7 @@ from meridian.lib.platform import launch_gate
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
+from tests.support.launch_paths import launch_paths
 
 
 def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running") -> None:
@@ -45,19 +46,18 @@ async def test_launch_managed_backend_records_scope(tmp_path: Path) -> None:
 
     handle = await launch_managed_backend(
         ManagedBackendConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
             harness_id=HarnessId.CODEX,
             command=(sys.executable, "-c", "pass"),
             cwd=tmp_path,
             env=os.environ.copy(),
-            control_root=tmp_path,
             grace_seconds=0.1,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
 
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    scopes = read_scopes_from_disk(runtime_root, spawn_id)
+    scopes = read_scopes_from_disk(launch_paths(runtime_root, spawn_id))
 
     assert [(scope.scope_id, scope.root_pid) for scope in scopes] == [
         ("backend", handle.process.pid)
@@ -85,18 +85,19 @@ async def test_launch_managed_backend_refuses_unknown_birth(
     with pytest.raises(RuntimeError, match="birth time"):
         await launch_managed_backend(
             ManagedBackendConfig(
-                spawn_id=spawn_id,
+                launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
                 harness_id=HarnessId.OPENCODE,
                 command=("/bin/sh", "-c", f"touch {marker}"),
                 cwd=tmp_path,
                 env=os.environ.copy(),
-                control_root=tmp_path,
                 grace_seconds=0.1,
             ),
             stderr=asyncio.subprocess.DEVNULL,
         )
     assert not marker.exists()
-    assert not read_scopes_from_disk(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
+    assert not read_scopes_from_disk(
+        launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
+    )
 
 
 @pytest.mark.asyncio
@@ -120,12 +121,11 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
         with pytest.raises(ValueError, match="after cleanup began"):
             await launch_managed_backend(
                 ManagedBackendConfig(
-                    spawn_id=spawn_id,
+                    launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
                     harness_id=HarnessId.CODEX,
                     command=(sys.executable, "-c", "import time; time.sleep(60)"),
                     cwd=tmp_path,
                     env=os.environ.copy(),
-                    control_root=tmp_path,
                     grace_seconds=0.1,
                 ),
                 stderr=asyncio.subprocess.DEVNULL,
@@ -154,7 +154,7 @@ async def test_scope_termination_disarms_guardian_without_waiting_its_grace(tmp_
     grace = 5.0
     handle = await launch_managed_backend(
         ManagedBackendConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
             harness_id=HarnessId.CODEX,
             command=(
                 sys.executable,
@@ -163,7 +163,6 @@ async def test_scope_termination_disarms_guardian_without_waiting_its_grace(tmp_
             ),
             cwd=tmp_path,
             env=dict(os.environ),
-            control_root=tmp_path,
             grace_seconds=grace,
         ),
         stderr=asyncio.subprocess.DEVNULL,
@@ -201,12 +200,11 @@ async def test_missing_binary_uses_launch_path_and_keeps_typed_error(
         if mode == "backend":
             await launch_managed_backend(
                 ManagedBackendConfig(
-                    spawn_id=spawn_id,
+                    launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
                     harness_id=HarnessId.CODEX,
                     command=(binary.name,),
                     cwd=tmp_path,
                     env=env,
-                    control_root=tmp_path,
                     grace_seconds=0.1,
                 ),
                 stderr=asyncio.subprocess.DEVNULL,
@@ -214,12 +212,11 @@ async def test_missing_binary_uses_launch_path_and_keeps_typed_error(
         else:
             await launch_managed_stdio(
                 config=ConnectionConfig(
-                    spawn_id=spawn_id,
                     harness_id=HarnessId.PI,
                     prompt="",
                     control_root=tmp_path,
                     child_env=env,
-                    runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+                    launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
                 ),
                 harness_id=HarnessId.PI,
                 command=(binary.name,),

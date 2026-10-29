@@ -20,6 +20,7 @@ from meridian.lib.launch.signals import (
 )
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -89,7 +90,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
 
         async def start(self, config: ConnectionConfig, spec: object) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
 
         async def stop(self) -> None:
@@ -137,7 +138,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
 
     outcome = await run_streaming_spawn(
         config=ConnectionConfig(
-            spawn_id=SpawnId("p-signal"),
+            launch=launch_paths(tmp_path, SpawnId("p-signal")),
             harness_id=HarnessId.CODEX,
             prompt="hello",
             control_root=tmp_path,

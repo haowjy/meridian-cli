@@ -91,6 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         (python, "-m", "ruff", "check", "."),
         (python, "-m", "pyright", "--warnings"),
         (python, "-m", "meridian.dev.lints"),
+        (python, "-m", "meridian.dev.check_launch_paths"),
         (python, "-m", "meridian.dev.pytests"),
     )
     # A gate must not silently become a last-failed/filtered developer rerun.

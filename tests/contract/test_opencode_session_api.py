@@ -17,6 +17,7 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from tests.support.async_determinism import AsyncDeterminism
+from tests.support.launch_paths import launch_paths
 
 
 class _TestableOpenCodeConnection(OpenCodeConnection):
@@ -87,7 +88,7 @@ class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
 async def test_create_session_uses_spec_model_not_connection_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-1"}, "")])
     connection._config = ConnectionConfig(
-        spawn_id=SpawnId("p-open-1"),
+        launch=launch_paths(tmp_path, SpawnId("p-open-1")),
         harness_id=HarnessId.OPENCODE,
         prompt="hello",
         control_root=tmp_path,

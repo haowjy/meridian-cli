@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import type { SpawnStateFile } from "./schemas";
 
 /** Mirrors ``pi_paths.resolve_meridian_pi_state_dir`` — extension runtime state root. */
 export function resolveStateRoot(): string {
@@ -44,6 +45,14 @@ export function resolveDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): 
 /** Mirrors ``paths.observed_spawns_path``: the parent's own spawn directory. */
 export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveSpawnsDir(), spawnId, "observed-spawns.json");
+}
+
+/**
+ * Mirrors ``LaunchPaths.report``: the one place the extension names a per-launch file.
+ * Takes the parsed spawn state so the launch it names is the one resolved.
+ */
+export function resolveReportPath(row: SpawnStateFile): string {
+  return path.join(resolveSpawnsDir(), row.id, "report.md");
 }
 
 /** legacy-observed-spawns (#719): Old location, read-only in the Pi extension. */

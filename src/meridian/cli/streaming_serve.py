@@ -116,10 +116,9 @@ async def streaming_serve(
         if debug:
             from meridian.lib.observability.debug_tracer import DebugTracer
 
-            spawn_dir = runtime_root / "spawns" / str(spawn_id)
             tracer = DebugTracer(
                 spawn_id=str(spawn_id),
-                debug_path=spawn_dir / "debug.jsonl",
+                debug_path=prepared.launch.debug,
                 echo_stderr=True,
             )
             connection_config = replace(connection_config, debug_tracer=tracer)
@@ -150,7 +149,7 @@ async def streaming_serve(
                 startup_attempt_id=uuid.uuid4().hex,
             ) as managed:
                 spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
-                lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
+                lifecycle = LifecycleLog.for_launch(prepared.launch)
                 try:
                     native_run = bind_entry(
                         managed,
@@ -173,8 +172,7 @@ async def streaming_serve(
                 )
                 child_env = dict(connection_config.child_env)
                 prelaunch = launch_ctx.harness.prepare_prelaunch(
-                    runtime_root=runtime_root,
-                    spawn_id=spawn_id,
+                    launch=prepared.launch,
                     session=launch_ctx.resolved_request.session,
                     child_cwd=launch_ctx.binding.child_cwd,
                     child_env=child_env,
@@ -273,8 +271,7 @@ async def streaming_serve(
                         extractor=extractor,
                         facts=facts,
                         native_key=native_key,
-                        spawn_id=spawn_id,
-                        log_dir=runtime_root / "spawns" / str(spawn_id),
+                        launch=prepared.launch,
                         model_id=prepared.resolved_model,
                         harness_id=harness_id,
                         project_root=project_root,

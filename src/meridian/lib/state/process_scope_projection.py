@@ -33,13 +33,12 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import mutate_model, read_model
+from meridian.lib.state.paths import REAPER_CLEANUP_CLAIM_FILENAME, LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 from meridian.lib.utils.json_shapes import json_object, tuple_or_empty
 
 logger = logging.getLogger(__name__)
 
-_SIDECAR_FILENAME = "process_scopes.json"
-_CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 _FIRST_WRITER_WAIT_SECONDS = 2.0
 
 
@@ -88,10 +87,6 @@ class ScopeProjectionSnapshot:
 # ---------------------------------------------------------------------------
 
 
-def _sidecar_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
-    return runtime_root / "spawns" / str(spawn_id) / _SIDECAR_FILENAME
-
-
 def _read_raw(path: Path) -> ScopeProjection:
     """Read sidecar JSON; return default payload on any error."""
     return read_model(path, ScopeProjection) or ScopeProjection()
@@ -103,18 +98,16 @@ def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> P
 
 
 def _mutate_scope_projection(
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     mutator: Callable[[ScopeProjection], ScopeProjection],
 ) -> ScopeProjection:
     """Apply one sidecar RMW under its stable per-spawn lock."""
-    path = _sidecar_path(runtime_root, spawn_id)
     updated, _ = mutate_model(
-        path,
+        launch.process_scopes,
         ScopeProjection,
         lambda current: (mutator(current or ScopeProjection()), None),
         lock=lock_file(
-            scope_projection_lock_path(runtime_root, spawn_id),
+            scope_projection_lock_path(launch.runtime_root, launch.spawn_id),
             reentrant=False,
         ),
     )
@@ -159,8 +152,7 @@ def parse_scope_entries(entries: Iterable[object]) -> list[ProcessScopeSnapshot]
 
 
 def record_scope(
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     snapshot: ProcessScopeSnapshot,
 ) -> None:
     """Persist a process scope snapshot for a spawn.
@@ -171,6 +163,8 @@ def record_scope(
     ownership can be upgraded without leaving duplicate cleanup targets. Distinct
     concrete releases with the same human label are preserved.
     """
+    runtime_root = launch.runtime_root
+    spawn_id = launch.spawn_id
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
     # This makes cleanup-claim snapshots and registration mutually exclusive.
@@ -179,7 +173,7 @@ def record_scope(
         lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
     ):
         current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
-        claim_path = spawns_dir / str(spawn_id) / _CLEANUP_CLAIM_FILENAME
+        claim_path = resolve_spawn_dir(runtime_root, spawn_id) / REAPER_CLEANUP_CLAIM_FILENAME
         if current is None:
             raise ValueError(
                 f"Refusing process-scope registration: spawn does not exist: {spawn_id}"
@@ -208,12 +202,11 @@ def record_scope(
                 scopes.append(snapshot_dict)
             return payload.model_copy(update={"scopes": tuple(scopes)})
 
-        _mutate_scope_projection(runtime_root, spawn_id, upsert)
+        _mutate_scope_projection(launch, upsert)
 
 
 def mark_scope_released(
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     release_id: str,
 ) -> None:
     """Mark a scope as released (terminated / cleaned up).
@@ -228,6 +221,8 @@ def mark_scope_released(
             return payload
         return payload.model_copy(update={"released": (*payload.released, release_id)})
 
+    runtime_root = launch.runtime_root
+    spawn_id = launch.spawn_id
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
     with (
@@ -237,13 +232,10 @@ def mark_scope_released(
         current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
         if current is None or current.record_mode == "historical":
             return
-        _mutate_scope_projection(runtime_root, spawn_id, mark_released)
+        _mutate_scope_projection(launch, mark_released)
 
 
-def read_scope_projection(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-) -> ScopeProjectionSnapshot:
+def read_scope_projection(launch: LaunchPaths) -> ScopeProjectionSnapshot:
     """Read scopes and release markers from one projection snapshot.
 
     A lock path without a sidecar can mean the first writer is publishing. Wait
@@ -253,8 +245,8 @@ def read_scope_projection(
     snapshot.
     """
 
-    path = _sidecar_path(runtime_root, spawn_id)
-    lock_path = scope_projection_lock_path(runtime_root, spawn_id)
+    path = launch.process_scopes
+    lock_path = scope_projection_lock_path(launch.runtime_root, launch.spawn_id)
     if not path.is_file() and not lock_path.exists():
         return ScopeProjectionSnapshot(scopes=(), released_ids=frozenset())
 
@@ -274,28 +266,24 @@ def read_scope_projection(
 
 
 def is_scope_released(
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     release_id: str,
 ) -> bool:
     """Check if a scope has been marked as released.
 
     Returns False on any read error so callers fail open (attempt cleanup).
     """
-    return release_id in read_scope_projection(runtime_root, spawn_id).released_ids
+    return release_id in read_scope_projection(launch).released_ids
 
 
-def read_scopes_from_disk(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-) -> list[ProcessScopeSnapshot]:
+def read_scopes_from_disk(launch: LaunchPaths) -> list[ProcessScopeSnapshot]:
     """Read scope snapshots directly from disk for a spawn.
 
     Tolerates missing, truncated, or corrupt files — returns ``[]`` on any
     error.  Use when the spawn record may not have been refreshed yet (e.g.
     immediately after ``record_scope`` in the same process).
     """
-    return list(read_scope_projection(runtime_root, spawn_id).scopes)
+    return list(read_scope_projection(launch).scopes)
 
 
 __all__ = [

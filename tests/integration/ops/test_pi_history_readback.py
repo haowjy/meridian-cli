@@ -96,7 +96,7 @@ def test_pi_native_readback_survives_reclaim(tmp_path: Path, monkeypatch) -> Non
     original = native.read_bytes()
     key = spawn_store.start_spawn(
         root, chat_id="c1", prompt="first question", harness="pi", model="test", agent="coder"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     _retain_bound_native(root, key, iter(events))
     for kwargs in ({"file_path": str(native)}, {"ref": key}):
@@ -166,7 +166,7 @@ def test_rebuild_warms_archived_children_and_counts_unsupported(
             harness="pi",
             model="test",
             agent="coder",
-        )
+        ).spawn_id
         keys.append(key)
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
         _retain_bound_native(

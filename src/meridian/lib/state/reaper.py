@@ -23,6 +23,7 @@ from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
 from meridian.lib.state.reaper_cleanup_claim import (
@@ -75,7 +76,7 @@ def _fallback_cleanup_scopes(
     record: SpawnRecord,
     primary_metadata: PrimaryMetadata | None,
 ) -> tuple[ProcessScopeSnapshot, ...]:
-    if read_scopes_from_disk(runtime_root, SpawnId(record.id)):
+    if read_scopes_from_disk(LaunchPaths.for_row(runtime_root, record)):
         return ()
     if primary_metadata is not None and primary_metadata.managed_backend:
         scopes: list[ProcessScopeSnapshot] = []
@@ -154,7 +155,7 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
             if result.skip_reason == "termination_exception":
                 unresolved.append(scope)
                 continue
-            mark_scope_released(runtime_root, spawn_id, scope.release_id)
+            mark_scope_released(LaunchPaths.for_row(runtime_root, record), scope.release_id)
         replace_cleanup_claim(runtime_root, spawn_id, unresolved)
 
 
@@ -233,7 +234,9 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
         def claim_cleanup(stored: SpawnRecord) -> None:
             # Runs only after this pass won the dead-launch claim.
             _claim_reaper_cleanup(
-                runtime_root, stored, read_primary_metadata(runtime_root, stored.id)
+                runtime_root,
+                stored,
+                read_primary_metadata(LaunchPaths.for_row(runtime_root, stored)),
             )
             claimed_ids.add(stored.id)
 
@@ -296,7 +299,7 @@ def reconcile_active_spawn(
         return record
 
     def claim_cleanup(stored: SpawnRecord) -> None:
-        primary_metadata = read_primary_metadata(runtime_root, stored.id)
+        primary_metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, stored))
         _claim_reaper_cleanup(runtime_root, stored, primary_metadata)
 
     reconciled = asyncio.run(

@@ -22,7 +22,7 @@ from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
-from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -31,8 +31,6 @@ from meridian.lib.state.spawn.model import (
 
 from ..runtime import OperationRuntime, runtime_context
 from .execute_bg import (
-    BACKGROUND_STDERR_FILENAME,
-    BACKGROUND_STDOUT_FILENAME,
     BackgroundWorkerLaunchRequest,
     _background_worker_main,
     _build_background_worker_command,
@@ -301,12 +299,8 @@ def execute_spawn_background(
         spawn_id_text = str(context.spawn.spawn_id)
         execution_cwd_str = initial_execution_cwd
         parent_launch_cwd_str = execution_contract.control_root.as_posix()
-        log_dir = resolve_spawn_log_dir(
-            project_paths.project_root,
-            context.spawn.spawn_id,
-            runtime_root=context.runtime_root,
-        )
-        log_dir.mkdir(parents=True, exist_ok=True)
+        launch = context.launch
+        launch.dir.mkdir(parents=True, exist_ok=True)
         request_metadata = _build_params_request_metadata(
             request,
             desc=payload.desc,
@@ -314,9 +308,7 @@ def execute_spawn_background(
         )
         try:
             _write_params_json(
-                project_paths,
-                context.runtime_root,
-                context.spawn.spawn_id,
+                launch,
                 request_metadata=request_metadata,
             )
         except Exception:
@@ -340,7 +332,7 @@ def execute_spawn_background(
                 debug=payload.debug,
             )
             _persist_bg_worker_request(
-                log_dir,
+                launch,
                 BackgroundWorkerLaunchRequest(
                     request=persisted_request,
                     runtime=launch_runtime,
@@ -353,8 +345,9 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
-            _cleanup_background_runtime_artifacts(log_dir)
+            _cleanup_background_runtime_artifacts(launch)
             logger.exception(
                 "Failed to persist background worker params.",
                 spawn_id=spawn_id_text,
@@ -381,8 +374,8 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        stdout_path = log_dir / BACKGROUND_STDOUT_FILENAME
-        stderr_path = log_dir / BACKGROUND_STDERR_FILENAME
+        stdout_path = launch.background_stdout
+        stderr_path = launch.background_stderr
 
         # This launches Meridian's background worker, not a harness child.
         launch_env = dict(os.environ)
@@ -432,8 +425,9 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
-            _cleanup_background_runtime_artifacts(log_dir)
+            _cleanup_background_runtime_artifacts(launch)
             logger.exception(
                 "Failed to launch background spawn worker.",
                 spawn_id=spawn_id_text,
@@ -527,6 +521,7 @@ def execute_spawn_blocking(
             warning = value
 
         context_from_resolved = context_ref_values(request.context_refs)
+        launch = context.launch
 
         try:
             execution_cwd_str = initial_execution_cwd
@@ -537,9 +532,7 @@ def execute_spawn_blocking(
             )
             try:
                 _write_params_json(
-                    project_paths,
-                    context.runtime_root,
-                    spawn.spawn_id,
+                    launch,
                     request_metadata=request_metadata,
                 )
             except Exception:
@@ -556,6 +549,7 @@ def execute_spawn_blocking(
             exit_code = asyncio.run(
                 launch_prepared_spawn(
                     spawn=spawn,
+                    launch=launch,
                     request=request,
                     runtime_request=build_spawn_mars_runtime(
                         runtime=runtime,
@@ -586,6 +580,7 @@ def execute_spawn_blocking(
                 project_paths.project_root,
                 spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
             logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
             failure_row = read_spawn_row(project_paths.project_root, spawn_id_text)
@@ -619,11 +614,7 @@ def execute_spawn_blocking(
 
         duration = time.monotonic() - started
         row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
-        _, report_body = read_report(
-            project_paths.project_root,
-            str(spawn.spawn_id),
-            runtime_root=context.runtime_root,
-        )
+        _, report_body = read_report(launch)
         status = "failed"
         if row is not None:
             status = row.status

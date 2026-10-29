@@ -13,13 +13,12 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(
@@ -27,7 +26,7 @@ def _write_spawn_output(
     spawn_id: str,
     *events: dict[str, object],
     artifact: bool = False,
-    filename: str = HISTORY_FILENAME,
+    filename: str = LAUNCH_FILE_NAMES.history,
 ) -> None:
     base_dir = "artifacts" if artifact else "spawns"
     output_path = runtime_root / base_dir / spawn_id / filename
@@ -398,7 +397,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             kind="primary",
             prompt="primary",
             harness_session_id=primary_session_id,
-        )
+        ).spawn_id
     )
     child_spawn_id = str(
         spawn_store.start_spawn(
@@ -412,7 +411,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             kind="child",
             prompt="child task",
             harness_session_id="thread-child",
-        )
+        ).spawn_id
     )
     _write_codex_rollout(
         sessions_root=codex_home / "sessions",

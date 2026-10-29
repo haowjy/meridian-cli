@@ -80,7 +80,6 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -359,9 +358,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         validate_prompt_size(config)
 
         self._transition("starting")
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._startup_emitter = StartupPhaseEmitter(
-            str(config.spawn_id),
+            str(config.launch.spawn_id),
             harness_id=config.harness_id.value,
             model=spec.model,
             agent=None,
@@ -387,14 +386,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         env = dict(config.child_env)
         self._codex_home = resolve_codex_home(env)
         effective_cwd = self._effective_project_root()
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root,
-            config.spawn_id,
-            runtime_root=(
-                config.runtime_root or resolve_project_runtime_root_for_write(config.control_root)
-            ),
-        )
-        self._stderr_log_path = spawn_dir / "stderr.log"
+        launch = config.launch
+        self._stderr_log_path = launch.stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
 
@@ -408,12 +401,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             handle = await launch_managed_backend(
                 ManagedBackendConfig(
-                    spawn_id=config.spawn_id,
+                    launch=launch,
                     harness_id=self.harness_id,
                     command=tuple(appserver_command),
                     cwd=effective_cwd,
                     env=env,
-                    control_root=config.control_root,
                     grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
                 ),
                 stderr=self._stderr_handle,

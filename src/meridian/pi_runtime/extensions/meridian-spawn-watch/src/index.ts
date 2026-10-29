@@ -15,6 +15,7 @@ import {
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
   resolvePiBashDir,
+  resolveReportPath,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
@@ -31,15 +32,17 @@ import {
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
 type ChildDiscovery = { rows: SpawnStateFile[]; revision: number };
-type NotificationItem = {
+type NotificationFields = {
   id: string;
-  kind: "spawn" | "bash";
   status: string;
   label: string;
   duration: string;
   exitCode?: number;
   error?: string;
 };
+// A spawn's report path comes from its parsed state, so the launch it names is the one read.
+type SpawnNotificationItem = NotificationFields & { kind: "spawn"; reportPath: string };
+type NotificationItem = SpawnNotificationItem | (NotificationFields & { kind: "bash" });
 type NotificationFrame = {
   prefix: string;
   detail: string;
@@ -262,7 +265,7 @@ export class SpawnWatchRuntime {
       if (row.terminal !== null && consumed.has(row.id)) this.candidateChildIds.delete(row.id);
       if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
         eligible.push({
-          id: row.id, kind: "spawn", status: row.status,
+          id: row.id, kind: "spawn", status: row.status, reportPath: resolveReportPath(row),
           label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
           duration: formatDurationSecs(row.terminal.duration_secs),
           exitCode: row.terminal.exit_code,
@@ -305,7 +308,7 @@ export class SpawnWatchRuntime {
     for (const item of initial) {
       if (candidates.length >= MAX_NOTIFICATION_MEMBERS) break;
       const separatorBytes = candidates.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
-      const itemMandatoryBytes = mandatoryNotificationBytes(item, this.spawnsDir);
+      const itemMandatoryBytes = mandatoryNotificationBytes(item);
       if (mandatoryBytes + separatorBytes + itemMandatoryBytes > MAX_NOTIFICATION_BYTES) break;
       candidates.push({ item, mandatoryBytes: itemMandatoryBytes });
       mandatoryBytes += separatorBytes + itemMandatoryBytes;
@@ -387,10 +390,10 @@ export class SpawnWatchRuntime {
     return true;
   }
 
-  private async renderSpawnNotification(item: NotificationItem, maxBytes: number): Promise<string | undefined> {
-    const reportPath = path.join(this.spawnsDir, item.id, "report.md");
+  private async renderSpawnNotification(item: SpawnNotificationItem, maxBytes: number): Promise<string | undefined> {
+    const reportPath = item.reportPath;
     const report = await readBoundedReport(reportPath);
-    const frame = spawnNotificationFrame(item, this.spawnsDir, report.text);
+    const frame = spawnNotificationFrame(item, report.text);
     if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(reportPath);
     return renderNotificationFrame(frame, maxBytes);
   }
@@ -592,8 +595,8 @@ function notificationOutcome(item: NotificationItem): string {
   return `${code}${item.duration}${item.error === undefined ? "" : "; result error"}`;
 }
 
-function spawnNotificationFrame(item: NotificationItem, spawnsDir: string, report: string | null): NotificationFrame {
-  const reportPath = path.join(spawnsDir, item.id, "report.md");
+function spawnNotificationFrame(item: SpawnNotificationItem, report: string | null): NotificationFrame {
+  const reportPath = item.reportPath;
   const details = [`Worker: ${item.label}`];
   if (item.error) details.push(`Failure: ${item.error}`);
   details.push("", report || "No durable report content was published.");
@@ -625,12 +628,12 @@ function formatBashNotification(item: NotificationItem, maxBytes: number): strin
   return renderNotificationFrame(bashNotificationFrame(item), maxBytes);
 }
 
-function mandatoryNotificationBytes(item: NotificationItem, spawnsDir: string): number {
+function mandatoryNotificationBytes(item: NotificationItem): number {
   const frame = item.kind === "spawn"
-    ? spawnNotificationFrame(item, spawnsDir, null)
+    ? spawnNotificationFrame(item, null)
     : bashNotificationFrame(item);
   if (item.kind === "spawn") {
-    const reportPath = path.join(spawnsDir, item.id, "report.md");
+    const reportPath = item.reportPath;
     frame.truncationNotice = spawnReportTruncationNotice(reportPath);
   }
   return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);

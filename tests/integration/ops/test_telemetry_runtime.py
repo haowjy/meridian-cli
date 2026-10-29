@@ -73,7 +73,7 @@ def start_spawn(
             status=status,  # type: ignore[arg-type]
         ),
         launch_lock=launch_lock,
-    )
+    ).spawn_id
 
 
 def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:

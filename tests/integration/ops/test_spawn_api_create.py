@@ -32,10 +32,11 @@ from meridian.lib.safety.policy import (
     parse_network_policy,
 )
 from meridian.lib.state import spawn_store, work_repository, work_store
-from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 
 def _set_caller_guardrail(
@@ -148,11 +149,7 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
     ] == [allowed.spawn_id]
     assert list((spawns_dir / ".staging").iterdir()) == []
 
-    allowed_log_dir = resolve_spawn_log_dir(
-        project_root,
-        allowed.spawn_id,
-        runtime_root=prepared.runtime_root,
-    )
+    allowed_log_dir = launch_paths(prepared.runtime_root, allowed.spawn_id).dir
     params = json.loads((allowed_log_dir / "params.json").read_text(encoding="utf-8"))
     assert params["phase"] == "request"
     assert params["model"] == "gemini-2.5-pro"
@@ -760,11 +757,8 @@ def test_spawn_create_forwards_requested_environment_to_the_background_worker(
     assert result.status == "running"
     assert result.spawn_id is not None
     prepared = prepare_for_runtime_write(project_root)
-    log_dir = resolve_spawn_log_dir(
-        project_root,
-        result.spawn_id,
-        runtime_root=prepared.runtime_root,
-    )
+    assert prepared.runtime_root is not None
+    log_dir = launch_paths(prepared.runtime_root, result.spawn_id).dir
     worker_request = json.loads(
         (log_dir / "bg-worker-request.json").read_text(encoding="utf-8")
     )

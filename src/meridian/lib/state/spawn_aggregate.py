@@ -15,7 +15,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import REAPER_CLEANUP_CLAIM_FILENAME, RuntimePaths
 from meridian.lib.state.process_scope_projection import scope_projection_lock_path
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
@@ -149,7 +149,7 @@ def _remove_published_spawn[T](
         lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)),
         lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)),
     ):
-        claim_path = spawn_dir / "reaper_cleanup_claim.json"
+        claim_path = spawn_dir / REAPER_CLEANUP_CLAIM_FILENAME
         if claim_path.exists() or not can_delete(
             read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
         ):

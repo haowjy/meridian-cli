@@ -41,8 +41,8 @@ class SensorErrorReporter:
 
     def __init__(self, ctx: IdleSensorContext) -> None:
         self._tracer = DebugTracer(
-            spawn_id=str(ctx.spawn_id or ""),
-            debug_path=ctx.spawn_dir / "debug.jsonl",
+            spawn_id=str(ctx.launch.spawn_id),
+            debug_path=ctx.launch.debug,
             report_failures=False,
         )
         self._counts: dict[tuple[str, str, str], int] = {}

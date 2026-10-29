@@ -9,7 +9,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
-from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
@@ -17,7 +17,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import ModelId
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
@@ -27,8 +27,8 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (
+    LaunchPaths,
     resolve_project_paths,
-    resolve_spawn_log_dir,
     resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.spawn.model import LaunchMode
@@ -72,9 +72,13 @@ class _SpawnContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn: Spawn
-    runtime_root: Path
+    launch: LaunchPaths
     current_depth: int
     work_id: str | None = None
+
+    @property
+    def runtime_root(self) -> Path:
+        return self.launch.runtime_root
 
 
 def _emit_subrun_event(
@@ -234,16 +238,16 @@ def _reserve_spawn(
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
-    spawn_id = service.reserve(reservation, launch_lock=launch_lock)
+    launch = service.reserve(reservation, launch_lock=launch_lock)
     spawn = Spawn(
-        spawn_id=SpawnId(spawn_id),
+        spawn_id=launch.spawn_id,
         prompt=reservation.prompt,
         model=ModelId(reservation.session_metadata.model or ""),
         status=reservation.status,
     )
     return _SpawnContext(
         spawn=spawn,
-        runtime_root=runtime_root,
+        launch=launch,
         current_depth=resolved_context.depth,
         work_id=reservation.work_id,
     )
@@ -369,20 +373,13 @@ def _params_payload(
 
 
 def _write_params_json(
-    project_paths: ProjectConfigPaths,
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     *,
     request_metadata: ParamsRequestMetadata,
     binding: ResolvedLaunchBinding | None = None,
 ) -> None:
     """Write resolved execution params to the spawn directory."""
-    params_path = (
-        resolve_spawn_log_dir(
-            project_paths.project_root, spawn_id, runtime_root=runtime_root
-        )
-        / "params.json"
-    )
+    params_path = launch.params
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = _params_payload(request_metadata, binding=binding)
     atomic_write_text(params_path, json.dumps(params_payload, indent=2) + "\n")

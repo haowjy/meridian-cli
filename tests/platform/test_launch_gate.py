@@ -34,7 +34,7 @@ mode = sys.argv[2]
 pause = sys.argv[3] == "pause"
 runtime = resolve_project_runtime_root_for_write(root)
 spawn = SpawnId("p1")
-start_spawn(
+launch = start_spawn(
     runtime,
     spawn_id=spawn,
     chat_id="c1",
@@ -69,12 +69,11 @@ async def run():
         managed_stdio.register_spawn_owned_process = register
         handle = await managed_stdio.launch_managed_stdio(
             config=ConnectionConfig(
-                spawn_id=spawn,
                 harness_id=HarnessId.PI,
                 prompt="",
                 control_root=root,
                 child_env={},
-                runtime_root=runtime,
+                launch=launch,
             ),
             harness_id=HarnessId.PI,
             command=command,
@@ -93,7 +92,8 @@ async def run():
         managed_backend.register_spawn_owned_process = register
         handle = await managed_backend.launch_managed_backend(
             managed_backend.ManagedBackendConfig(
-                spawn, HarnessId.CODEX, backend_command, root, os.environ.copy(), root, 0.1
+                launch, HarnessId.CODEX, backend_command, root,
+                os.environ.copy(), 0.1,
             ),
             stderr=asyncio.subprocess.DEVNULL,
         )

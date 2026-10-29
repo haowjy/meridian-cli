@@ -23,8 +23,8 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
+from tests.support.launch_paths import launch_paths
 
 _PI_HELP = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
@@ -120,16 +120,13 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         harness="claude",
         prompt="hello",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     await connection.start(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
             prompt="hello",
             control_root=tmp_path,
-            runtime_root=runtime_root,
+            launch=launch_paths(runtime_root, spawn_id),
             child_env=child_env,
         ),
         ResolvedLaunchSpec(
@@ -218,16 +215,13 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         harness="pi",
         prompt="hello",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     await connection.start(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            runtime_root=runtime_root,
+            launch=launch_paths(runtime_root, spawn_id),
             child_env=child_env,
             pi_session_role=role,  # type: ignore[arg-type]
         ),

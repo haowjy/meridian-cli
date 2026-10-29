@@ -14,6 +14,7 @@ from meridian.lib.harness.claude_boundary import (
     latest_messaging_socket,
 )
 from meridian.lib.state.liveness import is_process_alive_born_by
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 _SOCKET_TIMEOUT_SECONDS = 3.0
@@ -42,7 +43,7 @@ def post_primary_message(
     if worker_pid is None or worker_pid <= 0:
         raise PrimaryInboxError(f"Claude primary {spawn_id}'s worker PID is unknown")
 
-    journal = claude_boundary_journal_path(runtime_root, spawn_id)
+    journal = claude_boundary_journal_path(LaunchPaths.for_row(runtime_root, record))
     published_inbox = latest_messaging_socket(journal, pid=worker_pid)
     if published_inbox is None:
         raise PrimaryInboxError(

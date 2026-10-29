@@ -16,6 +16,7 @@ from meridian.lib.harness.bundle import PrimaryInboxError
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.state.spawn.model import SpawnRecord
+from tests.support.launch_paths import launch_paths
 
 
 def _primary_record(pid: int) -> SpawnRecord:
@@ -35,7 +36,7 @@ def _publish_inbox(
     *,
     recorded_at: float,
 ) -> None:
-    journal = claude_boundary_journal_path(runtime_root, record.id)
+    journal = claude_boundary_journal_path(launch_paths(runtime_root, record.id))
     journal.parent.mkdir(parents=True, exist_ok=True)
     journal.write_text(
         json.dumps(

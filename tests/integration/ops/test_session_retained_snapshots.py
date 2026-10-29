@@ -24,8 +24,7 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 
 NEEDLE = "SNAPNEEDLE"
 
@@ -52,7 +51,7 @@ def archived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Archived:
     project, root = _project(tmp_path, "a")
     key = spawn_store.start_spawn(
         root, chat_id="c1", prompt="question", harness="pi", model="test", agent="coder"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     sid = f"native-{key}"
     store = tmp_path / "native"
@@ -120,7 +119,7 @@ def test_imported_history_reads_zip_member_in_place(archived: Archived, tmp_path
         SessionSearchInput(project_root=str(project), ref=archived.history_id, query=NEEDLE)
     )
     assert search.complete and search.matches
-    assert not any((root / "spawns").glob("*/" + NATIVE_SNAPSHOT_FILENAME))
+    assert not any((root / "spawns").glob("*/" + LAUNCH_FILE_NAMES.native_snapshot))
 
     again = session_import_sync(
         SessionImportInput(project_root=str(project), archive=str(archived.zip))
@@ -166,7 +165,7 @@ def test_damaged_or_rebound_snapshots_fail_closed(archived: Archived, tmp_path: 
             project_root=str(project), archive=str(archived.zip), refs=(archived.history_id,)
         )
     ).restored_histories[0]
-    snapshot = root / "spawns" / restored.spawn_id / NATIVE_SNAPSHOT_FILENAME
+    snapshot = root / "spawns" / restored.spawn_id / LAUNCH_FILE_NAMES.native_snapshot
     original = snapshot.read_bytes()
     header, rest = original.split(b"\n", 1)
     rebound = json.loads(header)
@@ -185,7 +184,7 @@ def test_damaged_or_rebound_snapshots_fail_closed(archived: Archived, tmp_path: 
     with zipfile.ZipFile(archived.zip) as source, zipfile.ZipFile(tampered, "w") as copy:
         for info in source.infolist():
             data = source.read(info)
-            if info.filename.endswith(NATIVE_SNAPSHOT_FILENAME):
+            if info.filename.endswith(LAUNCH_FILE_NAMES.native_snapshot):
                 data = data.replace(NEEDLE.encode(), b"TAMPERED!!")
             copy.writestr(info, data)
     tampered.replace(archived.zip)

@@ -25,6 +25,7 @@ from meridian.lib.state.process_scope_projection import (
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_store import delete_published_spawn
+from tests.support.launch_paths import launch_paths
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
@@ -50,7 +51,7 @@ def _create_primary_spawn(tmp_path: Path, spawn_id: str = "p1") -> tuple[Path, s
         runner_pid=111,
         started_at=_OLD_STARTED_AT,
         status="running",
-    )
+    ).spawn_id
     return runtime_root, str(created)
 
 
@@ -90,9 +91,9 @@ def test_missing_scope_sidecar_reads_do_not_create_lock_tree(
     runtime_root = tmp_path / "runtime"
 
     if read_api == "scopes":
-        assert read_scopes_from_disk(runtime_root, SpawnId("p1")) == []
+        assert read_scopes_from_disk(launch_paths(runtime_root, SpawnId("p1"))) == []
     else:
-        assert is_scope_released(runtime_root, SpawnId("p1"), "missing") is False
+        assert is_scope_released(launch_paths(runtime_root, SpawnId("p1")), "missing") is False
 
     assert not runtime_root.exists()
 
@@ -112,7 +113,9 @@ def test_missing_scope_sidecar_read_waits_for_first_writer_publish(tmp_path: Pat
 
     with lock_file(lock_path, reentrant=False):
         reader = threading.Thread(
-            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+            target=lambda: result.append(
+                read_scopes_from_disk(launch_paths(runtime_root, SpawnId(spawn_id)))
+            )
         )
         reader.start()
         reader.join(timeout=0.2)
@@ -139,7 +142,9 @@ def test_missing_scope_sidecar_read_has_bounded_first_writer_wait(tmp_path: Path
 
     with lock_file(lock_path, reentrant=False):
         reader = threading.Thread(
-            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+            target=lambda: result.append(
+                read_scopes_from_disk(launch_paths(runtime_root, SpawnId(spawn_id)))
+            )
         )
         reader.start()
         reader.join(timeout=2.5)
@@ -163,7 +168,9 @@ def test_timed_out_scope_read_uses_atomically_published_sidecar(tmp_path: Path) 
 
     with lock_file(lock_path, reentrant=False):
         reader = threading.Thread(
-            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+            target=lambda: result.append(
+                read_scopes_from_disk(launch_paths(runtime_root, SpawnId(spawn_id)))
+            )
         )
         reader.start()
         reader.join(timeout=0.2)
@@ -198,8 +205,8 @@ def test_concurrent_scope_releases_preserve_every_marker(
         owner_id=spawn_id,
         root_pid=302,
     )
-    record_scope(runtime_root, SpawnId(spawn_id), scope_a)
-    record_scope(runtime_root, SpawnId(spawn_id), scope_b)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope_a)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope_b)
 
     original_read_raw = process_scope_projection._read_raw
     reads_aligned = threading.Barrier(2)
@@ -214,7 +221,7 @@ def test_concurrent_scope_releases_preserve_every_marker(
     threads = [
         threading.Thread(
             target=mark_scope_released,
-            args=(runtime_root, SpawnId(spawn_id), scope.release_id),
+            args=(launch_paths(runtime_root, spawn_id), scope.release_id),
         )
         for scope in (scope_a, scope_b)
     ]
@@ -239,7 +246,7 @@ def test_deleted_spawn_cannot_grow_ghost_scope_sidecar(tmp_path: Path) -> None:
         owner_id=spawn_id,
         root_pid=301,
     )
-    record_scope(runtime_root, SpawnId(spawn_id), scope)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
     spawn_dir = runtime_root / "spawns" / spawn_id
 
     deletion = threading.Thread(
@@ -255,9 +262,9 @@ def test_deleted_spawn_cannot_grow_ghost_scope_sidecar(tmp_path: Path) -> None:
     assert not deletion.is_alive()
     assert not spawn_dir.exists()
 
-    mark_scope_released(runtime_root, SpawnId(spawn_id), scope.release_id)
+    mark_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), scope.release_id)
     with pytest.raises(ValueError, match="spawn does not exist"):
-        record_scope(runtime_root, SpawnId(spawn_id), scope)
+        record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
 
     assert not spawn_dir.exists()
 
@@ -326,10 +333,12 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
         ),
     )
     for spawn_id, scope in scope_records:
-        record_scope(runtime_root, SpawnId(spawn_id), scope)
+        record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
 
     already_released_scope = scope_records[3][1]
-    mark_scope_released(runtime_root, SpawnId("p2"), already_released_scope.release_id)
+    mark_scope_released(
+        launch_paths(runtime_root, SpawnId("p2")), already_released_scope.release_id
+    )
 
     terminated_scope_ids: list[str] = []
 
@@ -361,10 +370,21 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
     assert terminated_scope_ids == ["backend", "tui"]
     assert [result.scope_id for result in results] == ["backend", "tui"]
     assert (
-        is_scope_released(runtime_root, SpawnId(spawn_one), scope_records[0][1].release_id) is True
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_one)), scope_records[0][1].release_id
+        )
+        is True
     )
-    assert is_scope_released(runtime_root, SpawnId("p2"), scope_records[2][1].release_id) is True
-    assert is_scope_released(runtime_root, SpawnId("p2"), already_released_scope.release_id) is True
+    assert (
+        is_scope_released(launch_paths(runtime_root, SpawnId("p2")), scope_records[2][1].release_id)
+        is True
+    )
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId("p2")), already_released_scope.release_id
+        )
+        is True
+    )
 
 
 def test_duplicate_scope_labels_are_released_by_concrete_identity(tmp_path: Path) -> None:
@@ -384,14 +404,18 @@ def test_duplicate_scope_labels_are_released_by_concrete_identity(tmp_path: Path
         root_pid=502,
     )
 
-    record_scope(runtime_root, SpawnId(spawn_id), first)
-    record_scope(runtime_root, SpawnId(spawn_id), second)
-    mark_scope_released(runtime_root, SpawnId(spawn_id), first.release_id)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), first)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), second)
+    mark_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), first.release_id)
 
     assert first.scope_id == second.scope_id
     assert first.release_id != second.release_id
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), first.release_id) is True
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), second.release_id) is False
+    assert (
+        is_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), first.release_id) is True
+    )
+    assert (
+        is_scope_released(launch_paths(runtime_root, SpawnId(spawn_id)), second.release_id) is False
+    )
 
 
 def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
@@ -427,7 +451,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
         ),
     )
     for scope in scope_records:
-        record_scope(runtime_root, SpawnId(spawn_id), scope)
+        record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
 
     monkeypatch.setattr(
         "meridian.lib.state.reaper.is_process_alive",
@@ -470,14 +494,39 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     assert reconciled.status == "failed"
     assert reconciled.terminal is not None
     assert reconciled.terminal.error == "crashed"
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[0].release_id) is True
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is False
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is False
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_id)), scope_records[0].release_id
+        )
+        is True
+    )
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_id)), scope_records[1].release_id
+        )
+        is False
+    )
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_id)), scope_records[2].release_id
+        )
+        is False
+    )
 
     terminated_scope_ids.clear()
     results = reclaim_session_owned_scopes_for_chat(runtime_root, "c1", grace_seconds=2.0)
 
     assert terminated_scope_ids == ["backend", "tui"]
     assert [result.scope_id for result in results] == ["backend", "tui"]
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is True
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is True
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_id)), scope_records[1].release_id
+        )
+        is True
+    )
+    assert (
+        is_scope_released(
+            launch_paths(runtime_root, SpawnId(spawn_id)), scope_records[2].release_id
+        )
+        is True
+    )

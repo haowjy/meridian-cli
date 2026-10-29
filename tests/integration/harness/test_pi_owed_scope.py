@@ -14,6 +14,7 @@ from meridian.lib.ops.spawn.owed import discover_owed_scope
 from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import record_to_stored_state
 from tests.support.history import warm_history_index
+from tests.support.launch_paths import launch_paths
 
 
 def _seed_primary(runtime_root: Path, spawn_id: str, chat_id: str) -> None:
@@ -57,8 +58,7 @@ def _prepare_prelaunch(
 ) -> dict[str, str]:
     monkeypatch.setattr("meridian.lib.harness.pi.resolve_pi_runtime", _resolve_pi_runtime)
     state = PiAdapter().prepare_prelaunch(
-        runtime_root=runtime_root,
-        spawn_id=SpawnId("p-resumed"),
+        launch=launch_paths(runtime_root, SpawnId("p-resumed")),
         session=SessionRequest(),
         child_cwd=runtime_root,
         child_env={
