@@ -24,7 +24,6 @@ _NOISY_KEYS = {
     "stderr",
     "harness_session_id",
     "report_body",
-    "report_path",
     "log_path",
 }
 
@@ -224,7 +223,7 @@ def test_spawn_show_json_contract(
 
     payload = _run_json(project_root, env, "spawn", "show", "p1")
 
-    assert {"spawn_id", "status", "model", "harness", "report_summary"} <= (
+    assert {"spawn_id", "status", "model", "harness", "report_path", "report_summary"} <= (
         payload.keys()
     )
     _assert_noisy_keys_absent(payload)
