@@ -436,7 +436,8 @@ def test_delete_published_spawn_cannot_leave_writer_ghost_row(tmp_path: Path) ->
 
 def _reopening(**overrides: Any) -> LaunchInput:
     fields: dict[str, Any] = dict(
-        chat_id="c1", prompt="x", kind="child", owner_chat_id=None, parent_id=None, goal=None,
+        chat_id="c1", prompt="x", kind="child", model="gpt-5.4", control_root=None,
+        task_cwd=None, execution_cwd=None, owner_chat_id=None, parent_id=None, goal=None,
         harness_session_id=None, launch_mode=None, worker_pid=None, runner_pid=None,
         runner_created_at_epoch=None,
     )
@@ -501,19 +502,15 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
                     handle,
                     runtime_root,
                     _reopening(parent_id="p9"),
-                    max_depth=3,
                 )
             with pytest.raises(ValueError, match="--goal cannot be empty"):
                 reopen_spawn(
                     handle,
                     runtime_root,
                     _reopening(goal=" "),
-                    max_depth=3,
                 )
             assert not (legacy_dir / "launches").exists()  # refused before any write
-            reopened = reopen_spawn(
-                handle, runtime_root, _reopening(prompt="again"), max_depth=3
-            )
+            reopened = reopen_spawn(handle, runtime_root, _reopening(prompt="again"))
         assert LaunchPaths.for_row(runtime_root, reopened).dir == legacy_dir / "launches" / "2"
         archived = launch_archive(runtime_root, "p9", 1)
         assert json.loads(archived.read_text())["v"] == 3

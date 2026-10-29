@@ -11,7 +11,14 @@ spawn moves it under the caller, and a spawn cannot be continued from one of its
 descendants.
 
 A spawn can be continued only while no run of it is live. A second terminal continuing the same
-spawn is refused ("pN is still running") before anything is written.
+spawn is refused before anything is written: "pN is still running", or "pN is being continued
+or repaired" while the first continue is still starting. Do not retry the second message; wait
+for the first run to end.
+
+A continue may change the model (`-m`: the run and `spawn show` use the new one), `--work` and
+`--desc` (they replace the spawn's own; left out, they are kept). Agent, skills, approval,
+sandbox, network, effort, `--task-dir` and passthrough arguments are refused on a continue, for
+a primary as for a child: use `--fork-fresh` to change them.
 
 **What changed**
 
@@ -27,6 +34,10 @@ spawn is refused ("pN is still running") before anything is written.
   continued as `p9`) reopens the chat's newest spawn: `meridian --continue p5` prints
   "p5's conversation continues as p9". It refuses when that would change the newest spawn's
   parent or kind; continue it by its ID, or use `--fork`.
+- `meridian --continue cN` on a chat that belongs to a child spawn is refused ("cN is child
+  pN's conversation; `meridian --continue pN` makes it a primary"). Before v0.18.0 it started
+  a new primary in that chat. `meridian --continue pN` makes the child a primary with the same
+  ID.
 - A spawn that ended without recording an outcome (killed, or its terminal closed) is
   recorded as `crashed` by the next continue, which also stops what it left running,
   including a managed primary's backend and TUI.

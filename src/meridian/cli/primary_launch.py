@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -13,7 +14,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.lib.config.loader import load_config
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -28,6 +28,7 @@ from meridian.lib.launch.continue_replay import (
     MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
+    reject_continue_policy_overrides,
 )
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
@@ -195,13 +196,6 @@ def run_primary_launch(
     fork_fresh_target_requested = raw_fork_fresh_target or None
     context_from_requested = (raw_from_target,) if raw_from_target else ()
     normalized_task_dir = (task_dir or "").strip() or None
-    if resume_target is not None and normalized_task_dir is not None:
-        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
-    if resume_target is not None and work.strip():
-        raise ValueError(
-            "--continue does not accept --work. "
-            "Use --fork-fresh or a fresh session to change work context."
-        )
     resolved_approval = approval if approval is not None else ("never" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
@@ -248,10 +242,22 @@ def run_primary_launch(
     # spawn does: `--goal` overrides, its absence inherits.
     source_goal: str | None = None
     if resume_target is not None:
-        if skills:
-            raise ValueError("Cannot combine --continue with --skills.")
-        if passthrough:
-            raise ValueError("Cannot combine --continue with passthrough args (--).")
+        reject_continue_policy_overrides(
+            {
+                "--skills": bool(skills),
+                "--yolo": yolo,
+                "--approval": approval is not None,
+                "--sandbox": sandbox is not None,
+                "--network": network is not None,
+                "--network-allow": bool(network_allow),
+                "--network-deny": bool(network_deny),
+                "--effort": effort is not None,
+                "--autocompact": autocompact is not None,
+                "--autocompact-pct": autocompact_pct is not None,
+                "--": bool(passthrough),
+                "--task-dir": normalized_task_dir is not None,
+            }
+        )
         resolved_continue = resolve_session_target(
             project_root=project_root,
             continue_ref=resume_target,
@@ -363,7 +369,7 @@ def run_primary_launch(
     context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
-    continue_hold: ContinueHold | None = None
+    hold: ContinueHold | None = None
     continue_source = (
         spawn_store.get_spawn(resolve_project_runtime_root(project_root), continue_source_spawn_id)
         if continue_source_spawn_id is not None
@@ -372,7 +378,7 @@ def run_primary_launch(
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
         # owns it, so a second terminal's continue is refused rather than racing this one.
-        continue_hold = begin_continue(
+        hold = begin_continue(
             project_root=project_root,
             runtime_root=resolve_project_runtime_root(project_root),
             named=continue_source,
@@ -381,15 +387,14 @@ def run_primary_launch(
             parent_id=None,
             kind="primary",
             caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
-            max_depth=load_config(project_root).max_depth,
             dry_run=dry_run,
         )
-        if continue_hold is not None and continue_hold.notice:
-            continue_warning = _merge_warnings(continue_warning, continue_hold.notice)
-    try:
+        if hold is not None and hold.notice:
+            continue_warning = _merge_warnings(continue_warning, hold.notice)
+    with hold.slot if hold is not None else nullcontext():
         launch_result = launch_primary(
             project_root=project_root,
-            continue_hold=continue_hold,
+            hold=hold,
             request=LaunchRequest(
                 ignore_direnv=ignore_direnv,
                 model=requested_model,
@@ -451,9 +456,6 @@ def run_primary_launch(
             ),
             harness_registry=harness_registry,
         )
-    finally:
-        if continue_hold is not None:
-            continue_hold.slot.close()
 
     continue_chat_id = launch_result.continue_chat_id
     row = None

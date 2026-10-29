@@ -130,9 +130,9 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
         project_root: Path,
         request: LaunchRequest,
         harness_registry: object,
-        continue_hold: object = None,
+        hold: object = None,
     ) -> LaunchResult:
-        _ = (project_root, harness_registry, continue_hold)
+        _ = (project_root, harness_registry, hold)
         requests.append(request)
         return LaunchResult(
             command=(),
@@ -495,7 +495,6 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     [
         ({"passthrough": ("--custom",)}, ("--",)),
         ({"task_dir": "other-worktree"}, ("--continue", "--task-dir", "--fork")),
-        ({"work": "other-work"}, ("--work", "--fork-fresh", "fresh session")),
     ],
 )
 def test_primary_continue_rejects_surface_overrides(

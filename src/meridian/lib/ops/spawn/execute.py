@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -198,11 +199,11 @@ def _prepare_then_reserve(
     launch_mode: LaunchMode,
     runner_pid: int | None = None,
     launch_lock: LaunchSlot,
-    reopen: ContinueHold | None,
+    hold: ContinueHold | None,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
     """Prepare, then write the launch's row: a setup error leaves nothing to clean up.
 
-    ``reopen``: a continue's hold on a finished spawn (``launch_lock`` is its slot), so its
+    ``hold``: a continue's hold on a finished spawn (``launch_lock`` is its slot), so its
     next launch is committed rather than a new spawn created.
     """
     resolved_context = runtime_context(ctx)
@@ -220,7 +221,8 @@ def _prepare_then_reserve(
         payload=payload,
         request=request,
         desc=payload.desc,
-        work_id=contract.work_id,
+        # A continue keeps the spawn's work unless it was told one.
+        work_id=(payload.work.strip() or None) if hold is not None else contract.work_id,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
@@ -234,7 +236,7 @@ def _prepare_then_reserve(
         reservation=reservation,
         launch_lock=launch_lock,
         runtime=runtime,
-        reopen=reopen,
+        hold=hold,
         ctx=resolved_context,
     )
     logger.debug(
@@ -254,7 +256,6 @@ def _prepare_then_reserve(
         request=request,
         runtime=runtime,
         project_root=project_paths.project_root,
-        created=reopen is None,
         ctx=resolved_context,
     )
     return context, preparation
@@ -266,9 +267,9 @@ def execute_spawn_background(
     request: SpawnRequest,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
-    reopen: ContinueHold | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with reopen.slot if reopen is not None else LaunchSlot() as launch_lock:
+    with nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock:
         reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
@@ -277,7 +278,7 @@ def execute_spawn_background(
             launch_mode=BACKGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
-            reopen=reopen,
+            hold=hold,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved
@@ -479,9 +480,9 @@ def execute_spawn_blocking(
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
-    reopen: ContinueHold | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with reopen.slot if reopen is not None else LaunchSlot() as launch_lock:
+    with nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock:
         reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
@@ -490,7 +491,7 @@ def execute_spawn_blocking(
             launch_mode=FOREGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
-            reopen=reopen,
+            hold=hold,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved

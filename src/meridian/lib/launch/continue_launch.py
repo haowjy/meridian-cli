@@ -56,14 +56,14 @@ _TEARDOWN_GRACE_SECS = 5.0
 class ContinueHold:
     """The reopened spawn's launch lock, held with its last launch finished and swept.
 
-    ``slot`` owns the lock: the caller closes it on any failure before a runner takes over.
+    ``slot`` owns the lock: the caller enters it once (``with hold.slot``), and what it calls
+    uses it without closing; the runner's handover closes it early.
     ``spawn`` is the stored row, whose launch has an outcome. ``notice`` is set when the
     continue reopened a different spawn than the one named.
     """
 
     slot: LaunchSlot
     spawn: SpawnRecord
-    max_depth: int
     notice: str | None = None
 
 
@@ -95,10 +95,7 @@ def _busy_error(
 ) -> ValueError:
     row = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
     if row is not None and is_process_dead_with_birth(row.runner_pid, row.runner_created_at_epoch):
-        return ValueError(
-            f"{spawn_id}'s launch lock is held by a repair or another continue; "
-            "retry in a moment"
-        )
+        return ValueError(f"{spawn_id} is being continued or repaired")
     if caller_spawn_id == spawn_id:
         return ValueError(f"{spawn_id} is this session; use --fork {spawn_id}")
     moved_to = (row.continue_chat_id or row.current_chat_id) if row is not None else None
@@ -190,6 +187,12 @@ def _target(
             raise ValueError(
                 f"{named.id}'s conversation now belongs to {target.id} under a different "
                 f"caller; continue {target.id} from there, or --fork {named.id}"
+            )
+        if target.kind != kind:
+            command = "meridian --continue" if kind == "primary" else "meridian spawn --continue"
+            raise ValueError(
+                f"{chat_id} is {target.kind} {target.id}'s conversation; "
+                f"`{command} {target.id}` makes it a {kind}, or --fork {chat_id}"
             )
         raise ValueError(
             f"Chat {chat_id} belongs to {target.id}, which runs under a different caller; "
@@ -287,7 +290,6 @@ def begin_continue(
     parent_id: str | None,
     kind: SpawnKind,
     caller_spawn_id: str | None,
-    max_depth: int,
     dry_run: bool,
 ) -> ContinueHold | None:
     """Steps 1-4 of a continue; ``None`` for ``dry_run``, which probes and writes nothing.
@@ -321,22 +323,16 @@ def begin_continue(
     slot = LaunchSlot(handle)
     try:
         row = _finish_last_launch(project_root, runtime_root, handle)
-        if parent_id != row.parent_id and spawn_store.spawn_would_cycle(
-            RuntimePaths.from_root_dir(runtime_root).spawns_dir,
-            spawn_id,
-            parent_id,
-            max_depth=max_depth,
-        ):
-            raise ValueError(
-                f"Cannot continue {spawn_id} from {parent_id}: {parent_id} is {spawn_id} "
-                f"or one of its descendants; use --fork {spawn_id}"
+        if parent_id != row.parent_id:
+            spawn_store.reject_continue_cycle(
+                RuntimePaths.from_root_dir(runtime_root).spawns_dir, spawn_id, parent_id
             )
         if chat_id:
             _check_chat_free(runtime_root, chat_id)
     except BaseException:
         slot.close()
         raise
-    return ContinueHold(slot=slot, spawn=row, max_depth=max_depth, notice=notice)
+    return ContinueHold(slot=slot, spawn=row, notice=notice)
 
 
 __all__ = ["ContinueHold", "begin_continue"]

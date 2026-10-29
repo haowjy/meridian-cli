@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Generator, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -720,7 +720,7 @@ def run_harness_process(
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
     activate_work_fn: Callable[[Path, str, str], object] = activate_work,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
-    continue_hold: ContinueHold | None = None,
+    hold: ContinueHold | None = None,
 ) -> ProcessOutcome:
     """Start session, spawn tracking, launch process, wait for exit."""
 
@@ -775,46 +775,64 @@ def run_harness_process(
     # A continue keeps its spawn's ID and commits its next launch before the session starts.
     reopened: SpawnRecord | None = None
 
+    def primary_reservation(
+        *, chat_id: str | None, work_id: str | None, harness_session_id: str | None
+    ) -> SpawnReservation:
+        # A primary's goal is its conversation's identity, so a `--continue` inherits it
+        # from the row.
+        return SpawnReservation(
+            chat_id=chat_id,
+            session_metadata=session_metadata,
+            spawn_id=str(reserved_spawn_id),
+            kind="primary",
+            prompt=preview_request.prompt,
+            harness_session_id=harness_session_id,
+            control_root=str(control_root),
+            task_cwd=None,
+            execution_cwd=str(execution_cwd),
+            launch_mode=FOREGROUND_LAUNCH_MODE,
+            work_id=work_id,
+            goal=preview_request.goal,
+            runner_pid=os.getpid(),
+        )
+
     @contextmanager
     def fail_unstarted_launch() -> Generator[None]:
-        """The next launch was committed but its session could not start (the chat is held):
-        no runner will write its outcome, so write it before the launch lock is released."""
+        """The next launch was committed but its session could not start (the chat is held,
+        or Ctrl-C arrived while waiting): no runner will write its outcome, so write it
+        before the launch lock is released."""
         try:
             yield
-        except Exception as exc:
+        except BaseException as exc:
             if reopened is not None and chat_id is None:
                 asyncio.run(
                     spawn_service.complete_spawn(
-                        SpawnId(reopened.id), "failed", 1, origin="launcher", error=str(exc)
+                        SpawnId(reopened.id),
+                        "failed",
+                        1,
+                        origin="launcher",
+                        error=str(exc) or type(exc).__name__,
                     )
                 )
             raise
 
     reserved_spawn_id = (
-        SpawnId(continue_hold.spawn.id)
-        if continue_hold is not None
+        SpawnId(hold.spawn.id)
+        if hold is not None
         else spawn_store.reserve_launch(runtime_root).spawn_id
     )
     try:
-        if continue_hold is not None:
+        if hold is not None:
             reopened = lifecycle_service.reopen(
-                SpawnReservation(
+                primary_reservation(
                     chat_id=resume_chat_id,
-                    session_metadata=session_metadata,
-                    kind="primary",
-                    prompt=preview_request.prompt,
+                    work_id=preview_context.work_id,
                     harness_session_id=resolved_harness_session_id,
-                    control_root=str(control_root),
-                    execution_cwd=str(execution_cwd),
-                    launch_mode=FOREGROUND_LAUNCH_MODE,
-                    goal=preview_request.goal,
-                    runner_pid=os.getpid(),
                 ),
-                launch_lock=continue_hold.slot,
-                max_depth=continue_hold.max_depth,
+                launch_lock=hold.slot,
             )
         with (
-            continue_hold.slot if continue_hold is not None else LaunchSlot()
+            nullcontext(hold.slot) if hold is not None else LaunchSlot()
         ) as launch_lock, fail_unstarted_launch(), session_scope(
             runtime_root=runtime_root,
             metadata=session_metadata,
@@ -853,24 +871,12 @@ def run_harness_process(
                     LaunchPaths.for_row(runtime_root, reopened)
                     if reopened is not None
                     else lifecycle_service.start(
-                        SpawnReservation(
+                        primary_reservation(
                             chat_id=chat_id,
-                            session_metadata=session_metadata,
-                            spawn_id=str(reserved_spawn_id),
-                            kind="primary",
-                            prompt=preview_request.prompt,
+                            work_id=attached_work_id,
                             harness_session_id=(
                                 None if should_fork else resolved_harness_session_id
                             ),
-                            control_root=str(control_root),
-                            task_cwd=None,
-                            execution_cwd=str(execution_cwd),
-                            launch_mode=FOREGROUND_LAUNCH_MODE,
-                            work_id=attached_work_id,
-                            # A primary's goal is its conversation's identity, so a
-                            # `--continue` inherits it from the row.
-                            goal=preview_request.goal,
-                            runner_pid=os.getpid(),
                         ),
                         launch_lock=launch_lock,
                     )

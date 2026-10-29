@@ -223,6 +223,10 @@ class LaunchInput:
     chat_id: str | None
     prompt: str
     kind: SpawnKind
+    model: str
+    control_root: str | None
+    task_cwd: str | None
+    execution_cwd: str | None
     owner_chat_id: str | None
     parent_id: str | None
     goal: str | None
@@ -247,6 +251,10 @@ class _LaunchFields(TypedDict):
     owner_history_id: UUID | None
     forked_from_history_id: UUID | None
     chat_id: ChatId | None
+    model: str
+    control_root: str | None
+    task_cwd: str | None
+    execution_cwd: str | None
     owner_chat_id: ChatId | None
     parent_id: str | None
     originating_bash_id: str | None
@@ -284,7 +292,8 @@ def _launch_fields(
 
     The one builder behind a new spawn's first launch and a reopen's next one: a field
     added here reaches both, and the reset list cannot drift from the creation list.
-    Spawn-level fields (ID, history identity, work, harness, launch policy) stay with
+    That includes the model and the three paths, which a continue may change. Spawn-level
+    fields (ID, history identity, work, harness, agent, skills, launch policy) stay with
     the caller; ``goal``, ``desc`` and ``forked_from_history_id`` are the row's effective
     values. A reopen overrides ``session_instance_id``: the owner chat's current one
     belongs to the launch that just ended, not to this launch's runner.
@@ -308,6 +317,11 @@ def _launch_fields(
         "parent_id": parent_id,
         "originating_bash_id": os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
         "kind": launch.kind,
+        "model": launch.model,
+        # The next launch may run elsewhere than the last: the three paths move together.
+        "control_root": normalize_path_for_write(launch.control_root),
+        "task_cwd": normalize_path_for_write(launch.task_cwd),
+        "execution_cwd": normalize_path_for_write(launch.execution_cwd),
         "display_label": derive_display_label(goal=goal, desc=desc, prompt=launch.prompt),
         "harness_session_id": (
             HarnessSessionId(launch.harness_session_id)
@@ -382,6 +396,10 @@ def start_spawn(
         chat_id=chat_id,
         prompt=prompt,
         kind=kind,
+        model=model,
+        control_root=control_root,
+        task_cwd=task_cwd,
+        execution_cwd=execution_cwd,
         owner_chat_id=owner_chat_id,
         parent_id=parent_id,
         goal=start_metadata.goal,
@@ -414,7 +432,6 @@ def start_spawn(
             history_id=uuid4(),
             state_revision=1,
             launch=LaunchRef(n=FIRST_LAUNCH),
-            model=model,
             agent=agent,
             agent_path=agent_path,
             skills=skills,
@@ -427,9 +444,6 @@ def start_spawn(
                 else None
             ),
             goal=launch.goal,
-            control_root=normalize_path_for_write(control_root),
-            task_cwd=normalize_path_for_write(task_cwd),
-            execution_cwd=normalize_path_for_write(execution_cwd),
             claude_config_dir=claude_config_dir,
             launch_policy_snapshot=resolved_launch_policy_snapshot,
             **_launch_fields(
@@ -463,27 +477,24 @@ def start_spawn(
         return LaunchPaths.for_row(runtime_root, record)
 
 
-def spawn_would_cycle(
-    spawns_dir: Path, spawn_id: str, new_parent_id: str | None, *, max_depth: int
-) -> bool:
-    """Whether making ``new_parent_id`` the parent of ``spawn_id`` closes a loop.
+def reject_continue_cycle(spawns_dir: Path, spawn_id: str, new_parent_id: str | None) -> None:
+    """Refuse a continue that would make ``spawn_id`` its own ancestor.
 
-    Walks the new parent's ancestor chain, at most ``max_depth`` links with a visited set, so a
-    chain that already loops cannot spin. The answer is only stable under ``spawns_flock``.
+    Walks the new parent's stored ancestor chain to its end; the visited set only stops a
+    chain that already loops. Re-parenting moves whole subtrees, so no depth bound is safe.
+    The answer is only stable under ``spawns_flock``.
     """
     visited: set[str] = set()
     current = new_parent_id
-    for _ in range(max(max_depth, 1) + 1):
-        if current is None:
-            return False
+    while current is not None and current not in visited:
         if current == spawn_id:
-            return True
-        if current in visited:
-            return False
+            raise ValueError(
+                f"Cannot continue {spawn_id} under {new_parent_id}: {new_parent_id} is "
+                f"{spawn_id} or one of its descendants; use --fork {spawn_id}"
+            )
         visited.add(current)
         row = _read_state(spawns_dir, current, include_prompt=False)
         current = row.parent_id if row is not None else None
-    return False
 
 
 def reopen_spawn(
@@ -491,10 +502,8 @@ def reopen_spawn(
     runtime_root: Path,
     launch: LaunchInput,
     *,
-    max_depth: int,
-    control_root: str | None = None,
-    task_cwd: str | None = None,
-    execution_cwd: str | None = None,
+    desc: str | None = None,
+    work_id: str | None = None,
     clock: Clock | None = None,
 ) -> SpawnRecord:
     """Start the next launch of a finished spawn under its launch lock; return its new row.
@@ -505,10 +514,11 @@ def reopen_spawn(
     created with the prompt, then one ``state.json`` write turns the row into launch
     K+1. K's outcome must already be written: the archive is terminal by construction.
 
-    A continue moves the spawn under its caller. When the parent changes, the ancestor
-    walk, the check and the write share ``spawns_flock``, so two continues moving each
-    other's ancestors cannot both pass the check. The caller's wait pin for the spawn is
-    dropped last: it has moved past launch K.
+    ``desc`` and ``work_id``, when given, replace the spawn's own (as ``work rename`` does);
+    ``None`` keeps them. A continue moves the spawn under its caller. When the parent
+    changes, the ancestor walk, the check and the write share ``spawns_flock``, so two
+    continues moving each other's ancestors cannot both pass the check. The caller's wait
+    pin for the spawn is dropped last: it has moved past launch K.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -520,16 +530,6 @@ def reopen_spawn(
         raise ValueError(f"Cannot reopen {spawn_id}: its last launch has no outcome")
     k = observed.launch_number
     started = (clock or RealClock()).utc_now_iso()
-    # The next launch may run elsewhere than the last: all three paths move together.
-    contract = (
-        {
-            "control_root": normalize_path_for_write(control_root),
-            "task_cwd": normalize_path_for_write(task_cwd),
-            "execution_cwd": normalize_path_for_write(execution_cwd),
-        }
-        if execution_cwd is not None
-        else {}
-    )
 
     def next_launch(current: SpawnRecord) -> SpawnRecord:
         terminal = current.terminal
@@ -543,6 +543,7 @@ def reopen_spawn(
         following.dir.mkdir(parents=True, exist_ok=True)
         atomic_write_text(following.starting_prompt, launch.prompt)
         effective_goal = launch.goal if launch.goal is not None else current.goal
+        effective_desc = desc if desc is not None else current.desc
         owed = current.owed_launches
         if current.launch_mode == BACKGROUND_LAUNCH_MODE and current.parent_id:
             owed = (*owed, OwedLaunch(n=k, parent_id=current.parent_id))
@@ -552,17 +553,18 @@ def reopen_spawn(
                     runtime_root,
                     launch,
                     goal=effective_goal,
-                    desc=current.desc,
+                    desc=effective_desc,
                     forked_from_history_id=current.forked_from_history_id,
                     started_at=started,
                     status=SpawnStatus.RUNNING,
                 ),
                 "session_instance_id": None,
                 "goal": effective_goal,
+                "desc": effective_desc,
+                "work_id": work_id.strip() or None if work_id is not None else current.work_id,
                 "launch": LaunchRef(n=k + 1),
                 "prior_usage": current.prior_usage.plus(terminal),
                 "owed_launches": owed,
-                **contract,
             }
         )
 
@@ -578,13 +580,7 @@ def reopen_spawn(
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.spawns_flock),
         ):
-            if spawn_would_cycle(
-                paths.spawns_dir, spawn_id, launch.parent_id, max_depth=max_depth
-            ):
-                raise ValueError(
-                    f"Cannot continue {spawn_id} under {launch.parent_id}: "
-                    f"{launch.parent_id} is {spawn_id} or one of its descendants"
-                )
+            reject_continue_cycle(paths.spawns_dir, spawn_id, launch.parent_id)
             result = commit()
     if not isinstance(result, Applied):
         raise ValueError(f"Cannot reopen {spawn_id}: {type(result).__name__}")

@@ -244,7 +244,7 @@ def test_continue_names_non_runner_holder_of_dead_source(
         process = runtime.cli(*continue_args(primary))
         assert process.wait(timeout=30) != 0
         log = (runtime.root / f"cli-{runtime.processes.index(process)}.log").read_text()
-        assert "held by a repair or another continue" in log
+        assert "being continued or repaired" in log
         assert "still running" not in log
         assert not (runtime.root / "runtime/spawns/p1/launches/2").exists()
     finally:
@@ -277,7 +277,7 @@ def test_second_continue_before_first_worker_starts_is_refused(runtime: Runtime)
     second = runtime.cli(*continue_args(False, background=True))
     assert second.wait(timeout=30) != 0
     log = (runtime.root / f"cli-{runtime.processes.index(second)}.log").read_text()
-    assert "held by a repair or another continue" in log
+    assert "being continued or repaired" in log
     (runtime.root / "p1.worker-release").touch()
     runtime.started("p1.2")
     assert runtime.row("p1")["launch"] == {"n": 2}
@@ -452,7 +452,7 @@ def test_continue_io_bound(
         hold = begin_continue(
             project_root=tmp_path, runtime_root=root,
             named=spawn_store.get_spawn(root, f"p{source}"), named_by_spawn_ref=True,
-            chat_id=None, parent_id=None, kind="child", caller_spawn_id=None, max_depth=3,
+            chat_id=None, parent_id=None, kind="child", caller_spawn_id=None,
             dry_run=False,
         )
         assert hold is not None

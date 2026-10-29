@@ -230,27 +230,22 @@ def _reserve_spawn(
     reservation: SpawnReservation,
     launch_lock: LaunchSlot,
     runtime: OperationRuntime,
-    reopen: ContinueHold | None = None,
+    hold: ContinueHold | None = None,
     ctx: RuntimeContext | None = None,
 ) -> _SpawnContext:
     """Persist only the durable spawn row — no work-item creation or lifecycle events.
 
-    ``reopen``: a continue's hold on a finished spawn; its next launch is written instead.
+    ``hold``: a continue's hold on a finished spawn; its next launch is written instead.
     """
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
-    if reopen is not None:
-        launch = LaunchPaths.for_row(
-            runtime_root,
-            service.reopen(
-                reservation,
-                launch_lock=launch_lock,
-                max_depth=reopen.max_depth,
-                dispatch_events=False,
-            ),
-        )
+    work_id = reservation.work_id
+    if hold is not None:
+        row = service.reopen(reservation, launch_lock=launch_lock, dispatch_events=False)
+        launch = LaunchPaths.for_row(runtime_root, row)
+        work_id = row.work_id
     else:
         launch = service.reserve(reservation, launch_lock=launch_lock)
     spawn = Spawn(
@@ -263,7 +258,7 @@ def _reserve_spawn(
         spawn=spawn,
         launch=launch,
         current_depth=resolved_context.depth,
-        work_id=reservation.work_id,
+        work_id=work_id,
     )
 
 
@@ -316,11 +311,10 @@ def _announce_reserved_spawn(
     request: SpawnRequest,
     runtime: OperationRuntime,
     project_root: Path,
-    created: bool = True,
     ctx: RuntimeContext | None = None,
 ) -> None:
     service = build_spawn_lifecycle_service_from_roots(project_root, context.runtime_root)
-    service.announce(str(context.spawn.spawn_id), created=created)
+    service.announce(str(context.spawn.spawn_id))
     _emit_spawn_start_subrun_event(
         spawn_id=str(context.spawn.spawn_id),
         request=request,

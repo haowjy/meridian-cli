@@ -85,11 +85,11 @@ def launch_primary(
     project_root: Path,
     request: LaunchRequest,
     harness_registry: HarnessRegistry,
-    continue_hold: ContinueHold | None = None,
+    hold: ContinueHold | None = None,
 ) -> LaunchResult:
     """Launch the primary agent process and wait for exit.
 
-    ``continue_hold``: the finished spawn this launch reopens, its lock held; the runner commits
+    ``hold``: the finished spawn this launch reopens, its lock held; the runner commits
     the next launch to it instead of creating a spawn.
     """
 
@@ -244,7 +244,7 @@ def launch_primary(
         preview_context,
         harness_registry,
         prepared=prepared,
-        continue_hold=continue_hold,
+        hold=hold,
     )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 
