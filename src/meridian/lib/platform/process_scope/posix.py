@@ -137,6 +137,14 @@ def terminate_pgid(
     except (PermissionError, OSError):
         pass
 
+    # Descendants that started their own process group (a harness's background
+    # task) do not receive the group signal; without their own SIGTERM they
+    # survive until the escalation below.
+    for child in children:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            if os.getpgid(child.pid) != pgid:
+                child.terminate()
+
     # --- Build the process tree to wait on ---
     tree: list[psutil.Process] = (
         orphans if root_is_dead else ([root_proc] if root_proc is not None else []) + children

@@ -166,5 +166,5 @@ quarantine signal that migration and retention depend on to fail closed.
 
 - [`../AGENTS.md`](../AGENTS.md) — entry points
 - [`../../.context/CONTEXT.md`](../../.context/CONTEXT.md) — parent state module contracts
-- `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — finalization authority lattice, `runner_exit_*` invariant, and reaper contract
+- `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write rules, the `runner_exit_*` invariant, and the reaper contract
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — per-spawn state layout, locking, and reconciliation model

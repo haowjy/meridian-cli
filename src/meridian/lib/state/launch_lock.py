@@ -206,12 +206,12 @@ def take_handoff_fd() -> int:
 
 def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchSlot:
     """Validate the inherited description, publish this worker's identity, return its bound slot."""
-    from meridian.lib.state.spawn_store import update_spawn
+    from meridian.lib.state.spawn_store import record_spawn_launch_facts
 
     handle = LaunchHandle(SpawnId(spawn_id), fd)
     try:
         _validate(fd, resolve_spawn_dir(runtime_root, spawn_id))
-        update_spawn(runtime_root, spawn_id, runner_pid=os.getpid())
+        record_spawn_launch_facts(runtime_root, spawn_id, runner_pid=os.getpid())
     except BaseException:
         handle.close()
         raise

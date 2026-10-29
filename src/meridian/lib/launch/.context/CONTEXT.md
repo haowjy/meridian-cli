@@ -701,7 +701,7 @@ exception paths. Do not replicate this logic inline.
 - `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
 - `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation` — exact continue replay contract
 - `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
-- `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, authority lattice
+- `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, who writes the terminal row
 - `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
 
 ## Lateral Links

@@ -31,6 +31,9 @@ direnv environment runs a bounded subprocess on every bind, previews included.
   `continue_replay.py` (`ContinueReplayContract`), shared by primary and spawn.
   Persisted `LaunchPolicySnapshot.model == ""` is legacy JSON for harness-default; it
   is normalized to `None` in `policy_snapshot.py` only.
+- A continue keeps the spawn's ID: `continue_launch.py:begin_continue` picks the spawn, takes its
+  launch lock, ends the last launch and checks what would make the next one fail; the caller
+  then reopens the spawn and launches. Nothing is written for `--dry-run`.
 
 ### Driving adapters
 

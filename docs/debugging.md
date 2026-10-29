@@ -40,24 +40,20 @@ Use `show` first to inspect the persisted state for one spawn. Use `wait` if the
 
 ## Logs
 
-Each spawn records a stderr log under the Meridian state root. Prefer getting the path from `spawn show` output instead of constructing it manually.
+Each run of a spawn keeps its own stderr log in `launches/<n>/stderr.log` inside the spawn's directory (older spawns keep it at the top of that directory). Find the directory from `spawn show`, then list the latest run's files:
 
 ```bash
 meridian spawn show SPAWN_ID
-# Look for "log_path" in the JSON output.
-```
-
-If you already know the resolved state root, the log is typically at:
-
-```text
-$MERIDIAN_STATE_ROOT/spawns/SPAWN_ID/stderr.log
+ls ~/.meridian/projects/<project-id>/spawns/SPAWN_ID/launches/
 ```
 
 Tail a running log only when you need detailed harness traces:
 
 ```bash
-tail -f "$MERIDIAN_STATE_ROOT/spawns/SPAWN_ID/stderr.log"
+tail -f ~/.meridian/projects/<project-id>/spawns/SPAWN_ID/launches/N/stderr.log
 ```
+
+To read what a run reported rather than how it ran, use `meridian spawn report show SPAWN_ID`.
 
 ## Shared Files
 

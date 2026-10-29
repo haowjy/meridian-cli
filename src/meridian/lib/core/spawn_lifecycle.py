@@ -30,6 +30,13 @@ if TYPE_CHECKING:
     from meridian.lib.state.spawn.model import LaunchMode
     from meridian.plugin_api.types import SpawnKind
 
+# Cancel SIGKILLs a runner still alive after this long, and a SIGKILLed runner loses its
+# usage. A runner stopped by a termination signal must therefore finish its harness stop and
+# terminal write inside SIGNAL_STOP_BUDGET_SECS, which sits below the grace by the time the
+# terminal write itself needs.
+CANCEL_GRACE_SECS = 5.0
+SIGNAL_STOP_BUDGET_SECS = CANCEL_GRACE_SECS - 2.0
+
 
 @dataclass(frozen=True)
 class SpawnReservation:

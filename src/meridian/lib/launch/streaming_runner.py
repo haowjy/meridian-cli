@@ -26,7 +26,11 @@ from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
 )
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
+from meridian.lib.core.spawn_lifecycle import (
+    SIGNAL_STOP_BUDGET_SECS,
+    ExecutionTerminalFacts,
+    parse_terminal_status,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -479,15 +483,11 @@ async def run_streaming_spawn(
     terminal_outcome: TerminalEventOutcome | None = None
     subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     run_spec = spec
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        runner_pid=os.getpid(),
-    )
     resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
         project_root,
         runtime_root,
     )
+    resolved_lifecycle.record_launch_facts(spawn_id, runner_pid=os.getpid())
     try:
         connection = await _start_spawn_with_timeout(
             manager=manager,
@@ -748,6 +748,9 @@ async def _run_streaming_attempt(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
             drain_exit_code = stop_exit_code
             drain_error = decision.synthetic_error
@@ -1008,11 +1011,6 @@ async def execute_with_streaming(
                 f"no spawn row exists for {run.spawn_id!r}. "
                 "Call start_spawn() before execute_with_streaming()."
             )
-        spawn_store.update_spawn(
-            runtime_root,
-            run.spawn_id,
-            runner_pid=os.getpid(),
-        )
         resolved_launch_mode: LaunchMode = (
             BACKGROUND_LAUNCH_MODE
             if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
@@ -1033,6 +1031,7 @@ async def execute_with_streaming(
             project_root,
             runtime_root,
         )
+        lifecycle_service.record_launch_facts(run.spawn_id, runner_pid=os.getpid())
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
