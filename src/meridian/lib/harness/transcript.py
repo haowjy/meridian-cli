@@ -16,10 +16,8 @@ from meridian.lib.harness.opencode_transcript import (
     interpret_opencode_v2_record,
 )
 from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_annotation
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
-    NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
     SnapshotStream,
     TranscriptReadPaused,
@@ -30,6 +28,7 @@ from meridian.lib.state.native_snapshot import (
     reject_unframed_storage_frame,
     reject_unframed_storage_record,
 )
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES
 from meridian.lib.utils.json_shapes import json_object
 
 _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
@@ -538,7 +537,7 @@ class JsonlTranscriptProvider(TranscriptProvider):
     """Generic JSONL provider for harness-native transcript files."""
 
     def supports(self, path: Path) -> bool:
-        return path.name != HISTORY_FILENAME
+        return path.name != LAUNCH_FILE_NAMES.history
 
     def iter_events(
         self,
@@ -909,7 +908,7 @@ def reject_runner_history(path: Path) -> None:
 
 def is_native_snapshot(path: Path) -> bool:
     """Bounded storage selection only; a true result is not a validated capture."""
-    if path.name == NATIVE_SNAPSHOT_FILENAME:
+    if path.name == LAUNCH_FILE_NAMES.native_snapshot:
         return True
     with path.open("rb") as handle:
         return is_snapshot_prefix(handle.readline(HEADER_LIMIT + 1))
@@ -933,7 +932,7 @@ def iter_transcript_events(
                     validation.reason = "Transcript read paused before header selection"
                 return
             first = handle.readline(HEADER_LIMIT + 1)
-            if path.name == NATIVE_SNAPSHOT_FILENAME or is_snapshot_prefix(first):
+            if path.name == LAUNCH_FILE_NAMES.native_snapshot or is_snapshot_prefix(first):
                 handle.seek(0)
                 yield from read_snapshot(
                     _CountedStream(handle, consume) if consume else handle,

@@ -10,6 +10,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.parametrize("missing", [False, True])
@@ -38,7 +39,7 @@ def test_recorded_claude_source_preparation(
     )
     def prepare() -> None:
         adapter.prepare_prelaunch(
-            runtime_root=tmp_path, spawn_id=SpawnId("p1"), session=session,
+            launch=launch_paths(tmp_path, SpawnId("p1")), session=session,
             child_cwd=cwd, child_env={"CLAUDE_CONFIG_DIR": str(destination)},
             resolved_harness_session_id=sid,
         )

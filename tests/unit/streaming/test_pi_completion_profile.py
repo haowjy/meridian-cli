@@ -22,6 +22,7 @@ from meridian.lib.streaming.pi_completion_profile import (
     PiCompletionProfile,
     PiOutstandingWork,
 )
+from tests.support.launch_paths import launch_paths
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _READY = WorkAssessment(disposition="ready", blockers=(), generation=1)
@@ -45,8 +46,7 @@ def _profile(tmp_path: Any, *, child: bool, nudge: bool) -> PiCompletionProfile:
         ),
     )
     profile = PiCompletionProfile(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         session_role="spawned",
         child_wave_timeout_seconds=5.0,
         emit_phase=lambda **_payload: None,

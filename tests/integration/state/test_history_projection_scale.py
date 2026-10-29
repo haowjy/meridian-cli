@@ -28,7 +28,7 @@ def _write_sessions_log(root: Path, *, spawns: int = 6, events_per_spawn: int = 
     for i in range(spawns):
         key = spawn_store.start_spawn(
             root, chat_id=f"c{i + 1}", prompt="p", model="m", agent="coder", harness="codex"
-        )
+        ).spawn_id
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
         record = spawn_store.get_spawn(root, key)
         assert record is not None

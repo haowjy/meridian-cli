@@ -15,14 +15,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.state.jsonl import append_durable_jsonl_line
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
-
-JOURNAL_FILENAME = "permission_requests.jsonl"
 
 PermissionRequestType = Literal["approval", "user_input"]
 PermissionRequestStatus = Literal["pending", "resolved", "failed", "cancelled"]
@@ -101,10 +98,10 @@ class PermissionJournal:
     the file (the broker's lock while a spawn runs, finalization after it stopped).
     """
 
-    def __init__(self, spawn_dir: Path) -> None:
-        self._runtime_root = spawn_dir.parent.parent
-        self._spawn_id = SpawnId(spawn_dir.name)
-        self._path = spawn_dir / JOURNAL_FILENAME
+    def __init__(self, launch: LaunchPaths) -> None:
+        self._runtime_root = launch.runtime_root
+        self._spawn_id = launch.spawn_id
+        self._path = launch.permission_requests
         self._transitions: list[PermissionTransition] = []
         self._requests: dict[str, PermissionRequestRecord] = {}
         self._next_seq = 0
@@ -280,7 +277,6 @@ def _parse_transition_line(line: str) -> PermissionTransition | None:
 
 
 __all__ = [
-    "JOURNAL_FILENAME",
     "REJECT_DECISION",
     "TERMINAL_STATUSES",
     "PermissionDenial",

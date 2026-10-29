@@ -19,6 +19,7 @@ from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.paths import LaunchPaths
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
 _TOOL_RESULT_PREFIX = "[tool_result]"
@@ -277,7 +278,7 @@ def _spawn_appendices(
             included = session_identity.spawn_matches_owner_chat(spawn, owner_chat_id)
         if not included:
             continue
-        report_path = runtime_root / "spawns" / spawn.id / "report.md"
+        report_path = LaunchPaths.for_row(runtime_root, spawn).report
         if not report_path.is_file():
             continue
         report = report_path.read_text(encoding="utf-8", errors="ignore").strip()

@@ -15,6 +15,7 @@ from tests.integration.state.conftest import (
     _reconcile,
     recording_scope_cleanup,
 )
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -48,7 +49,7 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), backend_scope)
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", str(runtime_root))

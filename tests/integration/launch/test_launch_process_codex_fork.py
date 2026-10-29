@@ -149,8 +149,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
 
     def fake_run_primary_attach(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -161,8 +160,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
-            spawn_id,
-            spawn_dir,
+            launch,
             control_root,
             task_cwd,
             spec,
@@ -274,8 +272,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
 
     def fake_run_primary_attach(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -286,8 +283,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
-            spawn_id,
-            spawn_dir,
+            launch,
             control_root,
             task_cwd,
             spec,
@@ -415,8 +411,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
 
     def attach(
         harness_id,
-        spawn_id,
-        log_dir,
+        launch,
         control_root,
         task_cwd,
         env,

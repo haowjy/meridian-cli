@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from contextlib import AbstractContextManager
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -14,6 +13,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import published_artifact_lock
 from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -141,8 +141,7 @@ class _HoldProfile:
     def __init__(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         backend: ResidentBackendControl | None,
         send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
@@ -151,11 +150,12 @@ class _HoldProfile:
         clock: Callable[[], float],
         completion_signals_available: bool,
     ) -> None:
-        self._runtime_root = runtime_root
-        self._spawn_id = spawn_id
+        self._launch = launch
+        self._runtime_root = launch.runtime_root
+        self._spawn_id = launch.spawn_id
         self._window = RearmWindow(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            runtime_root=launch.runtime_root,
+            spawn_id=launch.spawn_id,
             deadline_seconds=deadline_seconds,
             rearm_budget=rearm_budget,
         )
@@ -194,7 +194,7 @@ class _HoldProfile:
         del trigger
         if not self._accepted_signals:
             return CompletionDirectives()
-        signals = consume_resident_signals(self._runtime_root, self._spawn_id)
+        signals = consume_resident_signals(self._launch)
         if state.candidate is None:
             self._done_requested = False
             return CompletionDirectives()
@@ -553,8 +553,7 @@ class ResidentDrainCoordinator:
     def build(
         cls,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         send_nudge: Callable[[str], Awaitable[None]],
         completion_signals_available: bool,
         backend: ResidentBackendControl | None,
@@ -566,6 +565,8 @@ class ResidentDrainCoordinator:
     ) -> ResidentDrainCoordinator:
         if deadline_seconds <= 0:
             raise ValueError("resident completion deadline must be positive")
+        runtime_root = launch.runtime_root
+        spawn_id = launch.spawn_id
         resolved_poll = poll_seconds if poll_seconds and poll_seconds > 0 else 5.0
         clock = time.monotonic
         if native is None and backend is None:
@@ -582,8 +583,7 @@ class ResidentDrainCoordinator:
             native=native,
         )
         profile = _HoldProfile(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             backend=backend,
             send_nudge=send_nudge,
             completion_signals_available=completion_signals_available,

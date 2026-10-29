@@ -99,6 +99,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
 
@@ -432,11 +433,11 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_primary_runtime_request_handler(
         self,
         *,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
     ) -> ServerRequestHandler | None:
         return PermissionBroker(
-            spawn_dir=spawn_dir,
+            launch=launch,
             event_sink=event_sink,
             auto_reject_runtime_requests=False,
             harness_id=HarnessId.OPENCODE.value,

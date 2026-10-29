@@ -267,7 +267,7 @@ def test_continue_to_different_harness_fails_without_changing_source_chat(
         prompt="source prompt",
         kind="primary",
         harness_session_id=session_id,
-    )
+    ).spawn_id
     session_store.update_session_spawn_id(runtime_root, chat_id, source_spawn)
     session_store.stop_session(runtime_root, chat_id)
     before_chat = session_store.chat_record(runtime_root, chat_id)
@@ -625,7 +625,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
         harness="codex",
         prompt="old",
         kind="primary",
-    )
+    ).spawn_id
     session_store.update_session_spawn_id(root, source, first)
     original = spawn_store.get_spawn(root, first)
     session_store.stop_session(root, source)
@@ -644,7 +644,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
         harness="codex",
         prompt="new",
         kind="primary",
-    )
+    ).spawn_id
     session_store.update_session_spawn_id(root, source, second)
     session_store.stop_session(root, source)
     requests = _record_primary_launch(monkeypatch)

@@ -24,7 +24,6 @@ from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -32,6 +31,7 @@ from tests.integration.launch.streaming_runner_support import (
     _FakeControlSocketServer,
 )
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 
 
 class _ClaudeSeedPersistenceConnection:
@@ -80,10 +80,10 @@ class _ClaudeSeedPersistenceConnection:
         return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         assert row.harness_session_id == spec.native_identity.session_id
@@ -103,11 +103,8 @@ class _ClaudeSeedPersistenceConnection:
 
     async def events(self):  # type: ignore[no-untyped-def]
         assert self._project_root is not None
-        log_dir = resolve_spawn_log_dir(
-            self._project_root,
-            self._spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(self._project_root),
-        )
+        runtime_root = resolve_project_runtime_root_for_write(self._project_root)
+        log_dir = launch_paths(runtime_root, self._spawn_id).dir
         (log_dir / "report.md").write_text("seeded claude complete", encoding="utf-8")
         yield RawHarnessEvent(
             event_type="result",
@@ -162,9 +159,9 @@ class _UnboundOpenCodeConnection:
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         self.state = "connected"
@@ -238,11 +235,11 @@ class _OpenCodeConnectSessionConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         if config.session_id_observer is not None:
             config.session_id_observer(self._session_id)
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         self.state = "connected"

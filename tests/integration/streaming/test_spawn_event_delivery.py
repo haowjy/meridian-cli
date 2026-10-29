@@ -8,6 +8,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEv
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.streaming.drain_policy import PersistentDrainPolicy
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import NoopControlServer, start_row
 from tests.support.resident_drain import FakeResidentConnection
 
@@ -44,7 +45,7 @@ async def test_delivered_sequence_is_identical_with_and_without_fold(tmp_path, m
         try:
             await manager.start_spawn(
                 ConnectionConfig(
-                    spawn_id=spawn,
+                    launch=launch_paths(runtime, spawn),
                     harness_id=HarnessId.CLAUDE,
                     prompt="test",
                     control_root=runtime,

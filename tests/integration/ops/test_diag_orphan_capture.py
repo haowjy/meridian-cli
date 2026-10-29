@@ -13,11 +13,11 @@ from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops import diag
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -161,7 +161,7 @@ def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(runtime_root, SpawnId("p2"), scope)
+    record_scope(launch_paths(runtime_root, SpawnId("p2")), scope)
     claim_active_spawn_scopes(runtime_root, SpawnId("p2"))
     spawn_store.finalize_spawn(
         runtime_root,
@@ -259,4 +259,4 @@ def test_repair_captures_every_orphan_primary_of_one_native_session(
     for spawn_id in spawn_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         assert record is not None and record.status == "failed"
-        assert (runtime_root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME).is_file()
+        assert (runtime_root / "spawns" / spawn_id / LAUNCH_FILE_NAMES.native_snapshot).is_file()

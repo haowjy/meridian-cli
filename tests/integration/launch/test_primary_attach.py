@@ -21,7 +21,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
-from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
@@ -36,8 +35,10 @@ from meridian.lib.launch.process.primary_attach import (
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn
+from tests.support.launch_paths import launch_paths
 
 _BACKEND_SCOPE_EPOCH = 12_345.0
 
@@ -111,8 +112,8 @@ async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
             yield event
 
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-no-writer"),
-        spawn_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p-no-writer")),
+        durable=False,
         connection=cast("Any", FiniteConnection()),
         tui_command_builder=lambda session_id: ("codex", session_id),
         process_launcher=cast("ProcessLauncher", object()),
@@ -156,7 +157,7 @@ def _build_config(
     harness_id: HarnessId = HarnessId.CODEX,
 ) -> ConnectionConfig:
     return ConnectionConfig(
-        spawn_id=spawn_id,
+        launch=launch_paths(control_root, spawn_id),
         harness_id=harness_id,
         prompt="hello",
         control_root=control_root,
@@ -268,7 +269,7 @@ class FakeManagedConnection:
         _ = spec
         self.start_calls += 1
         self.started_ports.append(config.ws_port)
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         start_in_observer_mode = self.started_primary_observer_mode is True
         if start_in_observer_mode and config.ws_port > 0:
             self._observer_endpoint = ObserverEndpoint(
@@ -347,7 +348,7 @@ class FakeProcessLauncher(ProcessLauncher):
         self.launch_commands.append(command)
         self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
-        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        metadata_path = _launch_of(self.spawn_dir).primary_meta
         assert metadata_path.exists()
         self.metadata_seen_at_launch = cast(
             "dict[str, object]",
@@ -399,7 +400,7 @@ class BlockingProcessLauncher(ProcessLauncher):
     ) -> BlockingProcessLauncher:
         _ = (cwd, env, output_log_path, terminal_fds)
         self.launch_commands.append(command)
-        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        metadata_path = _launch_of(self.spawn_dir).primary_meta
         assert metadata_path.exists()
         return self
 
@@ -450,10 +451,14 @@ class FailingEventConnection(FakeManagedConnection):
             yield RawHarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
 
 
+def _launch_of(spawn_dir: Path) -> LaunchPaths:
+    return launch_paths(spawn_dir.parent.parent, spawn_dir.name)
+
+
 def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     return cast(
         "dict[str, object]",
-        json.loads((spawn_dir / PRIMARY_META_FILENAME).read_text(encoding="utf-8")),
+        json.loads(_launch_of(spawn_dir).primary_meta.read_text(encoding="utf-8")),
     )
 
 
@@ -477,8 +482,8 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         connection=connection,
     )
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-idle-errors"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p-idle-errors")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=FakeProcessLauncher(
@@ -538,8 +543,8 @@ async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
 
     monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p-opencode-idle"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p-opencode-idle")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
         process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
@@ -591,8 +596,8 @@ async def test_primary_attach_observer_end_waits_for_tui(
 
     monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900-liveness"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p900-liveness")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
         process_launcher=process_launcher,
@@ -646,8 +651,8 @@ async def test_primary_attach_cancellation_stops_blocking_tui_launch(
 
     monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900-cancel"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p900-cancel")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -693,8 +698,8 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
     monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(primary_attach_module, "_TUI_WAIT_CANCEL_TIMEOUT_SECONDS", 0.05)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p901-cancel-timeout"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p901-cancel-timeout")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -755,8 +760,8 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
     monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
     monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p902-codex-cancel"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p902-codex-cancel")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -824,8 +829,8 @@ async def test_primary_attach_cancellation_during_opencode_drain_retries_cleanup
     monkeypatch.setattr(primary_attach_module.asyncio, "shield", _shield)
     monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p903-opencode-cancel"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p903-opencode-cancel")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
         process_launcher=process_launcher,
@@ -864,14 +869,12 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     requested_sessions: list[str] = []
 
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p900"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p900")),
         connection=connection,
         tui_command_builder=lambda session_id: (
             requested_sessions.append(session_id) or ("codex", "resume", session_id)
         ),
         process_launcher=process_launcher,
-        runtime_root=tmp_path,
     )
 
     await launcher.run(
@@ -904,8 +907,8 @@ async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
 
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p905"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p905")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: (
             "opencode",
@@ -945,11 +948,11 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
     provisional = connection.scope_snapshot
     assert provisional is not None
-    record_scope(tmp_path, spawn_id, provisional)
+    record_scope(launch_paths(tmp_path, spawn_id), provisional)
 
     launcher = PrimaryAttachLauncher(
-        spawn_id=spawn_id,
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, spawn_id),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -963,7 +966,9 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
     )
 
     backend_scopes = [
-        scope for scope in read_scopes_from_disk(tmp_path, spawn_id) if scope.scope_id == "backend"
+        scope
+        for scope in read_scopes_from_disk(launch_paths(tmp_path, spawn_id))
+        if scope.scope_id == "backend"
     ]
     assert [(scope.owner_policy, scope.owner_id) for scope in backend_scopes] == [
         ("session_owned", "thread-upgraded")
@@ -980,13 +985,13 @@ async def test_primary_attach_activity_transitions_update_metadata(
     original_write_primary_metadata = primary_attach_module.write_primary_metadata
 
     def _record_activity_write(
-        spawn_dir_arg: Path,
+        launch_arg: LaunchPaths,
         metadata: Any,
         **kwargs: Any,
     ) -> bool:
         if not activity_transitions or activity_transitions[-1] != metadata.activity:
             activity_transitions.append(metadata.activity)
-        return original_write_primary_metadata(spawn_dir_arg, metadata, **kwargs)
+        return original_write_primary_metadata(launch_arg, metadata, **kwargs)
 
     monkeypatch.setattr(
         primary_attach_module,
@@ -1011,8 +1016,8 @@ async def test_primary_attach_activity_transitions_update_metadata(
         spawn_dir=spawn_dir, exit_after=connection.events_drained
     )
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p903"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p903")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -1036,8 +1041,8 @@ async def test_primary_attach_retries_port_bind_with_fresh_ports(tmp_path: Path)
     connection = FakeManagedConnection(events=[], port_bind_failures=2)
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p904"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p904")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -1074,8 +1079,8 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     connection = FakeManagedConnection(events=[], port_bind_failures=3)
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p905"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p905")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -1145,8 +1150,8 @@ async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_
     before_hup = signal.getsignal(signal.SIGHUP)
     before_int = signal.getsignal(signal.SIGINT)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p902-signal"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p902-signal")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -1187,8 +1192,8 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
     connection = FakeManagedConnection(events=[], session_id="sess-signal-startup")
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p903-signal-startup"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p903-signal-startup")),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
@@ -1255,12 +1260,10 @@ async def test_primary_attach_sigint_during_backend_startup_propagates_and_tears
     connection = SigintDuringStartupConnection(events=[])
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p903-sigint-startup"),
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, SpawnId("p903-sigint-startup")),
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
-        runtime_root=tmp_path,
     )
 
     with pytest.raises(KeyboardInterrupt):
@@ -1317,8 +1320,8 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
         policy=None,
     )
     launcher = PrimaryAttachLauncher(
-        spawn_id=spawn_id,
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, spawn_id),
+        durable=False,
         connection=connection,
         tui_command_builder=lambda sid: ("codex", "resume", sid),
         process_launcher=process_launcher,
@@ -1397,12 +1400,10 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
     fold = PI_EXTRACTOR.create_fold()
     facts = fold.facts
     launcher = PrimaryAttachLauncher(
-        spawn_id=spawn_id,
-        spawn_dir=tmp_path / "spawns" / spawn_id,
+        launch=launch_paths(tmp_path, spawn_id),
         connection=Connection(),
         tui_command_builder=lambda _: (),
         process_launcher=object(),
-        runtime_root=tmp_path,
         fold=fold,
     )
     await launcher._consume_live_events()
@@ -1428,11 +1429,11 @@ async def test_managed_attach_persists_one_tui_scope_before_real_exec(
     writes: list[ProcessScopeSnapshot] = []
     original_record = primary_attach_module.record_scope
 
-    def record(runtime: Path, spawn: SpawnId, scope: ProcessScopeSnapshot) -> None:
+    def record(launch: LaunchPaths, scope: ProcessScopeSnapshot) -> None:
         if scope.scope_id == "tui":
             assert not marker.exists()
             writes.append(scope)
-        original_record(runtime, spawn, scope)
+        original_record(launch, scope)
 
     monkeypatch.setattr(primary_attach_module, "record_scope", record)
     # The child reads the durable sidecar itself, before emitting any result.
@@ -1445,8 +1446,8 @@ async def test_managed_attach_persists_one_tui_scope_before_real_exec(
         f"pathlib.Path({str(marker)!r}).touch()"
     )
     launcher = PrimaryAttachLauncher(
-        spawn_id=spawn_id,
-        spawn_dir=spawn_dir,
+        launch=launch_paths(tmp_path, spawn_id),
+        durable=False,
         connection=FakeManagedConnection(events=[], session_id="sess-gated-attach"),
         tui_command_builder=lambda _session: (sys.executable, "-c", program),
         process_launcher=SubprocessProcessLauncher(),

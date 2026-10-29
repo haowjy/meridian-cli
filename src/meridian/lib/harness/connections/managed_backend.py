@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import reap_on_ownership_transfer_failure
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
@@ -17,9 +17,7 @@ from meridian.lib.platform.process_scope import (
     ScopedProcessHandle,
     scope_from_identity,
 )
-from meridian.lib.state.paths import (
-    resolve_project_runtime_root_for_write,
-)
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import record_scope
 
 
@@ -27,12 +25,11 @@ from meridian.lib.state.process_scope_projection import record_scope
 class ManagedBackendConfig:
     """Inputs for launching a managed backend process."""
 
-    spawn_id: SpawnId
+    launch: LaunchPaths
     harness_id: HarnessId
     command: tuple[str, ...]
     cwd: Path
     env: dict[str, str]
-    control_root: Path
     grace_seconds: float
 
 
@@ -53,19 +50,15 @@ async def kill_and_reap_unowned_process(process: asyncio.subprocess.Process) -> 
 
 async def register_spawn_owned_process(
     *,
-    spawn_id: SpawnId,
-    control_root: Path,
+    launch: LaunchPaths,
     process: asyncio.subprocess.Process,
     scope_id: str,
     role: str,
     identity: ProcessIdentity,
     gate: LaunchGate,
-    runtime_root: Path | None = None,
-    persist: bool = True,
 ) -> ScopedProcessHandle:
     """Persist crash-recovery ownership for an already launched child process."""
 
-    resolved_runtime_root = runtime_root or resolve_project_runtime_root_for_write(control_root)
     scope_handle = ScopedProcessHandle(
         process=process,
         snapshot=scope_from_identity(
@@ -73,13 +66,12 @@ async def register_spawn_owned_process(
             scope_id=scope_id,
             role=role,
             owner_policy="spawn_owned",
-            owner_id=str(spawn_id),
+            owner_id=str(launch.spawn_id),
         ),
         gate=gate,
     )
     try:
-        if persist:
-            record_scope(resolved_runtime_root, spawn_id, scope_handle.snapshot)
+        record_scope(launch, scope_handle.snapshot)
     except BaseException:
         await reap_on_ownership_transfer_failure(
             lambda: scope_handle.terminate(reason="scope_registration_failed")
@@ -101,7 +93,6 @@ async def launch_managed_backend(
     pass ``asyncio.subprocess.PIPE``.
     """
 
-    runtime_root = resolve_project_runtime_root_for_write(config.control_root)
     gate = LaunchGate(grace_seconds=config.grace_seconds)
     process: asyncio.subprocess.Process | None = None
     try:
@@ -127,14 +118,12 @@ async def launch_managed_backend(
             process.pid, kill_and_reap=lambda: kill_and_reap_unowned_process(process)
         )
         scope_handle = await register_spawn_owned_process(
-            spawn_id=config.spawn_id,
-            control_root=config.control_root,
+            launch=config.launch,
             process=process,
             scope_id="backend",
             role="harness_backend",
             identity=identity,
             gate=gate,
-            runtime_root=runtime_root,
         )
         gate.open()
     except BaseException:

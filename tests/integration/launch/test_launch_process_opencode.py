@@ -15,7 +15,6 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as runner_module
 from meridian.lib.launch.process.primary_attach import (
@@ -32,7 +31,9 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.state.paths import LaunchPaths
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -109,8 +110,7 @@ def test_run_primary_attach_preserves_startup_failure_cause(
     with pytest.raises(PrimaryAttachError) as exc_info:
         runner_module.run_primary_attach(
             harness_id=HarnessId.OPENCODE,
-            spawn_id=runner_module.SpawnId("p-timeout-cause"),
-            spawn_dir=tmp_path / "spawn",
+            launch=launch_paths(tmp_path, "p-timeout-cause"),
             control_root=tmp_path,
             task_cwd=tmp_path,
             env={},
@@ -152,13 +152,12 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
     managed_calls = 0
     black_box_calls = 0
-    captured_spawn_dir: Path | None = None
+    captured_spawn_dir: LaunchPaths | None = None
     captured_black_box_cwd: Path | None = None
 
     def failing_managed(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -167,21 +166,20 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         on_running: Any = None,
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
-        _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
+        _ = harness_id, control_root, task_cwd, env, spec, process_launcher, on_running
         nonlocal managed_calls
         nonlocal captured_spawn_dir
         managed_calls += 1
-        spawn_dir = Path(spawn_dir)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        (spawn_dir / PRIMARY_META_FILENAME).write_text(
+        launch.dir.mkdir(parents=True, exist_ok=True)
+        (launch.primary_meta).write_text(
             '{"managed_backend":true}\n',
             encoding="utf-8",
         )
-        (spawn_dir / OUTPUT_FILENAME).write_text(
+        (launch.output).write_text(
             '{"type":"turn/started"}\n',
             encoding="utf-8",
         )
-        captured_spawn_dir = spawn_dir
+        captured_spawn_dir = launch
         raise PrimaryAttachError("managed startup error")
 
     def fake_run_primary_process_with_capture(
@@ -214,8 +212,8 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert managed_calls == 1
     assert black_box_calls == 1
     assert captured_spawn_dir is not None
-    assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
-    assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
+    assert not captured_spawn_dir.primary_meta.exists()
+    assert not captured_spawn_dir.output.exists()
     assert captured_black_box_cwd == project_root
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0

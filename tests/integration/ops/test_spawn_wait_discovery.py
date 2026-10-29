@@ -61,7 +61,7 @@ def _spawn(
             kind=kind,
             prompt="wait discovery",
             launch_mode=launch_mode,
-        )
+        ).spawn_id
     )
 
 

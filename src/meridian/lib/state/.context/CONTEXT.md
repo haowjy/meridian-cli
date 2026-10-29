@@ -190,7 +190,7 @@ directory rename while holding `spawns_flock`. Runtime-write startup removes aba
 ### Monotonic ID Generation
 
 **Spawn IDs** (`spawn-id-counter`): incremented under `spawns_flock` at reservation
-time. IDs can be reserved before the spawn row exists (`reserve_spawn_id()`).
+time. IDs can be reserved before the spawn row exists (`reserve_launch()`, which returns the spawn's first launch).
 Format: `p1`, `p2`, `p3`, …
 
 **Session IDs** (`session-id-counter`): incremented under `lock_file()`. Format:
@@ -535,7 +535,7 @@ late or not at all leaves spawn commands unable to name the chat's owner ("Chat 
 spawn"); resume, read and `--from` still work on the chat.
 
 - Children write the spawn row first, then start the session.
-- The primary runner reserves its ID (`spawn_store.reserve_spawn_id`) before
+- The primary runner reserves its ID (`spawn_store.reserve_launch`) before
   `session_scope`, so the start event can carry it, and passes the same ID to
   `SpawnReservation`. Its
   post-start `update_session_spawn_id` stays: it is the only writer of the session's

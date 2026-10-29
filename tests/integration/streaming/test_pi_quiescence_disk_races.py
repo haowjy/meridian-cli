@@ -28,6 +28,7 @@ from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
 from tests.support.history import warm_history_index
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import FakePiConnection as _FakePiConnection
 from tests.support.pi import NoopControlServer as _NoopControlServer
 from tests.support.pi import PiDrainScenario, write_pi_bash_record
@@ -483,7 +484,7 @@ async def test_pi_done_nudge_stops_when_done_signal_arrives(
         await coordinator.handle_timeout()
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
 
-        done_signal = spawn_signal_path(tmp_path, spawn_id, "done")
+        done_signal = spawn_signal_path(launch_paths(tmp_path, spawn_id), "done")
         done_signal.parent.mkdir(parents=True, exist_ok=True)
         done_signal.write_text("test\n", encoding="utf-8")
         requested = await coordinator.handle_timeout()
@@ -610,7 +611,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,

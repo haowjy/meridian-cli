@@ -10,8 +10,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
-    spawn_log_subpath,
+    resolve_spawn_dir,
 )
 from meridian.lib.state.spawn_aggregate import (
     PublishedArtifactUnavailable,
@@ -48,10 +47,7 @@ def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
     runtime_root = resolve_project_runtime_root_or_none(project_root)
     if runtime_root is None:
         return None
-    return (
-        resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
-        / _SCOPE_FILENAME
-    )
+    return resolve_spawn_dir(runtime_root, spawn_id) / _SCOPE_FILENAME
 
 
 def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
@@ -76,7 +72,7 @@ def write_spawn_scope_task_dir(
     """Pin task_dir in scope.json, or unpin it with ``None``. Atomic tmp+rename."""
 
     runtime_root = resolve_project_runtime_root_for_write(project_root)
-    path = runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME
+    path = resolve_spawn_dir(runtime_root, spawn_id) / _SCOPE_FILENAME
     stored = _StoredSpawnScope(
         task_dir=task_dir.expanduser().resolve().as_posix() if task_dir is not None else None
     )

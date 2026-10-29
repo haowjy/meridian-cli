@@ -16,13 +16,13 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import read_model, write_model
+from meridian.lib.state.paths import REAPER_CLEANUP_CLAIM_FILENAME, LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import (
     parse_scope_entries,
     read_scope_projection,
 )
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
-_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 _CLAIM_VERSION = 1
 
 
@@ -36,7 +36,7 @@ class CleanupClaim(BaseModel):
 
 
 def cleanup_claim_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    return runtime_root / "spawns" / str(spawn_id) / _CLAIM_FILENAME
+    return resolve_spawn_dir(runtime_root, spawn_id) / REAPER_CLEANUP_CLAIM_FILENAME
 
 
 def cleanup_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
@@ -87,7 +87,7 @@ def claim_active_spawn_scopes(
         ):
             return read_cleanup_claim(runtime_root, spawn_id)
         existing = read_cleanup_claim(runtime_root, spawn_id)
-        projection = read_scope_projection(runtime_root, SpawnId(spawn_id_text))
+        projection = read_scope_projection(LaunchPaths.for_row(runtime_root, current))
         candidates = [
             scope
             for scope in projection.scopes

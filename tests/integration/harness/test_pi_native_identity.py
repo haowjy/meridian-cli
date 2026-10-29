@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.parametrize("basename", ["unrelated.jsonl", ".jsonl"])
@@ -52,7 +53,7 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         agent="",
         kind="primary",
         prompt="test",
-    )
+    ).spawn_id
     session_store.start_session(
         tmp_path,
         "pi",
@@ -63,7 +64,7 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         native_store=store,
     )
     write_primary_metadata(
-        tmp_path / "spawns" / key,
+        launch_paths(tmp_path, key),
         PrimaryMetadata(managed_backend=True, session_dir=str(tmp_path / "wrong")),
     )
     reference = resolve_session_reference(

@@ -12,7 +12,6 @@ from pathlib import Path
 import psutil
 import structlog
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import terminate_scope_sync, terminate_tree_sync
 from meridian.lib.platform.process_scope.base import (
     CleanupResult,
@@ -20,6 +19,7 @@ from meridian.lib.platform.process_scope.base import (
     birth_time_unverified,
 )
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
@@ -61,7 +61,8 @@ def terminate_recorded_spawn_scopes(
 ) -> list[CleanupResult]:
     """Terminate scope sidecars recorded for a spawn record."""
 
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    launch = LaunchPaths.for_row(runtime_root, spawn_record)
+    scopes = read_scopes_from_disk(launch)
     return _terminate_recorded_spawn_scopes(
         runtime_root,
         spawn_record,
@@ -97,7 +98,8 @@ def terminate_spawn_scopes(
 ) -> list[CleanupResult]:
     """Terminate recorded scopes, with legacy worker fallback when none exist."""
 
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    launch = LaunchPaths.for_row(runtime_root, spawn_record)
+    scopes = read_scopes_from_disk(launch)
     if scopes:
         return _terminate_recorded_spawn_scopes(
             runtime_root,
@@ -126,10 +128,10 @@ def _terminate_recorded_spawn_scopes(
     grace_seconds: float,
 ) -> list[CleanupResult]:
     results: list[CleanupResult] = []
-    spawn_id = SpawnId(spawn_record.id)
+    launch = LaunchPaths.for_row(runtime_root, spawn_record)
 
     for scope in scopes:
-        if is_scope_released(runtime_root, spawn_id, scope.release_id):
+        if is_scope_released(launch, scope.release_id):
             result = CleanupResult(
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
@@ -182,7 +184,7 @@ def _terminate_recorded_spawn_scopes(
             continue
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
-        mark_scope_released(runtime_root, spawn_id, scope.release_id)
+        mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Terminated process scope.",
             spawn_id=spawn_record.id,
@@ -306,17 +308,17 @@ def cancel_managed_primary(
     Idempotent — already-released scopes are skipped. Safe to call even when
     primary_metadata is not available (falls back to scope records only).
     """
-    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    launch = LaunchPaths.for_row(runtime_root, spawn_record)
+    scopes = read_scopes_from_disk(launch)
     results: list[CleanupResult] = []
-    spawn_id = SpawnId(spawn_record.id)
 
     # 1. Terminate launcher scope first (spawn_owned).
     for scope in scopes:
         if scope.scope_id == "launcher":
-            if is_scope_released(runtime_root, spawn_id, scope.release_id):
+            if is_scope_released(launch, scope.release_id):
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
-            mark_scope_released(runtime_root, spawn_id, scope.release_id)
+            mark_scope_released(launch, scope.release_id)
             logger.debug(
                 "Terminated managed primary launcher scope.",
                 spawn_id=spawn_record.id,
@@ -341,7 +343,7 @@ def cancel_managed_primary(
     for scope in scopes:
         if scope.scope_id not in {"backend", "tui"}:
             continue
-        if is_scope_released(runtime_root, spawn_id, scope.release_id):
+        if is_scope_released(launch, scope.release_id):
             result = CleanupResult(
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
@@ -367,7 +369,7 @@ def cancel_managed_primary(
             results.append(result)
             continue
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
-        mark_scope_released(runtime_root, spawn_id, scope.release_id)
+        mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Terminated managed primary runtime scope.",
             spawn_id=spawn_record.id,
@@ -444,12 +446,12 @@ def reclaim_session_owned_scopes_for_chats(
     results: list[CleanupResult] = []
     for record in SpawnScan.ordered(candidates, ()).records:
         chat_id = str(record.entry_chat_id)
-        spawn_id = SpawnId(record.id)
-        scopes = read_scopes_from_disk(runtime_root, spawn_id)
+        launch = LaunchPaths.for_row(runtime_root, record)
+        scopes = read_scopes_from_disk(launch)
         for scope in scopes:
             if scope.owner_policy != "session_owned":
                 continue
-            if is_scope_released(runtime_root, spawn_id, scope.release_id):
+            if is_scope_released(launch, scope.release_id):
                 continue
             if require_live_root:
                 skip_reason = _live_root_skip_reason(scope)
@@ -480,7 +482,7 @@ def reclaim_session_owned_scopes_for_chats(
                     results.append(result)
                     continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
-            mark_scope_released(runtime_root, spawn_id, scope.release_id)
+            mark_scope_released(launch, scope.release_id)
             logger.debug(
                 "Reclaimed session-owned scope at session exit.",
                 spawn_id=record.id,

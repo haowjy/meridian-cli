@@ -14,6 +14,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_ownership import is_owed_child
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -456,8 +457,7 @@ class PiDrainCoordinator:
     def for_connection(
         cls,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         receiver: HarnessConnection[ResolvedLaunchSpec],
         session_role: str | None,
         child_wave_timeout_seconds: float | None,
@@ -466,6 +466,8 @@ class PiDrainCoordinator:
         send_done_nudge: SendPiDoneNudge | None = None,
     ) -> PiDrainCoordinator:
         del receiver
+        runtime_root = launch.runtime_root
+        spawn_id = launch.spawn_id
         normalized_role = (session_role or "").strip().lower()
         clock = lambda: time.monotonic()  # noqa: E731 - preserve runtime clock patching
         ledger = PiPrivateWorkLedger()
@@ -485,8 +487,7 @@ class PiDrainCoordinator:
             clock=clock,
         )
         profile = PiCompletionProfile(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             session_role=normalized_role,
             child_wave_timeout_seconds=child_wave_timeout_seconds,
             emit_phase=emit_phase,

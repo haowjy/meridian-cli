@@ -102,7 +102,7 @@ def test_live_runner_with_only_stale_files_survives_reconciliation(tmp_path: Pat
         status="running",
         kind="child",
         started_at="2000-01-01T00:00:00Z",
-    )
+    ).spawn_id
     spawn_dir = runtime / "spawns" / str(spawn_id)
     lock_path = spawn_dir / "launch.lock"
     lock_path.touch()

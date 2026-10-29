@@ -40,7 +40,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_store import (
     ChatBusyError,
     update_session_claude_config_dir,
@@ -76,6 +76,7 @@ class PreparedExecutionHandoff:
     """Result of successful spawn preparation. Owns session scope cleanup."""
 
     resolved_request: SpawnRequest
+    launch: LaunchPaths
     launch_context: LaunchContext
     session_context: _SessionExecutionContext
     session_exit_stack: ExitStack
@@ -102,6 +103,7 @@ def _log_launch_failure_without_traceback(
 async def _prepare_execution_handoff(
     *,
     spawn: Spawn,
+    launch: LaunchPaths,
     request: SpawnRequest,
     runtime_request: LaunchRuntime,
     runtime: OperationRuntime,
@@ -217,7 +219,7 @@ async def _prepare_execution_handoff(
             }
         )
         bindings = RuntimeBindings(
-            spawn_id=str(spawn.spawn_id),
+            launch=launch,
             runtime_work_id=runtime_work_id,
             plan_overrides=dict(run_env_overrides),
             dry_run=False,
@@ -249,9 +251,7 @@ async def _prepare_execution_handoff(
         launch_context = materialize_launch_context(launch_context)
         try:
             _write_params_json(
-                project_paths,
-                runtime_root,
-                spawn.spawn_id,
+                launch,
                 request_metadata=request_metadata,
                 binding=launch_context.binding,
             )
@@ -262,11 +262,7 @@ async def _prepare_execution_handoff(
                 exc_info=True,
             )
         write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(
-                project_paths.project_root,
-                spawn.spawn_id,
-                runtime_root=runtime_root,
-            ),
+            launch=launch,
             launch_context=launch_context,
             surface="spawn",
         )
@@ -275,6 +271,7 @@ async def _prepare_execution_handoff(
         local_stack = ExitStack()
         return PreparedExecutionHandoff(
             resolved_request=launch_context.resolved_request,
+            launch=launch,
             launch_context=launch_context,
             session_context=session_context,
             session_exit_stack=handoff_stack,
@@ -305,7 +302,7 @@ async def _invoke_runner(
         request=handoff.resolved_request,
         launch_context=handoff.launch_context,
         project_root=project_paths.project_root,
-        runtime_root=runtime_root,
+        launch=handoff.launch,
         session_attempt=handoff.session_context.attempt,
         event_observer=event_observer,
         stream_stdout_to_terminal=stream_stdout_to_terminal,
@@ -323,6 +320,7 @@ def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
 async def launch_prepared_spawn(
     *,
     spawn: Spawn,
+    launch: LaunchPaths,
     request: SpawnRequest,
     runtime_request: LaunchRuntime,
     runtime: OperationRuntime,
@@ -347,6 +345,7 @@ async def launch_prepared_spawn(
     try:
         handoff = await _prepare_execution_handoff(
             spawn=spawn,
+            launch=launch,
             request=request,
             runtime_request=runtime_request,
             runtime=runtime,
@@ -366,6 +365,7 @@ async def launch_prepared_spawn(
             project_paths.project_root,
             spawn.spawn_id,
             exc,
+            launch=launch,
         )
         _log_launch_failure_without_traceback(
             message="Pre-launch setup failed.",
@@ -398,8 +398,7 @@ async def launch_prepared_spawn(
                         )
 
                 maybe_prelaunch_state = prepare_prelaunch(
-                    runtime_root=runtime_root,
-                    spawn_id=spawn.spawn_id,
+                    launch=handoff.launch,
                     session=handoff.resolved_request.session,
                     child_cwd=handoff.launch_context.control_root,
                     child_env=child_env,
@@ -436,6 +435,7 @@ async def launch_prepared_spawn(
                 project_paths.project_root,
                 spawn.spawn_id,
                 exc,
+                launch=launch,
             )
             _log_launch_failure_without_traceback(
                 message="Child harness pre-run setup failed.",

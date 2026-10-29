@@ -19,6 +19,7 @@ from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessE
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from tests.support.async_determinism import AsyncDeterminism, wait_until
+from tests.support.launch_paths import launch_paths
 
 _SESSION_ID = "ses_v2_stream"
 
@@ -85,7 +86,7 @@ def _sensor_context(tmp_path: Path, connection: _StreamProbeConnection) -> IdleS
         env={"MERIDIAN_HARNESS_OPENCODE_VERSION": "v2"},
         tmux_pane=None,
         tui_alive=lambda: True,
-        spawn_dir=tmp_path,
+        launch=launch_paths(tmp_path, "p1"),
     )
 
 

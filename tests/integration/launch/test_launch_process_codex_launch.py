@@ -22,7 +22,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
@@ -161,8 +160,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     def fake_launcher_for(captured: dict[str, object]):
         def fake_run_primary_attach(
             harness_id: Any,
-            spawn_id: Any,
-            spawn_dir: Any,
+            launch: Any,
             control_root: Any,
             task_cwd: Any,
             env: Any,
@@ -171,8 +169,8 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             on_running: Any = None,
             session_id_observer: Any = None,
         ) -> PrimaryAttachOutcome:
-            _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher
-            captured["log_dir"] = Path(spawn_dir)
+            _ = harness_id, control_root, task_cwd, env, spec, process_launcher
+            captured["log_dir"] = launch.dir
             return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
 
         return fake_run_primary_attach
@@ -275,8 +273,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
 
     def fake_run_primary_attach(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -285,9 +282,9 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         on_running: Any = None,
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
-        _ = spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
+        _ = control_root, task_cwd, env, spec, process_launcher, on_running
         captured["harness_id"] = harness_id
-        spawn_dir = Path(spawn_dir)
+        spawn_dir = launch.dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         captured["spawn_dir"] = spawn_dir
         session_id_observer(spec.native_identity.session_id)
@@ -359,8 +356,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
 
     def fake_run_primary_attach(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         passthrough_task_cwd: Any,
         env: Any,
@@ -369,7 +365,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         on_running: Any = None,
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
-        _ = spawn_id, spawn_dir, spec, process_launcher
+        _ = launch, spec, process_launcher
         captured["harness_id"] = harness_id
         captured["control_root"] = control_root
         captured["task_cwd"] = passthrough_task_cwd
@@ -445,8 +441,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
 
     def fake_run_primary_attach(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -455,7 +450,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         on_running: Any = None,
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
-        _ = harness_id, spawn_id, spawn_dir, control_root, task_cwd, env, spec, process_launcher
+        _ = harness_id, launch, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
         assert list_spawns(launch_context.runtime_root).records[0].status == "queued"
         on_running(ProcessIdentity(5151, 100.0, 5151))
@@ -525,8 +520,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
 
     def failing_managed(
         harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
+        launch: Any,
         control_root: Any,
         task_cwd: Any,
         env: Any,
@@ -535,10 +529,9 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         on_running: Any = None,
         session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
-        _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
-        spawn_path = Path(spawn_dir)
-        spawn_path.mkdir(parents=True, exist_ok=True)
-        diagnostics_path = spawn_path / LAUNCHER_LOG_FILENAME
+        _ = harness_id, control_root, task_cwd, env, spec, process_launcher, on_running
+        launch.dir.mkdir(parents=True, exist_ok=True)
+        diagnostics_path = launch.launcher_log
         diagnostics_path.write_text("relay failed\n", encoding="utf-8")
         diagnostics_paths.append(diagnostics_path.resolve())
         raise PrimaryAttachError("managed startup error")

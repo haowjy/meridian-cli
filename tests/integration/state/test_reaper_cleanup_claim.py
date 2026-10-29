@@ -11,6 +11,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper import reconcile_active_spawn
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -49,7 +50,7 @@ def _spawn_with_scope(tmp_path: Path) -> tuple[Path, str, ProcessScopeSnapshot]:
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(runtime_root, SpawnId(spawn_id), scope)
+    record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
     return runtime_root, spawn_id, scope
 
 

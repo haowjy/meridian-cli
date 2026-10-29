@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import consume_spawn_signal
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -86,8 +85,7 @@ class PiCompletionProfile:
     def __init__(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         session_role: str,
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,
@@ -96,8 +94,9 @@ class PiCompletionProfile:
         stabilization_seconds: float,
         clock: Callable[[], float],
     ) -> None:
-        self.runtime_root = runtime_root
-        self.spawn_id = spawn_id
+        self.launch = launch
+        self.runtime_root = launch.runtime_root
+        self.spawn_id = launch.spawn_id
         self.session_role = session_role
         self.child_wave_timeout_seconds = child_wave_timeout_seconds
         self.emit_phase = emit_phase
@@ -158,7 +157,7 @@ class PiCompletionProfile:
             and self.last_successful_terminal is not None
             and not self._done_requested
         ):
-            self._done_requested = consume_spawn_signal(self.runtime_root, self.spawn_id, "done")
+            self._done_requested = consume_spawn_signal(self.launch, "done")
         return CompletionDirectives(done=self._done_requested)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:

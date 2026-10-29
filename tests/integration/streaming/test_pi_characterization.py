@@ -22,6 +22,7 @@ from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoo
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_completion_profile import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json, write_pi_bash_record
 
 
@@ -48,7 +49,7 @@ _start_coordinator = PiDrainScenario.start
 
 
 def _write_done_signal(runtime_root: Path, spawn_id: str) -> None:
-    path = spawn_signal_path(runtime_root, spawn_id, "done")
+    path = spawn_signal_path(launch_paths(runtime_root, spawn_id), "done")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("test\n", encoding="utf-8")
 

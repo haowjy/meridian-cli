@@ -11,6 +11,7 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
+from meridian.lib.state.paths import resolve_spawn_dir
 from meridian.lib.state.spawn.repository import is_safe_spawn_dir_name
 
 _LOCK_CLASSES = ("spawns", "process-scopes", "reaper-cleanup")
@@ -66,7 +67,7 @@ def gc_orphaned_locks(runtime_root: Path) -> LockGcStats:
                     contended += 1
                     continue
                 try:
-                    spawn_path = runtime_root / "spawns" / spawn_id
+                    spawn_path = resolve_spawn_dir(runtime_root, spawn_id)
                     if not spawn_path.exists() and not spawn_path.is_symlink():
                         removed += unlink_validated_lock(lock_path, handle)
                 finally:

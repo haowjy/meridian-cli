@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
 
@@ -28,7 +29,7 @@ from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from ..runtime import (
@@ -298,7 +299,7 @@ def bind_create_payload_context(
     return bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
-            spawn_id="dry-run",
+            launch=LaunchPaths.preview(Path(artifacts.preview_runtime.runtime_root), "dry-run"),
             dry_run=True,
             plan_overrides=artifacts.plan_overrides,
         ),

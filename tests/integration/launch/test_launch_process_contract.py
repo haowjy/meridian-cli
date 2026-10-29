@@ -20,7 +20,6 @@ from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.constants import LAUNCHER_LOG_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
@@ -35,6 +34,7 @@ from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Bound, Conflict
+from tests.support.launch_paths import launch_paths
 
 
 def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
@@ -153,7 +153,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         prompt="test",
         status="running",
     )
-    log_dir = tmp_path / "spawns" / "p-contract-blackbox"
+    launch = launch_paths(tmp_path, "p-contract-blackbox")
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CODEX).model_copy(
         update={"bootstrap_mode": BootstrapMode.SUBPROCESS_ONLY}
@@ -171,7 +171,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
-        assert launcher_diagnostics_path == log_dir / LAUNCHER_LOG_FILENAME
+        assert launcher_diagnostics_path == launch.launcher_log
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(ProcessIdentity(111, 100.0, 111))
@@ -179,8 +179,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
 
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CODEX,
-        primary_spawn_id=SpawnId("p-contract-blackbox"),
-        log_dir=log_dir,
+        launch=launch,
         control_root=tmp_path,
         launch_cwd=tmp_path,
         task_cwd=None,
@@ -221,7 +220,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         prompt="test",
         status="running",
     )
-    log_dir = tmp_path / "spawns" / "p-contract-fallback"
+    launch = launch_paths(tmp_path, "p-contract-fallback")
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CLAUDE).model_copy(
         update={
@@ -230,7 +229,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         }
     )
     black_box_calls = 0
-    launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
+    launcher_diagnostics_path = launch.launcher_log
     launcher_diagnostics_path.write_text("stale relay failure\n", encoding="utf-8")
 
     def _black_box(
@@ -244,7 +243,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
     ) -> process_runner.PrimaryProcessResult:
         nonlocal black_box_calls
         _ = (command, cwd, env, output_log_path)
-        assert launcher_diagnostics_path == log_dir / LAUNCHER_LOG_FILENAME
+        assert launcher_diagnostics_path == launch.launcher_log
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(ProcessIdentity(222, 100.0, 222))
@@ -252,8 +251,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
 
     result = process_runner._execute_primary_process(
         harness_id=HarnessId.CLAUDE,
-        primary_spawn_id=SpawnId("p-contract-fallback"),
-        log_dir=log_dir,
+        launch=launch,
         control_root=tmp_path,
         launch_cwd=tmp_path,
         task_cwd=None,

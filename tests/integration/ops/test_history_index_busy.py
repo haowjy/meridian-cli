@@ -36,7 +36,7 @@ def _spawn(root: Path, spawn_id: str = "p-busy") -> str:
             agent="coder",
             harness="pi",
             prompt="history contention",
-        )
+        ).spawn_id
     )
 
 

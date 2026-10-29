@@ -15,6 +15,7 @@ import pytest
 from meridian.cli import spawn_message
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.state import spawn_store
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -84,7 +85,7 @@ async def test_claude_primary_posts_to_published_inbox(
 
     receiver = threading.Thread(target=receive, daemon=True)
     receiver.start()
-    journal = claude_boundary_journal_path(tmp_path, "p1")
+    journal = claude_boundary_journal_path(launch_paths(tmp_path, "p1"))
     journal.parent.mkdir(parents=True, exist_ok=True)
     journal.write_text(
         json.dumps(

@@ -9,9 +9,10 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
-from meridian.lib.launch.constants import REPORT_FILENAME
 from meridian.lib.launch.extract import FinalizeReportKind, enrich_finalize
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion
+from meridian.lib.state.paths import LaunchPaths
+from tests.support.launch_paths import launch_paths
 
 # p6491: the OpenCode adapter extracted the agent's streamed narration preamble as
 # the "report"; no turn ever completed.
@@ -28,21 +29,21 @@ _PERMISSION_ENVELOPE_REPORT = (
     '"type":"permission.asked"}\n'
 )
 
-def _seed_report(spawn_dir: Path, *, report_text: str) -> None:
-    (spawn_dir / REPORT_FILENAME).write_text(report_text, encoding="utf-8")
+def _seed_report(launch: LaunchPaths, *, report_text: str) -> None:
+    launch.dir.mkdir(parents=True, exist_ok=True)
+    launch.report.write_text(report_text, encoding="utf-8")
 
 
 def test_hung_permission_spawn_resolves_cancelled_not_succeeded(tmp_path: Path) -> None:
     """p6491/p6493: a SIGTERM'd permission-hang is not a report-based success."""
 
     spawn_id = SpawnId("p-hung-permission")
-    _seed_report(tmp_path, report_text=_PARTIAL_NARRATION_REPORT)
+    _seed_report(launch_paths(tmp_path, spawn_id), report_text=_PARTIAL_NARRATION_REPORT)
 
     extraction = enrich_finalize(
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
-        spawn_id=spawn_id,
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, spawn_id),
         failure_reason="terminated",
     )
 
@@ -61,13 +62,12 @@ def test_permission_envelope_report_is_not_durable_completion(tmp_path: Path) ->
     """p6493: a raw harness event envelope must not classify as completion."""
 
     spawn_id = SpawnId("p-permission-envelope")
-    _seed_report(tmp_path, report_text=_PERMISSION_ENVELOPE_REPORT)
+    _seed_report(launch_paths(tmp_path, spawn_id), report_text=_PERMISSION_ENVELOPE_REPORT)
 
     extraction = enrich_finalize(
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
-        spawn_id=spawn_id,
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, spawn_id),
         failure_reason="terminated",
     )
 
@@ -83,12 +83,11 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(
     extraction = enrich_finalize(
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
-        spawn_id=spawn_id,
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, spawn_id),
         failure_reason="Cursor subprocess exited with code 130.",
     )
 
-    report = (tmp_path / REPORT_FILENAME).read_text(encoding="utf-8")
+    report = launch_paths(tmp_path, spawn_id).report.read_text(encoding="utf-8")
     conclusion = StreamingRunConclusion(
         exit_code=130,
         failure_reason="cancelled",

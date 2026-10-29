@@ -51,6 +51,7 @@ from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
@@ -224,13 +225,13 @@ class SpawnLifecycleService:
         *,
         dispatch_events: bool = True,
         launch_lock: LaunchSlot,
-    ) -> str:
-        """Persist a spawn row from ``reservation`` and optionally dispatch spawn.created."""
+    ) -> LaunchPaths:
+        """Persist a spawn row from ``reservation``; return the launch it published."""
         return self._start_from_reservation(
             reservation, dispatch_events=dispatch_events, launch_lock=launch_lock
         )
 
-    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> str:
+    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> LaunchPaths:
         """Persist a spawn row without dispatching lifecycle events."""
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
 
@@ -249,13 +250,13 @@ class SpawnLifecycleService:
         *,
         dispatch_events: bool,
         launch_lock: LaunchSlot,
-    ) -> str:
+    ) -> LaunchPaths:
         with bind_lifecycle_correlation(
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
             session_metadata = reservation.session_metadata
             # Authoritative transition write still happens in _spawn_store().
-            result_id = _spawn_store().start_spawn(
+            launch = _spawn_store().start_spawn(
                 self._runtime_root,
                 chat_id=reservation.chat_id,
                 owner_chat_id=reservation.owner_chat_id,
@@ -286,12 +287,12 @@ class SpawnLifecycleService:
                 clock=reservation.clock,
                 launch_lock=launch_lock,
             )
-            allocate_spawn_sequence(str(result_id))
-            record = _spawn_store().get_spawn(self._runtime_root, result_id)
+            allocate_spawn_sequence(str(launch.spawn_id))
+            record = _spawn_store().get_spawn(self._runtime_root, launch.spawn_id)
             self._record = record
             if dispatch_events:
                 self._dispatch_spawn_started_events(status=reservation.status)
-            return str(result_id)
+            return launch
 
     def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
         assert self._record is not None

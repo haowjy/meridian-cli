@@ -53,6 +53,7 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import NetworkPolicy
+from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.extractors.base import AttemptFold
@@ -368,8 +369,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def prepare_prelaunch(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -413,7 +413,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def build_primary_runtime_request_handler(
         self,
         *,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
     ) -> ServerRequestHandler | None:
         """Build a managed-primary runtime request handler for this harness."""
@@ -710,8 +710,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def prepare_prelaunch(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -719,8 +718,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
         _ = (
-            runtime_root,
-            spawn_id,
+            launch,
             session,
             child_cwd,
             child_env,
@@ -765,10 +763,10 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def build_primary_runtime_request_handler(
         self,
         *,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
     ) -> ServerRequestHandler | None:
-        _ = spawn_dir, event_sink
+        _ = launch, event_sink
         return None
 
     def seed_session(

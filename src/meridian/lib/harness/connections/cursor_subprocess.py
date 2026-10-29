@@ -101,7 +101,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError(f"Cannot start Cursor connection from state '{self._state}'")
 
         validate_prompt_size(config)
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._set_state("starting")
 
         env = dict(config.child_env)

@@ -79,7 +79,7 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
     }
     defaults.update(overrides)
     with LaunchSlot() as launch_lock:
-        return service.start(SpawnReservation(**defaults), launch_lock=launch_lock)
+        return service.start(SpawnReservation(**defaults), launch_lock=launch_lock).spawn_id
 
 
 def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
@@ -170,7 +170,7 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
                 ),
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
@@ -199,7 +199,7 @@ def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
                 status="queued",
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     assert hook.event_types == []
 
@@ -229,7 +229,7 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
             ),
             dispatch_events=False,
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     assert hook.event_types == []
 

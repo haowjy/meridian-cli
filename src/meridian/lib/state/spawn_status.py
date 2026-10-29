@@ -16,6 +16,7 @@ from meridian.lib.state.launch_lock import (
     LaunchHandle,
     NotFound,
     acquire,
+    lock_path,
     shared_hold,
 )
 from meridian.lib.state.liveness import is_process_alive_with_birth
@@ -120,15 +121,14 @@ type DeadLaunchClaim = Claimed | Settled | Live | Lockless
 
 def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
     """Claim a lock-backed dead launch and return its lock-consistent rows."""
-    spawn_dir = runtime_root / "spawns" / spawn_id
     try:
-        handle = acquire(spawn_dir)
+        handle = acquire(runtime_root, spawn_id)
     except NotFound:
         return Lockless()
     except (Busy, Contended):
         return Live()
     try:
-        row = read_state(spawn_dir.parent, spawn_id, include_prompt=False)
+        row = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
         if row is None:
             handle.close()
             return Live()
@@ -147,8 +147,7 @@ def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
 def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
     """Read one row with liveness consistent with its runner-lifetime lock."""
     spawns_dir = runtime_root / "spawns"
-    lock_path = spawns_dir / spawn_id / "launch.lock"
-    with shared_hold(lock_path) as lock_free:
+    with shared_hold(lock_path(runtime_root, spawn_id)) as lock_free:
         row = read_state(spawns_dir, spawn_id, include_prompt=False)
         if row is None:
             return None
@@ -189,8 +188,7 @@ def quarantine_may_observe(
 ) -> bool:
     """Conservatively decide whether a quarantined row may observe one chat."""
 
-    lock_path = runtime_root / "spawns" / report.spawn_id / "launch.lock"
-    with shared_hold(lock_path) as lock_free:
+    with shared_hold(lock_path(runtime_root, report.spawn_id)) as lock_free:
         current_chat_id = read_quarantined_chat_id(report)
         if current_chat_id is QuarantinedChatIdStatus.UNREADABLE:
             return True

@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
+from tests.support.launch_paths import launch_paths
 
 
 def _write_spawn_output(
@@ -19,7 +19,7 @@ def _write_spawn_output(
     spawn_id: str,
     *events: dict[str, object],
     artifact: bool = False,
-    filename: str = HISTORY_FILENAME,
+    filename: str = LAUNCH_FILE_NAMES.history,
 ) -> None:
     base_dir = "artifacts" if artifact else "spawns"
     output_path = runtime_root / base_dir / spawn_id / filename
@@ -33,7 +33,7 @@ def _write_primary_meta(
     *,
     managed_backend: bool = True,
 ) -> None:
-    meta_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    meta_path = launch_paths(runtime_root, spawn_id).primary_meta
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, object] = {"managed_backend": managed_backend}
     if managed_backend:

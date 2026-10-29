@@ -32,12 +32,9 @@ from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connecti
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import (
-    resolve_project_runtime_root_for_write,
-    resolve_spawn_log_dir,
-)
 from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 from tests.support.opencode import FakeOpenCodeProcess
 
 OPENCODE_ACTIVITY_IDLE_EVENT = "session.idle"
@@ -397,7 +394,7 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
         '[project]\nid = "opencode-connection-test"\n', encoding="utf-8"
     )
     return ConnectionConfig(
-        spawn_id=SpawnId("p-open-observer"),
+        launch=launch_paths(tmp_path, SpawnId("p-open-observer")),
         harness_id=HarnessId.OPENCODE,
         prompt="hello from test",
         control_root=tmp_path,
@@ -1090,12 +1087,7 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     spec = ResolvedLaunchSpec()
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
-    resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    ).mkdir(
+    config.launch.dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -1110,7 +1102,7 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
         snapshot = ProcessScopeSnapshot(
             scope_id="backend",
             owner_policy="spawn_owned",
-            owner_id=str(config.spawn_id),
+            owner_id=str(config.launch.spawn_id),
             role="harness_backend",
             containment="pid_tree_fallback",
             root_pid=fake_process.pid,
@@ -1149,12 +1141,7 @@ def _set_startup_failure(
     config: ConnectionConfig,
     text: str,
 ) -> None:
-    spawn_dir = resolve_spawn_log_dir(
-        config.control_root,
-        config.spawn_id,
-        runtime_root=config.runtime_root
-        or resolve_project_runtime_root_for_write(config.control_root),
-    )
+    spawn_dir = config.launch.dir
     spawn_dir.mkdir(parents=True, exist_ok=True)
     connection._stderr_log_path = spawn_dir / "stderr.log"
     connection._stderr_log_path.write_text(text, encoding="utf-8")
