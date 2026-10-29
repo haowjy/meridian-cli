@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.env_registry import is_registered_env_name
+from meridian.lib.state.paths import LaunchPaths
 
 # The `src/` directory holding the `meridian` package.
 DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -312,11 +313,169 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
+# --- per-launch paths ------------------------------------------------------
+# Per-launch files are named, and launches constructed, only in `paths.py`: the
+# spawn directory layout has one owner. A path built from a name held in a variable
+# (`d / name`) is invisible to a literal check; the construction rule is what keeps a
+# spawn directory from being wrapped as a launch. A file name `LaunchPaths` lacks is
+# invisible too: add the property first.
+_LAUNCH_PATHS_OWNERS = frozenset(
+    {
+        "meridian/lib/state/paths.py",
+        "meridian/pi_runtime/extensions/shared/pi_state_paths.ts",
+    }
+)
+_RESERVE_OWNER = "meridian/lib/state/spawn_store.py"
+_PREVIEW_CALLERS = frozenset(
+    {"meridian/lib/ops/spawn/prepare.py", "meridian/lib/launch/__init__.py"}
+)
+# This module reads `LaunchPaths` to learn the names and spells the retired identifier.
+_LAUNCH_RULES_SELF = "meridian/dev/lints.py"
+_PATHS_MODULE = "meridian.lib.state.paths"
+_RETIRED_IDENTIFIER = "resolve_spawn_log_dir"
+_LAUNCH_STRUCTURE_MARKERS = ("LaunchPaths", "replace", _PATHS_MODULE)
+_SCRIPT_QUOTED = re.compile(r"""(["'`])([^"'`\n]*)\1""")
+
+
+def per_launch_names() -> frozenset[str]:
+    """Every file name `LaunchPaths` produces.
+
+    The retired `history.jsonl` is not gated: Claude's own config dir has a file of the
+    same name that `claude_sessions` reads.
+    """
+    probe = LaunchPaths.preview(Path("/probe"))
+    return frozenset(
+        value.name
+        for attr in dir(LaunchPaths)
+        if isinstance(getattr(LaunchPaths, attr), property)
+        and isinstance(value := getattr(probe, attr), Path)
+        and attr != "dir"
+    )
+
+
+def _is_per_launch_literal(value: str, names: frozenset[str]) -> bool:
+    return (
+        value in names
+        or value.endswith(".signal")
+        or any(value.endswith(f"/{name}") for name in names)
+    )
+
+
+def _is_launch_paths(node: ast.expr) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "LaunchPaths") or (
+        isinstance(node, ast.Attribute) and node.attr == "LaunchPaths"
+    )
+
+
+def _is_launch_name(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and (
+        node.id in {"launch", "launch_paths"} or node.id.endswith("_launch")
+    )
+
+
+def _launch_structure(module: PythonSource) -> list[tuple[int, str]]:
+    """Constructions, aliases, copies, restricted calls, and private-name imports."""
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(module.parse()):
+        if isinstance(node, ast.Call):
+            target = node.func
+            if _is_launch_paths(target):
+                found.append(
+                    (node.lineno, "LaunchPaths(...) is constructed in state/paths.py only")
+                )
+            is_replace = (isinstance(target, ast.Name) and target.id == "replace") or (
+                isinstance(target, ast.Attribute) and target.attr == "replace"
+            )
+            if is_replace and node.args and _is_launch_name(node.args[0]):
+                found.append((node.lineno, "a launch is copied; only its publisher assigns n"))
+            if isinstance(target, ast.Attribute) and _is_launch_paths(target.value):
+                if target.attr == "reserved" and module.path != _RESERVE_OWNER:
+                    found.append(
+                        (node.lineno, "LaunchPaths.reserved(...) is spawn_store's: it assigns n")
+                    )
+                if target.attr == "preview" and module.path not in _PREVIEW_CALLERS:
+                    found.append(
+                        (node.lineno, "LaunchPaths.preview() is for the dry-run entry points only")
+                    )
+        elif isinstance(node, ast.Assign) and _is_launch_paths(node.value):
+            found.append(
+                (node.lineno, "LaunchPaths is aliased; construct nothing outside state/paths.py")
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == _PATHS_MODULE:
+            found.extend(
+                (node.lineno, f"{alias.name} is private to paths.py; use LAUNCH_FILE_NAMES")
+                for alias in node.names
+                if alias.name.startswith("_")
+            )
+    return found
+
+
+def _python_string_literals(module: PythonSource) -> list[tuple[int, str]]:
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(module.parse())
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+
+def _script_string_literals(script: ScriptSource) -> list[tuple[int, str]]:
+    return [
+        (number, match.group(2))
+        for number, line in enumerate(script.text.splitlines(), start=1)
+        for match in _SCRIPT_QUOTED.finditer(line)
+    ]
+
+
+def launch_path_violations(sources: Sources) -> list[Violation]:
+    """Reject per-launch file names and `LaunchPaths` construction outside their owner."""
+
+    names = per_launch_names()
+    literal_markers = (".signal", *names)
+    found: list[Violation] = []
+
+    def literal(path: str, line: int, value: str) -> Violation:
+        return Violation(
+            path, line, f"{value!r} is a per-launch file; reach it through LaunchPaths"
+        )
+
+    for module in sources.python_modules:
+        if module.path in _LAUNCH_PATHS_OWNERS or module.path == _LAUNCH_RULES_SELF:
+            continue
+        if module.mentions(_RETIRED_IDENTIFIER):
+            found.append(
+                Violation(module.path, 0, f"{_RETIRED_IDENTIFIER} is gone; use LaunchPaths")
+            )
+        if module.mentions(*literal_markers):
+            found.extend(
+                literal(module.path, line, value)
+                for line, value in _python_string_literals(module)
+                if _is_per_launch_literal(value, names)
+            )
+        if module.mentions(*_LAUNCH_STRUCTURE_MARKERS):
+            found.extend(
+                Violation(module.path, line, message) for line, message in _launch_structure(module)
+            )
+    for script in sources.scripts:
+        if script.path in _LAUNCH_PATHS_OWNERS or script.path.endswith((".test.ts", ".d.ts")):
+            continue
+        if _RETIRED_IDENTIFIER in script.text:
+            found.append(
+                Violation(script.path, 0, f"{_RETIRED_IDENTIFIER} is gone; use LaunchPaths")
+            )
+        found.extend(
+            literal(script.path, line, value)
+            for line, value in _script_string_literals(script)
+            if _is_per_launch_literal(value, names)
+        )
+    return found
+
+
 CHECKS: tuple[Check, ...] = (
     raw_write_violations,
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
+    launch_path_violations,
 )
 
 

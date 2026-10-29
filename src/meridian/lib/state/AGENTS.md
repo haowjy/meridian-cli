@@ -58,7 +58,7 @@ against a recreated inode (split-brain).
   directory, the control socket) stay joined to `resolve_spawn_dir`: nothing a user sees
   resets on a continue; code that slices a *spawn* directory (retention) stays valid.
   Per-launch name constants are private to `paths.py`; code that recognizes a name (not
-  reaches a file) uses `LAUNCH_FILE_NAMES`. `meridian.dev.check_launch_paths` (fast gate)
+  reaches a file) uses `LAUNCH_FILE_NAMES`. the `meridian.dev.lints` launch-path rule
   rejects a per-launch file name written as a literal (or a literal ending in one), a
   `LaunchPaths(...)` construction, alias or `replace` copy outside `paths.py`, a `reserved`
   call outside `spawn_store`, a `preview` call outside the two dry-run entry points, and an

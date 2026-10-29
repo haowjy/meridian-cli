@@ -2,11 +2,7 @@
 
 Developer-only utilities, not part of the CLI surface: `pytests.py` (`pytest-llm`
 entry point), `preflight.py` (concurrent fast-gate runner behind
-`scripts/preflight.sh`), `lints.py` (structural rules about the source tree) and
-`check_launch_paths.py` (a fast-gate source check: per-launch
-file names appear only in `state/paths.py` and the Pi `shared/pi_state_paths.ts`, and
-`LaunchPaths(...)` is constructed only in `state/paths.py`, `reserved` is called only by
-`state/spawn_store.py`, and private `paths.py` names stay there).
+`scripts/preflight.sh`) and `lints.py` (structural rules about the source tree).
 
 `uv run pytest-llm` runs the default paths with trimmed output; the full suite is still
 `uv run pytest tests/`. The wrapper trims output
@@ -17,7 +13,10 @@ file names appear only in `state/paths.py` and the Pi `shared/pi_state_paths.ts`
 `python -m meridian.dev.lints` (also `-m meridian.dev.preflight`) rejects source-tree
 shapes no test should assert: a raw file write outside the atomic write contract, a
 `MERIDIAN_*` literal the env registry does not own, a harness adapter importing
-`meridian.lib.idle`. Each rule is one function over `Sources` from `read_sources()`,
+`meridian.lib.idle`, a per-launch file name written as a literal or a `LaunchPaths`
+construction, alias, copy, `reserved` or `preview` call outside its owner (`state/paths.py`,
+the Pi `shared/pi_state_paths.ts`, `state/spawn_store.py`, the dry-run entry points), a
+private `paths.py` name imported elsewhere. Each rule is one function over `Sources` from `read_sources()`,
 returning `Violation`s that carry a path relative to the scanned root and a sentence
 naming the rule; `main()` prints them and exits 1. Keep the allowlists and their
 justification strings.
