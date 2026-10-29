@@ -429,7 +429,7 @@ def test_prepare_then_reserve_graceful_prep_failure_leaks_nothing_with_work(
 
 
 @pytest.mark.parametrize("mode", ["blocking", "background"])
-def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
+def test_prepare_then_reserve_happy_path_announces_once_with_normalized_work_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mode: str,

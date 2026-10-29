@@ -12,7 +12,6 @@ from meridian.lib.state.work_repository import (
     reopen_work_item,
     update_work_item,
 )
-from meridian.lib.state.work_state import slugify  # noqa: F401
 from meridian.lib.state.work_store import (
     list_archived_work_items,
     list_work_items,
