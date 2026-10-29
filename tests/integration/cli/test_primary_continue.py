@@ -490,6 +490,38 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     assert work_after.task_dir == source_task_dir.as_posix()
 
 
+def test_primary_continue_yolo_reaches_command_and_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.3-codex", harness=HarnessId.CODEX)
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _seed_primary_spawn(
+        _state_root(project_root),
+        spawn_id="p47",
+        harness_session_id="00000000-0000-4000-8000-000000000047",
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    contexts: list[Any] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+
+    _run_primary_continue(project_root, "p47", dry_run=True, yolo=True)
+
+    request = contexts[0].resolved_request
+    assert request.execution_policy.approval == "never"
+    assert request.launch_policy_snapshot is not None
+    assert request.launch_policy_snapshot.execution_policy.approval == "never"
+    assert request.launch_policy_snapshot.field_provenance["approval_source"] == "cli"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message_fragments"),
     [

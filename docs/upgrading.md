@@ -18,8 +18,9 @@ for the first run to end.
 A continue may change the model (`-m`: the run and `spawn show` use the new one), `--work` and
 `--desc` (they replace the spawn's own; left out, they are kept). A primary continue still
 refuses `--skills`, `--task-dir` and passthrough arguments. It accepts approval (`--yolo`), sandbox,
-network, effort and autocompact, and now applies them to that run; earlier builds accepted them
-and ignored them.
+network, effort and autocompact, and now applies them to that run and keeps them as the spawn's
+policy for later continues (`--sandbox` alone also resets the network, as a fresh launch does,
+unless the network was set explicitly); earlier builds accepted them and ignored them.
 A child continue (`spawn --continue`) refuses skills, approval, sandbox, network, effort,
 autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refuses `--work`. Use
 `--fork-fresh` to change what a continue refuses.
