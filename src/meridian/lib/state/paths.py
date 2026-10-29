@@ -367,7 +367,7 @@ def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
 
 
 # Per-launch file names. This module is the only place they appear as literals
-# (``meridian.dev.check_launch_paths``, part of the fast gate, enforces it, and flags a
+# (``meridian.dev.lints``, in both gates, enforces it, and flags a
 # private name imported elsewhere). Code that must recognize a name rather than reach a
 # file (retention, transcript discovery, legacy import) uses ``LAUNCH_FILE_NAMES``.
 _HISTORY_FILENAME = "history.jsonl"  # retired runner stream; never written

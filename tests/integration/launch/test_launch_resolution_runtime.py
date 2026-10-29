@@ -29,14 +29,17 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
-from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
+from meridian.lib.launch.types import LaunchRequest
 from meridian.lib.safety.policy import (
     Host,
     Hosts,
     SandboxDerivedNetwork,
 )
 from meridian.lib.state import work_repository, work_store
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import (
+    resolve_project_paths,
+    resolve_project_runtime_root_or_none,
+)
 from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
@@ -429,33 +432,6 @@ def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(
     assert any(warning.code == "network_allow_hosts_dropped" for warning in preview.warnings)
 
 
-@pytest.mark.parametrize(
-    ("harness", "requires_initial_prompt"),
-    [
-        (HarnessId.CLAUDE, False),
-        (HarnessId.CODEX, True),
-    ],
-    ids=["claude", "codex"],
-)
-def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
-    harness: HarnessId,
-    requires_initial_prompt: bool,
-) -> None:
-    request = LaunchRequest(
-        model="test-model",
-        harness=harness.value,
-    )
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    if requires_initial_prompt:
-        assert spawn_request.prompt == build_primary_prompt(request)
-        assert spawn_request.primary_prompt_is_synthetic is True
-    else:
-        assert spawn_request.prompt == ""
-        assert spawn_request.primary_prompt_is_synthetic is False
-
-
 def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRef:
     """A resolved ``--from`` ref, as the cli or spawn prepare hands it to launch."""
     return SpawnContextRef(
@@ -468,46 +444,6 @@ def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRe
         report_text="prior context",
         work_id=work_id,
     )
-
-
-def test_build_primary_spawn_request_uses_context_as_initial_prompt() -> None:
-    request = LaunchRequest(
-        model="test-model",
-        harness=HarnessId.CODEX.value,
-        context_refs=(_prior(),),
-    )
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    assert spawn_request.prompt == ""
-    assert spawn_request.primary_prompt_is_synthetic is False
-
-
-def test_build_primary_spawn_request_copies_context_from() -> None:
-    request = LaunchRequest(
-        model="test-model",
-        harness=HarnessId.CLAUDE.value,
-        context_refs=(_prior(),),
-    )
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    assert spawn_request.context_refs == (_prior(),)
-
-
-@pytest.mark.parametrize(
-    "model",
-    ["claude-sonnet-4"],
-    ids=["claude-model"],
-)
-def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(model: str) -> None:
-    """Without explicit harness we default to no synthetic first prompt."""
-
-    request = LaunchRequest(model=model)
-
-    spawn_request = build_primary_spawn_request(request=request)
-
-    assert spawn_request.prompt == ""
 
 
 def test_primary_launch_injects_bundle_inventory(
@@ -674,16 +610,26 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
 ) -> None:
     project_root = tmp_path / "project"
     task_dir = tmp_path / "task"
+    from_work_task_dir = tmp_path / "from-work-task"
     project_root.mkdir()
     task_dir.mkdir()
+    from_work_task_dir.mkdir()
     _write_minimal_mars_config(project_root)
     (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
     (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
-    work_repository.ensure_work_item_metadata(project_root / ".meridian", "task-work")
+    (from_work_task_dir / "task-only.txt").write_text("from-work marker", encoding="utf-8")
+    state_dir = project_root / ".meridian"
+    work_repository.ensure_work_item_metadata(state_dir, "task-work")
     work_repository.update_work_item_task_dir(
-        project_root / ".meridian",
+        state_dir,
         "task-work",
         task_dir=task_dir.as_posix(),
+    )
+    work_repository.ensure_work_item_metadata(state_dir, "from-work")
+    work_repository.update_work_item_task_dir(
+        state_dir,
+        "from-work",
+        task_dir=from_work_task_dir.as_posix(),
     )
     stub_bundle_request_and_resolve(
         monkeypatch,
@@ -697,6 +643,7 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
             model="gpt-5.4-mini",
             harness=HarnessId.CODEX.value,
             work_id="task-work",
+            context_refs=(_prior("p123", "from-work"),),
             reference_files=("task-only.txt",),
             dry_run=True,
         ),
@@ -707,6 +654,8 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
     prompt = result.launch_plan.attach_command[-1]
     assert (task_dir / "task-only.txt").as_posix() in prompt
     assert "task marker" in prompt
+    assert from_work_task_dir.as_posix() not in prompt
+    assert "from-work marker" not in prompt
     assert "project shadow" not in prompt
 
 
@@ -795,9 +744,15 @@ def test_primary_launch_stale_work_task_dir_warning_reaches_dry_run_result(
 
 def test_primary_launch_invalid_reference_does_not_create_explicit_work(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    # Both places project state can land: the project-local legacy carrier and the
+    # resolved runtime root the bootstrap would mint (which needs project identity).
+    meridian_home = tmp_path / "meridian-home"
+    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
 
     with pytest.raises(FileNotFoundError):
         launch_primary(
@@ -810,8 +765,9 @@ def test_primary_launch_invalid_reference_does_not_create_explicit_work(
             harness_registry=get_default_harness_registry(),
         )
 
-    assert not (project_root / ".meridian" / "work").exists()
-    assert not (project_root / ".meridian" / "id").exists()
+    assert resolve_project_runtime_root_or_none(project_root) is None
+    assert not (project_root / ".meridian").exists()
+    assert not meridian_home.exists()
 
 
 def test_primary_launch_does_not_create_work_named_by_context_from(
@@ -876,37 +832,6 @@ def test_primary_launch_does_not_create_work_named_by_context_from(
     assert result.primary_spawn_id == "p1"
     # Only an explicit `--work` creates an item; a `--from` source's stale name is no item.
     assert work_store.get_work_item(project_state_dir, "inherited-work") is None
-
-
-def test_primary_launch_explicit_work_precedence_over_context_from(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    _write_minimal_mars_config(project_root)
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-
-    result = launch_primary(
-        project_root=project_root,
-        request=PrimaryLaunchRequest(
-            model="gpt-5.4-mini",
-            harness=HarnessId.CODEX.value,
-            work_id="explicit-work",
-            context_refs=(_prior("p123", "from-work"),),
-            dry_run=True,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
-
-    assert result.exit_code == 0
-    assert work_store.get_work_item(project_state_dir, "explicit-work") is None
-    assert work_store.get_work_item(project_state_dir, "from-work") is None
 
 
 @pytest.mark.parametrize(

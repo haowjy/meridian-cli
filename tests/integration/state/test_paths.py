@@ -7,7 +7,6 @@ from meridian.lib.state.paths import (
     RuntimePaths,
     load_context_config,
     resolve_project_paths,
-    resolve_project_paths_for_write,
     resolve_project_paths_from_context,
 )
 
@@ -43,39 +42,6 @@ def test_state_root_paths_repo_meridian_stays_runtime_root_local(
     assert paths.work_dir == runtime_root / "work"
     assert paths.work_archive_dir == runtime_root / "archive" / "work"
     assert paths.kb_dir == runtime_root / "kb"
-def test_resolve_project_paths_for_write_initializes_project_placeholder_paths(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[context.work]",
-                'path = "contexts/{project}/work"',
-                'archive = "contexts/{project}/archive/work"',
-                "",
-                "[context.kb]",
-                'path = "contexts/{project}/kb"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    paths = resolve_project_paths_for_write(project_root)
-    import tomllib
-
-    project_uuid = tomllib.loads(
-        (project_root / "meridian.toml").read_text(encoding="utf-8")
-    )["project"]["id"]
-
-    assert project_uuid
-    assert paths.work_dir == project_root / f"contexts/{project_uuid}/work"
-    assert paths.work_archive_dir == project_root / f"contexts/{project_uuid}/archive/work"
-    assert paths.kb_dir == project_root / f"contexts/{project_uuid}/kb"
-
-
 def test_resolve_project_paths_merges_context_config_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

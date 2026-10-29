@@ -30,22 +30,18 @@ def test_parse_cli_scalar_str_list_accepts_valid_values(
 
 
 @pytest.mark.parametrize(
-    "raw_value",
-    ['[""]', '[" "]', '["" , ""]'],
+    ("raw_value", "message"),
+    [
+        ('[""]', "expected non-empty items"),
+        ('[" "]', "expected non-empty items"),
+        ('["" , ""]', "expected non-empty items"),
+        ("", "expected comma-separated values"),
+    ],
 )
-def test_parse_cli_scalar_str_list_rejects_all_empty_items(raw_value: str) -> None:
-    with pytest.raises(ValueError, match="expected non-empty items"):
+def test_parse_cli_scalar_str_list_rejects_empty_values(raw_value: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         parse_cli_scalar(
             canonical_key="spawn.deny_headless_harnesses",
             value_kind="str_list",
             raw_value=raw_value,
-        )
-
-
-def test_parse_cli_scalar_str_list_rejects_bare_empty_string() -> None:
-    with pytest.raises(ValueError, match="expected comma-separated values"):
-        parse_cli_scalar(
-            canonical_key="spawn.deny_headless_harnesses",
-            value_kind="str_list",
-            raw_value="",
         )

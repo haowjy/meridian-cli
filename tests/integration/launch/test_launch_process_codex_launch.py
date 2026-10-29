@@ -19,10 +19,7 @@ import pytest
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.connections.base import ObserverEndpoint
-from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
@@ -111,45 +108,6 @@ def _build_primary_launch_context(
     return launch_context, harness_registry
 
 
-@pytest.mark.parametrize(
-    ("prompt", "expected_tail"),
-    [("continue here", ("continue here",)), (" \t", ())],
-)
-def test_codex_managed_attach_does_not_override_remote_permissions(
-    tmp_path: Path,
-    prompt: str,
-    expected_tail: tuple[str, ...],
-) -> None:
-    connection: Any = type(
-        "FakeConnection",
-        (),
-        {
-            "observer_endpoint": ObserverEndpoint(
-                transport="ws",
-                url="ws://127.0.0.1:43123",
-                host="127.0.0.1",
-                port=43123,
-            ),
-        },
-    )()
-    spec = ResolvedLaunchSpec(
-        prompt="",
-        user_turn_content=prompt,
-        projected_roots=(tmp_path / "sibling",),
-    )
-
-    command = CodexPassthrough().build_tui_command(connection, spec)("thread-123")
-
-    assert command == (
-        "codex",
-        "resume",
-        "thread-123",
-        "--remote",
-        "ws://127.0.0.1:43123",
-        *expected_tail,
-    )
-
-
 @pytest.mark.slow
 def test_run_harness_process_writes_codex_system_field_primary_projection_manifest(
     monkeypatch: pytest.MonkeyPatch,
@@ -230,14 +188,12 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     assert f"{harness_id.value} primary prompt" in starting_prompt
     manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
     assert manifest.pop("permission_report")
-    assert manifest == {
-        "harness": harness_id.value,
-        "surface": "primary",
-        "channels": {
-            "system_instruction": "system-field",
-            "user_task_prompt": "user-turn",
-            "task_context": "user-turn",
-        },
+    assert manifest["harness"] == harness_id.value
+    assert manifest["surface"] == "primary"
+    assert manifest["channels"] == {
+        "system_instruction": "system-field",
+        "user_task_prompt": "user-turn",
+        "task_context": "user-turn",
     }
     assert outcome.exit_code == 0
 

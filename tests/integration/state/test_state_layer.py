@@ -215,3 +215,14 @@ def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_pat
     assert row.terminal is not None
     assert row.terminal.error is None
     assert row.terminal.duration_secs == 1.0
+
+    # A worker that never called start() reads the same winner from disk.
+    restarted = SpawnLifecycleService(runtime_root)
+    bootstrapped = restarted.bootstrap_from_disk(spawn_id)
+    assert bootstrapped is not None
+    assert bootstrapped.status == "succeeded"
+    assert isinstance(restarted.finalize(spawn_id, "failed", 1, origin="runner"), Declined)
+    persisted = get_spawn(runtime_root, spawn_id)
+    assert persisted is not None
+    assert persisted.terminal is not None
+    assert persisted.terminal.duration_secs == 1.0

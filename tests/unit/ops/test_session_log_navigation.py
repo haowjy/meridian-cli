@@ -100,13 +100,10 @@ def test_decoded_handoff_becomes_the_next_segment_setup_slot() -> None:
     assert segments[1][0].content == "handoff summary"
     assert segments[1][0].is_placeholder is False
 
-
-def test_missing_handoff_reserves_the_segment_boundary_slot() -> None:
-    current = _entries(handoff=None)[1]
-
-    assert [entry.ordinal for entry in current] == [0, 1, 2]
-    assert current[0].is_placeholder is True
-    assert current[0].content.startswith("[compaction handoff slot reserved:")
+    missing = _entries(handoff=None)[1]
+    assert [entry.ordinal for entry in missing] == [0, 1, 2]
+    assert missing[0].is_placeholder is True
+    assert missing[0].content.startswith("[compaction handoff slot reserved:")
 
 
 def test_window_validation_rejects_invalid_ordinals_and_limits() -> None:

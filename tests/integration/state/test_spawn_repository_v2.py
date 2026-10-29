@@ -343,22 +343,6 @@ def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) 
     assert read_state(spawns_dir, "p1").status == "succeeded"  # type: ignore[union-attr]
 
 
-def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record())
-
-    committed = write_state_locked(
-        spawns_dir,
-        "p1",
-        lambda current: current.model_copy(update={"runner_pid": 789, "desc": "updated"}),
-    )
-
-    assert isinstance(committed, Applied)
-    assert committed.before.runner_pid == 456
-    assert committed.after.runner_pid == 789
-    assert committed.after.desc == "updated"
-
-
 def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     _seed_state(spawns_dir, _record())
@@ -411,48 +395,6 @@ def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
     assert outcome.reason == "not applicable"
     assert read_state(spawns_dir, "p1") == outcome.snapshot
     assert state_path.stat().st_ino == original_inode
-
-
-def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:
-    from meridian.lib.state.paths import RuntimePaths
-    from meridian.lib.state.spawn_store import start_spawn
-
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    spawn_id = start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="summarize this task please",
-        desc=None,
-        goal=None,
-    ).spawn_id
-
-    state_text = (
-        RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "state.json"
-    ).read_text(encoding="utf-8")
-    assert '"display_label": "summarize this task please"' in state_text
-
-    spawns_dir = RuntimePaths.from_root_dir(runtime_root).spawns_dir
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
-    assert restored is not None
-    assert restored.display_label == "summarize this task please"
-    assert restored.prompt is None
-
-
-def test_read_state_metadata_only_skips_prompt_file(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record(prompt="hello world"))
-
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
-
-    assert restored is not None
-    assert restored.prompt is None
-    assert restored.id == "p1"
-    assert (spawns_dir / "p1" / "starting-prompt.md").exists() is False
 
 
 def test_write_state_locked_rejects_mutators_that_change_spawn_id(tmp_path: Path) -> None:

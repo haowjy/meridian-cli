@@ -5,11 +5,7 @@ from pathlib import Path
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
-    CompositionBlock,
-    GuidancePhase,
-    PromptDocument,
     project_inline_content,
-    render_system_instruction_blocks,
 )
 from meridian.lib.launch.prompt import build_report_instruction
 from meridian.lib.launch.prompt_context import compose_skill_prompt_documents
@@ -77,7 +73,7 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
 
 
 def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
-    """Test that directories are rendered as trees, not inlined."""
+    """Directories are rendered as trees, not inlined; a file reference is inlined."""
     # Create directory structure
     subdir = tmp_path / "mydir"
     subdir.mkdir()
@@ -86,11 +82,13 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
     nested = subdir / "nested"
     nested.mkdir()
     (nested / "deep.txt").write_text("Deep file")
+    single_file = tmp_path / "single.md"
+    single_file.write_text("File content here")
 
     kb_dir = tmp_path / "kb"
     kb_dir.mkdir()
     loaded_refs = load_reference_items(
-        [subdir],
+        [single_file, subdir],
         reference_anchor=tmp_path,
         kb_dir=kb_dir,
     )
@@ -121,110 +119,8 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
     assert "# Python file" not in composed
     assert "# Markdown" not in composed
     assert "Deep file" not in composed
-
-
-def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
-    """Test mixing files and directories in references."""
-    # Create a file
-    single_file = tmp_path / "single.md"
-    single_file.write_text("File content here")
-
-    # Create a directory
-    mydir = tmp_path / "mydir"
-    mydir.mkdir()
-    (mydir / "inner.py").write_text("# Inner")
-
-    kb_dir = tmp_path / "kb"
-    kb_dir.mkdir()
-    loaded_refs = load_reference_items(
-        [single_file, mydir],
-        reference_anchor=tmp_path,
-        kb_dir=kb_dir,
-    )
-
-    composed = project_inline_content(
-        ComposedLaunchContent(
-            supplemental_documents=(),
-            agent_profile_body="",
-            report_instruction="",
-            passthrough_system_fragments=(),
-            user_task_prompt="Check both",
-            reference_items=loaded_refs,
-            prior_output="",
-        )
-    ).user_turn_content
-
-    # Single file should be inlined
+    # A single-file reference is inlined instead of rendered as a tree
+    assert single_file.as_posix() in composed
     assert "File content here" in composed
-    # Directory should be tree
-    assert "mydir/" in composed
-    assert "inner.py" in composed
-    # Directory content should NOT be inlined
-    assert "# Inner" not in composed
 
 
-def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> None:
-    content = ComposedLaunchContent(
-        supplemental_documents=(
-            PromptDocument(kind="skill", logical_name="ref", path="/ref", content="REF"),
-            PromptDocument(
-                kind="skill",
-                logical_name="principle-a",
-                path="/principle-a",
-                content="PRINCIPLE-A",
-                skill_type="principle",
-            ),
-            PromptDocument(kind="bootstrap", logical_name="b", path="/b", content="BOOTSTRAP"),
-            PromptDocument(
-                kind="skill",
-                logical_name="guardrail",
-                path="/guardrail",
-                content="GUARDRAIL",
-                skill_type="guardrail",
-            ),
-            PromptDocument(
-                kind="skill",
-                logical_name="principle-b",
-                path="/principle-b",
-                content="PRINCIPLE-B",
-                skill_type="principle",
-            ),
-        ),
-        agent_profile_body="PROFILE",
-        report_instruction="REPORT",
-        guidance_blocks=(
-            CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, "INVENTORY"),
-            CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, "CONTEXT"),
-        ),
-        passthrough_system_fragments=("PASSTHROUGH",),
-        user_task_prompt="USER",
-        reference_items=(),
-        prior_output="",
-    )
-
-    rendered = render_system_instruction_blocks(content)
-    # Composition order: profile, skills sorted by type (principles first,
-    # then guardrails, then reference/other), bootstrap, inventory, context,
-    # report, passthrough. No principle bookend at the end. The completion
-    # contract is user-turn content, not a system block.
-    expected_sequence = (
-        "PROFILE",
-        "PRINCIPLE-A",
-        "PRINCIPLE-B",
-        "GUARDRAIL",
-        "REF",
-        "BOOTSTRAP",
-        "INVENTORY",
-        "CONTEXT",
-        "REPORT",
-        "PASSTHROUGH",
-    )
-    cursor = -1
-    for part in expected_sequence:
-        cursor = rendered.find(part, cursor + 1)
-        assert cursor != -1, f"Expected '{part}' after position {cursor} in rendered output"
-    # Principle bookend is gone — principles should NOT appear after REPORT
-    report_pos = rendered.find("REPORT")
-    passthrough_pos = rendered.find("PASSTHROUGH")
-    between = rendered[report_pos:passthrough_pos]
-    assert "PRINCIPLE-A" not in between

@@ -50,21 +50,6 @@ def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
     )
 
 
-def test_resolve_task_cwd_uses_explicit_task_dir_override_first(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    explicit = tmp_path / "explicit-task"
-    explicit.mkdir(parents=True, exist_ok=True)
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        explicit_task_dir=explicit.as_posix(),
-    )
-
-    assert resolved.task_cwd == explicit.resolve()
-    assert resolved.source == "explicit-task-dir"
-
-
 def test_resolve_task_cwd_explicit_task_dir_wins_over_stale_work_item(tmp_path: Path) -> None:
     authority_root, state_dir = _roots(tmp_path)
     work_id, _ = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
@@ -124,21 +109,6 @@ def test_resolve_task_cwd_explicit_work_is_boundary_over_ambient(tmp_path: Path)
     assert resolved.task_cwd == authority_root.resolve()
     assert resolved.source == "explicit-work-authority-root"
     assert resolved.work_item == explicit.name
-
-
-def test_resolve_task_cwd_ambient_work_uses_task_dir(tmp_path: Path) -> None:
-    authority_root, state_dir = _roots(tmp_path)
-    ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
-
-    resolved = resolve_task_cwd(
-        authority_root,
-        project_state_dir=state_dir,
-        ambient_work_id=ambient_id,
-    )
-
-    assert resolved.task_cwd == (tmp_path / "ambient-work-task-dir").resolve()
-    assert resolved.source == "ambient-work-task-dir"
-    assert resolved.work_item == ambient_id
 
 
 def test_resolve_task_cwd_stale_ambient_work_falls_back_with_warning(tmp_path: Path) -> None:
@@ -258,7 +228,7 @@ def test_resolve_task_cwd_explicit_work_task_dir_wins_over_inherited(tmp_path: P
     assert resolved.source == "explicit-work-task-dir"
 
 
-def test_resolve_task_cwd_explicit_work_without_task_dir_preserves_inherited(
+def test_resolve_task_cwd_explicit_work_without_task_dir_uses_authority_root(
     tmp_path: Path,
 ) -> None:
     authority_root, state_dir = _roots(tmp_path)

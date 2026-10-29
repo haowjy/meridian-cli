@@ -25,15 +25,25 @@ OPENCODE_LIVE_MESSAGE_PART_UPDATED = (
 )
 
 
-@pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled", "timed_out"])
-def test_parse_terminal_status_accepts_domain_terminal_values(status: str) -> None:
-    assert parse_terminal_status(status) == status
-
-
-@pytest.mark.parametrize("status", ["queued", "running", "finalizing", "unknown"])
-def test_parse_terminal_status_rejects_nonterminal_values(status: str) -> None:
-    with pytest.raises(ValueError, match="Invalid terminal spawn status"):
-        parse_terminal_status(status)
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("succeeded", "succeeded"),
+        ("failed", "failed"),
+        ("cancelled", "cancelled"),
+        ("timed_out", "timed_out"),
+        ("queued", None),
+        ("running", None),
+        ("finalizing", None),
+        ("unknown", None),
+    ],
+)
+def test_parse_terminal_status(status: str, expected: str | None) -> None:
+    if expected is None:
+        with pytest.raises(ValueError, match="Invalid terminal spawn status"):
+            parse_terminal_status(status)
+    else:
+        assert parse_terminal_status(status) == expected
 
 
 def test_has_durable_report_completion_distinguishes_completion_from_cancel_artifacts() -> None:
@@ -141,104 +151,90 @@ def test_has_durable_report_completion_distinguishes_completion_from_cancel_arti
     assert has_durable_report_completion('{"type":"server.connected","properties":{}}') is False
 
 
-def test_resolve_execution_terminal_state_returns_cancelled_for_cancel_intent() -> None:
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=143,
-        failure_reason="terminated",
-        cancelled=True,
-    )
-    assert status == "cancelled"
-    assert exit_code == 143
-    assert error == "terminated"
+@pytest.mark.parametrize(
+    ("facts", "expected"),
+    [
+        (
+            {"exit_code": 143, "failure_reason": "terminated", "cancelled": True},
+            ("cancelled", 143, "terminated"),
+        ),
+        (
+            {
+                "exit_code": 143,
+                "failure_reason": "terminated",
+                "cancelled": True,
+                "durable_report_completion": True,
+            },
+            ("cancelled", 143, "terminated"),
+        ),
+        (
+            {
+                "exit_code": 0,
+                "failure_reason": None,
+                "cancelled": True,
+                "durable_report_completion": True,
+            },
+            ("succeeded", 0, None),
+        ),
+        (
+            {
+                "exit_code": 1,
+                "failure_reason": "resident_deadline_expired",
+                "durable_report_completion": True,
+                "terminal_status": "timed_out",
+            },
+            ("timed_out", 1, "resident_deadline_expired"),
+        ),
+        (
+            {
+                "exit_code": 1,
+                "failure_reason": "ignored",
+                "durable_report_completion": True,
+                "terminal_status": "succeeded",
+            },
+            ("succeeded", 0, None),
+        ),
+        (
+            {
+                "exit_code": 1,
+                "failure_reason": "crash",
+                "durable_report_completion": True,
+                "terminal_status": None,
+            },
+            ("failed", 1, "crash"),
+        ),
+        (
+            {
+                "exit_code": 1,
+                "failure_reason": "resident_deadline_expired",
+                "durable_report_completion": False,
+                "terminal_status": "timed_out",
+            },
+            ("timed_out", 1, "resident_deadline_expired"),
+        ),
+    ],
+    ids=[
+        "cancel-intent",
+        "cancel-beats-report",
+        "clean-cancel-keeps-report",
+        "timeout-beats-report",
+        "succeeded-terminal",
+        "nonzero-exit-beats-report",
+        "timeout-without-report",
+    ],
+)
+def test_resolve_execution_terminal_state(
+    facts: dict[str, object], expected: tuple[str, int, str | None]
+) -> None:
+    assert resolve_execution_terminal_state(**facts) == expected  # type: ignore[arg-type]
 
-
-def test_resolve_execution_terminal_state_cancellation_outranks_durable_completion() -> None:
-    # A killed attempt is not a success just because extraction found prose.
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=143,
-        failure_reason="terminated",
-        cancelled=True,
-        durable_report_completion=True,
-    )
-    assert status == "cancelled"
-    assert exit_code == 143
-    assert error == "terminated"
-
-
-def test_resolve_execution_terminal_state_keeps_clean_cancel_after_report() -> None:
-    # A late cleanup signal after a clean exit must not downgrade a real report.
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=0,
-        failure_reason=None,
-        cancelled=True,
-        durable_report_completion=True,
-    )
-    assert status == "succeeded"
-    assert exit_code == 0
-    assert error is None
-
-
-def test_resolve_execution_terminal_state_prefers_timeout_over_durable_completion() -> None:
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=1,
-        failure_reason="resident_deadline_expired",
-        durable_report_completion=True,
-        terminal_status="timed_out",
-    )
-
-    assert status == "timed_out"
-    assert exit_code == 1
-    assert error == "resident_deadline_expired"
-
-
-def test_resolve_execution_terminal_state_preserves_succeeded_terminal_durable_completion() -> None:
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=1,
-        failure_reason="ignored",
-        durable_report_completion=True,
-        terminal_status="succeeded",
-    )
-
-    assert status == "succeeded"
-    assert exit_code == 0
-    assert error is None
-
-
-def test_resolve_execution_terminal_state_nonzero_exit_outranks_durable_completion() -> None:
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=1,
-        failure_reason="crash",
-        durable_report_completion=True,
-        terminal_status=None,
-    )
-
-    assert status == "failed"
-    assert exit_code == 1
-    assert error == "crash"
-
-
-def test_resolve_execution_terminal_state_keeps_timeout_without_durable_completion() -> None:
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=1,
-        failure_reason="resident_deadline_expired",
-        durable_report_completion=False,
-        terminal_status="timed_out",
-    )
-
-    assert status == "timed_out"
-    assert exit_code == 1
-    assert error == "resident_deadline_expired"
-
-
-def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
     outcome = resolve_execution_terminal_outcome(
         ExecutionTerminalFacts(
-            exit_code=143,
-            failure_reason="terminated",
-            cancellation_observed=True,
+            exit_code=facts["exit_code"],  # type: ignore[arg-type]
+            failure_reason=facts["failure_reason"],  # type: ignore[arg-type]
+            cancellation_observed=facts.get("cancelled", False),  # type: ignore[arg-type]
+            durable_report_completion=facts.get("durable_report_completion", False),  # type: ignore[arg-type]
+            terminal_status=facts.get("terminal_status"),  # type: ignore[arg-type]
         )
     )
-
-    assert outcome.status == "cancelled"
-    assert outcome.exit_code == 143
-    assert outcome.error == "terminated"
+    assert (outcome.status, outcome.exit_code, outcome.error) == expected

@@ -105,6 +105,7 @@ def test_ensure_user_mars_root_initializes_only_user_root(
     user_root = user_home / "mars"
     bare = tmp_path / "bare"
     bare.mkdir()
+    monkeypatch.chdir(bare)
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
     calls: list[list[str]] = []
 
@@ -116,6 +117,7 @@ def test_ensure_user_mars_root_initializes_only_user_root(
 
     assert ensure_user_mars_root(executable="/fake/mars", run=fake_run) == user_root.resolve()
     assert calls == [["/fake/mars", "init", "--root", user_root.resolve().as_posix()]]
+    # The caller's directory is where the user root must not litter.
     assert not any(bare.iterdir())
 
 

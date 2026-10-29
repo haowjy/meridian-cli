@@ -1,15 +1,18 @@
+import pytest
+
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, decide_reentry
 
 
-def test_decide_reentry_blocks_without_harness_session() -> None:
+@pytest.mark.parametrize(
+    ("live", "has_harness_session", "expected"),
+    [
+        (True, False, Blocked("no harness session recorded; cannot resume or fork")),
+        (True, True, Fork("c1")),
+        (False, True, Resume("c1")),
+    ],
+    ids=["missing-session", "live-session", "stopped-session"],
+)
+def test_decide_reentry(live: bool, has_harness_session: bool, expected: object) -> None:
     assert decide_reentry(
-        chat_id="c1", live=True, has_harness_session=False
-    ) == Blocked("no harness session recorded; cannot resume or fork")
-
-
-def test_decide_reentry_forks_live_session() -> None:
-    assert decide_reentry(chat_id="c1", live=True, has_harness_session=True) == Fork("c1")
-
-
-def test_decide_reentry_resumes_stopped_session() -> None:
-    assert decide_reentry(chat_id="c1", live=False, has_harness_session=True) == Resume("c1")
+        chat_id="c1", live=live, has_harness_session=has_harness_session
+    ) == expected

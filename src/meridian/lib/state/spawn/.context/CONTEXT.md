@@ -81,8 +81,9 @@ not restate that contract. There is no public unlocked write path — the prior
 two-tier model (owner writes without lock / external writes with lock) was collapsed
 in PR #422.
 
-The conformance guard `tests/contract/test_state_write_conformance.py` rejects new
-raw writes to authoritative state files at CI.
+The conformance guard against raw writes to authoritative state files is the `raw-write`
+rule in `src/meridian/dev/lints.py`, which both gates run before the tests; its allowlist
+names each function that legitimately writes raw, with a justification.
 
 ## Pure Transitions
 

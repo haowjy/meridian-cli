@@ -379,7 +379,8 @@ async def test_execute_with_streaming_without_owned_signal_stays_unbound(
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code in (0, 1, 2)
+    # The fake run fails; the persisted identity below is the contract under test.
+    assert exit_code == 1
     assert row is not None
     assert row.harness_session_id is None
     assert row.harness_session_id == _UnboundOpenCodeConnection.observed_start_session_id
@@ -436,7 +437,8 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code in (0, 1, 2)
+    # The fake run fails; the persisted identity below is the contract under test.
+    assert exit_code == 1
     assert row is not None
     assert row.harness_session_id == "connect-opencode-session"
     assert row.harness_session_id == _OpenCodeConnectSessionConnection.observed_start_session_id
@@ -501,7 +503,8 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code in (0, 1, 2)
+    # The fake run fails; the persisted identity below is the contract under test.
+    assert exit_code == 1
     assert row is not None
     assert row.control_root == tmp_path.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()

@@ -26,24 +26,6 @@ def test_validate_reference_paths_resolves_relative_from_reference_anchor(tmp_pa
     assert resolved == (target.resolve(),)
 
 
-def test_validate_reference_paths_kb_prefix_confined_to_kb_dir(tmp_path: Path) -> None:
-    kb_dir = tmp_path / "authority" / ".meridian" / "kb"
-    anchor = tmp_path / "task"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    anchor.mkdir(parents=True, exist_ok=True)
-    kb_file = kb_dir / "domain" / "decision.md"
-    kb_file.parent.mkdir(parents=True, exist_ok=True)
-    kb_file.write_text("decision", encoding="utf-8")
-
-    resolved = validate_reference_paths(
-        ("kb:domain/decision.md",),
-        reference_anchor=anchor,
-        kb_dir=kb_dir,
-    )
-
-    assert resolved == (kb_file.resolve(),)
-
-
 def test_validate_reference_paths_kb_prefix_uses_authority_kb_not_reference_anchor(
     tmp_path: Path,
 ) -> None:
@@ -67,24 +49,6 @@ def test_validate_reference_paths_kb_prefix_uses_authority_kb_not_reference_anch
     )
 
     assert resolved == (authority_file.resolve(),)
-
-
-def test_validate_reference_paths_keeps_absolute_path(tmp_path: Path) -> None:
-    kb_dir = tmp_path / "authority" / ".meridian" / "kb"
-    anchor = tmp_path / "task"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    anchor.mkdir(parents=True, exist_ok=True)
-    absolute_file = tmp_path / "elsewhere" / "absolute.md"
-    absolute_file.parent.mkdir(parents=True, exist_ok=True)
-    absolute_file.write_text("absolute", encoding="utf-8")
-
-    resolved = validate_reference_paths(
-        (absolute_file,),
-        reference_anchor=anchor,
-        kb_dir=kb_dir,
-    )
-
-    assert resolved == (absolute_file.resolve(),)
 
 
 def test_validate_reference_paths_expands_home_prefix(

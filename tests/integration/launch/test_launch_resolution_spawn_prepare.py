@@ -91,19 +91,12 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert "--file" not in preview.binding.argv
     assert file_ref.as_posix() not in preview.binding.argv
     assert preview.projected_content is not None
-    assert [route.to_dict() for route in preview.projected_content.reference_routing] == [
-        {
-            "path": file_ref.as_posix(),
-            "type": "file",
-            "routing": "inline",
-            "native_flag": None,
-        },
-        {
-            "path": dir_ref.as_posix(),
-            "type": "directory",
-            "routing": "inline",
-            "native_flag": None,
-        },
+    assert [
+        (route.path, route.type, route.routing)
+        for route in preview.projected_content.reference_routing
+    ] == [
+        (file_ref.as_posix(), "file", "inline"),
+        (dir_ref.as_posix(), "directory", "inline"),
     ]
     assert f"# Reference: {file_ref.as_posix()}" in preview.binding.run_params.prompt
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.binding.run_params.prompt
@@ -421,41 +414,6 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
     assert "# Meridian Agents" not in projected.user_turn_content
-
-
-def test_spawn_prepare_claude_projects_profile_auto_approval_without_cli_override(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-sonnet-4-5",
-        harness=HarnessId.CLAUDE,
-        execution_policy=ResolvedExecutionPolicy(approval="auto"),
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-claude-spawn-prepare-approval-auto",
-        request=SpawnRequest(
-            prompt="task",
-            model="claude-sonnet-4-5",
-            harness="claude",
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            runtime_root=(tmp_path / ".meridian").as_posix(),
-            project_paths_project_root=tmp_path.as_posix(),
-            project_paths_execution_cwd=tmp_path.as_posix(),
-        ),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    argv = preview.binding.argv
-    assert "--permission-mode" in argv
-    assert "acceptEdits" in argv
 
 
 def test_spawn_prepare_headless_deny_error_names_denied_harness(

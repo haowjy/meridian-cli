@@ -53,9 +53,7 @@ def run_commands(
             for process in tuple(active):
                 # Peek without reaping: the leader reserves the numeric group
                 # id until cleanup, even if all other members already exited.
-                exited = os.waitid(
-                    os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
-                )
+                exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
                 if exited is None or exited.si_pid == 0:
                     continue
                 # A completed leader does not prove that its descendants exited.
@@ -90,7 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = (
         (python, "-m", "ruff", "check", "."),
         (python, "-m", "pyright", "--warnings"),
-        (python, "-m", "meridian.dev.check_launch_paths"),
+        (python, "-m", "meridian.dev.lints"),
         (python, "-m", "meridian.dev.pytests"),
     )
     # A gate must not silently become a last-failed/filtered developer rerun.

@@ -1,14 +1,19 @@
 # Smoke workflows
 
-This directory contains CLI-visible checks that are intentionally separate from
-pytest collection.  The default safety boundary is **disposable state, no
-network, no harness process, and no paid model**.
+This directory contains CLI-visible checks that the default gate leaves out.  The
+default safety boundary is **disposable state, no network, no harness process, and
+no paid model**.
+
+Most files are markdown guides. A few are pytest modules outside `testpaths`, so
+only an explicit `tests/` path collects them: `native_identity_golden.py` is run
+directly, and `test_mars_agents_query.py` exercises the installed `mars` binary
+and skips when it is absent.
 
 ## Tiers
 
 | Tier | How to run | Cost and purpose |
 |---|---|---|
-| Default gate | `uv run pytest-llm` (see `tests/AGENTS.md`) | Fast automated contracts; no smoke/e2e markdown is collected. |
+| Default gate | `uv run pytest-llm` (see `tests/AGENTS.md`) | Fast automated contracts; `tests/smoke/` and `tests/e2e/` are outside `testpaths`. |
 | Cheap executable smoke | `tests/smoke/scripts/cli.sh` | One local workflow: help/version, the 11 rootless helper commands, config CRUD, explicit `-C` project targeting, and empty-state JSON. Uses isolated HOME/XDG/Meridian/native stores; no harness/network/model call. |
 | Complete automated regression | `tests/smoke/scripts/extended.sh` | Explicit `tests/` path includes `tests/extended/` and slower integrity/concurrency/workflow contracts. Pass a focused path to narrow it. |
 | Local opt-in manual | `sanity.md`, `config.md`, `spawn-dry-run.md`, `workspace.md`, `work-items.md`, `plain-directory-roots.md`, and the local e2e guides | Useful exploratory or seam checks. Source `scripts/setup.sh` in a fresh shell and clean up afterward. |

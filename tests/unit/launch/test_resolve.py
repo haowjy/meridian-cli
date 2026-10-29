@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.launch.resolve import (
     AgentLaunchInput,
@@ -24,53 +26,48 @@ def test_parse_duration_seconds() -> None:
     assert parse_duration_seconds("") is None
 
 
-def test_resolve_pi_child_wave_timeout_defaults_to_five_minutes() -> None:
+@pytest.mark.parametrize(
+    ("explicit", "snapshot", "expected"),
+    [
+        (None, None, 300.0),
+        (42.0, {"pi_child_wave_timeout_seconds": 10.0}, 42.0),
+        (None, {"timeouts": {"pi_child_wave_timeout_seconds": 12.5}}, 12.5),
+    ],
+    ids=["default", "explicit", "nested-config"],
+)
+def test_resolve_pi_child_wave_timeout(
+    explicit: float | None,
+    snapshot: dict[str, object] | None,
+    expected: float,
+) -> None:
     assert (
         resolve_pi_child_wave_timeout_seconds(
-            explicit_timeout_seconds=None,
-            config_snapshot=None,
+            explicit_timeout_seconds=explicit,
+            config_snapshot=snapshot,
         )
-        == 300.0
+        == expected
     )
 
 
-def test_resolve_pi_child_wave_timeout_prefers_explicit_timeout() -> None:
-    assert (
-        resolve_pi_child_wave_timeout_seconds(
-            explicit_timeout_seconds=42.0,
-            config_snapshot={"pi_child_wave_timeout_seconds": 10.0},
-        )
-        == 42.0
-    )
-
-
-def test_resolve_pi_child_wave_timeout_uses_nested_config_override() -> None:
-    assert (
-        resolve_pi_child_wave_timeout_seconds(
-            explicit_timeout_seconds=None,
-            config_snapshot={"timeouts": {"pi_child_wave_timeout_seconds": 12.5}},
-        )
-        == 12.5
-    )
-
-
-def test_resolve_pi_task_ping_interval_prefers_explicit() -> None:
+@pytest.mark.parametrize(
+    ("explicit", "snapshot", "expected"),
+    [
+        (120.0, {"pi_task_ping_interval_seconds": 60.0}, 120.0),
+        (None, {"timeouts": {"pi_task_ping_interval_seconds": 3300.0}}, 3300.0),
+    ],
+    ids=["explicit", "nested-config"],
+)
+def test_resolve_pi_task_ping_interval(
+    explicit: float | None,
+    snapshot: dict[str, object] | None,
+    expected: float,
+) -> None:
     assert (
         resolve_pi_task_ping_interval_seconds(
-            explicit_interval_seconds=120.0,
-            config_snapshot={"pi_task_ping_interval_seconds": 60.0},
+            explicit_interval_seconds=explicit,
+            config_snapshot=snapshot,
         )
-        == 120.0
-    )
-
-
-def test_resolve_pi_task_ping_interval_uses_nested_config_override() -> None:
-    assert (
-        resolve_pi_task_ping_interval_seconds(
-            explicit_interval_seconds=None,
-            config_snapshot={"timeouts": {"pi_task_ping_interval_seconds": 3300.0}},
-        )
-        == 3300.0
+        == expected
     )
 
 

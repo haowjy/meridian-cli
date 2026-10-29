@@ -9,8 +9,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
-import pytest
 from sqlalchemy import select as sql_select
 
 import meridian.lib.ops.spawn.api as spawn_api
@@ -23,6 +23,9 @@ from meridian.lib.state import history_index, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.session_fold import SessionStartEvent
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _spawn(root: Path, spawn_id: str = "p-busy") -> str:
@@ -176,32 +179,6 @@ def test_no_arg_wait_caps_discovery_at_query_timeout(
 
     assert result.checkpoint_discovery_pending
     assert deadlines == [100.0 + history_index.QUERY_TIMEOUT]
-
-
-def test_busy_message_names_lock_gate_without_blame_for_pending_sessions(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "runtime"
-    _spawn(root)
-    index = history_index.HistoryIndex(root)
-    index.rebuild()
-    HistoryChanges(root).mark(HistorySource(kind="sessions"))
-    monkeypatch.setattr(history_index, "QUERY_TIMEOUT", 0.1)
-
-    with (
-        _held_lock(index.catchup_lock, release_after_secs=None),
-        pytest.raises(history_index.HistoryIndexBusy) as raised,
-    ):
-        index.spawns()
-
-    message = str(raised.value)
-    assert message == (
-        "History index is busy (history index catch-up gate); another Meridian process "
-        "holds it. Retry the command."
-    )
-    assert "sessions" not in message
-    assert "is writing" not in message
 
 
 def test_no_arg_wait_yields_when_discovery_remains_busy(

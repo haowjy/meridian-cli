@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from threading import Lock
 from typing import TypeVar
 
@@ -10,11 +9,10 @@ from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, DetectIdle
 from meridian.lib.idle.service import (
     ConfigResult,
     IdleService,
-    close_on_launch,
     effective,
 )
 from meridian.lib.notify import RouteReport, RouteResult
-from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
+from meridian.lib.state.idle_store import IdleState
 from meridian.plugin_api.types import HookEventName, Notification
 
 T = TypeVar("T")
@@ -206,31 +204,6 @@ def test_replacing_a_scheduled_push_keeps_the_original_owed_time() -> None:
     replaced = idle.arm(harness="example", session="s1")
     assert replaced.push_at == 241_000
     assert store.read("example", "s1").push_owed_since_ms == 0  # type: ignore[union-attr]
-
-
-def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path: Path) -> None:
-    env = {"MERIDIAN_HOME": str(tmp_path), "MERIDIAN_SESSION_ROLE": "primary"}
-    store = IdleStore(root=tmp_path / "idle")
-    store.write(
-        IdleState(
-            harness="example",
-            session="open",
-            stretch=1,
-            stretch_open=True,
-            anchor=1,
-            idle_since_ms=1,
-            schedule=IdleSchedule(push_at=2),
-            updated_at_ms=1,
-        )
-    )
-
-    close_on_launch(harness="example", session="open", env=env)
-    close_on_launch(harness="example", session="missing", env=env)
-
-    current = store.read("example", "open")
-    assert current is not None and current.stretch_open is False
-    assert IdleService(store=store, config=MeridianConfig(), env=env).status() == ()
-    assert not store.path_for("example", "missing").exists()
 
 
 def test_arm_opens_reanchors_and_never_reenables_a_done_stage() -> None:

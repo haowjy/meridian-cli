@@ -148,6 +148,7 @@ testpaths = [
   "tests/integration/prompt",
   "tests/integration/telemetry",
   "tests/integration/state",
+  "tests/integration/notify",
 ]
 addopts = "-ra -n 4"
 asyncio_mode = "auto"

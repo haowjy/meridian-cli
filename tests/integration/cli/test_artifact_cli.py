@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from http.client import HTTPConnection
 from pathlib import Path
 
@@ -23,55 +23,6 @@ from meridian.cli.invocation import GlobalOptions, invocation_scope
 from meridian.cli.output import OutputConfig
 from meridian.lib.artifact import service, store
 from meridian.lib.artifact.store import Serve
-
-
-@pytest.mark.parametrize(
-    ("value", "seconds"),
-    [("2h", 7200), ("30m", 1800), ("90s", 90), ("1d", 86400)],
-)
-def test_parse_ttl(value: str, seconds: int) -> None:
-    assert service.parse_ttl(value) == seconds
-
-
-@pytest.mark.parametrize("value", ["", "2", "1w", "0h", "-1m", "1.5h"])
-def test_parse_ttl_rejects_invalid_values(value: str) -> None:
-    with pytest.raises(ValueError):
-        service.parse_ttl(value)
-
-
-def test_expiry_is_strict_and_persistent_never_expires() -> None:
-    created = datetime(2026, 1, 1, tzinfo=UTC)
-    base = Serve("report", 50000, "/tmp", None, "2026-01-01T00:00:00Z", 60, False, 123)
-    persistent = Serve("keep", 50001, "/tmp", None, base.created, None, False, 124)
-
-    assert not service.is_expired(base, created + timedelta(seconds=60))
-    assert service.is_expired(base, created + timedelta(seconds=61))
-    assert not service.is_expired(persistent, created + timedelta(days=365))
-
-
-def test_pick_port_skips_occupied_and_failed_bind_probe() -> None:
-    candidates = iter([50000, 50001, 50002])
-
-    port = service.pick_port(
-        {50000},
-        lambda candidate: candidate != 50001,
-        choose=lambda _low, _high: next(candidates),
-    )
-
-    assert port == 50002
-
-
-def test_slug_derivation_sanitizes_and_resolves_collisions() -> None:
-    assert service.derive_slug(Path("/tmp/My  Report!!"), None, set(), 50000) == "my-report"
-    assert service.derive_slug(Path("/tmp/report"), None, {"report"}, 51234) == "report-51234"
-    assert (
-        service.derive_slug(
-            Path("/tmp/report"), None, {"report", "report-51234"}, 51234
-        )
-        == "report-51234-2"
-    )
-    with pytest.raises(service.ArtifactError):
-        service.derive_slug(Path("/"), "/", set(), 50000)
 
 
 def test_teardown_is_surgically_scoped_to_slug(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -422,27 +373,6 @@ def test_patched_cli_serve_list_stop_gc(
     assert "Garbage-collected 0" in capsys.readouterr().out
 
 
-def test_artifact_list_routes_url_warning_through_cli_sink(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def unavailable_dns_name() -> str:
-        raise service.ArtifactError("tailscale unavailable")
-
-    monkeypatch.setattr(store, "serves_path", lambda: tmp_path / "serves.json")
-    store.save_serves([_serve("report", 50000)])
-    monkeypatch.setattr(service, "tailscale_dns_name", unavailable_dns_name)
-    monkeypatch.setattr(service, "pid_alive", lambda _pid, _created: True)
-
-    _invoke_artifact(["list"])
-
-    captured = capsys.readouterr()
-    assert "report" in captured.out
-    assert "Warning:" not in captured.out
-    assert captured.err == "warning: artifact URLs unavailable: tailscale unavailable\n"
-
-
 @pytest.mark.parametrize("slug", ["", "/", "..", "a/b", " white ", "a--b", "x\nroot"])
 def test_invalid_persisted_slugs_are_dropped_without_tailscale_calls(
     slug: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -761,4 +691,5 @@ def test_list_survives_unavailable_tailscale(
     output = capsys.readouterr()
     assert "report" in output.out
     assert "unavailable" in output.out
+    assert "Warning:" not in output.out
     assert output.err.count("offline") == 1

@@ -15,26 +15,21 @@ class Config:
 
 
 @pytest.mark.parametrize(
-    ("ttl_seconds", "expected"),
+    ("ttl_seconds", "cfg", "expected"),
     [
-        (3600, Schedule(push_at=183_000, warn_at=2_823_000)),
-        (300, Schedule(push_at=183_000)),
-        (None, Schedule(push_at=183_000)),
+        (3600, Config(), Schedule(push_at=183_000, warn_at=2_823_000)),
+        (300, Config(), Schedule(push_at=183_000)),
+        (None, Config(), Schedule(push_at=183_000)),
+        (300, Config(warn_minutes=4), Schedule(push_at=None, warn_at=183_000)),
     ],
-    ids=["one-hour", "five-minutes", "unknown"],
+    ids=["one-hour", "five-minutes", "unknown", "warning-must-follow-push"],
 )
 def test_schedule_places_only_windows_that_fit(
     ttl_seconds: int | None,
+    cfg: Config,
     expected: Schedule,
 ) -> None:
-    assert schedule(123_000, ttl_seconds, Config(), push_delay_seconds=60) == expected
-
-
-def test_schedule_drops_push_that_would_not_precede_a_valid_warning() -> None:
-    assert schedule(123_000, 300, Config(warn_minutes=4), push_delay_seconds=60) == Schedule(
-        push_at=None,
-        warn_at=183_000,
-    )
+    assert schedule(123_000, ttl_seconds, cfg, push_delay_seconds=60) == expected
 
 
 @pytest.mark.parametrize(

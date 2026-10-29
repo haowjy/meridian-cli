@@ -89,6 +89,7 @@ def _isolate_control_sockets() -> Iterator[Path]:
 _NATIVE_STORE_ENV = frozenset({
     "CODEX_HOME",
     "CLAUDE_CONFIG_DIR",
+    "OPENCODE_HOME",
     "OPENCODE_DB",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
@@ -98,6 +99,22 @@ _NATIVE_STORE_ENV = frozenset({
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
 })
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Point HOME at an empty per-test directory.
+
+    Native harness stores default under HOME (``~/.claude``, ``~/.codex``,
+    ``~/.local/share/opencode``), so without this a test reads whatever native config
+    the caller has and pass/fail depends on their machine. A test that needs native
+    config sets HOME (or the store variable) itself.
+    """
+
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
 
 
 @pytest.fixture(autouse=True)
