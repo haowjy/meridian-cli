@@ -49,8 +49,8 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
 - `--dry-run` still reports without writing or stopping anything.
 
 **Mixed versions.** Before running v0.18.0, update every worktree and install that shares this
-project's runtime to v0.17.N or later (N is set when that patch ships). Builds older than
-v0.17.N stop listing spawns and stop launching primaries once v0.18.0 has written a spawn.
+project's runtime to v0.17.5 or later. Builds older than
+v0.17.5 stop listing spawns and stop launching primaries once v0.18.0 has written a spawn.
 v0.17.x builds refuse the spawns v0.18.0 created or continued, refuse prune and archive while
 those exist, and may show a child's result a second time: an older build re-delivers a result
 v0.18.0 already consumed, and never loses one. Spawns that an older build archives are not in

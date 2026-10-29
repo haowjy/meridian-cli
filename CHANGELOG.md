@@ -6,6 +6,16 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-29
+
+### Fixed
+- Older builds keep working in a runtime that holds spawn rows written by a newer Meridian.
+
+## [0.17.4] - 2026-10-28
+
+### Fixed
+- `_MERIDIAN_RUNTIME_DIR` now applies inside spawns. Before, a nested process silently ignored it, so a probe that pointed it at a scratch runtime from inside a spawn read and wrote the real runtime. Children of a launch that used the override stay on that runtime. `meridian -C` drops the override only when it targets a different project.
+
 ## [0.17.3] - 2026-10-28
 
 ### Added

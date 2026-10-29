@@ -32,11 +32,12 @@ when a release label is present.
 
 ### Minor and major releases collect on a release branch
 
-Each PR merged to `main` with `release:minor` or `release:major` cuts its own breaking
-release. So breaking work never merges to `main` piece by piece: every minor or major
-release is assembled on an integration branch named `release/v<X>.<Y>.0` (for a major,
-`release/v<X>.0.0`), even when it starts as one PR. Users get one breaking release with one
-set of upgrade notes, and later breaking work for the same version joins the same branch.
+Each PR merged to `main` with `release:minor` or `release:major` cuts its own release. So
+a minor or major release never merges to `main` piece by piece: it is assembled on an
+integration branch named `release/v<X>.<Y>.0` (for a major, `release/v<X>.0.0`), even when
+it starts as one PR. Every other minor or major change made before it ships joins the same
+branch, so users get one release with one set of upgrade notes. Patch-level changes still
+merge to `main` on their own.
 
 1. If `release/v<X>.<Y>.0` doesn't exist yet, create it from `main` and push it. Open its PR
    to `main` as a draft once the first part has merged (GitHub refuses a PR with no
@@ -47,10 +48,10 @@ set of upgrade notes, and later breaking work for the same version joins the sam
    release PR's `## Changelog`: only commits on `main`'s first-parent history reach the
    renderer, so part PRs merged into the release branch never render on their own.
 3. The agent leading the release merges its part PRs into the release branch once each
-   passes its own review and CI; that needs no human approval. Merging the release PR to
-   `main` does.
+   passes its own review and CI, without asking. Merging the release PR to `main` needs the
+   human's approval.
 4. When the last part lands and the combined change passes the full gate, mark the
-   release PR ready, merge it (with approval), and CI releases everything once.
+   release PR ready and, with approval, merge it; CI releases everything once.
 
 Work that must ship separately (for example, a part another release depends on) gets its
 own release. Decide that when the work is planned, not at merge time.

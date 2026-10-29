@@ -74,6 +74,7 @@ from meridian.lib.state.session_fold import (
 from meridian.lib.state.session_store import parse_model_observation
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
+    SpawnStateNewer,
     SpawnStateQuarantined,
     read_state,
     scan_spawn_ids,
@@ -543,7 +544,12 @@ class HistoryIndex:
         old = db.exec_driver_sql(
             "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
         ).first()
-        record = read_state(self.root / "spawns", key, include_prompt=False)
+        try:
+            record = read_state(self.root / "spawns", key, include_prompt=False)
+        except SpawnStateNewer as exc:
+            # A later build wrote this row: treat it as absent (delete-and-refresh below).
+            logger.warning("%s; skipped", exc)
+            record = None
         active = record is not None and (
             record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         )
@@ -1175,7 +1181,26 @@ class HistoryIndex:
             return None
         if generation is not None and failure.generation not in {None, generation}:
             return None
+        if failure.code == "authority" and self._quarantine_is_newer_format(failure.reason):
+            return None  # An older build latched this; this build skips such rows.
         return failure.reason
+
+    @staticmethod
+    def _quarantine_is_newer_format(reason: str) -> bool:
+        """Whether a latched ``Spawn state quarantined: <path>`` names a newer-format row."""
+        prefix = "Spawn state quarantined: "
+        if not reason.startswith(prefix):
+            return False
+        path = Path(reason.removeprefix(prefix))
+        if path.name != "state.json":
+            return False
+        try:
+            read_state(path.parent.parent, path.parent.name, include_prompt=False)
+        except SpawnStateNewer:
+            return True
+        except SpawnStateQuarantined:
+            return False
+        return False
 
     @staticmethod
     def _initialization_error(reason: str, *, persisted: bool = True) -> HistoryIndexIncomplete:
