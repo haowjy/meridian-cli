@@ -249,7 +249,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                     last = row.id
                     try:
                         result = await service.finalize_dead_launch(
-                            SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                            SpawnId(row.id), before_finalize=claim_cleanup
                         )
                         if isinstance(result, SpawnRecord) and result.id in claimed_ids:
                             recovered.append(result)
@@ -308,7 +308,6 @@ def reconcile_active_spawn(
             runtime_root,
         ).finalize_dead_launch(
             SpawnId(record.id),
-            origin="reconciler",
             before_finalize=claim_cleanup,
         )
     )

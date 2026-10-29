@@ -2,7 +2,7 @@
 
 """CRUD operation tests for the spawn store.
 
-Covers: start, get, list, update, next_id, reserve, mark_running, and
+Covers: start, get, list, update, next_id, reserve, record_launch_facts, and
 attempt-exit and runner-exit metadata writes. Finalization and concurrency live in
 test_spawn_store_finalize.py.
 """

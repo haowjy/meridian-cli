@@ -826,6 +826,14 @@ def _spawn_create(
         raise SystemExit(exit_code)
 
 
+def _warn_deprecated_list_filter(flag: str) -> None:
+    print(
+        f"warning: `{flag}` is deprecated and will be removed in the next minor release; "
+        "new spawns go straight to running.",
+        file=sys.stderr,
+    )
+
+
 def _spawn_list(
     emit: Emitter,
     status: Annotated[
@@ -844,8 +852,8 @@ def _spawn_list(
             name="--view",
             help=(
                 "Preset list view: active, recent (recent active spawns), "
-                "all, running, queued, completed, failed, cancelled, timed_out. "
-                "Default: active."
+                "all, running, completed, failed, cancelled, timed_out "
+                "(queued is deprecated). Default: active."
             ),
         ),
     ] = "active",
@@ -901,16 +909,13 @@ def _spawn_list(
             raise ValueError(f"Unsupported spawn status '{status}'")
         normalized_status = SpawnStatus(candidate)
         if normalized_status in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}:
-            print(
-                f"warning: `--status {candidate}` is deprecated and will be removed in the "
-                "next minor release; new spawns go straight to running.",
-                file=sys.stderr,
-            )
+            _warn_deprecated_list_filter(f"--status {candidate}")
     elif failed:
         normalized_statuses = (SpawnStatus.FAILED,)
     else:
-        mapped_statuses = view_map[normalized_view]
-        normalized_statuses = mapped_statuses
+        if normalized_view == "queued":
+            _warn_deprecated_list_filter("--view queued")
+        normalized_statuses = view_map[normalized_view]
 
     result = spawn_list_sync(
         SpawnListInput(

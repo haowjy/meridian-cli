@@ -997,7 +997,7 @@ def run_harness_process(
                         child_pid = identity.pid
                         native_primary_tui_pid = child_pid
                         observe_child(child_pid)
-                        lifecycle_service.mark_running(
+                        lifecycle_service.record_launch_facts(
                             primary_spawn_id,
                             launch_mode=FOREGROUND_LAUNCH_MODE,
                             worker_pid=child_pid,

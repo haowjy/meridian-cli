@@ -68,7 +68,7 @@ from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_id
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.transitions import (
     apply_finalize,
-    apply_mark_running,
+    apply_launch_facts,
 )
 from meridian.lib.state.spawn_aggregate import (
     delete_published_spawn,
@@ -537,7 +537,7 @@ def finalize_spawn(
     )
 
 
-def mark_spawn_running(
+def record_spawn_launch_facts(
     runtime_root: Path,
     spawn_id: SpawnId | str,
     *,
@@ -554,10 +554,10 @@ def mark_spawn_running(
     if runner_pid is not None and resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
-    def mark_running(current: SpawnRecord) -> SpawnRecord | Decline:
+    def record_launch_facts(current: SpawnRecord) -> SpawnRecord | Decline:
         if not _is_active_spawn_status(current.status):
             return Decline("spawn is not active")
-        return apply_mark_running(
+        return apply_launch_facts(
             current,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
@@ -565,7 +565,7 @@ def mark_spawn_running(
             runner_created_at_epoch=resolved_runner_created_at_epoch,
         )
 
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), mark_running)
+    return _write_state_locked(paths.spawns_dir, str(spawn_id), record_launch_facts)
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:

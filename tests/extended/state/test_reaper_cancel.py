@@ -429,7 +429,7 @@ def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(
     assert elapsed < 0.5
 
 
-def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
+def test_spawn_cancel_managed_primary_without_runner_converges_to_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

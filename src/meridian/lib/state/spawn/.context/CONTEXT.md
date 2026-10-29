@@ -85,15 +85,15 @@ raw writes to authoritative state files at CI.
 
 ## Pure Transitions
 
-`transitions.py` functions (`apply_mark_running`, `apply_finalize`) contain no I/O. Each
+`transitions.py` functions (`apply_launch_facts`, `apply_finalize`) contain no I/O. Each
 takes a `SpawnRecord` and returns a new `SpawnRecord` with updated fields. Callers decide
 whether to run on the owner hot path or inside `write_state_locked`'s mutator lambda, then
 pass the same transition function either way.
 
 Rows are created `running` and have one status write after that: the terminal, in the same
-write as the `terminal` facts. `apply_mark_running` only records launch facts (launch mode,
+write as the `terminal` facts. `apply_launch_facts` only records launch facts (launch mode,
 runner and worker PIDs). `queued` and `finalizing` stay readable on rows older builds
-wrote; `validate_transition()` still accepts them.
+wrote; no status transition table remains, since the one write is active → terminal.
 
 ## Harness Exit vs Runner-Exit vs Terminal Facts
 
@@ -118,14 +118,15 @@ Frozen sub-model holding the complete finalized state (`exit_code`,
 `origin`). Written by `apply_finalize()` in `transitions.py`. Does not carry
 status; top-level `status` is the sole status authority. A *derived* terminal (dead launch,
 no stored terminal) takes `finished_at` from an older exit time on the row, else the newest
-mtime of the launch's `output.jsonl`/`stderr.log`, else `started_at`: never `""`, and the
+mtime of the files only the runner appends to (`LaunchPaths.runner_activity`: output, stderr,
+debug, runner lifecycle log, report), else `started_at`: never `""`, and the
 same on every read.
 
 ### PID-liveness hardening: `runner_created_at_epoch`
 
-`psutil.Process(runner_pid).create_time()` captured alongside `runner_pid`.
-Passed to `is_process_alive()` for robust PID-birth-time verification. Falls
-back to `started_at` heuristic when `psutil` raises.
+`psutil.Process(runner_pid).create_time()` captured alongside `runner_pid`. Cancel signals a
+PID only on an exact birth match (`signal_with_birth`); a row with no recorded birth is
+never signalled. Only a lockless legacy row falls back to `legacy_runner_alive`'s start grace.
 
 ## Terminal Write Authority
 
@@ -141,9 +142,6 @@ Pydantic validation and miss the prompt-body stitch from `starting-prompt.md`.
 
 **Don't call `write_state()` from external processes** — use `write_state_locked()`
 with a mutator. Without the lock, external writes race with the runner's hot path.
-
-**Don't skip `validate_status_transition` on production paths** — it guards against
-status regressions (e.g. writing `running` after `success`).
 
 **Don't treat `last_attempt_exit_code == 0` as a spawn-success signal.** It is
 legacy pre-finalization bookkeeping from older builds and can disagree with the final

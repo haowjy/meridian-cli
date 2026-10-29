@@ -659,7 +659,7 @@ async def _run_streaming_attempt(
             recording_selection = True
             on_running(connection)
             recording_selection = False
-        lifecycle_service.mark_running(
+        lifecycle_service.record_launch_facts(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
@@ -1301,28 +1301,27 @@ async def execute_with_streaming(
             )
         finalized_usage = conclusion.extracted.usage if conclusion.extracted is not None else None
         terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
-        with signal_coordinator().mask_termination():
-            spawn_service = build_spawn_application_service_from_roots(
-                project_root,
-                runtime_root,
-                lifecycle=lifecycle_service,
+        spawn_service = build_spawn_application_service_from_roots(
+            project_root,
+            runtime_root,
+            lifecycle=lifecycle_service,
+        )
+        execution_outcome = await spawn_service.complete_execution(
+            run.spawn_id,
+            terminal_facts,
+            origin="runner",
+            duration_secs=duration_seconds,
+            usage=finalized_usage,
+        )
+        conclusion.exit_code = execution_outcome.resolved.exit_code
+        conclusion.failure_reason = execution_outcome.resolved.error
+        outcome = execution_outcome.completion
+        if not outcome.wrote:
+            logger.info(
+                "Runner finalize skipped; spawn already terminal or missing.",
+                spawn_id=str(run.spawn_id),
+                harness_id=str(launch_context.harness.id),
             )
-            execution_outcome = await spawn_service.complete_execution(
-                run.spawn_id,
-                terminal_facts,
-                origin="runner",
-                duration_secs=duration_seconds,
-                usage=finalized_usage,
-            )
-            conclusion.exit_code = execution_outcome.resolved.exit_code
-            conclusion.failure_reason = execution_outcome.resolved.error
-            outcome = execution_outcome.completion
-            if not outcome.wrote:
-                logger.info(
-                    "Runner finalize skipped; spawn already terminal or missing.",
-                    spawn_id=str(run.spawn_id),
-                    harness_id=str(launch_context.harness.id),
-                )
 
         runner_phase[0] = "completed"
         lifecycle_active[0] = False

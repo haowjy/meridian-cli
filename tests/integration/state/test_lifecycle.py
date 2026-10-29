@@ -215,14 +215,14 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
     assert hook.event_types == ["spawn.created"]
 
 
-def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
+def test_owner_record_launch_facts_clears_stale_runner_created_epoch_when_pid_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
-    service.mark_running(
+    service.record_launch_facts(
         spawn_id,
         runner_pid=os.getpid(),
         runner_created_at_epoch=222.0,
@@ -233,7 +233,7 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
 
     monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
     hook.event_types.clear()
-    service.mark_running(
+    service.record_launch_facts(
         spawn_id,
         runner_pid=999997,
     )
@@ -245,14 +245,14 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert hook.event_types == []
 
 
-def test_mark_running_terminal_decline_emits_no_event(tmp_path: Path) -> None:
+def test_record_launch_facts_terminal_decline_emits_no_event(tmp_path: Path) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
     service.finalize(spawn_id, "succeeded", 0, origin="runner")
     hook.event_types.clear()
 
-    service.mark_running(spawn_id, runner_pid=999997)
+    service.record_launch_facts(spawn_id, runner_pid=999997)
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
@@ -282,7 +282,7 @@ def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: 
     spawn_id = _start_spawn(service)
 
     spawn_store.update_spawn(tmp_path, spawn_id, claude_config_dir="/tmp/claude-config")
-    service.mark_running(spawn_id, launch_mode="background")
+    service.record_launch_facts(spawn_id, launch_mode="background")
 
     updated = spawn_store.get_spawn(tmp_path, spawn_id)
     assert updated is not None

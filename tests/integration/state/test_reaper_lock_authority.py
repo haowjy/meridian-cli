@@ -110,11 +110,11 @@ def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
     assert reconciled.terminal is not None
     assert reconciled.terminal.exit_code == 130
     assert reconciled.terminal.error == "cancelled by user"
-    assert reconciled.terminal.origin == "reconciler"
+    assert reconciled.terminal.origin == "cancel"
 
 
 @pytest.mark.asyncio
-async def test_cancel_dead_runner_with_report_is_cancelled(tmp_path: Path) -> None:
+async def test_cancel_dead_runner_with_report_keeps_the_completion(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
     (runtime_root / "spawns" / spawn_id / "report.md").write_text(
@@ -128,13 +128,13 @@ async def test_cancel_dead_runner_with_report_is_cancelled(tmp_path: Path) -> No
 
     outcome = await service.cancel(SpawnId(spawn_id))
 
-    assert outcome.status == "cancelled"
+    assert outcome.status == "succeeded"
     persisted = spawn_store.get_spawn(runtime_root, spawn_id)
     assert persisted is not None
-    assert persisted.status == "cancelled"
+    assert persisted.status == "succeeded"
     assert persisted.terminal is not None
-    assert persisted.terminal.exit_code == 130
-    assert persisted.terminal.error == "cancelled"
+    assert persisted.terminal.exit_code == 0
+    assert persisted.terminal.error is None
 
 
 def test_reaper_cleans_managed_primary_fallback_processes(tmp_path: Path) -> None:

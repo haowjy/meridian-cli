@@ -337,7 +337,7 @@ def cancel_managed_primary(
     # the launcher scope is actually gone.
     launcher_scope = next((scope for scope in scopes if scope.scope_id == "launcher"), None)
     if results and launcher_scope is not None:
-        _wait_for_scope_exit(launcher_scope, timeout=1.0)
+        _wait_for_scope_exit(launcher_scope, timeout=min(1.0, grace_seconds))
 
     # 3. Terminate backend and TUI if still unreleased.
     for scope in scopes:

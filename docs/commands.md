@@ -618,7 +618,7 @@ directory actually read, so a Mars-provided skill points at
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
 
-`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued` and `--status finalizing` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
+`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued`, `--status finalizing` and `--view queued` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
 ## Spawn References
 

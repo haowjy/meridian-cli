@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, validate_transition
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import TokenUsage
@@ -22,7 +21,7 @@ if TYPE_CHECKING:
     )
 
 
-def apply_mark_running(
+def apply_launch_facts(
     record: SpawnRecord,
     *,
     launch_mode: LaunchMode | None = None,
@@ -57,16 +56,8 @@ def apply_finalize(
     usage: TokenUsage | None = None,
     error: str | None = None,
     managed_scopes_pending: bool = False,
-    validate_status_transition: bool = True,
 ) -> SpawnRecord:
     """Return ``record`` with terminal status and metrics applied."""
-
-    if (
-        validate_status_transition
-        and record.status != "unknown"
-        and record.status not in TERMINAL_SPAWN_STATUSES
-    ):
-        validate_transition(record.status, SpawnStatus(status))
 
     from meridian.lib.state.spawn.model import TerminalFacts
 

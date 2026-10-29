@@ -1,7 +1,7 @@
 """Authoritative lifecycle-transition seam for spawn state.
 
 This module is the single service boundary for lifecycle transitions
-(``start``, ``mark_running``, ``record_exited``, ``finalize``, ``cancel``) and post-write
+(``start``, ``record_launch_facts``, ``finalize``) and post-write
 lifecycle hook dispatch.
 Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
 
@@ -12,7 +12,7 @@ Design decisions in effect:
 - D9: No async — synchronous methods matching spawn_store
 - D12: First-class LifecycleEvent over ad hoc callbacks
 - D13: Metrics may be None on spawn.finished — fire for persisted terminal writes,
-  including authoritative replacement of reconciler terminal state
+  including a terminal a runner writes over a derived one
 
 Import note
 -----------
@@ -36,7 +36,6 @@ import structlog
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
-    TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
     is_terminal_spawn_status,
 )
@@ -304,7 +303,7 @@ class SpawnLifecycleService:
             self._dispatch(event)
             self._emit_telemetry_event("spawn.started", self._record)
 
-    def mark_running(
+    def record_launch_facts(
         self,
         spawn_id: str,
         *,
@@ -315,12 +314,12 @@ class SpawnLifecycleService:
     ) -> None:
         """Record launch facts (modes and PIDs). Rows are created ``running``; no event."""
         with bind_lifecycle_correlation(
-            self._correlation(operation="mark_running", spawn_id=spawn_id)
+            self._correlation(operation="record_launch_facts", spawn_id=spawn_id)
         ):
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            outcome = _spawn_store().mark_spawn_running(
+            outcome = _spawn_store().record_spawn_launch_facts(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -395,45 +394,6 @@ class SpawnLifecycleService:
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
-
-    def cancel(
-        self,
-        spawn_id: str,
-        exit_code: int = 130,
-        *,
-        duration_secs: float | None = None,
-        usage: TokenUsage | None = None,
-        finished_at: str | None = None,
-        error: str | None = None,
-        clock: Clock | None = None,
-    ) -> bool:
-        """Cancel a spawn — convenience for finalize(status='cancelled', origin='cancel')."""
-        with bind_lifecycle_correlation(
-            self._correlation(
-                operation="cancel",
-                spawn_id=spawn_id,
-                outcome_category=SpawnFailureCategory.CANCELLATION,
-                terminal_status="cancelled",
-                terminal_origin="cancel",
-            )
-        ):
-            outcome = self.finalize(
-                spawn_id,
-                "cancelled",
-                exit_code,
-                origin="cancel",
-                duration_secs=duration_secs,
-                usage=usage,
-                finished_at=finished_at,
-                error=error,
-                clock=clock,
-            )
-            from meridian.lib.state.spawn.repository import Applied
-
-            return (
-                isinstance(outcome, Applied)
-                and outcome.before.status not in TERMINAL_SPAWN_STATUSES
-            )
 
     # ------------------------------------------------------------------
     # Internal helpers

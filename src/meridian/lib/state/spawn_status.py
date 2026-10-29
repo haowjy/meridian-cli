@@ -32,6 +32,7 @@ from meridian.lib.state.spawn.repository import (
     read_quarantined_chat_id,
     read_state,
 )
+from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import epoch_to_iso_timestamp, iso_timestamp_to_epoch
 
 CRASHED = "crashed"
@@ -59,44 +60,53 @@ def read_cancel_intent(launch: LaunchPaths, row: SpawnRecord) -> CancelIntent | 
 def _observed_end(launch: LaunchPaths, row: SpawnRecord) -> str:
     """When a dead launch last showed life, from files only: the same on every read.
 
-    Older runners recorded an exit time on the row; otherwise the newest write to the
-    launch's output or stderr, else the start.
+    Older runners recorded an exit time on the row; otherwise the newest write to a file
+    only the runner appends to (``LaunchPaths.runner_activity``), else the start.
     """
     if row.runner_exit is not None:
         return row.runner_exit.exited_at
     if row.last_attempt_exited_at:
         return row.last_attempt_exited_at
     mtimes: list[float] = []
-    for path in (launch.output, launch.stderr_log):
+    for path in launch.runner_activity:
         with suppress(OSError):
             mtimes.append(path.stat().st_mtime)
     return epoch_to_iso_timestamp(max(mtimes)) if mtimes else row.started_at or ""
 
 
-def _derived_terminal(
-    launch: LaunchPaths, row: SpawnRecord, intent: CancelIntent | None
-) -> TerminalFacts:
-    """Fit a pure derived outcome into v3's required terminal-facts shape."""
-    observed_at = _observed_end(launch, row)
-    return TerminalFacts(
-        exit_code=intent.exit_code if intent is not None else 1,
-        finished_at=observed_at,
-        published_at=observed_at,
-        error=intent.error if intent is not None else CRASHED,
-        origin="cancel" if intent is not None else "reconciler",
-    )
-
-
 def derive(runtime_root: Path, row: SpawnRecord) -> SpawnRecord:
-    """Overlay status on a row read while its launch lock was free (no runner)."""
+    """Overlay status on a row read while its launch lock was free (no runner).
+
+    A cancel request makes the outcome ``cancelled`` unless the launch left a durable
+    report: the report is a completion the cancel arrived too late to undo. Everything
+    that ends a dead launch (cancel, doctor, the repair pass) inherits this one rule.
+    """
     if not is_active_spawn_status(row.status):
         return row
     launch = LaunchPaths.for_row(runtime_root, row)
     intent = read_cancel_intent(launch, row)
+    observed_at = _observed_end(launch, row)
+    if intent is None:
+        status, exit_code, error, origin = SpawnStatus.FAILED, 1, CRASHED, "reconciler"
+    elif spawn_report_has_durable_completion(launch):
+        status, exit_code, error, origin = SpawnStatus.SUCCEEDED, 0, None, "reconciler"
+    else:
+        status, exit_code, error, origin = (
+            SpawnStatus.CANCELLED,
+            intent.exit_code,
+            intent.error,
+            "cancel",
+        )
     return row.model_copy(
         update={
-            "status": SpawnStatus.CANCELLED if intent is not None else SpawnStatus.FAILED,
-            "terminal": _derived_terminal(launch, row, intent),
+            "status": status,
+            "terminal": TerminalFacts(
+                exit_code=exit_code,
+                finished_at=observed_at,
+                published_at=observed_at,
+                error=error,
+                origin=origin,
+            ),
         }
     )
 
@@ -201,7 +211,9 @@ class Finished:
 
 @dataclass(frozen=True)
 class LockFree:
-    """No runner holds the launch: it has no outcome yet and nothing will write one."""
+    """No runner holds the launch: nothing will write its outcome. ``row`` is the derived one."""
+
+    row: SpawnRecord
 
 
 @dataclass(frozen=True)
@@ -211,25 +223,33 @@ class Running:
 
 type LaunchPoll = Finished | LockFree | Running
 
+POLL_INTERVAL_SECS = 0.1
 
-def poll_launch(runtime_root: Path, spawn_id: str) -> LaunchPoll:
-    """One cheap answer to "has this launch finished", from a single ``read_derived``."""
+
+def poll_launch(runtime_root: Path, spawn_id: str, n: int | None) -> LaunchPoll:
+    """One cheap answer to "has launch ``n`` finished", from a single ``read_derived``.
+
+    ``n`` is unused until a spawn can have more than one launch (every row is launch 1).
+    """
+    del n
     row, derived = _read_launch(runtime_root, spawn_id)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
     if derived:
-        return LockFree()
+        return LockFree(row)
     return Running() if is_active_spawn_status(row.status) else Finished(row)
 
 
-async def wait_until(runtime_root: Path, spawn_id: str, *, until: float) -> LaunchPoll:
-    """Poll every 0.1 s until the launch finishes, loses its runner, or ``until`` (monotonic)."""
+async def wait_until(
+    runtime_root: Path, spawn_id: str, n: int | None, *, until: float
+) -> LaunchPoll:
+    """Poll until the launch finishes, loses its runner, or ``until`` (monotonic)."""
     while True:
-        poll = poll_launch(runtime_root, spawn_id)
+        poll = poll_launch(runtime_root, spawn_id, n)
         remaining = until - time.monotonic()
         if not isinstance(poll, Running) or remaining <= 0:
             return poll
-        await asyncio.sleep(min(0.1, remaining))
+        await asyncio.sleep(min(POLL_INTERVAL_SECS, remaining))
 
 
 def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[SpawnRecord]:
@@ -269,6 +289,7 @@ def quarantine_may_observe(
 
 __all__ = [
     "CRASHED",
+    "POLL_INTERVAL_SECS",
     "Claimed",
     "DeadLaunchClaim",
     "Finished",

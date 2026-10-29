@@ -527,6 +527,11 @@ class LaunchPaths:
         return self.dir / "cancel.json"
 
     @property
+    def runner_activity(self) -> tuple[Path, ...]:
+        """Files only the runner appends to; their newest mtime is its last sign of life."""
+        return (self.output, self.stderr_log, self.debug, self.runner_lifecycle, self.report)
+
+    @property
     def accepted_signals(self) -> Path:
         return self.dir / "accepted-signals.json"
 

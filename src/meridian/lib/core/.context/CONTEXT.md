@@ -97,11 +97,10 @@ the harness selected for the child launch.
 State transitions with post-write observer dispatch:
 
 ```
-start()           → spawn.created + spawn.started (rows are created `running`)
-mark_running()    → records launch facts (modes, PIDs); no status change, no event
-record_exited()   → spawn.process_exited telemetry only; the row keeps no copy
-finalize()        → spawn.finished
-cancel()          → finalize(status='cancelled')
+start()                → spawn.created + spawn.started (rows are created `running`)
+record_launch_facts()  → records launch facts (modes, PIDs); no status change, no event
+record_exited()        → spawn.process_exited telemetry only; the row keeps no copy
+finalize()             → spawn.finished
 ```
 
 `LifecycleHook.on_event(event)` — exceptions are logged but never block
@@ -202,27 +201,17 @@ Persisted timestamp parsing lives in `state/timestamps.py`;
 `iso_timestamp_to_epoch(timestamp)` normalizes trailing `Z` to UTC, treats naive
 timestamps as UTC, and returns `None` for blank or invalid values.
 
-### Centralized Completion-vs-Cancel Precedence
+### Completion-vs-Cancel Precedence
 
-`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...,
-execution_exit_code=None, execution_terminal_status=None)` is the shared resolution rule
-for durable completion against an outstanding cancel request. It delegates to
-`resolve_execution_terminal_state` — there is one precedence authority:
+Two places decide it, each once:
 
-- With execution evidence (the runner's `execution_exit_code` / `execution_terminal_status`),
-  a cancelled or abnormal (non-zero) exit outranks report text; a clean exit keeps a
-  genuine report.
-- With no execution evidence, a durable report is authoritative → `succeeded`, else a
-  cancel request → `cancelled` with the caller's `cancel_exit_code`.
-- Neither report nor cancel → `None` (caller falls back to its own outcome).
-
-This helper remains in the application service's explicit compatibility path for
-lockless legacy rows. Lock-backed dead launches use their runner-lifetime lock instead:
-a cancel request becomes `cancelled`; otherwise loss without an outcome becomes
-`failed`/`crashed`, regardless of report text. The runner path (`complete_execution`)
-folds the durable `cancel_intent` into its `ExecutionTerminalFacts` and calls
-`resolve_execution_terminal_state` directly instead of letting a second rule override
-the resolved result.
+- **A live runner** (`complete_execution`) folds the durable `cancel_intent` into its
+  `ExecutionTerminalFacts` and calls `resolve_execution_terminal_state`: recorded execution
+  facts outrank report text, and a durable report outranks a bare cancel.
+- **A launch with no runner** (`state.spawn_status.derive`) decides for cancel, doctor and the
+  repair pass alike: a cancel request makes it `cancelled` unless the launch left a durable
+  report, which makes it `succeeded` (origin `reconciler`). With no cancel request, loss
+  without an outcome is `failed`/`crashed`, whatever the report says.
 
 ### Execution Terminal State Resolution
 
@@ -250,8 +239,8 @@ compatibility ([cancel](cancel.md)), but does not apply to dead lock-backed laun
 `resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
 runner path.
 
-Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`;
-it does not consult report text.
+Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`; it
+consults the report only to let it outrank a cancel request.
 
 ## Related KB
 

@@ -1,10 +1,9 @@
 # qa-validated: test-suite-redesign
 
-"""Finalization, mark_finalizing, and concurrency tests for the spawn store.
+"""Finalization and concurrency tests for the spawn store.
 
-Covers: state-machine enforcement on mark_finalizing, authority/reconciler
-write ordering, concurrent thread and cross-process finalize races.  CRUD
-operations live in test_spawn_store_crud.py.
+Covers: authority/reconciler write ordering, concurrent thread and cross-process
+finalize races.  CRUD operations live in test_spawn_store_crud.py.
 """
 
 from __future__ import annotations
