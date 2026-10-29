@@ -62,7 +62,9 @@ bare path
       report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
     attempt-N/                      — legacy retry evidence; new runs do not create it
     observed-launches.json          — this parent's consumed launches (`<spawn id>:<n>`),
-                                      explicit-wait leases and wait pins; shared by Pi and
+                                      explicit-wait leases and wait pins, plus the `delivered`
+                                      map (what the last `spawn collect` handed over, per
+                                      spawn, so `spawn ack` consumes exactly that); shared by Pi and
                                       Claude delivery; goes with the spawn, so pruning one
                                       forgets its consumption
     observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
@@ -231,14 +233,11 @@ context roots together.
 
 ### Terminal Write Authority
 
-Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. The
-finalize mutator checks `current.terminal.origin` against the incoming origin
-under the per-spawn lock: a reconciler-origin terminal write can be replaced by
-an authoritative origin (`runner`, `launcher`, `launch_failure`, `cancel`); all
-other terminal-to-terminal writes are rejected. Terminal statuses are
-`succeeded`, `failed`, `cancelled`, and `timed_out`. The reaper will not
-overwrite a spawn that the runner already terminated with a higher-authority
-origin.
+Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. Under the
+per-spawn lock the finalize mutator accepts a write only while the row is active; any
+terminal-to-terminal write is declined (`Decline("spawn is already terminal")`), whatever
+its origin. `origin` is recorded on the terminal facts for diagnosis, not ranked.
+Terminal statuses are `succeeded`, `failed`, `cancelled`, and `timed_out`.
 
 ### Reconciliation Behavior
 
@@ -252,8 +251,10 @@ repair. It fails closed unless `is_root_side_effect_process()` is true and deleg
 `SpawnApplicationService.finalize_dead_launch()`, the only dead-launch outcome writer.
 That method writes only after `claim_dead_launch()` returns `Claimed`, retaining the
 free runner-lifetime `launch.lock`, and persists the same status, exit code, and error
-that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
-disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
+that `read_derived()` projects. `derive()` checks the durable report first: a report
+yields `succeeded`, with or without a cancel request. Without a report, cancel intent
+yields `cancelled`, otherwise runner disappearance yields `failed`/`crashed`. Origin and
+timestamps may differ. It never
 finalizes a lockless legacy row.
 
 Before finalization it snapshots exact cleanup targets into
@@ -268,19 +269,17 @@ and 32 recoveries per pass, lockless rows untouched, and a busy index skips the 
 Only doctor still reads every `state.json` (`iter_repair_candidates`), and only doctor
 resolves a terminal row's leftover reaper claim.
 
-Cancel convergence uses the same launch-lock claim for lock-backed rows. A report or
-runner-exit breadcrumb is not an outcome: when the runner is gone, cancel intent still
-yields `cancelled`. Lockless legacy rows retain the old report/cancel precedence until
-their explicit-command compatibility path is removed.
+Cancel convergence uses the same launch-lock claim for lock-backed rows, so it follows
+`derive()`: the durable report wins over a cancel request, and a runner-exit breadcrumb
+alone is not an outcome. Lockless legacy rows retain the old report/cancel precedence
+until their explicit-command compatibility path is removed.
 
 **Managed-primary orphan cleanup:**
 
 For managed primaries, the claim combines recorded spawn-owned scopes with fallback
 targets derived from the managed-primary snapshot when available. Birth-validated
 scope cleanup consumes only that claim after terminal finalization. Successful targets
-gain durable release markers; failed targets remain claimed for retry. A runner-origin
-terminal write clears a reconciler claim without signalling because runner authority
-supersedes reconciler cleanup intent.
+gain durable release markers; failed targets remain claimed for retry.
 
 ## Patterns
 

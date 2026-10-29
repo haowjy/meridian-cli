@@ -23,8 +23,6 @@ Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spa
 | `report.md` | Final report when the spawn reached report emission |
 | `output.jsonl` | Raw harness stdout (prefer `meridian spawn log`) |
 | `stderr.log` | Harness stderr, warnings, and errors |
-| `prompt.md` | Prompt materialized for the harness |
-| `harness.pid` | Foreground harness PID file |
 
 ## First Checks
 

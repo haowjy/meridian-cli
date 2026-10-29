@@ -76,8 +76,10 @@ writes route through `mutate_published_spawn_artifact()` at write time, includin
 awaited dispatches. Never append directly after an async boundary.
 
 **Terminal publication belongs to `SpawnManager`.** The drain loop supplies its
-classification, but `stop_spawn()` must still publish the finalized lifecycle row,
-resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
+classification, but `stop_spawn()` must still publish the terminal outcome, resolve
+completion, and start that spawn's cleanup when a bounded drain is cancelled.
+`SpawnManager` does not write the spawn row: the caller that awaits the outcome (launch
+runner, `streaming_serve`) writes it through `SpawnApplicationService.complete_spawn()`.
 
 **Drain loop ordering is fixed** (diagram above). Hooks see each delivered frame before any subscriber. Don't reintroduce a persisted runner event stream.
 
