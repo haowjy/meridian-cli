@@ -85,7 +85,7 @@ def _session_execution_context(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     spawn_id: str | None = None,
-    launch_slot: LaunchSlot | None = None,
+    launch_slot: LaunchSlot,
 ) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
         runtime_root=runtime_root,

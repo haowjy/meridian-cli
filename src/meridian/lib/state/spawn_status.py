@@ -206,16 +206,14 @@ def _read_current(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None
     return derive(runtime_root, row), True
 
 
-def _read_launch(
-    runtime_root: Path, spawn_id: str, n: int | None = None
-) -> tuple[SpawnRecord | None, bool]:
+def _read_launch(runtime_root: Path, spawn_id: str, n: int) -> tuple[SpawnRecord | None, bool]:
     """``_read_current``, or launch ``n``'s archive once the spawn has moved past it.
 
     The archive is terminal by construction: the holder that starts launch ``n+1`` writes
     ``n``'s outcome before copying its row.
     """
     row, derived = _read_current(runtime_root, spawn_id)
-    if row is not None and n is not None and row.launch_number > n:
+    if row is not None and row.launch_number > n:
         return read_launch_archive(runtime_root, spawn_id, n), False
     return row, derived
 
@@ -267,6 +265,12 @@ def poll_launch(runtime_root: Path, spawn_id: str, n: int) -> LaunchPoll:
     """
     row, derived = _read_launch(runtime_root, spawn_id, n)
     if row is None:
+        current = read_derived(runtime_root, spawn_id)
+        if current is not None:
+            raise LaunchNotFound(
+                f"Launch {n} of spawn '{spawn_id}' has no archive "
+                f"(the spawn is at launch {current.launch_number})"
+            )
         raise LaunchNotFound(f"Spawn '{spawn_id}' not found")
     if derived:
         return LockFree(row)

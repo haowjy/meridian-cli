@@ -22,6 +22,7 @@ from meridian.lib.launch import context as launch_context_module
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
@@ -554,6 +555,7 @@ async def test_streaming_claude_exec_receives_prebound_identity(
         status="queued",
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
             harness="claude",

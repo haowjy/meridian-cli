@@ -25,6 +25,7 @@ from meridian.lib.launch.process import ProcessOutcome
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -655,6 +656,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
     from meridian.lib.launch.types import PrimarySessionMetadata
 
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=root,
         metadata=PrimarySessionMetadata(
             harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=()

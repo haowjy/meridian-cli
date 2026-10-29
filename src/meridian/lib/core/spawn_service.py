@@ -81,6 +81,7 @@ from meridian.lib.state.spawn_status import (
     derive,
     legacy_runner_alive,
     overlay_derived,
+    poll_launch,
     read_cancel_intent,
     wait_until,
 )
@@ -197,11 +198,11 @@ class CancelOutcome:
     status: SpawnStatus
     origin: SpawnOrigin
     exit_code: int
+    # The launch this outcome is for: the one the cancel observed, not necessarily the current.
+    launch_number: int
     already_terminal: bool = False
     model: str | None = None
     harness: str | None = None
-    # The launch this outcome is for: the one the cancel observed, not necessarily the current.
-    launch_number: int = 1
 
 
 @dataclass(frozen=True)
@@ -735,8 +736,14 @@ class SpawnApplicationService:
                     terminal.exit_code,
                     origin=terminal.origin,
                     error=terminal.error,
+                    expected_n=row.launch_number,
                 )
-                return outcome.snapshot
+                snapshot = outcome.snapshot
+                if snapshot is None or snapshot.launch_number == row.launch_number:
+                    return snapshot
+                # A continue converted the row and started the next launch during the sweep:
+                # the finish was declined, and this launch's outcome is in its archive.
+                return poll_launch(self._runtime_root, row.id, row.launch_number).row
             return None
 
     async def cancel_descendants(self, root_id: SpawnId | str) -> set[str]:
@@ -934,6 +941,7 @@ class SpawnApplicationService:
         usage: TokenUsage | None = None,
         error: str | None = None,
         managed_scopes_pending: bool = False,
+        expected_n: int | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -955,6 +963,7 @@ class SpawnApplicationService:
             usage=usage,
             error=error,
             managed_scopes_pending=managed_scopes_pending,
+            expected_n=expected_n,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (

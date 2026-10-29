@@ -25,8 +25,16 @@ def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
     return task_line
 
 
+# The Pi extension's per-report bound (``MAX_REPORT_BYTES``).
+DELIVERY_REPORT_MAX_BYTES = 64 * 1024
+
+
 def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
-    """Render header-only notifications for terminal child details."""
+    """Render header-only notifications for terminal child details.
+
+    A detail that carries ``report_body`` is a run the spawn has since moved past, so
+    ``spawn show`` would describe the next run: its report goes inline instead.
+    """
 
     rendered: list[str] = []
     for row in rows:
@@ -48,7 +56,14 @@ def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
             and row.task_cwd != row.authority_root
         ):
             lines.append(task_dir_line(row.task_cwd, row.work_id))
-        lines.append(f"meridian spawn show {row.spawn_id}")
+        if row.report_body is None:
+            lines.append(f"meridian spawn show {row.spawn_id}")
+        else:
+            encoded = row.report_body.encode("utf-8")
+            lines.append("Report of this run (the spawn has since continued):")
+            lines.append(encoded[:DELIVERY_REPORT_MAX_BYTES].decode("utf-8", errors="ignore"))
+            if len(encoded) > DELIVERY_REPORT_MAX_BYTES:
+                lines.append(f"[Report truncated after {DELIVERY_REPORT_MAX_BYTES} bytes]")
         rendered.append("\n".join(lines))
     return "\n\n".join(rendered)
 

@@ -132,12 +132,14 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
 protocol:
 
 - `spawn collect --exclude p1,p2` returns exactly one JSON object with
-  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. `ids` are launch keys
-  (`p7:2`: spawn `p7`, launch 2), which `--exclude` and `spawn ack` take back (a bare spawn ID
-  to `ack` means its current launch). It never
-  consumes. Index discovery is parent-scoped; polling re-reads only still-owed
-  authority rows with derived status.
-- Owed membership is background direct children of all primary generations for
+  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. `ids` are bare,
+  de-duplicated spawn IDs (launches are internal), which `--exclude` and `spawn ack` take
+  back; `--exclude pN` excludes every launch of `pN`. It never consumes, but a delivery
+  records the launches it delivered (`delivered: {pN: [K, ...]}`) in the caller's
+  `observed-launches.json`, one write per delivery, so `ack` can consume exactly those.
+  Index discovery is parent-scoped; polling re-reads only still-owed authority rows with
+  derived status.
+- Owed membership (`state/spawn_ownership.owed_launches`, shared with the Pi drain) is background direct children of all primary generations for
   `MERIDIAN_CHAT_ID`, plus the background launches a continue moved past while still owed
   to one of those parents (`owed_launches`, projected into the index's side table; their
   rows are `launches/<n>/launch.json`, whoever the spawn belongs to now), minus consumption read across those same generations and
@@ -153,11 +155,16 @@ protocol:
 - A delivery admits at most 32 results. Each member is header-only: identity and
   outcome, worker, failure and distinct task directory when present, then a
   `meridian spawn show <id>` lookup. The collector does not read report bodies;
-  Claude leads explicitly read one with `spawn show`. Printing a terminal report body
+  Claude leads explicitly read one with `spawn show`. The exception is a launch the spawn
+  has since continued past: `spawn show` and `report show` describe the next launch, so that
+  member carries its own report inline (`delivery_detail`; 64 KiB, the Pi path's bound),
+  and so does the owed list of a no-argument `spawn wait`. Printing a terminal report body
   through `spawn show` or `spawn report show` consumes it, as do `spawn wait`
   completion, `spawn ack`, and a `spawn cancel` that reports `cancelled`.
-- `spawn ack <ids...>` writes those launch keys under the caller's current primary and
-  returns exactly `{acked: [...]}`; it fails when that primary's row is gone. The CLI
+- `spawn ack <ids...>` consumes, under the caller's current primary, exactly the launches
+  the last delivery recorded for each ID and drops the record. With no record (a person
+  running `ack`) it consumes the ID's finished, owed, unconsumed launches, never one still
+  running. It returns exactly `{acked: [...]}` and fails when that primary's row is gone. The CLI
   refuses `spawn ack -C` before calling the operation. Reading across the chat is what
   makes an ack written after resume consume a child of an earlier primary.
 

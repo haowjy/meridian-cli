@@ -98,8 +98,9 @@ class LaunchHandle(AbstractContextManager["LaunchHandle"]):
 class LaunchSlot(AbstractContextManager["LaunchSlot"]):
     """Own a staged capability before the spawn ID has been allocated."""
 
-    def __init__(self) -> None:
-        self._handle: LaunchHandle | None = None
+    def __init__(self, handle: LaunchHandle | None = None) -> None:
+        """``handle``: one the process already holds (a background worker's adopted one)."""
+        self._handle: LaunchHandle | None = handle
 
     @property
     def handle(self) -> LaunchHandle:
@@ -111,13 +112,6 @@ class LaunchSlot(AbstractContextManager["LaunchSlot"]):
     def held(self) -> LaunchHandle | None:
         """The bound handle, or ``None`` before the slot is bound."""
         return self._handle
-
-    @classmethod
-    def holding(cls, handle: LaunchHandle) -> LaunchSlot:
-        """A slot over a handle the process already holds (a background worker's adopted one)."""
-        slot = cls()
-        slot._handle = handle
-        return slot
 
     def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
         if self._handle is not None:
@@ -210,8 +204,8 @@ def take_handoff_fd() -> int:
     return fd
 
 
-def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
-    """Validate the inherited description and publish this worker's identity."""
+def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchSlot:
+    """Validate the inherited description, publish this worker's identity, return its bound slot."""
     from meridian.lib.state.spawn_store import update_spawn
 
     handle = LaunchHandle(SpawnId(spawn_id), fd)
@@ -221,4 +215,4 @@ def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> Launc
     except BaseException:
         handle.close()
         raise
-    return handle
+    return LaunchSlot(handle)

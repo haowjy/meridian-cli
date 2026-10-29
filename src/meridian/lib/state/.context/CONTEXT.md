@@ -626,12 +626,17 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   lock and never recreate a deleted spawn directory; readers union the current file
   with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
   best-effort shown-result observations wait up to one second and preserve their
-  output when the lock or filesystem is unavailable.
+  output when the lock or filesystem is unavailable. `LaunchKey(spawn_id, n)` is the one
+  key type; `str()` of it is the ledger entry. `legacy_view()` is the one place an older
+  build's bare-ID file becomes launch-1 entries. A `delivered` map records what the last
+  `spawn collect` handed out so `spawn ack` consumes exactly that.
 - `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
   primary owns every primary generation of its chat, anyone else owns only itself. Also
   owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which
   the Pi spawn-watch extension mirrors as `isBackgroundLaunch`. `spawn collect`, the Pi
-  launch's spawn-watch scope, and the Pi drain all read it here.
+  launch's spawn-watch scope, and the Pi drain all read it here. `owed_launches()` is the
+  one rule for which launches are owed to a parent set (current background children plus
+  the index's `owed_launches` side table); `spawn collect` and the Pi drain both call it.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

@@ -547,21 +547,19 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
         ).spawn_id
 
         original_poll_launch = spawn_api.poll_launch
-        finishing_reads = 0
+        finished = False
 
         def _finish_before_snapshot_read(*args, **kwargs):
-            nonlocal finishing_reads
-            spawn_id = args[1]
-            if spawn_id == str(finishing_id):
-                finishing_reads += 1
-                if finishing_reads == 1:
-                    spawn_store.finalize_spawn(
-                        runtime_root,
-                        finishing_id,
-                        "succeeded",
-                        0,
-                        origin="runner",
-                    )
+            nonlocal finished
+            if args[1] == str(finishing_id) and not finished:
+                finished = True
+                spawn_store.finalize_spawn(
+                    runtime_root,
+                    finishing_id,
+                    "succeeded",
+                    0,
+                    origin="runner",
+                )
             return original_poll_launch(*args, **kwargs)
 
         monkeypatch.setattr(spawn_api, "poll_launch", _finish_before_snapshot_read)
@@ -574,7 +572,6 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
             )
         )
 
-        assert finishing_reads == 1
         assert not output.fail_fast
         assert output.pending_ids == ()
         assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {

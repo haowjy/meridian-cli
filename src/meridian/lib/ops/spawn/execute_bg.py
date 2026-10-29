@@ -243,7 +243,7 @@ def _background_worker_main(
                     ctx=resolved_context,
                     prepared=prepared,
                     runtime_root=runtime_root,
-                    launch_slot=LaunchSlot.holding(launch_lock),
+                    launch_slot=launch_lock,
                 )
             )
         except Exception:

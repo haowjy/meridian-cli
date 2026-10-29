@@ -1,7 +1,8 @@
 """Crash-safe consumption, wait-lease and wait-pin state for spawn results.
 
 A result is one launch of a spawn, so every entry is keyed ``"<spawn id>:<n>"``
-(:func:`launch_key`). ``observed-launches.json`` is the only file written. The files older
+(``str(LaunchKey)``; the string form exists only in these files). ``observed-launches.json``
+is the only file written. The files older
 builds wrote (``observed-spawns.json``, keyed by bare spawn ID) are read and never written:
 a bare ID is launch 1, which is exact because an older build cannot read a v4 row and so only
 ever consumed launch 1.
@@ -12,9 +13,9 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Container, Iterable, Mapping
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import psutil
 from pydantic import Field, StrictInt
@@ -29,10 +30,25 @@ from meridian.lib.state.spawn_aggregate import (
     published_artifact_lock,
 )
 
+if TYPE_CHECKING:
+    from meridian.lib.state.spawn.model import SpawnRecord
 
-def launch_key(spawn_id: str, n: int) -> str:
-    """The ledger key of one launch."""
-    return f"{spawn_id}:{n}"
+
+class LaunchKey(NamedTuple):
+    """One launch of a spawn: what is owed, leased, pinned and consumed.
+
+    ``str()`` is the ledger key, the only place the string form is used.
+    """
+
+    spawn_id: str
+    n: int
+
+    @classmethod
+    def of(cls, row: SpawnRecord) -> LaunchKey:
+        return cls(row.id, row.launch_number)
+
+    def __str__(self) -> str:
+        return f"{self.spawn_id}:{self.n}"
 
 
 class WaitLease(VersionedPrivateDoc):
@@ -57,6 +73,9 @@ class LaunchObservations(VersionedPrivateDoc):
     waiting_launches: list[str] = Field(default_factory=list)
     wait_reservations: dict[str, WaitLease] = Field(default_factory=dict)
     wait_pins: dict[str, WaitPin] = Field(default_factory=dict)
+    # What the last ``spawn collect`` delivered per spawn, so ``spawn ack`` consumes exactly
+    # those launches and not one that finished or started after the delivery.
+    delivered: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class LegacyLease(VersionedPrivateDoc):
@@ -84,11 +103,35 @@ def _read(path: Path, parent_spawn_id: str) -> LaunchObservations | None:
     return observations
 
 
-def _read_legacy(runtime_root: Path, parent_spawn_id: str) -> LegacyObservations | None:
+def legacy_view(legacy: LegacyObservations) -> LaunchObservations:
+    """An older build's ledger as launch-1 entries: the one place a bare ID gains a launch."""
+    return LaunchObservations(
+        v=1,
+        spawn_id=legacy.spawn_id,
+        updated_at_ms=legacy.updated_at_ms,
+        observed_launches=[str(LaunchKey(item, 1)) for item in legacy.observed_spawn_ids],
+        waiting_launches=[str(LaunchKey(item, 1)) for item in legacy.waiting_spawn_ids],
+        wait_reservations={
+            token: WaitLease(
+                owner_pid=lease.owner_pid,
+                owner_birth_epoch=lease.owner_birth_epoch,
+                expires_at_epoch=lease.expires_at_epoch,
+                launches=[str(LaunchKey(item, 1)) for item in lease.spawn_ids],
+            )
+            for token, lease in legacy.wait_reservations.items()
+        },
+    )
+
+
+def _read_legacy(runtime_root: Path, parent_spawn_id: str) -> LaunchObservations | None:
     legacy = read_model(observed_spawns_path(runtime_root, parent_spawn_id), LegacyObservations)
     if legacy is None or legacy.spawn_id != parent_spawn_id:
         return None
-    return legacy
+    return legacy_view(legacy)
+
+
+def _pin_live(pin: WaitPin, target: str, consumed: Container[str], now: float) -> bool:
+    return pin.expires_at > now and str(LaunchKey(target, pin.n)) not in consumed
 
 
 def record(
@@ -100,6 +143,8 @@ def record(
     observed_add: Iterable[str] = (),
     pins_set: Mapping[str, WaitPin] | None = None,
     pins_clear: Iterable[str] = (),
+    delivered_set: Mapping[str, list[int]] | None = None,
+    ack_delivered: Iterable[str] = (),
     lease_seconds: float = 30.0,
     lock_timeout: float | None = None,
 ) -> bool:
@@ -111,6 +156,10 @@ def record(
     children. A finite ``lock_timeout`` bounds best-effort shown-result observation.
 
     A pin dies with the first of: its launch being consumed, expiry, ``pins_clear``.
+
+    ``delivered_set`` replaces the delivery record of each spawn it names. ``ack_delivered``
+    consumes the recorded launches of those spawns and drops their records; a spawn with no
+    record is left to the caller.
     """
 
     waiting_add_ids = tuple(waiting_add)
@@ -118,8 +167,16 @@ def record(
     observed_add_ids = tuple(observed_add)
     pin_updates = dict(pins_set or {})
     pins_clear_ids = tuple(pins_clear)
+    delivery_updates = dict(delivered_set or {})
+    ack_ids = tuple(ack_delivered)
     if not parent_spawn_id or not (
-        waiting_add_ids or waiting_remove_ids or observed_add_ids or pin_updates or pins_clear_ids
+        waiting_add_ids
+        or waiting_remove_ids
+        or observed_add_ids
+        or pin_updates
+        or pins_clear_ids
+        or delivery_updates
+        or ack_ids
     ):
         return True
 
@@ -154,13 +211,19 @@ def record(
             reservations.pop(token, None)
         waiting = {item for lease in reservations.values() for item in lease.launches}
         observed.update(observed_add_ids)
+        delivered = {**existing.delivered, **delivery_updates}
+        for target in ack_ids:
+            observed.update(str(LaunchKey(target, k)) for k in delivered.pop(target, ()))
+        delivered = {
+            target: remaining
+            for target, ns in delivered.items()
+            if (remaining := [k for k in ns if str(LaunchKey(target, k)) not in observed])
+        }
         pins = {**existing.wait_pins, **pin_updates}
         for target in pins_clear_ids:
             pins.pop(target, None)
         pins = {
-            target: pin
-            for target, pin in pins.items()
-            if pin.expires_at > now and launch_key(target, pin.n) not in observed
+            target: pin for target, pin in pins.items() if _pin_live(pin, target, observed, now)
         }
         return (
             LaunchObservations(
@@ -171,6 +234,7 @@ def record(
                 waiting_launches=sorted(waiting),
                 wait_reservations=reservations,
                 wait_pins=pins,
+                delivered=delivered,
             ),
             None,
         )
@@ -217,7 +281,7 @@ def live_wait_pins(
     return {
         target: pin.n
         for target, pin in observations.wait_pins.items()
-        if pin.expires_at > now and launch_key(target, pin.n) not in taken
+        if _pin_live(pin, target, taken, now)
     }
 
 
@@ -227,18 +291,17 @@ def leased_launches(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[
     now = time.time()
     leased: set[str] = set()
     for parent_id in set(parent_ids):
-        current = _read(observed_launches_path(runtime_root, parent_id), parent_id)
-        if current is not None:
-            for lease in current.wait_reservations.values():
+        for doc in (
+            _read(observed_launches_path(runtime_root, parent_id), parent_id),
+            _read_legacy(runtime_root, parent_id),
+        ):
+            if doc is None:
+                continue
+            for lease in doc.wait_reservations.values():
                 if _lease_live(
                     lease.expires_at_epoch, lease.owner_pid, lease.owner_birth_epoch, now
                 ):
                     leased.update(lease.launches)
-        legacy = _read_legacy(runtime_root, parent_id)
-        if legacy is not None:
-            for old in legacy.wait_reservations.values():
-                if _lease_live(old.expires_at_epoch, old.owner_pid, old.owner_birth_epoch, now):
-                    leased.update(launch_key(spawn_id, 1) for spawn_id in old.spawn_ids)
     return frozenset(leased)
 
 
@@ -246,14 +309,22 @@ def _lease_live(expires_at: float, pid: int, birth_epoch: float, now: float) -> 
     return expires_at > now and is_process_alive_with_birth(pid, birth_epoch)
 
 
+def delivered_launches(runtime_root: Path, parent_spawn_id: str) -> dict[str, list[int]]:
+    """What the parent's last ``spawn collect`` delivered and ``spawn ack`` has not taken."""
+    observations = _read(observed_launches_path(runtime_root, parent_spawn_id), parent_spawn_id)
+    return dict(observations.delivered) if observations is not None else {}
+
+
 __all__ = [
+    "LaunchKey",
     "LaunchObservations",
     "LegacyObservations",
     "WaitLease",
     "WaitPin",
     "clear_wait_pin",
-    "launch_key",
+    "delivered_launches",
     "leased_launches",
+    "legacy_view",
     "live_wait_pins",
     "record",
 ]

@@ -85,7 +85,7 @@ export function isBackgroundLaunch(row: SpawnStateFile): boolean {
   return row.launch_mode === "background";
 }
 
-/** A consumption-ledger key: one launch of a spawn. Mirrors ``spawn_observations.launch_key``. */
+/** A consumption-ledger key: one launch of a spawn. Mirrors ``str(spawn_observations.LaunchKey)``. */
 export function launchKey(id: string, n: number): string {
   return `${id}:${n}`;
 }

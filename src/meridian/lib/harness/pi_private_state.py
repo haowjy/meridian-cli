@@ -12,9 +12,10 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 from meridian.lib.state.json_doc import VersionedPrivateDoc
 from meridian.lib.state.paths import observed_launches_path, observed_spawns_path
 from meridian.lib.state.spawn_observations import (
+    LaunchKey,
     LaunchObservations,
     LegacyObservations,
-    launch_key,
+    legacy_view,
 )
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -127,7 +128,7 @@ def _legacy_entries(ids: Iterable[str]) -> Iterator[str]:
     """A pre-launch work ID: a bash task as written, a spawn as its launch 1."""
     for work_id in ids:
         yield work_id
-        yield launch_key(work_id, 1)
+        yield str(LaunchKey(work_id, 1))
 
 
 def read_pi_consumption_state(
@@ -178,9 +179,7 @@ def read_pi_consumption_state(
     if observations is not None:
         consumed.update(observations.observed_launches)
     if legacy_observations is not None:
-        consumed.update(
-            launch_key(spawn_id, 1) for spawn_id in legacy_observations.observed_spawn_ids
-        )
+        consumed.update(legacy_view(legacy_observations).observed_launches)
     if cleared is not None:
         consumed.update(cleared.cleared_launches)
     if legacy_cleared is not None:

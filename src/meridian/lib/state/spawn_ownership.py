@@ -7,11 +7,13 @@ which mirrors :func:`is_owed_child` as ``isBackgroundLaunch``.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 
 from meridian.lib.state import history_index
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, SpawnRecord
+from meridian.lib.state.spawn_observations import LaunchKey
 
 
 def is_owed_child(row: SpawnRecord) -> bool:
@@ -65,4 +67,31 @@ def owned_parent_ids(
     return tuple(dict.fromkeys((*(row.id for row in generations), caller_spawn_id)))
 
 
-__all__ = ["is_live_chat_primary", "is_owed_child", "owned_parent_ids"]
+def owed_launches(
+    index: history_index.HistoryIndex,
+    parent_ids: Collection[str],
+    *,
+    deadline: float | None = None,
+) -> tuple[LaunchKey, ...]:
+    """Every launch whose result may still be owed to these parents, oldest first.
+
+    The parents' current background children, plus the launches a continue moved past while
+    still owed (the index's ``owed_launches`` side table), whichever parent the spawn belongs
+    to now. Consumption is not subtracted; terminal state is not read. The one owner of this
+    rule: ``spawn collect`` and the Pi drain both call it, and the Pi extension mirrors it.
+    """
+
+    parents = set(parent_ids)
+    moved = index.owed_launches(parents, deadline=deadline)
+    children = index.spawns(parent_id=parents, oldest_first=True, deadline=deadline)
+    return tuple(
+        dict.fromkeys(
+            (
+                *(LaunchKey(*item) for item in moved),
+                *(LaunchKey.of(row) for row in children if is_owed_child(row)),
+            )
+        )
+    )
+
+
+__all__ = ["is_live_chat_primary", "is_owed_child", "owed_launches", "owned_parent_ids"]

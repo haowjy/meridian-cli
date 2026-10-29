@@ -15,7 +15,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.spawn_observations import launch_key
 from meridian.lib.state.spawn_ownership import is_owed_child
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -329,37 +328,26 @@ class PiCompletionEvidence:
     ) -> tuple[DiagnosticBlocker, ...]:
         active_ids = {item.identity for item in self._refresh.assessment.blockers}
         consumed = private.consumed_work_ids
-        # `parent_id == self` is `owned_parent_ids` for a non-primary caller; the
-        # drain runs only for spawned sessions. A primary drain would have to own
-        # every generation of its chat, as the watcher's launch scope does.
+        # The drain runs only for spawned sessions, which own just their own direct children
+        # (``owned_parent_ids``); a primary drain would own every generation of its chat.
+        current = {row.id: row for row in self._refresh.records}
         blockers: list[DiagnosticBlocker] = []
-        for row in self._refresh.records:
-            if (
-                row.parent_id == str(self.spawn_id)
-                and is_owed_child(row)
-                and row.id not in active_ids
-                and launch_key(row.id, row.launch_number) not in consumed
-            ):
-                blockers.append(
-                    DiagnosticBlocker(
-                        source="profile",
-                        code="pi_result_delivery_pending"
-                        if row.terminal
-                        else "pi_result_publication_pending",
-                        identity=row.id,
-                    )
+        for key in self._refresh.owed:
+            if str(key) in consumed:
+                continue
+            row = current.get(key.spawn_id)
+            if row is None or row.launch_number != key.n:
+                # A launch a continue moved past: its archive is terminal.
+                code = "pi_result_delivery_pending"
+            elif row.id in active_ids:
+                continue
+            else:
+                code = (
+                    "pi_result_delivery_pending"
+                    if row.terminal
+                    else "pi_result_publication_pending"
                 )
-            # A launch a continue moved past is still owed (its archive is terminal).
-            blockers.extend(
-                DiagnosticBlocker(
-                    source="profile",
-                    code="pi_result_delivery_pending",
-                    identity=launch_key(row.id, owed.n),
-                )
-                for owed in row.owed_launches
-                if owed.parent_id == str(self.spawn_id)
-                and launch_key(row.id, owed.n) not in consumed
-            )
+            blockers.append(DiagnosticBlocker(source="profile", code=code, identity=str(key)))
         return tuple(blockers)
 
     def _pi_owned_blockers(

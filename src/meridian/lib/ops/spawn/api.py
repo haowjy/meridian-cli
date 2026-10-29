@@ -65,7 +65,7 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_observations import WaitPin, launch_key, live_wait_pins
+from meridian.lib.state.spawn_observations import LaunchKey, WaitPin, live_wait_pins
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_signals import (
@@ -120,13 +120,11 @@ from .models import (
     format_spawn_identity_table,
 )
 from .owed import (
-    LaunchRef,
     consume_result_if_shown,
+    delivery_detail,
     owed_consumed_ids,
     record_result_shown_to_caller,
-    ref_key,
     resolve_owed_finished_rows,
-    row_ref,
     select_delivery_rows,
 )
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
@@ -153,7 +151,7 @@ class _WaitTargetDiscovery:
     active_rows: tuple[SpawnRecord, ...] = ()
     owed_rows: tuple[SpawnRecord, ...] = ()
     # Every finished owed launch seen, including rows the delivery cap held back.
-    owed_candidate_refs: frozenset[LaunchRef] = frozenset()
+    owed_candidate_refs: frozenset[LaunchKey] = frozenset()
     discovery_pending: bool = False
 
 
@@ -1608,7 +1606,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
-    excluded_owed_refs: frozenset[LaunchRef] = frozenset(),
+    excluded_owed_refs: frozenset[LaunchKey] = frozenset(),
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1646,7 +1644,7 @@ def _resolve_wait_targets(
             chat_id=chat_id,
             caller_spawn_id=caller_spawn_id,
             parent_ids=roots,
-            excluded_refs=excluded_owed_refs.union(row_ref(row) for row in pending),
+            excluded_refs=excluded_owed_refs.union(LaunchKey.of(row) for row in pending),
             deadline=deadline,
         )
     except history_index.HistoryIndexBusy:
@@ -1656,7 +1654,7 @@ def _resolve_wait_targets(
         blocked_on_ids=tuple(row.id for row in pending),
         active_rows=tuple(pending),
         owed_rows=select_delivery_rows(owed_candidates),
-        owed_candidate_refs=frozenset(row_ref(row) for row in owed_candidates),
+        owed_candidate_refs=frozenset(LaunchKey.of(row) for row in owed_candidates),
     )
 
 
@@ -1719,7 +1717,7 @@ def _since_started_spawns(
             ctx,
             deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
             excluded_owed_refs=initial_targets.owed_candidate_refs.union(
-                row_ref(row) for row in initial_targets.active_rows
+                LaunchKey.of(row) for row in initial_targets.active_rows
             ),
         )
         if current_targets.discovery_pending:
@@ -1981,8 +1979,8 @@ def spawn_wait_sync(
             raise ValueError("Historical records cannot be waited on")
     observed_keys = tuple(
         (
-            *(launch_key(spawn_id, n) for spawn_id, n in pins.items()),
-            *(ref_key(row_ref(row)) for row in owed_rows),
+            *(str(LaunchKey(spawn_id, n)) for spawn_id, n in pins.items()),
+            *(str(LaunchKey.of(row)) for row in owed_rows),
         )
     )
 
@@ -2013,12 +2011,7 @@ def spawn_wait_sync(
     owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     try:
         owed_spawns = tuple(
-            detail_from_row(
-                project_root=project_root,
-                row=row,
-                include_report_body=False,
-                runtime_root=runtime_root,
-            )
+            delivery_detail(project_root=project_root, runtime_root=runtime_root, row=row)
             for row in owed_rows
         )
         if not blocked_on_ids:
@@ -2045,7 +2038,9 @@ def spawn_wait_sync(
                 record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
-                    waiting_add=tuple(launch_key(spawn_id, pins[spawn_id]) for spawn_id in pending),
+                    waiting_add=tuple(
+                        str(LaunchKey(spawn_id, pins[spawn_id])) for spawn_id in pending
+                    ),
                     pins_set=pin_documents(),
                     lease_seconds=lease_seconds,
                 )
@@ -2133,11 +2128,11 @@ def spawn_wait_sync(
             waiting_remove=observed_keys,
             observed_add=(
                 *(
-                    launch_key(detail.spawn_id, pins[detail.spawn_id])
+                    str(LaunchKey(detail.spawn_id, pins[detail.spawn_id]))
                     for detail in details
                     if _spawn_is_terminal(detail.status)
                 ),
-                *(ref_key(row_ref(row)) for row in owed_rows),
+                *(str(LaunchKey.of(row)) for row in owed_rows),
             ),
         )
 

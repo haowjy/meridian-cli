@@ -94,8 +94,9 @@ Pi extensions coordinate private work with Python through disk files:
 - explicit CLI observations/dismissals in `runtime_root/spawns/<parent>/observed-launches.json`
   and `pi-bash/<parent>/cleared-launches.json`, keyed by launch (`<spawn id>:<n>`); readers
   also merge the pre-launch files as launch 1. The drain holds the session open for a
-  background child's current launch and for every `owed_launches` entry of a child whose
-  parent is this session, until its key is consumed. The disk watcher watches both
+  launch `state/spawn_ownership.owed_launches` returns for this session (read in the same descendant refresh pass as the records) (current background
+  children plus the index's `owed_launches`, so a child a continue re-parented away still
+  counts), until its key is consumed; blocker identity is always the launch key. The disk watcher watches both
   directories and wakes only for the files it reads
 - supervised watcher/storage diagnostics in `delivery-fault.json`
 

@@ -8,7 +8,7 @@ import time
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict
@@ -25,12 +25,21 @@ from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndexBusy
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
-from meridian.lib.state.spawn_observations import launch_key, leased_launches
+from meridian.lib.state.spawn_observations import (
+    LaunchKey,
+    delivered_launches,
+    leased_launches,
+)
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
-from meridian.lib.state.spawn_ownership import is_live_chat_primary, is_owed_child, owned_parent_ids
+from meridian.lib.state.spawn_ownership import (
+    is_live_chat_primary,
+    is_owed_child,
+    owed_launches,
+    owned_parent_ids,
+)
 from meridian.lib.state.spawn_status import read_derived, read_launch
 
-from .models import render_delivery
+from .models import SpawnDetailOutput, render_delivery
 from .query import detail_from_row
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
@@ -76,30 +85,12 @@ class SpawnAckOutput(BaseModel):
 _EMPTY = SpawnCollectOutput(kind="empty", ids=(), text="")
 
 
-type LaunchRef = tuple[str, int]
-"""One launch of a spawn: ``(spawn id, n)``. What is owed, leased and consumed is a launch."""
-
-
-def row_ref(row: SpawnRecord) -> LaunchRef:
-    return (row.id, row.launch_number)
-
-
-def ref_key(ref: LaunchRef) -> str:
-    return launch_key(*ref)
-
-
-def parse_ref_key(key: str) -> LaunchRef | None:
-    """``"p7:2"`` -> ``("p7", 2)``; anything else is not a launch key."""
-    spawn_id, _, n = key.rpartition(":")
-    return (spawn_id, int(n)) if spawn_id and n.isdecimal() and int(n) >= 1 else None
-
-
 @dataclass(frozen=True)
 class OwedSpawnScope:
     """Fixed launch candidates and the parents whose observations consume them."""
 
     parent_ids: tuple[str, ...]
-    candidates: tuple[LaunchRef, ...]
+    candidates: tuple[LaunchKey, ...]
 
 
 @dataclass(frozen=True)
@@ -107,12 +98,35 @@ class OwedSnapshot:
     """Readable, unleased owed rows plus candidates that cannot settle yet.
 
     A row is one launch's: the spawn's current row, or the archive of a launch a continue
-    moved past. ``pending_keys`` and ``unavailable_keys`` are launch keys.
+    moved past.
     """
 
     rows: tuple[SpawnRecord, ...]
-    pending_keys: tuple[str, ...]
-    unavailable_keys: tuple[str, ...]
+    pending_keys: tuple[LaunchKey, ...]
+    unavailable_keys: tuple[LaunchKey, ...]
+
+
+def delivery_detail(
+    *, project_root: Path, runtime_root: Path, row: SpawnRecord
+) -> SpawnDetailOutput:
+    """A row's detail for ``render_delivery``, with its report when it is a past run.
+
+    Once a continue starts the next launch, ``spawn show`` and ``spawn report show`` describe
+    that one, so a delivered earlier launch carries its own report.
+    """
+
+    moved = (current := read_derived(runtime_root, row.id)) is not None and (
+        current.launch_number != row.launch_number
+    )
+    detail = detail_from_row(
+        project_root=project_root,
+        row=row,
+        include_report_body=moved,
+        runtime_root=runtime_root,
+    )
+    if moved and detail.report_body is None:
+        return detail.model_copy(update={"report_body": "(no report was written)"})
+    return detail
 
 
 def select_delivery_rows(rows: Sequence[SpawnRecord]) -> tuple[SpawnRecord, ...]:
@@ -172,7 +186,7 @@ def discover_owed_scope(
 
     Candidates are the parents' current background children plus the launches a continue
     moved past while still owed (the index's ``owed_launches`` side table), whichever parent
-    the spawn belongs to now. ``excluded`` holds launch keys or bare spawn IDs.
+    the spawn belongs to now. ``excluded`` holds spawn IDs: every launch of one is excluded.
 
     A primary owns direct children across every primary generation of its chat; a
     nested caller owns only its own direct children (see
@@ -195,16 +209,10 @@ def discover_owed_scope(
     if not parent_ids:
         return OwedSpawnScope(parent_ids=(), candidates=())
 
-    index = history_index.HistoryIndex(runtime_root)
-    children = index.spawns(parent_id=set(parent_ids), oldest_first=True, deadline=deadline)
-    moved = index.owed_launches(set(parent_ids), deadline=deadline)
+    owed = owed_launches(history_index.HistoryIndex(runtime_root), parent_ids, deadline=deadline)
     consumed = owed_consumed_ids(runtime_root, parent_ids)
     candidates = tuple(
-        ref
-        for ref in dict.fromkeys(
-            (*moved, *(row_ref(row) for row in children if is_owed_child(row)))
-        )
-        if ref_key(ref) not in consumed and not {ref[0], ref_key(ref)} & excluded
+        key for key in owed if str(key) not in consumed and key.spawn_id not in excluded
     )
     return OwedSpawnScope(parent_ids=parent_ids, candidates=candidates)
 
@@ -217,20 +225,19 @@ def read_owed_snapshot(
     """Re-read one fixed candidate set and subtract consumption and live leases."""
 
     consumed = owed_consumed_ids(runtime_root, scope.parent_ids)
-    owed = tuple(ref for ref in scope.candidates if ref_key(ref) not in consumed)
+    owed = tuple(key for key in scope.candidates if str(key) not in consumed)
     if not owed:
         return OwedSnapshot(rows=(), pending_keys=(), unavailable_keys=())
     leased = leased_launches(runtime_root, scope.parent_ids)
     rows: list[SpawnRecord] = []
-    pending: list[str] = []
-    unavailable: list[str] = []
-    for ref in owed:
-        key = ref_key(ref)
-        if key in leased:
+    pending: list[LaunchKey] = []
+    unavailable: list[LaunchKey] = []
+    for key in owed:
+        if str(key) in leased:
             pending.append(key)
             continue
         try:
-            row = read_launch(runtime_root, *ref)
+            row = read_launch(runtime_root, *key)
         except (OSError, SpawnStateQuarantined):
             pending.append(key)
             unavailable.append(key)
@@ -255,7 +262,7 @@ def resolve_owed_finished_rows(
     chat_id: str,
     caller_spawn_id: str,
     parent_ids: tuple[str, ...],
-    excluded_refs: Collection[LaunchRef],
+    excluded_refs: Collection[LaunchKey],
     deadline: float | None = None,
 ) -> tuple[SpawnRecord, ...]:
     """Resolve every finished owed row for no-argument wait, oldest first, uncapped."""
@@ -271,7 +278,7 @@ def resolve_owed_finished_rows(
     return tuple(
         row
         for row in snapshot.rows
-        if row_ref(row) not in excluded_refs and is_terminal_spawn_status(row.status)
+        if LaunchKey.of(row) not in excluded_refs and is_terminal_spawn_status(row.status)
     )
 
 
@@ -329,12 +336,7 @@ def collect_owed_sync(
         if terminal and not (wait_for_batch and snapshot.pending_keys):
             delivered_rows = select_delivery_rows(terminal)
             delivered_details = tuple(
-                detail_from_row(
-                    project_root=project_root,
-                    row=row,
-                    include_report_body=False,
-                    runtime_root=runtime_root,
-                )
+                delivery_detail(project_root=project_root, runtime_root=runtime_root, row=row)
                 for row in delivered_rows
             )
             text = render_delivery(delivered_details)
@@ -342,12 +344,45 @@ def collect_owed_sync(
             taken = owed_consumed_ids(runtime_root, scope.parent_ids) | leased_launches(
                 runtime_root, scope.parent_ids
             )
-            keys = tuple(ref_key(row_ref(row)) for row in delivered_rows)
-            if not any(key in taken for key in keys):
-                return SpawnCollectOutput(kind="delivery", ids=keys, text=text)
+            keys = tuple(LaunchKey.of(row) for row in delivered_rows)
+            if not any(str(key) in taken for key in keys):
+                delivered: dict[str, list[int]] = {}
+                for key in keys:
+                    delivered.setdefault(key.spawn_id, []).append(key.n)
+                _record_best_effort(runtime_root, current_spawn_id, delivered_set=delivered)
+                return SpawnCollectOutput(kind="delivery", ids=tuple(delivered), text=text)
             continue
         time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     return _EMPTY
+
+
+def _record_best_effort(
+    runtime_root: Path, caller_spawn_id: str | None, **changes: Any
+) -> None:
+    """Write to the caller's ledger; a failure costs a repeated delivery, never a lost one."""
+
+    try:
+        recorded = record_spawn_observation(
+            runtime_root=runtime_root,
+            parent_spawn_id=caller_spawn_id,
+            lock_timeout=_OBSERVATION_LOCK_TIMEOUT_SECS,
+            **changes,
+        )
+    except OSError as exc:
+        log = (
+            logger.debug
+            if isinstance(exc, PermissionError) or exc.errno == errno.EROFS
+            else logger.warning
+        )
+        log(
+            "spawn_result_consumption_failed",
+            caller_spawn_id=caller_spawn_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return
+    if not recorded:
+        logger.warning("spawn_result_consumption_not_recorded", caller_spawn_id=caller_spawn_id)
 
 
 def record_result_shown_to_caller(
@@ -361,33 +396,11 @@ def record_result_shown_to_caller(
 
     if runtime_root is None:
         return
-    try:
-        recorded = record_spawn_observation(
-            runtime_root=runtime_root,
-            parent_spawn_id=str(caller.spawn_id) if caller.spawn_id else None,
-            observed_add=(launch_key(spawn_id, launch_number),),
-            lock_timeout=_OBSERVATION_LOCK_TIMEOUT_SECS,
-        )
-    except OSError as exc:
-        log = (
-            logger.debug
-            if isinstance(exc, PermissionError) or exc.errno == errno.EROFS
-            else logger.warning
-        )
-        log(
-            "spawn_result_consumption_failed",
-            spawn_id=spawn_id,
-            caller_spawn_id=str(caller.spawn_id),
-            error_type=type(exc).__name__,
-            error=str(exc),
-        )
-        return
-    if not recorded:
-        logger.warning(
-            "spawn_result_consumption_not_recorded",
-            spawn_id=spawn_id,
-            caller_spawn_id=str(caller.spawn_id),
-        )
+    _record_best_effort(
+        runtime_root,
+        str(caller.spawn_id) if caller.spawn_id else None,
+        observed_add=(str(LaunchKey(spawn_id, launch_number)),),
+    )
 
 
 def consume_result_if_shown(
@@ -411,12 +424,29 @@ def consume_result_if_shown(
         )
 
 
-def _launch_key_of(runtime_root: Path, acked: str) -> str:
-    """A launch key as given, else the bare spawn ID's current launch."""
-    if parse_ref_key(acked) is not None:
-        return acked
-    row = read_derived(runtime_root, acked)
-    return launch_key(acked, row.launch_number if row is not None else 1)
+def _finished_owed_keys(
+    runtime_root: Path, context: RuntimeContext, caller_spawn_id: str, spawn_ids: Collection[str]
+) -> tuple[str, ...]:
+    """Ledger keys of the owed, unconsumed launches of ``spawn_ids`` that have finished.
+
+    A launch still running is never included: acking it would consume a result nobody saw.
+    """
+
+    if not spawn_ids:
+        return ()
+    scope = discover_owed_scope(
+        runtime_root=runtime_root,
+        chat_id=(context.chat_id or "").strip(),
+        caller_spawn_id=caller_spawn_id,
+    )
+    finished: list[str] = []
+    for key in scope.candidates:
+        if key.spawn_id not in spawn_ids:
+            continue
+        row = read_launch(runtime_root, *key)
+        if row is not None and is_terminal_spawn_status(row.status):
+            finished.append(str(key))
+    return tuple(finished)
 
 
 def ack_owed_sync(
@@ -427,8 +457,9 @@ def ack_owed_sync(
 ) -> SpawnAckOutput:
     """Durably consume delivered launches under the caller's primary generation.
 
-    IDs are the launch keys ``spawn collect`` returned; a bare spawn ID acks that spawn's
-    current launch.
+    IDs are the spawn IDs ``spawn collect`` returned. Each consumes exactly the launches that
+    delivery recorded; with no record (a person running ``spawn ack``), the spawn's finished,
+    owed, unconsumed launches. Never a launch still running.
     """
 
     resolved_context = runtime_context(ctx)
@@ -443,10 +474,14 @@ def ack_owed_sync(
             spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip()
         )
     )
+    unrecorded = frozenset(acked) - delivered_launches(runtime_root, parent_spawn_id).keys()
     recorded = record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_spawn_id,
-        observed_add=tuple(_launch_key_of(runtime_root, acked_id) for acked_id in acked),
+        observed_add=_finished_owed_keys(
+            runtime_root, resolved_context, parent_spawn_id, unrecorded
+        ),
+        ack_delivered=acked,
     )
     if not recorded:
         raise ValueError(f"Spawn acknowledgement: spawn '{parent_spawn_id}' is not published")
@@ -461,6 +496,7 @@ __all__ = [
     "ack_owed_sync",
     "collect_owed_sync",
     "consume_result_if_shown",
+    "delivery_detail",
     "discover_owed_scope",
     "owed_consumed_ids",
     "read_owed_snapshot",

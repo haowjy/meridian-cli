@@ -359,6 +359,7 @@ class SpawnLifecycleService:
         finished_at: str | None = None,
         error: str | None = None,
         managed_scopes_pending: bool = False,
+        expected_n: int | None = None,
         clock: Clock | None = None,
     ) -> LockedMutationResult:
         """Finalize a spawn and dispatch spawn.finished for persisted terminal writes."""
@@ -390,6 +391,7 @@ class SpawnLifecycleService:
                     finished_at=finished_at,
                     error=error,
                     managed_scopes_pending=managed_scopes_pending,
+                    expected_n=expected_n,
                     clock=clock,
                 )
             from meridian.lib.state.spawn.repository import Applied

@@ -684,13 +684,20 @@ def finalize_spawn(
     finished_at: str | None = None,
     error: str | None = None,
     managed_scopes_pending: bool = False,
+    expected_n: int | None = None,
     clock: Clock | None = None,
 ) -> LockedMutationResult:
-    """Finalize under the lock when terminal authority accepts the transition."""
+    """Finalize under the lock when terminal authority accepts the transition.
+
+    ``expected_n`` limits the write to that launch: a row a continue has since moved to a
+    later launch declines, so a finish decided for launch K never lands on K+1.
+    """
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def finalize(current: SpawnRecord) -> SpawnRecord | Decline:
+        if expected_n is not None and current.launch_number != expected_n:
+            return Decline(f"spawn is at launch {current.launch_number}, not {expected_n}")
         if not _is_active_spawn_status(current.status):
             logger.info(
                 "Finalize rejected: spawn already terminal.",

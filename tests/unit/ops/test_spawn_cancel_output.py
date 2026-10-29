@@ -12,6 +12,7 @@ def test_spawn_cancel_reports_deadline_outcome_as_finalizing() -> None:
             status=SpawnStatus.FINALIZING,
             origin="cancel",
             exit_code=1,
+            launch_number=1,
         )
     )
 
