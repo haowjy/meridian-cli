@@ -15,7 +15,7 @@ def test_identity_survives_mutation_and_transfer(tmp_path: Path) -> None:
     root = tmp_path / "original"
     spawn_id = start_spawn(
         root, chat_id="c1", model="model", agent="agent", harness="codex", prompt="hello"
-    )
+    ).spawn_id
     original = get_spawn(root, spawn_id)
     assert original is not None
     assert isinstance(original.history_id, UUID)
@@ -46,7 +46,7 @@ def test_identity_survives_mutation_and_transfer(tmp_path: Path) -> None:
 def test_unidentified_record_is_not_rewritten_by_reads(tmp_path: Path) -> None:
     spawn_id = start_spawn(
         tmp_path, chat_id="c1", model="model", agent="agent", harness="codex", prompt="hello"
-    )
+    ).spawn_id
     state_path = tmp_path / "spawns" / str(spawn_id) / "state.json"
     raw = json.loads(state_path.read_text())
     raw.pop("history_id", None)

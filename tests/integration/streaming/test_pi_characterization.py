@@ -22,6 +22,7 @@ from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoo
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_completion_profile import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json, write_pi_bash_record
 
 
@@ -48,7 +49,7 @@ _start_coordinator = PiDrainScenario.start
 
 
 def _write_done_signal(runtime_root: Path, spawn_id: str) -> None:
-    path = spawn_signal_path(runtime_root, spawn_id, "done")
+    path = spawn_signal_path(launch_paths(runtime_root, spawn_id), "done")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("test\n", encoding="utf-8")
 
@@ -113,11 +114,11 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / str(_SPAWN_ID) / "delivery-receipts.json",
+            tmp_path / "pi-bash" / str(_SPAWN_ID) / "launch-receipts.json",
             {
                 "v": 1,
                 "spawn_id": str(_SPAWN_ID),
-                "messages": {"child-admission": [child_id]},
+                "messages": {"child-admission": [f"{child_id}:1"]},
             },
         )
         disk_wake = await coordinator.handle_aux_wake()
@@ -132,7 +133,7 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
                         "customType": "meridian-spawn-watch",
                         "details": {
                             "ids": [child_id],
-                            "work_ids": [child_id],
+                            "work_ids": [f"{child_id}:1"],
                             "delivery_id": "child-admission",
                         },
                     },

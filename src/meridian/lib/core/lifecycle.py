@@ -1,8 +1,8 @@
 """Authoritative lifecycle-transition seam for spawn state.
 
 This module is the single service boundary for lifecycle transitions
-(``start``, ``mark_running``, ``record_exited``, ``record_runner_exit``,
-``mark_finalizing``, ``finalize``, ``cancel``) and post-write lifecycle hook dispatch.
+(``start``, ``record_launch_facts``, ``finalize``) and post-write
+lifecycle hook dispatch.
 Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
 
 Design decisions in effect:
@@ -12,7 +12,7 @@ Design decisions in effect:
 - D9: No async — synchronous methods matching spawn_store
 - D12: First-class LifecycleEvent over ad hoc callbacks
 - D13: Metrics may be None on spawn.finished — fire for persisted terminal writes,
-  including authoritative replacement of reconciler terminal state
+  including a terminal a runner writes over a derived one
 
 Import note
 -----------
@@ -36,7 +36,6 @@ import structlog
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
-    TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
     is_terminal_spawn_status,
 )
@@ -50,7 +49,10 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
+from meridian.lib.launch.signals import signal_coordinator
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
 if TYPE_CHECKING:
@@ -114,11 +116,15 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 # ---------------------------------------------------------------------------
 
 
-def generate_event_id(spawn_id: str, event_type: str, sequence: int) -> UUID:
-    """Generate a stable spawn-event ID using UUID v5."""
+def generate_event_id(spawn_id: str, n: int, event_type: str) -> UUID:
+    """Generate a stable event ID for one launch of a spawn, using UUID v5.
+
+    Launch 1 hashes to the ID the old always-zero ``sequence`` gave, so events of spawns that
+    started before launches keep their identity; launch 2 would otherwise dedupe against 1.
+    """
 
     namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
-    name = f"meridian:spawn:{spawn_id}:{event_type}:{sequence}"
+    name = f"meridian:spawn:{spawn_id}:{event_type}:{n - 1}"
     return uuid.uuid5(namespace, name)
 
 
@@ -143,6 +149,7 @@ class LifecycleEvent:
     # Spawn context (always present)
     spawn_id: str
     parent_id: str | None
+    # Whose spawn: the owner's chat, not the child's own session chat.
     chat_id: str | None
     work_id: str | None
 
@@ -222,18 +229,18 @@ class SpawnLifecycleService:
         *,
         dispatch_events: bool = True,
         launch_lock: LaunchSlot,
-    ) -> str:
-        """Persist a spawn row from ``reservation`` and optionally dispatch spawn.created."""
+    ) -> LaunchPaths:
+        """Persist a spawn row from ``reservation``; return the launch it published."""
         return self._start_from_reservation(
             reservation, dispatch_events=dispatch_events, launch_lock=launch_lock
         )
 
-    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> str:
+    def reserve(self, reservation: SpawnReservation, *, launch_lock: LaunchSlot) -> LaunchPaths:
         """Persist a spawn row without dispatching lifecycle events."""
         return self.start(reservation, dispatch_events=False, launch_lock=launch_lock)
 
     def announce(self, spawn_id: str) -> None:
-        """Dispatch spawn.created and initial telemetry for a reserved row."""
+        """Dispatch spawn.created (a first launch only) and spawn.started for a launch's row."""
         with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
             record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
             if record is None:
@@ -247,13 +254,13 @@ class SpawnLifecycleService:
         *,
         dispatch_events: bool,
         launch_lock: LaunchSlot,
-    ) -> str:
+    ) -> LaunchPaths:
         with bind_lifecycle_correlation(
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
             session_metadata = reservation.session_metadata
             # Authoritative transition write still happens in _spawn_store().
-            result_id = _spawn_store().start_spawn(
+            launch = _spawn_store().start_spawn(
                 self._runtime_root,
                 chat_id=reservation.chat_id,
                 owner_chat_id=reservation.owner_chat_id,
@@ -284,24 +291,73 @@ class SpawnLifecycleService:
                 clock=reservation.clock,
                 launch_lock=launch_lock,
             )
-            allocate_spawn_sequence(str(result_id))
-            record = _spawn_store().get_spawn(self._runtime_root, result_id)
+            allocate_spawn_sequence(str(launch.spawn_id))
+            record = _spawn_store().get_spawn(self._runtime_root, launch.spawn_id)
             self._record = record
             if dispatch_events:
                 self._dispatch_spawn_started_events(status=reservation.status)
-            return str(result_id)
+            return launch
+
+    def reopen(
+        self,
+        reservation: SpawnReservation,
+        *,
+        launch_lock: LaunchSlot,
+        dispatch_events: bool = True,
+    ) -> SpawnRecord:
+        """Start the next launch of the spawn ``launch_lock`` holds; return its new row.
+
+        ``reservation`` carries what the launch is told, as for ``start``: its model and
+        paths replace the last launch's. The spawn's history, agent, skills and policy stay;
+        ``desc`` and ``work_id`` replace the spawn's own only when set. Dispatches
+        ``spawn.started`` (never ``spawn.created``).
+        """
+        store = _spawn_store()
+        handle = launch_lock.handle
+        with bind_lifecycle_correlation(
+            self._correlation(operation="reopen", spawn_id=str(handle.spawn_id))
+        ):
+            row = store.reopen_spawn(
+                handle,
+                self._runtime_root,
+                store.LaunchInput(
+                    chat_id=reservation.chat_id,
+                    prompt=reservation.prompt,
+                    kind=reservation.kind,
+                    model=reservation.session_metadata.model,
+                    control_root=reservation.control_root,
+                    task_cwd=reservation.task_cwd,
+                    execution_cwd=reservation.execution_cwd,
+                    owner_chat_id=reservation.owner_chat_id,
+                    parent_id=reservation.parent_id,
+                    goal=reservation.goal,
+                    harness_session_id=reservation.harness_session_id,
+                    launch_mode=reservation.launch_mode,
+                    worker_pid=reservation.worker_pid,
+                    runner_pid=reservation.runner_pid,
+                    runner_created_at_epoch=None,
+                ),
+                desc=reservation.desc,
+                work_id=reservation.work_id,
+                clock=reservation.clock,
+            )
+            self._record = row
+            if dispatch_events:
+                self._dispatch_spawn_started_events(status=row.status)
+            return row
 
     def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
         assert self._record is not None
-        event = self._build_event("spawn.created", self._record)
-        self._dispatch(event)
-        self._emit_telemetry_event("spawn.created", self._record)
+        if self._record.launch_number == _spawn_store().FIRST_LAUNCH:
+            event = self._build_event("spawn.created", self._record)
+            self._dispatch(event)
+            self._emit_telemetry_event("spawn.created", self._record)
         if status == "running":
             event = self._build_event("spawn.started", self._record)
             self._dispatch(event)
             self._emit_telemetry_event("spawn.started", self._record)
 
-    def mark_running(
+    def record_launch_facts(
         self,
         spawn_id: str,
         *,
@@ -310,14 +366,14 @@ class SpawnLifecycleService:
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.started."""
+        """Record launch facts (modes and PIDs). Rows are created ``running``; no event."""
         with bind_lifecycle_correlation(
-            self._correlation(operation="mark_running", spawn_id=spawn_id)
+            self._correlation(operation="record_launch_facts", spawn_id=spawn_id)
         ):
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            outcome = _spawn_store().mark_spawn_running(
+            outcome = _spawn_store().record_spawn_launch_facts(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -325,129 +381,20 @@ class SpawnLifecycleService:
                 runner_pid=runner_pid,
                 runner_created_at_epoch=resolved_runner_created_at_epoch,
             )
-            from meridian.lib.state.spawn.repository import Applied
-
             record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
-            if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
-                event = self._build_event("spawn.started", outcome.after)
-                self._dispatch(event)
-                self._emit_telemetry_event("spawn.started", record)
 
-    def record_exited(
-        self,
-        spawn_id: str,
-        *,
-        exit_code: int,
-        exited_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> None:
-        """Record process exit and emit spawn.process_exited telemetry."""
+    def record_exited(self, spawn_id: str, *, exit_code: int) -> None:
+        """Emit ``spawn.process_exited``. The exit code is telemetry only; the row keeps no copy."""
         with bind_lifecycle_correlation(
             self._correlation(operation="record_exited", spawn_id=spawn_id)
         ):
-            record = _spawn_store().record_spawn_exited(
-                self._runtime_root,
-                spawn_id,
-                exit_code=exit_code,
-                exited_at=exited_at,
-                clock=clock,
-            )
-            if self._owns_record(spawn_id) and record is not None:
-                self._record = record
             self._emit_telemetry_event(
                 "spawn.process_exited",
-                record,
+                _spawn_store().get_spawn(self._runtime_root, spawn_id),
                 payload={"exit_code": exit_code},
             )
-
-    def record_runner_exit(
-        self,
-        spawn_id: str,
-        *,
-        status: TerminalSpawnStatus,
-        exit_code: int,
-        error: str | None = None,
-        exited_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> bool:
-        """Persist runner-resolved terminal intent before finalization."""
-
-        with bind_lifecycle_correlation(
-            self._correlation(operation="record_runner_exit", spawn_id=spawn_id)
-        ):
-            resolved_exited_at = exited_at or _utc_now_iso(clock)
-            record = _spawn_store().record_runner_exit(
-                self._runtime_root,
-                spawn_id,
-                status=status,
-                exit_code=exit_code,
-                error=error,
-                exited_at=resolved_exited_at,
-                clock=clock,
-            )
-            if record is None:
-                return False
-            if self._owns_record(spawn_id):
-                self._record = record
-            self._emit_telemetry_event(
-                "spawn.updated",
-                record,
-                payload={
-                    "runner_exit_status": status,
-                    "runner_exit_code": exit_code,
-                    "runner_exit_error": error,
-                    "runner_exit_at": resolved_exited_at,
-                },
-            )
-            return True
-
-    def request_cancel(
-        self,
-        spawn_id: str,
-        *,
-        exit_code: int = 130,
-        error: str | None = "cancelled",
-        requested_by: Literal["user", "system"] = "user",
-        requested_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> SpawnRecord | None:
-        """Persist pre-terminal spawn-level cancel intent."""
-
-        with bind_lifecycle_correlation(
-            self._correlation(operation="request_cancel", spawn_id=spawn_id)
-        ):
-            outcome = _spawn_store().record_cancel_intent(
-                self._runtime_root,
-                spawn_id,
-                exit_code=exit_code,
-                error=error,
-                requested_by=requested_by,
-                requested_at=requested_at,
-                clock=clock,
-            )
-            from meridian.lib.state.spawn.repository import Applied, Missing
-
-            if isinstance(outcome, Missing):
-                return None
-            record = outcome.after if isinstance(outcome, Applied) else outcome.snapshot
-            if isinstance(outcome, Applied):
-                self._emit_telemetry_event(
-                    "spawn.updated",
-                    record,
-                    payload={
-                        "cancel_intent": {
-                            "requested_at": record.cancel_intent.requested_at,
-                            "exit_code": record.cancel_intent.exit_code,
-                            "error": record.cancel_intent.error,
-                            "requested_by": record.cancel_intent.requested_by,
-                        }
-                        if record.cancel_intent is not None
-                        else None,
-                    },
-                )
-            return record
 
     def finalize(
         self,
@@ -461,6 +408,7 @@ class SpawnLifecycleService:
         finished_at: str | None = None,
         error: str | None = None,
         managed_scopes_pending: bool = False,
+        expected_n: int | None = None,
         clock: Clock | None = None,
     ) -> LockedMutationResult:
         """Finalize a spawn and dispatch spawn.finished for persisted terminal writes."""
@@ -478,87 +426,35 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            outcome = _spawn_store().finalize_spawn(
-                self._runtime_root,
-                spawn_id,
-                status,
-                exit_code,
-                origin=origin,
-                duration_secs=duration_secs,
-                usage=usage,
-                finished_at=finished_at,
-                error=error,
-                managed_scopes_pending=managed_scopes_pending,
-                clock=clock,
-            )
-            from meridian.lib.state.spawn.repository import Applied
+            # A SIGTERM or SIGHUP (a closing terminal) mid-write would leave the launch reading as
+            # crashed where it had finished, and one right after would kill the runner before the
+            # hooks ran. The mask defers it past the hooks and re-delivers it on exit, so a cancel
+            # racing the finish still gets ``spawn.finished``; its SIGKILL deadline bounds the wait.
+            with signal_coordinator().mask_termination():
+                outcome = _spawn_store().finalize_spawn(
+                    self._runtime_root,
+                    spawn_id,
+                    status,
+                    exit_code,
+                    origin=origin,
+                    duration_secs=duration_secs,
+                    usage=usage,
+                    finished_at=finished_at,
+                    error=error,
+                    managed_scopes_pending=managed_scopes_pending,
+                    expected_n=expected_n,
+                    clock=clock,
+                )
+                from meridian.lib.state.spawn.repository import Applied
 
-            if isinstance(outcome, Applied):
-                snapshot = outcome.after
-                if self._owns_record(spawn_id):
-                    self._record = snapshot
-                event = self._build_event("spawn.finished", snapshot)
-                self._dispatch(event)
-                self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
+                if isinstance(outcome, Applied):
+                    snapshot = outcome.after
+                    if self._owns_record(spawn_id):
+                        self._record = snapshot
+                    event = self._build_event("spawn.finished", snapshot)
+                    self._dispatch(event)
+                    self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
-
-    def mark_finalizing(self, spawn_id: str) -> bool:
-        """CAS transition running -> finalizing.  No lifecycle event dispatched."""
-        with bind_lifecycle_correlation(
-            self._correlation(operation="mark_finalizing", spawn_id=spawn_id)
-        ):
-            outcome = _spawn_store().mark_finalizing(
-                self._runtime_root,
-                spawn_id,
-            )
-            from meridian.lib.state.spawn.repository import Applied
-
-            record = _locked_mutation_snapshot(outcome)
-            if self._owns_record(spawn_id) and record is not None:
-                self._record = record
-            transitioned = isinstance(outcome, Applied)
-            if transitioned:
-                self._emit_telemetry_event("spawn.finalizing", record)
-            return transitioned
-
-    def cancel(
-        self,
-        spawn_id: str,
-        exit_code: int = 130,
-        *,
-        duration_secs: float | None = None,
-        usage: TokenUsage | None = None,
-        finished_at: str | None = None,
-        error: str | None = None,
-        clock: Clock | None = None,
-    ) -> bool:
-        """Cancel a spawn — convenience for finalize(status='cancelled', origin='cancel')."""
-        with bind_lifecycle_correlation(
-            self._correlation(
-                operation="cancel",
-                spawn_id=spawn_id,
-                outcome_category=SpawnFailureCategory.CANCELLATION,
-                terminal_status="cancelled",
-                terminal_origin="cancel",
-            )
-        ):
-            outcome = self.finalize(
-                spawn_id,
-                "cancelled",
-                exit_code,
-                origin="cancel",
-                duration_secs=duration_secs,
-                usage=usage,
-                finished_at=finished_at,
-                error=error,
-                clock=clock,
-            )
-            from meridian.lib.state.spawn.repository import Applied
-
-            return (
-                isinstance(outcome, Applied)
-                and outcome.before.status not in TERMINAL_SPAWN_STATUSES
-            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -589,7 +485,7 @@ class SpawnLifecycleService:
         return LifecycleCorrelation(
             spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
-            chat_id=record.chat_id if record is not None else None,
+            chat_id=spawn_owner_chat_id(record) if record is not None else None,
             work_id=record.work_id if record is not None else None,
             agent=record.agent if record is not None else None,
             model=record.model if record is not None else None,
@@ -727,12 +623,12 @@ class SpawnLifecycleService:
             )
 
         return LifecycleEvent(
-            event_id=generate_event_id(record.id, event_type, 0),
+            event_id=generate_event_id(record.id, record.launch_number, event_type),
             event_type=event_type,
             timestamp=datetime.now(tz=UTC),
             spawn_id=record.id,
             parent_id=record.parent_id,
-            chat_id=record.chat_id,
+            chat_id=spawn_owner_chat_id(record),
             work_id=record.work_id,
             agent=record.agent,
             kind=record.kind,
@@ -751,12 +647,6 @@ class SpawnLifecycleService:
             reasoning_tokens=reasoning_tokens,
             cost_is_estimate=cost_is_estimate,
         )
-
-
-def _utc_now_iso(clock: Clock | None = None) -> str:
-    if clock is not None:
-        return clock.utc_now_iso()
-    return datetime.now(tz=UTC).isoformat()
 
 
 def _emit_lifecycle_event(

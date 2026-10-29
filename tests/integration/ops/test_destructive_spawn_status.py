@@ -25,15 +25,15 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_codec import transcript_header
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.native_snapshot import (
-    NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
     SnapshotObservation,
     SnapshotRecord,
     SourceRevision,
     write_snapshot,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.utils.json_shapes import loads_json_object
+from tests.support import legacy_rows
 
 OLD = "2000-01-01T00:00:00+00:00"
 OLD_MTIME = 946_684_800.0
@@ -101,6 +101,7 @@ def _old_active_spawn(
                 root,
                 spawn_id="p1",
                 chat_id="c1",
+                owner_chat_id="c0",
                 model="test",
                 agent="coder",
                 harness="claude",
@@ -108,9 +109,9 @@ def _old_active_spawn(
                 harness_session_id=native_id,
                 started_at=OLD,
                 launch_lock=launch,
-            )
+            ).spawn_id
         )
-        spawn_store.record_spawn_exited(root, spawn_id, exit_code=1, exited_at=OLD)
+        legacy_rows.record_exited(root, spawn_id, exit_code=1, exited_at=OLD)
         spawn_dir = root / "spawns" / spawn_id
         (spawn_dir / "history.jsonl").write_text('{"event":"legacy"}\n')
         (spawn_dir / "report.md").write_text("possibly useful\n")
@@ -136,7 +137,7 @@ def _old_active_spawn(
                 ),
             ),
         )
-        with (spawn_dir / NATIVE_SNAPSHOT_FILENAME).open("wb") as snapshot:
+        with (spawn_dir / LAUNCH_FILE_NAMES.native_snapshot).open("wb") as snapshot:
             write_snapshot(
                 snapshot,
                 snapshot_header,

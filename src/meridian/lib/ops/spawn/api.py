@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -38,11 +40,16 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
+from meridian.lib.launch.continue_launch import (
+    ContinueHold,
+    begin_continue,
+    resolve_continue_target,
+)
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
+    reject_continue_policy_overrides,
 )
-from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
@@ -60,18 +67,26 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_observations import LaunchKey, WaitPin, live_wait_pins
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
+from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_signals import (
     SpawnSignalKind,
     read_accepted_signals,
     write_spawn_signal,
 )
-from meridian.lib.state.spawn_status import overlay_derived, read_derived
+from meridian.lib.state.spawn_status import (
+    LaunchNotFound,
+    Running,
+    overlay_derived,
+    poll_launch,
+    read_derived,
+)
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
@@ -113,6 +128,8 @@ from .models import (
 )
 from .owed import (
     consume_result_if_shown,
+    delivery_details,
+    owed_consumed_ids,
     record_result_shown_to_caller,
     resolve_owed_finished_rows,
     select_delivery_rows,
@@ -140,8 +157,8 @@ class _WaitTargetDiscovery:
     blocked_on_ids: tuple[str, ...] = ()
     active_rows: tuple[SpawnRecord, ...] = ()
     owed_rows: tuple[SpawnRecord, ...] = ()
-    # Every finished owed id seen, including rows the delivery cap held back.
-    owed_candidate_ids: frozenset[str] = frozenset()
+    # Every finished owed launch seen, including rows the delivery cap held back.
+    owed_candidate_refs: frozenset[LaunchKey] = frozenset()
     discovery_pending: bool = False
 
 
@@ -524,6 +541,7 @@ def _execute_prepared_spawn_create(
     *,
     sink: OutputSink | None,
     on_spawn_id: Callable[[str], None] | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
     if preparation.depth_exceeded is not None:
         return preparation.depth_exceeded
@@ -592,6 +610,7 @@ def _execute_prepared_spawn_create(
             request=prepared_request,
             runtime=runtime,
             ctx=resolved_context,
+            hold=hold,
         )
     else:
         result = execute_spawn_blocking(
@@ -601,6 +620,7 @@ def _execute_prepared_spawn_create(
             ctx=resolved_context,
             prepared=prepared_surface,
             on_spawn_id=on_spawn_id,
+            hold=hold,
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
@@ -718,7 +738,7 @@ def spawn_list_sync(
         activity: str | None = None
         surfaced_activity: str | None = None
         if kind == "primary":
-            metadata = read_primary_surface_metadata(runtime_root, row.id)
+            metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
             managed_backend = metadata.managed_backend
             activity = metadata.activity
             surfaced_activity = _surface_primary_activity(row.status, activity)
@@ -733,8 +753,8 @@ def spawn_list_sync(
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
-                duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
-                cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
+                duration_secs=row.total_usage.duration_secs,
+                cost_usd=row.total_usage.total_cost_usd,
             )
         )
 
@@ -794,8 +814,8 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             desc=_spawn_display_label(row),
-            duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
-            cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
+            duration_secs=row.total_usage.duration_secs,
+            cost_usd=row.total_usage.total_cost_usd,
         )
         for row in children
     )
@@ -892,14 +912,13 @@ def spawn_stats_sync(
         acc["total"] = int(acc["total"]) + 1
         if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
-        terminal = row.terminal
-        if terminal is not None and terminal.total_cost_usd is not None:
-            acc["cost_usd"] = float(acc["cost_usd"]) + terminal.total_cost_usd
-
-        if terminal is not None and terminal.duration_secs is not None:
-            total_duration_secs += terminal.duration_secs
-        if terminal is not None and terminal.total_cost_usd is not None:
-            total_cost_usd += terminal.total_cost_usd
+        cost = row.total_cost_usd
+        if cost is not None:
+            acc["cost_usd"] = float(acc["cost_usd"]) + cost
+            total_cost_usd += cost
+        duration = row.total_duration_secs
+        if duration is not None:
+            total_duration_secs += duration
 
     models: dict[str, ModelStats] = {
         k: ModelStats(
@@ -923,10 +942,10 @@ def spawn_stats_sync(
                 spawn_id=s.id,
                 status=s.status,
                 model=s.model or "",
-                duration_secs=s.terminal.duration_secs if s.terminal is not None else None,
-                cost_usd=s.terminal.total_cost_usd if s.terminal is not None else None,
-                input_tokens=s.terminal.input_tokens if s.terminal is not None else None,
-                output_tokens=s.terminal.output_tokens if s.terminal is not None else None,
+                duration_secs=s.total_usage.duration_secs,
+                cost_usd=s.total_usage.total_cost_usd,
+                input_tokens=s.total_usage.input_tokens,
+                output_tokens=s.total_usage.output_tokens,
             )
             for s in spawns
         )
@@ -991,7 +1010,7 @@ def spawn_show_sync(
     backend_port: int | None = None
     harness_session_id: str | None = None
     if kind == "primary":
-        metadata = read_primary_surface_metadata(runtime_root, spawn_id)
+        metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
         managed_backend = metadata.managed_backend
         activity = metadata.activity
         backend_pid = metadata.backend_pid
@@ -1008,7 +1027,7 @@ def spawn_show_sync(
     surfaced_activity = _surface_primary_activity(row.status, activity)
     result = detail.model_copy(
         update={
-            "denied_requests": denied_requests(runtime_root, spawn_id),
+            "denied_requests": denied_requests(LaunchPaths.for_row(runtime_root, row)),
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,
@@ -1023,6 +1042,7 @@ def spawn_show_sync(
         runtime_root=runtime_root,
         caller=resolved_context,
         spawn_id=result.spawn_id,
+        launch_number=row.launch_number,
         status=result.status,
         body=result.report_body,
     )
@@ -1133,25 +1153,10 @@ async def spawn_subagents(
 
 
 def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutput:
-    if outcome.status in {"queued", "running"} and not outcome.finalizing:
-        return SpawnActionOutput(
-            command="spawn.cancel",
-            status="failed",
-            spawn_id=outcome.spawn_id,
-            message=f"Cancellation of spawn '{outcome.spawn_id}' did not converge.",
-            error=f"Spawn remained {outcome.status} after cancellation.",
-            model=outcome.model,
-            harness_id=outcome.harness,
-            exit_code=1,
-        )
     if outcome.already_terminal:
         message = f"Spawn '{outcome.spawn_id}' is already {outcome.status}."
-    elif outcome.finalizing:
-        message = (
-            "Spawn did not terminate within grace; reaper will reconcile."
-            if outcome.status != "cancelled"
-            else "Spawn cancelled."
-        )
+    elif outcome.status == "finalizing":
+        message = "Spawn did not terminate within grace; reaper will reconcile."
     elif outcome.status == "cancelled":
         message = "Spawn cancelled."
     else:
@@ -1232,13 +1237,13 @@ def _resolve_caller_spawn_id(spawn_id: str | None, ctx: RuntimeContext | None) -
     return candidate
 
 
-def _resolve_signal_spawn_id(
+def _resolve_signal_spawn(
     *,
     project_root: Path,
     runtime_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None,
-) -> str:
+) -> SpawnRecord:
     candidate = _resolve_caller_spawn_id(spawn_id, ctx)
     resolved_spawn_id = resolve_spawn_target(
         project_root,
@@ -1250,7 +1255,7 @@ def _resolve_signal_spawn_id(
         raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
     if record.record_mode == "historical":
         raise ValueError("Historical records have no live process ownership")
-    return resolved_spawn_id
+    return record
 
 
 def _signal_refusal(
@@ -1310,12 +1315,14 @@ def _spawn_signal_sync(
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     try:
-        resolved_spawn_id = _resolve_signal_spawn_id(
+        target = _resolve_signal_spawn(
             project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=payload.spawn_id,
             ctx=ctx,
         )
+        resolved_spawn_id = target.id
+        launch = LaunchPaths.for_row(runtime_root, target)
         refusal: str | None = None
         reported = False
 
@@ -1323,14 +1330,13 @@ def _spawn_signal_sync(
             # Decided under the published-artifact lock that guards the write.
             nonlocal refusal, reported
             row = read_derived(runtime_root, stored.id) or stored
-            accepted = read_accepted_signals(runtime_root, stored.id)
+            accepted = read_accepted_signals(launch)
             refusal = _signal_refusal(row, kind, accepted)
             reported = accepted is not None
             return refusal is None
 
         if not write_spawn_signal(
-            runtime_root,
-            resolved_spawn_id,
+            launch,
             kind,
             can_write=consumer_reads_signal,
         ):
@@ -1447,6 +1453,7 @@ async def _spawn_cancel_impl(
             runtime_root=runtime_root,
             caller=resolved_context,
             spawn_id=outcome.spawn_id,
+            launch_number=outcome.launch_number,
         )
     return _spawn_cancel_output_from_outcome(outcome)
 
@@ -1610,7 +1617,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
-    excluded_owed_ids: frozenset[str] = frozenset(),
+    excluded_owed_refs: frozenset[LaunchKey] = frozenset(),
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1631,92 +1638,71 @@ def _resolve_wait_targets(
             "No-arg wait requires MERIDIAN_CHAT_ID (run from inside a meridian session)"
         )
 
-    self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
+    if not ctx.spawn_id:
+        raise ValueError("No-arg wait requires MERIDIAN_SPAWN_ID")
+    caller_spawn_id = str(ctx.spawn_id)
     try:
-        pending = _discover_pending_spawns(
+        roots = owned_parent_ids(
             runtime_root,
-            chat_id,
-            exclude_spawn_id=self_spawn_id,
-            only_descendants_of=self_spawn_id,
+            read_derived(runtime_root, caller_spawn_id),
+            chat_id=chat_id,
+            caller_spawn_id=caller_spawn_id,
+            deadline=deadline,
+        )
+        pending = _discover_pending_spawns(runtime_root, roots, deadline=deadline)
+        owed_candidates = resolve_owed_finished_rows(
+            runtime_root=runtime_root,
+            chat_id=chat_id,
+            caller_spawn_id=caller_spawn_id,
+            parent_ids=roots,
+            excluded_refs=excluded_owed_refs.union(LaunchKey.of(row) for row in pending),
             deadline=deadline,
         )
     except history_index.HistoryIndexBusy:
         return _WaitTargetDiscovery(discovery_pending=True)
 
-    blocked_on_ids = tuple(row.id for row in pending)
-    owed_candidates: tuple[SpawnRecord, ...] = ()
-    if self_spawn_id is not None:
-        try:
-            owed_candidates = resolve_owed_finished_rows(
-                runtime_root=runtime_root,
-                chat_id=chat_id,
-                caller_spawn_id=self_spawn_id,
-                excluded_ids=excluded_owed_ids.union(blocked_on_ids),
-                deadline=deadline,
-            )
-        except history_index.HistoryIndexBusy:
-            return _WaitTargetDiscovery(discovery_pending=True)
-
     return _WaitTargetDiscovery(
-        blocked_on_ids=blocked_on_ids,
+        blocked_on_ids=tuple(row.id for row in pending),
         active_rows=tuple(pending),
         owed_rows=select_delivery_rows(owed_candidates),
-        owed_candidate_ids=frozenset(row.id for row in owed_candidates),
+        owed_candidate_refs=frozenset(LaunchKey.of(row) for row in owed_candidates),
     )
 
 
 def _discover_pending_spawns(
     runtime_root: Path,
-    chat_id: str,
+    roots: tuple[str, ...],
     *,
-    exclude_spawn_id: str | None = None,
-    only_descendants_of: str | None = None,
     deadline: float | None = None,
 ) -> list[SpawnRecord]:
-    """Discover this owner's active spawns, or only the caller's transitive subtree.
+    """Discover active spawns in the transitive subtrees of ``roots``.
 
-    The index selects membership; lifecycle decisions re-read authority. Recursive
-    traversal retains terminal and archived ancestry so it cannot lose grandchildren.
+    Roots are ``owned_parent_ids``, the same set owed results use: a live primary
+    walks every primary generation of its chat, so background work started before a
+    continue is found; anyone else walks its own subtree. Peers that merely share the
+    chat are not under any root. The index selects membership; lifecycle decisions
+    re-read authority. Recursive traversal retains terminal and archived ancestry so
+    it cannot lose grandchildren.
     """
-    from meridian.lib.state.session_identity import spawn_matches_owner_chat
-
-    index = history_index.HistoryIndex(runtime_root)
-    if only_descendants_of is not None:
-        selected_ids = {
-            projection[0]
-            for projection in index.descendant_projection(
-                only_descendants_of,
-                active_only=True,
-                deadline=deadline,
-            )
-        }
-    else:
-        selected_ids = {
-            row.id
-            for row in index.spawns(
-                owner_chat_id=chat_id,
-                status=set(ACTIVE_SPAWN_STATUSES),
-                deadline=deadline,
-            )
-        }
+    selected = history_index.HistoryIndex(runtime_root).descendant_projection(
+        roots,
+        active_only=True,
+        deadline=deadline,
+    )
 
     candidates: list[SpawnRecord] = []
-    for spawn_id in selected_ids:
-        if spawn_id == exclude_spawn_id:
-            continue
+    for spawn_id, _parent, _archived in selected:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         if row is None:
             # Retirement can race the projection query just as it can race wait polling.
             continue
-        # Nested callers are scoped by subtree, not owner, matching main.
-        if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
-            continue
         candidates.append(row)
 
-    pending: list[SpawnRecord] = []
-    for row in overlay_derived(runtime_root, candidates):
-        if row.status in ACTIVE_SPAWN_STATUSES:
-            pending.append(row)
+    pending = [
+        row
+        for row in overlay_derived(runtime_root, candidates)
+        if row.status in ACTIVE_SPAWN_STATUSES
+    ]
     pending.sort(key=lambda row: row.id)
     return pending
 
@@ -1741,8 +1727,8 @@ def _since_started_spawns(
             runtime_root,
             ctx,
             deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
-            excluded_owed_ids=initial_targets.owed_candidate_ids.union(
-                initial_targets.blocked_on_ids
+            excluded_owed_refs=initial_targets.owed_candidate_refs.union(
+                LaunchKey.of(row) for row in initial_targets.active_rows
             ),
         )
         if current_targets.discovery_pending:
@@ -1978,12 +1964,36 @@ def spawn_wait_sync(
             runtime_root=runtime_root,
         )
 
-    observed_ids = tuple((*blocked_on_ids, *(row.id for row in owed_rows)))
-
-    for spawn_id in observed_ids:
+    parent_wait_observer_id = (
+        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
+    )
+    # Each target is waited on as the launch it is now, or the one an earlier run of this
+    # wait pinned (a `--yield-after-secs` re-run is a new process). Pins are stored only for
+    # an explicit wait by a caller with a spawn ID; any other wait pins in this process.
+    stored_pins = (
+        live_wait_pins(
+            runtime_root,
+            parent_wait_observer_id,
+            owed_consumed_ids(runtime_root, (parent_wait_observer_id,)),
+        )
+        if parent_wait_observer_id is not None and has_explicit_ids
+        else {}
+    )
+    pins: dict[str, int] = {}
+    for spawn_id in blocked_on_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         if record is not None and record.record_mode == "historical":
             raise ValueError("Historical records cannot be waited on")
+        pins[spawn_id] = stored_pins.get(spawn_id) or (record.launch_number if record else 1)
+    for owed_row in owed_rows:
+        if owed_row.record_mode == "historical":
+            raise ValueError("Historical records cannot be waited on")
+    observed_keys = tuple(
+        (
+            *(str(LaunchKey(spawn_id, n)) for spawn_id, n in pins.items()),
+            *(str(LaunchKey.of(row)) for row in owed_rows),
+        )
+    )
 
     poll = (
         payload.poll_interval_secs
@@ -1993,27 +2003,26 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    parent_wait_observer_id = (
-        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
-    )
     lease_seconds = max(30.0, poll * 2 + 5)
+
+    def pin_documents() -> dict[str, WaitPin]:
+        if not has_explicit_ids:
+            return {}
+        expires_at = time.time() + checkpoint_seconds
+        return {target: WaitPin(n=n, expires_at=expires_at) for target, n in pins.items()}
+
     record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
-        waiting_add=observed_ids,
+        waiting_add=observed_keys,
+        pins_set=pin_documents(),
         lease_seconds=lease_seconds,
     )
     details: tuple[SpawnDetailOutput, ...] = ()
     owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     try:
-        owed_spawns = tuple(
-            detail_from_row(
-                project_root=project_root,
-                row=row,
-                include_report_body=False,
-                runtime_root=runtime_root,
-            )
-            for row in owed_rows
+        owed_spawns = delivery_details(
+            project_root=project_root, runtime_root=runtime_root, rows=owed_rows
         )
         if not blocked_on_ids:
             output = _build_wait_multi_output(())
@@ -2039,21 +2048,25 @@ def spawn_wait_sync(
                 record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
-                    waiting_add=tuple(pending),
+                    waiting_add=tuple(
+                        str(LaunchKey(spawn_id, pins[spawn_id])) for spawn_id in pending
+                    ),
+                    pins_set=pin_documents(),
                     lease_seconds=lease_seconds,
                 )
                 for spawn_id in tuple(pending):
-                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                    if row is None:
+                    try:
+                        launch_poll = poll_launch(runtime_root, spawn_id, pins[spawn_id])
+                    except LaunchNotFound:
                         if has_explicit_ids:
-                            raise ValueError(f"Spawn '{spawn_id}' not found")
+                            raise
                         # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
                         # waiting, treat it as resolved instead of failing unrelated waits.
                         pending.discard(spawn_id)
                         rows.pop(spawn_id, None)
                         continue
-                    rows[spawn_id] = row
-                    if _spawn_is_terminal(row.status):
+                    rows[spawn_id] = launch_poll.row
+                    if not isinstance(launch_poll, Running):
                         pending.remove(spawn_id)
 
                 now = time.monotonic()
@@ -2122,14 +2135,14 @@ def spawn_wait_sync(
         record_spawn_observation(
             runtime_root=runtime_root,
             parent_spawn_id=parent_wait_observer_id,
-            waiting_remove=observed_ids,
+            waiting_remove=observed_keys,
             observed_add=(
                 *(
-                    detail.spawn_id
+                    str(LaunchKey(detail.spawn_id, pins[detail.spawn_id]))
                     for detail in details
                     if _spawn_is_terminal(detail.status)
                 ),
-                *(row.id for row in owed_rows),
+                *(str(LaunchKey.of(row)) for row in owed_rows),
             ),
         )
 
@@ -2211,44 +2224,22 @@ def _prompt_for_follow_up(
 def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
-    rejected: list[str] = []
-    if payload.skills:
-        rejected.append("--skills")
-    if payload.approval is not None:
-        rejected.append("--approval")
-    if payload.sandbox is not None:
-        rejected.append("--sandbox")
-    if payload.network.mode is not None:
-        rejected.append("--network")
-    if payload.network.allow:
-        rejected.append("--network-allow")
-    if payload.network.deny:
-        rejected.append("--network-deny")
-    if payload.effort is not None:
-        rejected.append("--effort")
-    if payload.autocompact is not None:
-        rejected.append("--autocompact")
-    if payload.autocompact_pct is not None:
-        rejected.append("--autocompact-pct")
-    if payload.passthrough_args:
-        rejected.append("--")
-    if payload.env:
-        rejected.append("--env")
-    if payload.work.strip():
-        rejected.append("--work")
-    if payload.task_dir is not None and payload.task_dir.strip():
-        rejected.append("--task-dir")
-    if rejected:
-        flags = ", ".join(rejected)
-        if "--task-dir" in rejected:
-            raise ValueError(
-                "Cannot use --task-dir with spawn --continue. "
-                "Use --fork --task-dir to diverge work location."
-            )
-        raise ValueError(
-            f"Cannot use policy-changing option(s) with spawn --continue: {flags}. "
-            "Use --fork-fresh to change launch identity or policy."
-        )
+    reject_continue_policy_overrides(
+        {
+            "--skills": bool(payload.skills),
+            "--approval": payload.approval is not None,
+            "--sandbox": payload.sandbox is not None,
+            "--network": payload.network.mode is not None,
+            "--network-allow": bool(payload.network.allow),
+            "--network-deny": bool(payload.network.deny),
+            "--effort": payload.effort is not None,
+            "--autocompact": payload.autocompact is not None,
+            "--autocompact-pct": payload.autocompact_pct is not None,
+            "--": bool(payload.passthrough_args),
+            "--env": bool(payload.env),
+            "--task-dir": payload.task_dir is not None and bool(payload.task_dir.strip()),
+        }
+    )
 
 
 def _build_continue_create_input(
@@ -2293,7 +2284,7 @@ def _build_continue_create_input(
         skills=continue_contract.skills,
         goal=resolved_goal,
         desc=payload.desc,
-        work=continue_contract.work_id or "",
+        work=payload.work.strip() or continue_contract.work_id or "",
         task_dir=continue_contract.task_dir,
         caller_cwd=payload.caller_cwd,
         launch_policy_snapshot=continue_contract.launch_policy_snapshot,
@@ -2497,6 +2488,24 @@ def spawn_continue_sync(
         runtime_root=runtime_root,
         harness_hint=payload.harness,
     )
+    # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
+    # continue reopens before anything is built, then build everything from that spawn.
+    caller_spawn_id = str(runtime_context(ctx).spawn_id or "") or None
+    target, redirect_notice = resolve_continue_target(
+        runtime_root,
+        source_spawn,
+        named_by_spawn_ref=parse_ref(payload.spawn_id.strip()).kind in {"spawn", "selector"},
+        chat_id=resolved_reference.source_chat_id,
+        parent_id=caller_spawn_id,
+        kind="child",
+    )
+    if target.id != source_spawn.id:
+        resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
+            target.id,
+            project_root,
+            runtime_root=runtime_root,
+            harness_hint=payload.harness,
+        )
     source_snapshot = resolved_reference.source_launch_policy_snapshot
     source_check = _run_spawn_creation_boundary(
         payload,
@@ -2527,13 +2536,23 @@ def spawn_continue_sync(
     )
     if isinstance(preparation, SpawnActionOutput):
         return _with_command(preparation, "spawn.continue")
-    sweep_before_continue(
-        runtime_root,
-        resolved_spawn_id,
+    if preparation.depth_exceeded is not None:
+        return _with_command(preparation.depth_exceeded, "spawn.continue")
+    hold = begin_continue(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        target=source_spawn,
         chat_id=resolved_reference.source_chat_id,
+        parent_id=caller_spawn_id,
+        caller_spawn_id=caller_spawn_id,
         dry_run=payload.dry_run,
     )
-    result = _execute_prepared_spawn_create(preparation, sink=sink)
+    with hold.slot if hold is not None else nullcontext():
+        result = _execute_prepared_spawn_create(preparation, sink=sink, hold=hold)
+    if redirect_notice:
+        result = result.model_copy(
+            update={"warning": _merge_warnings(result.warning, redirect_notice)}
+        )
     return _with_command(result, "spawn.continue")
 
 

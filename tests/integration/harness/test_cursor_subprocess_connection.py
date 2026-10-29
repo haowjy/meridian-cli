@@ -16,8 +16,8 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.executables import prepend_fake_executables
+from tests.support.launch_paths import launch_paths
 
 _MINTED_ID = "550e8400-e29b-41d4-a716-446655440000"
 _RESUMED_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
@@ -100,9 +100,7 @@ def _start_record(runtime_root: Path, spawn_id: SpawnId) -> None:
         harness="cursor",
         prompt="hello",
     )
-    resolve_spawn_log_dir(runtime_root, spawn_id, runtime_root=runtime_root).mkdir(
-        parents=True, exist_ok=True
-    )
+    launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
 
 
 async def _start(
@@ -129,11 +127,10 @@ async def _start(
     connection = CursorSubprocessConnection()
     await connection.start(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.CURSOR,
             prompt="hello",
             control_root=tmp_path,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, spawn_id),
             child_env=child_env,
             session_id_observer=record_session,
         ),

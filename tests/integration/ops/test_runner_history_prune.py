@@ -16,6 +16,7 @@ from meridian.lib.ops.session_archive import (
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
+from tests.support.launch_paths import launch_paths
 
 OLD = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 RUNNER_FILES = (
@@ -81,13 +82,14 @@ def add_spawn(
         root,
         spawn_id=f"p{n}",
         chat_id=chat,
+        owner_chat_id="c0",
         harness="claude",
         model="test",
         agent="a",
         prompt="question",
         harness_session_id=sid if bound else None,
         launch_lock=launch_lock,
-    )
+    ).spawn_id
     if boundary is not None:
         spawn_store.update_spawn(root, key, run_boundary=boundary)
     if finished_at is not None:
@@ -291,11 +293,11 @@ def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(root, SpawnId(key), scope)
+    record_scope(launch_paths(root, SpawnId(key)), scope)
     spawn_store.finalize_spawn(root, key, "succeeded", 0, origin="runner", finished_at=OLD)
     assert prune(project, apply=True).skipped == {"live_scope": (key,)}
     assert (root / "spawns" / key / "history.jsonl").is_file()
-    mark_scope_released(root, SpawnId(key), scope.release_id)
+    mark_scope_released(launch_paths(root, SpawnId(key)), scope.release_id)
     assert [row.spawn_id for row in prune(project).pruned] == [key]
 
 
@@ -374,16 +376,15 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
     import zipfile
 
     from meridian.lib.config.history_models import HistoryArchiveConfig
-    from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
     from meridian.lib.ops.session_archive import archive_history, materialize_native_history
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+    from meridian.lib.state.paths import LAUNCH_FILE_NAMES
 
     project, root, store = corpus(tmp_path)
     key = add_spawn(root, store, 1)
     assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
 
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME).is_file()
+    assert (launch_paths(root, key).native_transcript).is_file()
     out = archive_history(
         root,
         destination=tmp_path / "zips",
@@ -400,5 +401,5 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
     assert out.reclaimed == out.selected
     (archive,) = out.archives
     members = {Path(name).name for name in zipfile.ZipFile(archive).namelist()}
-    assert NATIVE_SNAPSHOT_FILENAME in members
-    assert not members & set(RETIRED_RUNNER_STREAM_FILENAMES)
+    assert LAUNCH_FILE_NAMES.native_snapshot in members
+    assert not members & set(LAUNCH_FILE_NAMES.retired_runner_stream)

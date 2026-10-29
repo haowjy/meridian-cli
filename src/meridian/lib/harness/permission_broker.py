@@ -6,10 +6,8 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any, cast
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessRequest,
@@ -17,6 +15,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import (
     REJECT_DECISION,
     TERMINAL_STATUSES,
@@ -47,22 +46,22 @@ class PermissionBroker(ServerRequestHandler):
     def __init__(
         self,
         *,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         policy_hook: PermissionTransitionSink | None = None,
         auto_reject_runtime_requests: bool = False,
         harness_id: str = "codex",
     ) -> None:
-        self._runtime_root = spawn_dir.parent.parent
-        self._spawn_id = SpawnId(spawn_dir.name)
+        self._runtime_root = launch.runtime_root
+        self._spawn_id = launch.spawn_id
         self._event_sink = event_sink
         self._policy_hook = policy_hook
         self._auto_reject_runtime_requests = auto_reject_runtime_requests
         self._harness_id = harness_id
-        self._cursor_path = spawn_dir / "permission_request_cursors.json"
+        self._cursor_path = launch.permission_cursors
 
         self._lock = asyncio.Lock()
-        self._journal = PermissionJournal(spawn_dir)
+        self._journal = PermissionJournal(launch)
         self._consumer_cursors: dict[str, int] = {}
 
         self._load_cursors()

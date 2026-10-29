@@ -54,8 +54,8 @@ connection stops; the black-box fallback never starts it.
 
 1. Calls `run_primary_attach()` → `PrimaryAttachLauncher`
 2. On `PrimaryAttachError`: if `primary_attach_failure_policy == "raise"`, re-raises; otherwise
-   logs a warning, deletes managed sidecars (`PRIMARY_META_FILENAME`, `OUTPUT_FILENAME`,
-   `stderr.log`), and falls back to black-box
+   logs a warning, deletes managed sidecars (`LaunchPaths.primary_meta`, `.output`,
+   `.stderr_log`), and falls back to black-box
 3. Black-box: calls `run_primary_process_with_capture_fn()` directly
 
 Managed attach feeds owned IDs into `NativeRun.observe`. Black-box artifact IDs
@@ -162,7 +162,7 @@ The surrounding `finally` always calls adapter prelaunch cleanup.
 
 Callers must provide a fully resolved `LaunchContext` with a valid `binding.argv`. The function:
 1. Opens `session_scope` (creates session store entry)
-2. Calls `lifecycle_service.start()` (creates spawn row, sets status to `queued`)
+2. Calls `lifecycle_service.start()` (creates the spawn row, `running`)
 3. Materializes fork if `session_mode == FORK` and harness supports it
 4. Rebuilds `LaunchContext` with real spawn ID and paths (or binds from `PreparedLaunchSurface`)
 5. Calls `harness_adapter.prepare_prelaunch()` — env overrides applied to `child_env`

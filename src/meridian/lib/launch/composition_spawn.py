@@ -69,7 +69,7 @@ def bind_spawn_launch_context(
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     merged_bindings = RuntimeBindings(
-        spawn_id=bindings.spawn_id,
+        launch=bindings.launch,
         runtime_work_id=bindings.runtime_work_id,
         chat_id=bindings.chat_id,
         forked_harness_session_id=bindings.forked_harness_session_id,

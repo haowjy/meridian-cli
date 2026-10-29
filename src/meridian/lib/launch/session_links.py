@@ -87,7 +87,7 @@ def execution_link_chat(
     if explicit:
         return explicit
     row = spawn_store.get_spawn(runtime_root, spawn_id)
-    return ((row.chat_id or "") if row is not None else "").strip()
+    return ((row.entry_chat_id or "") if row is not None else "").strip()
 
 
 def execution_of(runtime_root: Path, *, chat_id: str, spawn_id: str | None) -> Execution:
@@ -103,7 +103,7 @@ def execution_of(runtime_root: Path, *, chat_id: str, spawn_id: str | None) -> E
     chat = chat_id.strip()
     try:
         row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
-        if row is None or chat not in (row.chat_id, row.continue_chat_id):
+        if row is None or chat not in (row.entry_chat_id, row.continue_chat_id):
             record = session_store.chat_record(runtime_root, chat)
             named = (record.spawn_id or "").strip() if record is not None else ""
             row = spawn_store.get_spawn(runtime_root, named) if named else None
@@ -118,7 +118,7 @@ def execution_of(runtime_root: Path, *, chat_id: str, spawn_id: str | None) -> E
         )
     if row is None:
         return Execution(spawn_id="", entry_chat=chat, chats=(chat,))
-    entry = (row.chat_id or "").strip() or chat
+    entry = (row.entry_chat_id or "").strip() or chat
     return Execution(
         spawn_id=row.id,
         entry_chat=entry,
@@ -145,7 +145,7 @@ def _owner_of(runtime_root: Path, record: session_store.SessionRecord) -> Execut
     if record.kind == "primary" and spawn_id:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         if row is not None:
-            entry = (row.chat_id or "").strip() or entry
+            entry = (row.entry_chat_id or "").strip() or entry
             current = (row.continue_chat_id or "").strip() or current
     return Execution(
         spawn_id=spawn_id,

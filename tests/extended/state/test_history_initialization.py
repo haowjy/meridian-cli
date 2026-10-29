@@ -47,7 +47,7 @@ def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path) -> None:
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     state = tmp_path / "spawns" / key / "state.json"
     valid_state = state.read_bytes()
@@ -76,7 +76,7 @@ def test_dogfood_migration_rearms_authority_failure(tmp_path: Path) -> None:
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     state = tmp_path / "spawns" / key / "state.json"
     data = json.loads(state.read_text(encoding="utf-8"))
@@ -101,7 +101,7 @@ def test_quarantined_state_authority_failure_names_non_dogfood_row(tmp_path: Pat
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     state = tmp_path / "spawns" / key / "state.json"
     state.write_text('{"truncated":', encoding="utf-8")
@@ -122,13 +122,13 @@ def test_rebuild_skips_newer_format_row_but_not_invalid_v3(tmp_path: Path) -> No
     def start() -> str:
         return spawn_store.start_spawn(
             tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-        )
+        ).spawn_id
 
     kept, newer, broken = start(), start(), start()
     for key in (kept, newer, broken):
         spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     newer_state = tmp_path / "spawns" / newer / "state.json"
-    newer_state.write_text(json.dumps({"v": 4, "id": newer}), encoding="utf-8")
+    newer_state.write_text(json.dumps({"v": 5, "id": newer}), encoding="utf-8")
     index = HistoryIndex(tmp_path)
 
     assert index.rebuild().complete

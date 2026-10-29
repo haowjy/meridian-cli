@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,9 @@ class SpawnStartMetadata:
     work_id: str | None = None
     goal: str | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    usage_seed: dict[str, JsonValue] | None = None
+    """The source launch's ``harness_cumulative`` when this spawn resumes the source's native
+    session (a fork): the first launch's usage is counted from there."""
 
 
 def compact_prompt_summary(prompt: str) -> str | None:

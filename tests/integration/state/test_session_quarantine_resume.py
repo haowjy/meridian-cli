@@ -114,7 +114,7 @@ def test_newer_format_row_for_same_chat_with_held_lock_blocks_resume(tmp_path: P
             "p1",
             current_chat_id=chat_id,
             launch_lock=launch_lock,
-            version=4,
+            version=5,
         )
 
         with pytest.raises(ValueError, match="written by a newer Meridian"):
@@ -130,7 +130,7 @@ def test_newer_format_row_for_same_chat_with_free_lock_allows_resume(tmp_path: P
             "p1",
             current_chat_id=chat_id,
             launch_lock=launch_lock,
-            version=4,
+            version=5,
         )
 
     _resume(runtime_root, chat_id)
@@ -159,7 +159,7 @@ def test_newer_format_chatless_row_with_held_lock_allows_resume(tmp_path: Path) 
             "p1",
             current_chat_id=None,
             launch_lock=launch_lock,
-            version=4,
+            version=5,
         )
 
         _resume(runtime_root, chat_id)

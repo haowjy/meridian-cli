@@ -9,8 +9,9 @@ from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import BeforeValidator
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+from meridian.lib.state.paths import LaunchPaths
 
 _BACKGROUND_TASK_KINDS = frozenset({"agent", "shell", "watcher", "other"})
 
@@ -81,8 +82,7 @@ class IdleSensorContext:
     env: Mapping[str, str]
     tmux_pane: str | None
     tui_alive: Callable[[], bool]
-    spawn_dir: Path
-    spawn_id: SpawnId | None = None
+    launch: LaunchPaths
 
 
 class IdleSensor(Protocol):

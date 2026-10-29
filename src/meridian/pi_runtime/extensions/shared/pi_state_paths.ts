@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import type { SpawnStateFile } from "./schemas";
 
 /** Mirrors ``pi_paths.resolve_meridian_pi_state_dir`` — extension runtime state root. */
 export function resolveStateRoot(): string {
@@ -37,21 +38,51 @@ export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): strin
   return path.join(resolvePiBashDir(spawnId), "bash-records.json");
 }
 
+// Consumption ledgers are keyed by launch ("<spawn id>:<n>", see ``launchKey``). The files below
+// named "legacy" are what older builds wrote, keyed by bare spawn ID: read-only, and an entry
+// there names launch 1 (an older build cannot read a v4 row, so it only consumed launch 1).
+
 export function resolveDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "launch-receipts.json");
+}
+
+export function resolveLegacyDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "delivery-receipts.json");
 }
 
-/** Mirrors ``paths.observed_spawns_path``: the parent's own spawn directory. */
-export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
+/** Mirrors ``paths.observed_launches_path``: the parent's own spawn directory. */
+export function resolveObservedLaunchesPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolveSpawnsDir(), spawnId, "observed-launches.json");
+}
+
+/** Mirrors ``paths.observed_spawns_path``: the file older builds kept in the same place. */
+export function resolveLegacyObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveSpawnsDir(), spawnId, "observed-spawns.json");
 }
 
-/** legacy-observed-spawns (#719): Old location, read-only in the Pi extension. */
-export function resolveLegacyObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
+/**
+ * Mirrors ``launch_archive``: launch ``n``'s finished row, copied by the continue that started
+ * launch ``n+1``. A launch the spawn has moved past is read from here, never from ``state.json``.
+ */
+export function resolveLaunchArchivePath(spawnId: string, n: number): string {
+  return path.join(resolveSpawnsDir(), spawnId, "launches", String(n), "launch.json");
 }
 
-export function resolveClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
+/**
+ * Mirrors ``LaunchPaths.report``: the one place the extension names a per-launch file.
+ * Takes the parsed spawn state so the launch it names is the one resolved: a v4 row's
+ * launch lives in ``launches/<n>/``, a v3 row's (``launch`` absent) in the spawn directory.
+ */
+export function resolveReportPath(row: SpawnStateFile): string {
+  const launchDir = row.launch === undefined ? [] : ["launches", String(row.launch.n)];
+  return path.join(resolveSpawnsDir(), row.id, ...launchDir, "report.md");
+}
+
+export function resolveClearedLaunchesPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "cleared-launches.json");
+}
+
+export function resolveLegacyClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "cleared-spawns.json");
 }
 

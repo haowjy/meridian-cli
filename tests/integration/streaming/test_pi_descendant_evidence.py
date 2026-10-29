@@ -14,6 +14,8 @@ from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_coordinator import DrainTerminalDecision
 from meridian.lib.streaming.drain_policy import DrainAction
+from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import PiDrainScenario, pi_event, write_json, write_pi_bash_record
 from tests.support.resident_drain import start_row
 
@@ -131,11 +133,11 @@ async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_cons
     # writes its outcome. A report alone publishes nothing.
     child_runner = LaunchSlot()
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1", launch_lock=child_runner)
-    spawn_store.mark_finalizing(tmp_path, SpawnId("p2"))
+    legacy_rows.mark_finalizing(tmp_path, "p2")
     started = await _start_pi(tmp_path, monkeypatch)
     try:
         await _assess_terminal(started)
-        (tmp_path / "spawns" / "p2" / "report.md").write_text(
+        launch_paths(tmp_path, "p2").report.write_text(
             "# Report\n\nChild completed.\n",
             encoding="utf-8",
         )

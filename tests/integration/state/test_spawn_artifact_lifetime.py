@@ -22,6 +22,7 @@ from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.state.spawn_store import start_spawn
+from tests.support.launch_paths import launch_paths
 
 
 def _start_test_spawn(
@@ -53,7 +54,7 @@ def test_late_spawn_signal_does_not_recreate_deleted_spawn(tmp_path: Path) -> No
         can_delete=lambda record: record is not None,
     )
 
-    assert write_spawn_signal(runtime_root, spawn_id, "done") is False
+    assert write_spawn_signal(launch_paths(runtime_root, spawn_id), "done") is False
 
     assert not spawn_dir.exists()
 
@@ -86,7 +87,7 @@ async def test_control_action_ack_does_not_recreate_deleted_spawn(tmp_path: Path
     spawn_id = "p1"
     spawn_dir = runtime_root / "spawns" / spawn_id
     _start_test_spawn(runtime_root, spawn_id, status="running")
-    coordinator = ControlActionCoordinator(spawn_id=SpawnId(spawn_id), spawn_dir=spawn_dir)
+    coordinator = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, spawn_id))
     send_started = asyncio.Event()
     finish_send = asyncio.Event()
 
@@ -130,7 +131,9 @@ async def test_permission_cursor_does_not_recreate_deleted_spawn(tmp_path: Path)
         dispatch_started.set()
         await finish_dispatch.wait()
 
-    broker = PermissionBroker(spawn_dir=spawn_dir, event_sink=_event_sink)
+    broker = PermissionBroker(
+        launch=launch_paths(spawn_dir.parent.parent, spawn_dir.name), event_sink=_event_sink
+    )
     request = HarnessRequest(
         request_id="approval-1",
         request_type="approval",
@@ -161,7 +164,7 @@ async def test_late_permission_transition_does_not_recreate_deleted_spawn(
     spawn_id = "p1"
     spawn_dir = runtime_root / "spawns" / spawn_id
     _start_test_spawn(runtime_root, spawn_id, status="running")
-    broker = PermissionBroker(spawn_dir=spawn_dir)
+    broker = PermissionBroker(launch=launch_paths(spawn_dir.parent.parent, spawn_dir.name))
     await broker.handle_request(
         cast("HarnessConnection[Any]", object()),
         HarnessRequest(
@@ -191,12 +194,10 @@ def test_late_runner_lifecycle_write_does_not_recreate_deleted_spawn(
     runtime_root = tmp_path / "runtime"
     spawn_id = SpawnId("p1")
     spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    lifecycle_path = spawn_dir / "runner-lifecycle.jsonl"
+    lifecycle_path = launch_paths(runtime_root, spawn_id).runner_lifecycle
     _start_test_spawn(runtime_root, str(spawn_id), status="running")
     _append_runner_lifecycle_event(
-        runtime_root,
-        spawn_id,
-        lifecycle_path,
+        launch_paths(runtime_root, spawn_id),
         clock=RealClock(),
         event="runner_started",
         phase="setup",
@@ -209,9 +210,7 @@ def test_late_runner_lifecycle_write_does_not_recreate_deleted_spawn(
     )
 
     _append_runner_lifecycle_event(
-        runtime_root,
-        spawn_id,
-        lifecycle_path,
+        launch_paths(runtime_root, spawn_id),
         clock=RealClock(),
         event="runner_completed",
         phase="completed",
@@ -226,14 +225,12 @@ def test_late_native_primary_metadata_does_not_recreate_deleted_spawn(
     runtime_root = tmp_path / "runtime"
     spawn_id = SpawnId("p1")
     spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    metadata_path = spawn_dir / "primary_meta.json"
+    metadata_path = launch_paths(runtime_root, spawn_id).primary_meta
     _start_test_spawn(runtime_root, str(spawn_id), status="running")
 
     def _write() -> None:
         _write_native_primary_metadata(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
-            spawn_dir=spawn_dir,
+            launch=launch_paths(runtime_root, spawn_id),
             command=("pi",),
             launch_cwd=tmp_path,
             launcher_pid=os.getpid(),
@@ -263,7 +260,6 @@ async def test_process_adoption_does_not_recreate_deleted_spawn(
     tmp_path: Path,
 ) -> None:
     runtime_root = tmp_path / "runtime"
-    project_root = tmp_path / "repo"
     spawn_id = SpawnId("p1")
     spawn_dir = runtime_root / "spawns" / str(spawn_id)
     _start_test_spawn(runtime_root, str(spawn_id), status="running")
@@ -287,9 +283,7 @@ async def test_process_adoption_does_not_recreate_deleted_spawn(
     try:
         with pytest.raises(ValueError, match="spawn does not exist"):
             await register_spawn_owned_process(
-                spawn_id=spawn_id,
-                control_root=project_root,
-                runtime_root=runtime_root,
+                launch=launch_paths(runtime_root, spawn_id),
                 process=process,
                 identity=gate.adopt(process.pid),
                 gate=gate,

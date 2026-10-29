@@ -11,6 +11,7 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.claude import ClaudeFold, ClaudeHarnessExtractor
 from meridian.lib.launch.extract import enrich_finalize
+from tests.support.launch_paths import launch_paths
 
 
 def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
@@ -23,7 +24,8 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     output = tmp_path / "output.jsonl"
     output.write_bytes(
         b'\xff\n{"type":"broken"}\n'
-        b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
+        b'{"type":"result","result":"surviving report",'
+        b'"modelUsage":{"m":{"inputTokens":7}}}\n'
     )
     extractor = ClaudeHarnessExtractor()
     fold = DriftingFold(extractor)
@@ -34,8 +36,7 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     result = enrich_finalize(
         extractor=extractor,
         facts=facts,
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p1")),
     )
     assert result.report_path.read_text().endswith("surviving report\n")
     assert result.usage is not None
@@ -50,8 +51,7 @@ def test_finalize_logs_incomplete_facts_and_capped_report(tmp_path, incomplete):
         result = enrich_finalize(
             extractor=ClaudeHarnessExtractor(),
             facts=facts,
-            spawn_id=SpawnId("p1"),
-            log_dir=tmp_path,
+            launch=launch_paths(tmp_path, SpawnId("p1")),
         )
     assert result.usage is not None
     assert any(row["event"] == "facts_incomplete" for row in logs) is incomplete
@@ -62,8 +62,7 @@ def test_unknown_usage_is_none_and_empty_failure_does_not_create_history(tmp_pat
     result = enrich_finalize(
         extractor=ClaudeHarnessExtractor(),
         facts=AttemptFacts(),
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         failure_reason="child exited before output",
     )
     assert result.usage is None
@@ -80,8 +79,7 @@ def test_blank_stdout_lines_do_not_hide_known_usage(tmp_path):
     result = enrich_finalize(
         extractor=extractor,
         facts=fold.facts,
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p1")),
     )
     assert result.usage is not None
     assert result.usage.input_tokens == 7
@@ -91,8 +89,7 @@ def _finalize(tmp_path, extractor, facts):
     return enrich_finalize(
         extractor=extractor,
         facts=facts,
-        spawn_id=SpawnId("p1"),
-        log_dir=tmp_path,
+        launch=launch_paths(tmp_path, SpawnId("p1")),
     )
 
 
@@ -142,7 +139,14 @@ def test_fold_failure_drops_generic_usage_but_keeps_later_harness_total(tmp_path
         specific,
         ("assistant", {"usage": {"input_tokens": 3}}),
         ("broken", {}),
-        ("result", {"result": "done", "total_cost_usd": 1.25, "usage": {"input_tokens": 9}}),
+        (
+            "result",
+            {
+                "result": "done",
+                "total_cost_usd": 1.25,
+                "modelUsage": {"m": {"inputTokens": 9, "costUSD": 1.25}},
+            },
+        ),
     )
     usage = _finalize(tmp_path, extractor, specific.facts).usage
     assert usage is not None

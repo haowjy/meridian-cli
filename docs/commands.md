@@ -106,7 +106,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
-Session initiation modes: `--continue` resumes the same transcript (bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+Session initiation modes: `--continue` resumes the same transcript and keeps the spawn's ID (`--continue p7` is still `p7`; bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
 
 Meridian follows a native `/resume` inside a running harness on a best-effort basis (commands then name the run live in the chat). `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
 
@@ -150,7 +150,7 @@ Progressive disclosure:
 
 ```bash
 meridian spawn -a reviewer -p "task"              # compact: status + report
-meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
+meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens inline
 meridian spawn show p123                           # moderate summary + report body
 meridian spawn status p123                         # moderate summary without report body
 meridian spawn show p123 --verbose                 # internal diagnostics view
@@ -613,14 +613,12 @@ directory actually read, so a Mars-provided skill points at
 
 | Status | Meaning |
 | ------ | ------- |
-| `queued` | Registered but harness not yet started |
-| `running` | Harness process is active |
-| `finalizing` | All post-exit work is done; runner is committing the terminal state — no new work will happen, but the spawn is not yet terminal |
+| `running` | The spawn exists and its runner holds it; set when the row is created |
 | `succeeded` | Completed successfully |
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
 
-`queued`, `running`, and `finalizing` are active (in-flight) statuses. They all count toward active spawn counts in `spawn list` and the `work` dashboard. `finalizing` is typically brief — a few seconds at most — but is visible between harness exit and final persistence.
+`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued`, `--status finalizing` and `--view queued` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
 ## Spawn References
 

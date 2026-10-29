@@ -84,7 +84,6 @@ session drains that keep the harness alive across turns.
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
-- `signal_canceller.py` — shared cancel pipeline for CLI and app-managed spawns
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         compile_prepared_policy_surface,
         prepare_launch_surface,
     )
+    from meridian.lib.launch.continue_launch import ContinueHold
     from meridian.lib.launch.materialize import MaterializedLaunch, materialize_harness
     from meridian.lib.launch.policies import (
         ResolvedLaunchPolicy,
@@ -84,8 +85,13 @@ def launch_primary(
     project_root: Path,
     request: LaunchRequest,
     harness_registry: HarnessRegistry,
+    hold: ContinueHold | None = None,
 ) -> LaunchResult:
-    """Launch the primary agent process and wait for exit."""
+    """Launch the primary agent process and wait for exit.
+
+    ``hold``: the finished spawn this launch reopens, its lock held; the runner commits
+    the next launch to it instead of creating a spawn.
+    """
 
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -201,7 +207,7 @@ def launch_primary(
     preview_context = bind_launch_context(
         prepared=prepared,
         bindings=RuntimeBindings(
-            spawn_id="dry-run-primary",
+            launch=LaunchPaths.preview(Path(runtime.runtime_root)),
             runtime_work_id=effective_work_id,
             dry_run=True,
         ),
@@ -238,6 +244,7 @@ def launch_primary(
         preview_context,
         harness_registry,
         prepared=prepared,
+        hold=hold,
     )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 

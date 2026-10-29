@@ -17,13 +17,15 @@ from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _execute_with_context,
     _FakeControlSocketServer,
 )
 from tests.integration.launch.test_streaming_runner_seed import _ClaudeSeedPersistenceConnection
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -52,7 +54,7 @@ async def test_streaming_initial_identity(
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             nonlocal expected_id, observed_id, expected_store
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self._project_root = config.control_root
             self.state = "connected"
             assert spec.native_identity is not None
@@ -109,6 +111,7 @@ async def test_streaming_initial_identity(
         status=SpawnStatus.QUEUED,
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
             harness="claude",
@@ -152,7 +155,7 @@ async def test_streaming_initial_identity(
         assert row.terminal is not None
         assert row.terminal.error == "entry_mismatch"
         assert starts == []
-        lifecycle = resolve_spawn_log_dir(tmp_path, run.spawn_id, runtime_root=runtime_root)
+        lifecycle = launch_paths(runtime_root, run.spawn_id).dir
         facts = [
             json.loads(line)
             for line in (lifecycle / "runner-lifecycle.jsonl").read_text().splitlines()
@@ -245,6 +248,7 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
         status=SpawnStatus.QUEUED,
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
             harness="claude",

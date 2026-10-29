@@ -178,9 +178,7 @@ session ID. `@latest`, `@last-failed` and `@last-completed` also work with `--co
 
 ## Spawn shows as `finalizing`
 
-`finalizing` is a normal, short-lived active status. It means the runner has finished its post-exit work (output drain, report extraction) and is committing the terminal state. You may briefly see it in `spawn list` or the `work` dashboard between harness exit and terminal persistence. No action needed — the spawn will move to `succeeded` or `failed` momentarily.
-
-If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. If so, status reads already show it as crashed (see below).
+New spawns never show `finalizing`; they go from `running` straight to their outcome. You can still see it on a spawn an older build wrote, or in the output of `spawn cancel` when a cancellation did not finish within about 6 seconds because the runner's process is stuck. In both cases, if the runner has died the status reads as crashed or cancelled (see below); otherwise run `meridian doctor`.
 
 ## Spawn shows as crashed
 
@@ -260,8 +258,10 @@ If multi-repo filesystem access is required, use a harness that supports workspa
 ## Spawn artifacts
 
 Each spawn writes artifacts under
-`~/.meridian/projects/<uuid>/spawns/<spawn_id>/`. Use `meridian spawn show ID`
-to read them without navigating the path directly.
+`~/.meridian/projects/<uuid>/spawns/<spawn_id>/`. Spawns created by v0.18 and later
+keep every file below except `state.json` in `launches/<n>/` inside that directory.
+Use `meridian spawn show ID` and `meridian spawn report show ID` to read them
+without navigating the path directly.
 
 | File | Contents |
 | ---- | -------- |

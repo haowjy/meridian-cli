@@ -6,23 +6,21 @@ import json
 import os
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
     build_inline_file_contributions,
     build_reference_routing,
 )
-from meridian.lib.launch.constants import RUNNER_LIFECYCLE_FILENAME
 from meridian.lib.state.atomic import append_text_line, atomic_write_text
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 if TYPE_CHECKING:
@@ -33,9 +31,7 @@ logger = structlog.get_logger(__name__)
 
 
 def append_runner_lifecycle_event(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    path: Path,
+    launch: LaunchPaths,
     *,
     clock: Clock,
     event: str,
@@ -53,10 +49,10 @@ def append_runner_lifecycle_event(
     }
     try:
         mutate_published_spawn_artifact(
-            runtime_root,
-            spawn_id,
+            launch.runtime_root,
+            launch.spawn_id,
             lambda: append_text_line(
-                path,
+                launch.runner_lifecycle,
                 json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
             ),
         )
@@ -68,33 +64,16 @@ def append_runner_lifecycle_event(
 class LifecycleLog:
     """Destination and clock for runner-owned lifecycle evidence."""
 
-    runtime_root: Path
-    spawn_id: SpawnId
-    path: Path
+    launch: LaunchPaths
     clock: Clock
 
     @classmethod
-    def for_spawn(
-        cls,
-        runtime_root: Path,
-        project_root: Path,
-        spawn_id: SpawnId,
-        *,
-        clock: Clock | None = None,
-    ) -> LifecycleLog:
-        return cls(
-            runtime_root,
-            spawn_id,
-            resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
-            / RUNNER_LIFECYCLE_FILENAME,
-            clock if clock is not None else RealClock(),
-        )
+    def for_launch(cls, launch: LaunchPaths, *, clock: Clock | None = None) -> LifecycleLog:
+        return cls(launch, clock if clock is not None else RealClock())
 
     def __call__(self, *, event: str, phase: str, **details: object) -> None:
         append_runner_lifecycle_event(
-            self.runtime_root,
-            self.spawn_id,
-            self.path,
+            self.launch,
             clock=self.clock,
             event=event,
             phase=phase,
@@ -173,7 +152,7 @@ def _resolve_projection_channels(
 
 def _write_inline_file_reference_byte_accounting(
     *,
-    log_dir: Path,
+    launch: LaunchPaths,
     launch_context: LaunchContext,
     reference_routing: tuple[ReferenceRouting, ...],
 ) -> None:
@@ -191,14 +170,14 @@ def _write_inline_file_reference_byte_accounting(
         ],
     }
     atomic_write_text(
-        log_dir / "inline-file-reference-bytes.json",
+        launch.inline_reference_bytes,
         json.dumps(payload, indent=2) + "\n",
     )
 
 
 def write_projection_artifacts(
     *,
-    log_dir: Path,
+    launch: LaunchPaths,
     launch_context: LaunchContext,
     surface: ProjectionSurface,
 ) -> None:
@@ -218,20 +197,20 @@ def write_projection_artifacts(
         starting_prompt = user_turn or run_params.prompt.strip()
 
     if system_prompt:
-        atomic_write_text(log_dir / "system-prompt.md", system_prompt)
+        atomic_write_text(launch.system_prompt, system_prompt)
     if starting_prompt:
-        atomic_write_text(log_dir / "starting-prompt.md", starting_prompt)
+        atomic_write_text(launch.starting_prompt, starting_prompt)
     with suppress(FileNotFoundError):
-        (log_dir / "prompt.md").unlink()
+        launch.legacy_prompt.unlink()
 
     reference_routing = _resolve_reference_routing(launch_context)
     if reference_routing:
         atomic_write_text(
-            log_dir / "references.json",
+            launch.references,
             json.dumps([route.to_dict() for route in reference_routing], indent=2) + "\n",
         )
     _write_inline_file_reference_byte_accounting(
-        log_dir=log_dir,
+        launch=launch,
         launch_context=launch_context,
         reference_routing=reference_routing,
     )
@@ -247,6 +226,6 @@ def write_projection_artifacts(
         "permission_report": [line.to_wire() for line in launch_context.enforcement_report()],
     }
     atomic_write_text(
-        log_dir / "projection-manifest.json",
+        launch.projection_manifest,
         json.dumps(manifest_payload, indent=2) + "\n",
     )

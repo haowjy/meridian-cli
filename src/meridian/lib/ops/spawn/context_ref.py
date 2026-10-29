@@ -10,8 +10,10 @@ from meridian.lib.core.context_ref import (
 )
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
+from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .query import read_report, read_spawn_row
@@ -44,8 +46,11 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
     )
 
 
-def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
-    _, report_text = read_report(project_root, spawn_id)
+def _load_report_text(project_root: Path, row: SpawnRecord) -> str | None:
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        return None
+    report_text = read_report(LaunchPaths.for_row(runtime_root, row))
     return report_text
 
 
@@ -93,7 +98,7 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         desc=row.desc or "",
         model=row.model or "",
         harness=row.harness or "",
-        report_text=_load_report_text(project_root, row.id),
+        report_text=_load_report_text(project_root, row),
         harness_session_id=row.harness_session_id,
         chat_id=row.continue_chat_id,
         history_id=row.history_id,

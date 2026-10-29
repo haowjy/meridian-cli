@@ -78,11 +78,11 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.state import work_repository
 from meridian.lib.state.paths import (
+    LaunchPaths,
     load_context_config,
     resolve_ambient_work_dir,
     resolve_kb_dir,
     resolve_project_paths,
-    resolve_spawn_log_dir,
 )
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
@@ -97,6 +97,7 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
+from .compiler import ProvenanceLevel
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
@@ -109,7 +110,7 @@ from .composition import (
     join_content_blocks,
     replace_capabilities_block,
 )
-from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
+from .constants import DRY_RUN_REPORT_PATH
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, merge_env_overrides, undo_direnv
 from .permissions import launch_permission_rules
@@ -119,7 +120,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
-from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_model_selection
+from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_selection
 from .prompt import (
     build_goal_instruction,
     build_primary_preamble,
@@ -340,13 +341,17 @@ class MaterializedLaunchArtifacts:
 class RuntimeBindings:
     """Runtime-only values for the bind phase."""
 
-    spawn_id: str
+    launch: LaunchPaths
     runtime_work_id: str | None = None
     chat_id: str | None = None
     forked_harness_session_id: str | None = None
     continue_fork_override: bool | None = None
     plan_overrides: dict[str, str] = field(default_factory=lambda: {})
     dry_run: bool = False
+
+    @property
+    def spawn_id(self) -> str:
+        return str(self.launch.spawn_id)
 
 
 @dataclass(frozen=True)
@@ -1433,15 +1438,19 @@ def prepare_launch_surface(
         assert original is not None
         resolved_request = resolved_request.model_copy(
             update={
-                "launch_policy_snapshot": overlay_continue_model_selection(
+                "launch_policy_snapshot": overlay_continue_selection(
                     original,
                     harness=str(policies.harness),
                     model_selection=model_selection,
+                    execution_policy=execution_policy,
                     selection_report=policies.selection_report,
                     field_provenance={
                         **original.field_provenance,
-                        "model_source": policies.field_provenance.model_source.value,
-                        "harness_source": policies.field_provenance.harness_source.value,
+                        **{
+                            key: value.value
+                            for key, value in asdict(policies.field_provenance).items()
+                            if value is ProvenanceLevel.CLI
+                        },
                     },
                 ),
             }
@@ -1539,11 +1548,8 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    spawn_log_dir = resolve_spawn_log_dir(
-        project_paths.project_root, bindings.spawn_id, runtime_root=runtime_root
-    )
-    report_artifact_path = spawn_log_dir / REPORT_FILENAME
-    system_prompt_path = spawn_log_dir / SYSTEM_PROMPT_FILENAME
+    report_artifact_path = bindings.launch.report
+    system_prompt_path = bindings.launch.system_prompt
     logical_task_cwd = project_paths.execution_cwd.resolve()
     directory_context = LaunchDirectoryContext(
         authority_root=resolved_control_root,

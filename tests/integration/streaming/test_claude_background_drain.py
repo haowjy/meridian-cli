@@ -26,6 +26,7 @@ from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import start_row
 
 
@@ -99,7 +100,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
-                signal = spawn_signal_path(tmp_path, spawn_id, "done")
+                signal = spawn_signal_path(launch_paths(tmp_path, spawn_id), "done")
                 signal.parent.mkdir(parents=True, exist_ok=True)
                 signal.touch()
                 yield frame("assistant", message={"content": []})
@@ -124,15 +125,14 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
 
     receiver = cast("HarnessConnection[Any]", Receiver())
     plan = build_drain_plan(
-        runtime_root=tmp_path,
+        launch=launch_paths(tmp_path, spawn_id),
         project_root=tmp_path,
         emit_event=lambda *_: None,
         inject=inject,
         build_spawn_application_service=cast("Any", None),
-        spawn_id=spawn_id,
         receiver=receiver,
         config=ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(tmp_path, spawn_id),
             harness_id=HarnessId.CLAUDE,
             prompt="probe",
             control_root=tmp_path,

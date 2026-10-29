@@ -41,21 +41,12 @@ def _invoke_handler(signum: signal.Signals) -> None:
 
 
 @pytest.mark.asyncio
-async def test_install_returns_cleanup_callable() -> None:
-    """_install_signal_handlers returns a callable from the main thread."""
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-    received_signal: list[signal.Signals | None] = [None]
-
-    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
-    assert cleanup is not None
-    assert callable(cleanup)
-    cleanup()  # restore
-
-
-@pytest.mark.asyncio
-async def test_sigint_sets_shutdown_event() -> None:
-    """SIGINT causes the shutdown_event to be set."""
+@pytest.mark.parametrize(
+    "signum",
+    [pytest.param(signal.SIGINT, id="sigint"), pytest.param(signal.SIGTERM, id="sigterm")],
+)
+async def test_signal_sets_shutdown_event(signum: signal.Signals) -> None:
+    """SIGINT and SIGTERM set the shutdown_event and record the received signal."""
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
@@ -63,31 +54,12 @@ async def test_sigint_sets_shutdown_event() -> None:
     cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
-        _invoke_handler(signal.SIGINT)
+        _invoke_handler(signum)
         # Allow the event loop to process the call_soon_threadsafe callback
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert shutdown_event.is_set()
-        assert received_signal[0] == signal.SIGINT
-    finally:
-        cleanup()
-
-
-@pytest.mark.asyncio
-async def test_sigterm_sets_shutdown_event() -> None:
-    """SIGTERM causes the shutdown_event to be set."""
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-    received_signal: list[signal.Signals | None] = [None]
-
-    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
-    assert cleanup is not None
-    try:
-        _invoke_handler(signal.SIGTERM)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert shutdown_event.is_set()
-        assert received_signal[0] == signal.SIGTERM
+        assert received_signal[0] == signum
     finally:
         cleanup()
 

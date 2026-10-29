@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -15,17 +17,23 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.continue_launch import (
+    ContinueHold,
+    begin_continue,
+    resolve_continue_target,
+)
 from meridian.lib.launch.continue_replay import (
     MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
+    reject_continue_policy_overrides,
 )
-from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -38,6 +46,7 @@ from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -192,13 +201,6 @@ def run_primary_launch(
     fork_fresh_target_requested = raw_fork_fresh_target or None
     context_from_requested = (raw_from_target,) if raw_from_target else ()
     normalized_task_dir = (task_dir or "").strip() or None
-    if resume_target is not None and normalized_task_dir is not None:
-        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
-    if resume_target is not None and work.strip():
-        raise ValueError(
-            "--continue does not accept --work. "
-            "Use --fork-fresh or a fresh session to change work context."
-        )
     resolved_approval = approval if approval is not None else ("never" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
@@ -225,6 +227,8 @@ def run_primary_launch(
     source_execution_cwd: str | None = None
     source_native_store: str | None = None
     continue_source_tracked = False
+    continue_source: SpawnRecord | None = None
+    continue_source_chat_id: str | None = None
     continue_source_ref: str | None = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     continue_passthrough_args: tuple[str, ...] = ()
@@ -243,24 +247,48 @@ def run_primary_launch(
     # spawn does: `--goal` overrides, its absence inherits.
     source_goal: str | None = None
     if resume_target is not None:
-        if skills:
-            raise ValueError("Cannot combine --continue with --skills.")
-        if passthrough:
-            raise ValueError("Cannot combine --continue with passthrough args (--).")
+        reject_continue_policy_overrides(
+            {
+                "--skills": bool(skills),
+                "--": bool(passthrough),
+                "--task-dir": normalized_task_dir is not None,
+            }
+        )
         resolved_continue = resolve_session_target(
             project_root=project_root,
             continue_ref=resume_target,
             harness_hint=harness,
         )
+        continue_source_chat_id = resolved_continue.source_chat_id
+        # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
+        # continue reopens before anything is built, then build everything from that spawn.
+        named_spawn = (
+            spawn_store.get_spawn(
+                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id
+            )
+            if resolved_continue.source_spawn_id is not None
+            else None
+        )
+        if named_spawn is not None:
+            continue_source, redirect_notice = resolve_continue_target(
+                resolve_project_runtime_root(project_root),
+                named_spawn,
+                named_by_spawn_ref=parse_ref(resume_target).kind in {"spawn", "selector"},
+                chat_id=continue_source_chat_id,
+                parent_id=None,
+                kind="primary",
+            )
+            if continue_source.id != named_spawn.id:
+                resume_target = continue_source.id
+                resolved_continue = resolve_session_target(
+                    project_root=project_root,
+                    continue_ref=resume_target,
+                    harness_hint=harness,
+                )
+                continue_source_chat_id = resolved_continue.source_chat_id
+            continue_warning = redirect_notice
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
-        if resolved_continue.source_spawn_id is not None:
-            sweep_before_continue(
-                resolve_project_runtime_root(project_root),
-                resolved_continue.source_spawn_id,
-                chat_id=resolved_continue.source_chat_id,
-                dry_run=dry_run,
-            )
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
@@ -277,7 +305,7 @@ def run_primary_launch(
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
-        continue_warning = resolved_continue.warning
+        continue_warning = _merge_warnings(continue_warning, resolved_continue.warning)
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
         source_native_store = continue_contract.session.source_native_store
@@ -363,69 +391,84 @@ def run_primary_launch(
     context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
-    launch_result = launch_primary(
-        project_root=project_root,
-        request=LaunchRequest(
-            ignore_direnv=ignore_direnv,
-            model=requested_model,
-            harness=(
-                continue_harness
-                if (resume_target is not None or selected_fork_target is not None)
-                else harness
-            ),
-            agent=requested_agent,
-            agent_opt_out=agent_opt_out,
-            work_id=requested_work_id,
-            task_dir=launch_task_dir,
-            passthrough_args=(
-                continue_passthrough_args if resume_target is not None else passthrough
-            ),
-            session_mode=session_mode,
-            pinned_context="",
-            supplemental_prompt_documents=supplemental_prompt_documents,
-            include_bootstrap_documents=include_bootstrap_documents,
-            context_refs=context_sources,
-            reference_files=reference_files,
-            prompt=prompt,
-            skills=requested_skills,
-            goal=resolved_goal,
+    hold: ContinueHold | None = None
+    if continue_source is not None:
+        # The continue keeps the spawn's ID: hold its launch lock from here until the runner
+        # owns it, so a second terminal's continue is refused rather than racing this one.
+        hold = begin_continue(
+            project_root=project_root,
+            runtime_root=resolve_project_runtime_root(project_root),
+            target=continue_source,
+            chat_id=continue_source_chat_id,
+            parent_id=None,
+            caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
             dry_run=dry_run,
-            network_overrides=NetworkOverrides(
-                mode=network,
-                allow=network_allow,
-                deny=network_deny,
+        )
+    with hold.slot if hold is not None else nullcontext():
+        launch_result = launch_primary(
+            project_root=project_root,
+            hold=hold,
+            request=LaunchRequest(
+                ignore_direnv=ignore_direnv,
+                model=requested_model,
+                harness=(
+                    continue_harness
+                    if (resume_target is not None or selected_fork_target is not None)
+                    else harness
+                ),
+                agent=requested_agent,
+                agent_opt_out=agent_opt_out,
+                work_id=requested_work_id,
+                task_dir=launch_task_dir,
+                passthrough_args=(
+                    continue_passthrough_args if resume_target is not None else passthrough
+                ),
+                session_mode=session_mode,
+                pinned_context="",
+                supplemental_prompt_documents=supplemental_prompt_documents,
+                include_bootstrap_documents=include_bootstrap_documents,
+                context_refs=context_sources,
+                reference_files=reference_files,
+                prompt=prompt,
+                skills=requested_skills,
+                goal=resolved_goal,
+                dry_run=dry_run,
+                network_overrides=NetworkOverrides(
+                    mode=network,
+                    allow=network_allow,
+                    deny=network_deny,
+                ),
+                execution_policy=ResolvedExecutionPolicy(
+                    approval=resolved_approval if resolved_approval != "default" else None,
+                    effort=effort,
+                    sandbox=sandbox,
+                    timeout=timeout,
+                    autocompact=autocompact,
+                    autocompact_pct=autocompact_pct,
+                ),
+                launch_policy_snapshot=continue_launch_policy_snapshot,
+                session=continue_session.model_copy(
+                    update={
+                        "context_from_chat_id": context_source.chat_id if context_source else None,
+                        "context_from_history_id": context_source.history_id
+                        if context_source
+                        else None,
+                        "requested_harness_session_id": continue_harness_session_id,
+                        "continue_harness": continue_harness,
+                        "continue_chat_id": continue_chat_id,
+                        "continue_fork": continue_fork,
+                        "forked_from_chat_id": forked_from_chat_id,
+                        "forked_from_history_id": forked_from_history_id,
+                        "source_control_root": source_control_root,
+                        "source_execution_cwd": source_execution_cwd,
+                        "source_native_store": source_native_store,
+                        "continue_source_tracked": continue_source_tracked,
+                        "continue_source_ref": continue_source_ref,
+                    }
+                ),
             ),
-            execution_policy=ResolvedExecutionPolicy(
-                approval=resolved_approval if resolved_approval != "default" else None,
-                effort=effort,
-                sandbox=sandbox,
-                timeout=timeout,
-                autocompact=autocompact,
-                autocompact_pct=autocompact_pct,
-            ),
-            launch_policy_snapshot=continue_launch_policy_snapshot,
-            session=continue_session.model_copy(
-                update={
-                    "context_from_chat_id": context_source.chat_id if context_source else None,
-                    "context_from_history_id": context_source.history_id
-                    if context_source
-                    else None,
-                    "requested_harness_session_id": continue_harness_session_id,
-                    "continue_harness": continue_harness,
-                    "continue_chat_id": continue_chat_id,
-                    "continue_fork": continue_fork,
-                    "forked_from_chat_id": forked_from_chat_id,
-                    "forked_from_history_id": forked_from_history_id,
-                    "source_control_root": source_control_root,
-                    "source_execution_cwd": source_execution_cwd,
-                    "source_native_store": source_native_store,
-                    "continue_source_tracked": continue_source_tracked,
-                    "continue_source_ref": continue_source_ref,
-                }
-            ),
-        ),
-        harness_registry=harness_registry,
-    )
+            harness_registry=harness_registry,
+        )
 
     continue_chat_id = launch_result.continue_chat_id
     row = None

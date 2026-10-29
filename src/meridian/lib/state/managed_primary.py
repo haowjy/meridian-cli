@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import psutil
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.spawn.model import SpawnRecord
+
+_RELEASE_GRACE_SECS = 5.0
 
 
 def _terminate_pid(pid: int) -> bool:
@@ -67,48 +71,63 @@ def is_managed_primary_candidate(record: SpawnRecord) -> bool:
     return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
+def tear_down_dead_launch(
+    runtime_root: Path,
+    record: SpawnRecord,
+    metadata: PrimaryMetadata | None,
+    *,
+    until: float,
+) -> None:
+    """Stop what a launch with no runner left behind; the one teardown cancel uses.
+
+    A managed primary's backend and TUI go first (by exact birth, then their recorded
+    scopes), then every other recorded scope. Nothing is signalled whose birth is
+    unknown. Each step's grace is the time left before ``until`` (monotonic).
+    """
+
+    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
+    from meridian.lib.core.process_cleanup import (
+        cancel_managed_primary,
+        terminate_recorded_spawn_scopes,
+    )
+
+    managed = (
+        metadata.managed_backend if metadata is not None else is_managed_primary_candidate(record)
+    )
+    if managed:
+        terminate_managed_primary_processes(metadata, include_launcher=False)
+        cancel_managed_primary(
+            runtime_root, record, grace_seconds=max(0.0, until - time.monotonic())
+        )
+    terminate_recorded_spawn_scopes(
+        runtime_root, record, reason="cancel", grace_seconds=max(0.0, until - time.monotonic())
+    )
+
+
 def release_managed_primary_scopes(
     runtime_root: Path,
     spawn_id: SpawnId,
     record: SpawnRecord,
 ) -> None:
-    """Best-effort teardown of a terminal managed-primary orphan's processes.
-
-    Single owner of the cancel-on-terminal release path. Prefers managed-primary
-    metadata PIDs, then recorded process scopes, then the legacy worker fallback.
-    """
+    """Tear down a terminal managed-primary orphan once its runner is gone."""
 
     from meridian.lib.state.liveness import is_process_dead_with_birth
 
     if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
         return
-
-    metadata = read_primary_metadata(runtime_root, str(spawn_id))
-    if metadata is not None:
-        if metadata.managed_backend:
-            terminate_managed_primary_processes(metadata, include_launcher=False)
+    metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, record))
+    if metadata is None and not is_managed_primary_candidate(record):
         return
-
-    if not is_managed_primary_candidate(record):
+    if metadata is not None and not metadata.managed_backend:
         return
-
-    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
-    from meridian.lib.core.process_cleanup import (
-        cancel_managed_primary,
-        terminate_spawn_scopes,
+    tear_down_dead_launch(
+        runtime_root, record, metadata, until=time.monotonic() + _RELEASE_GRACE_SECS
     )
-    from meridian.lib.state.process_scope_projection import read_scopes_from_disk
-
-    if read_scopes_from_disk(runtime_root, spawn_id):
-        # Phase-3 scope records: use sequenced managed-primary teardown.
-        cancel_managed_primary(runtime_root, record, grace_seconds=5.0)
-    else:
-        # Legacy fallback: no scope records, use worker_pid termination.
-        terminate_spawn_scopes(runtime_root, record, reason="cancel", grace_seconds=5.0)
 
 
 __all__ = [
     "is_managed_primary_candidate",
     "release_managed_primary_scopes",
+    "tear_down_dead_launch",
     "terminate_managed_primary_processes",
 ]

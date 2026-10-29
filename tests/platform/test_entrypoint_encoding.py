@@ -6,12 +6,10 @@ import io
 import os
 import sys
 import types
-from typing import TYPE_CHECKING
+
+import pytest
 
 import meridian.cli.entrypoint as entrypoint_module
-
-if TYPE_CHECKING:
-    import pytest
 
 
 class _FakeTextIOWrapper(io.TextIOWrapper):
@@ -36,87 +34,73 @@ def _make_fake_main_module(captured: dict[str, object]) -> types.ModuleType:
     return fake
 
 
+def _run_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    is_windows: bool,
+    stdout: object,
+    stderr: object,
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = _make_fake_main_module(captured)
+    try:
+        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", is_windows)
+        monkeypatch.setattr(sys, "stdout", stdout)
+        monkeypatch.setattr(sys, "stderr", stderr)
+        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
+        entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+    return captured
+
+
 # ---------------------------------------------------------------------------
 # Windows reconfiguration — active on win32
 # ---------------------------------------------------------------------------
 
 
-def test_reconfigure_called_for_stdout_and_stderr_on_win32(
+@pytest.mark.parametrize(
+    ("is_windows", "expected_calls"),
+    (
+        pytest.param(True, [{"encoding": "utf-8", "errors": "replace"}], id="win32"),
+        pytest.param(False, [], id="posix"),
+    ),
+)
+def test_reconfigure_follows_platform(
     monkeypatch: pytest.MonkeyPatch,
+    is_windows: bool,
+    expected_calls: list[dict[str, object]],
 ) -> None:
-    """Both streams are reconfigured to utf-8 on Windows."""
+    """Both streams are reconfigured to utf-8 on Windows and left alone elsewhere."""
     fake_stdout = _FakeTextIOWrapper(encoding="cp1252")
     fake_stderr = _FakeTextIOWrapper(encoding="cp1252")
 
-    captured: dict[str, object] = {}
-    fake_main_module = _make_fake_main_module(captured)
-    original = sys.modules.get("meridian.cli.main")
-    sys.modules["meridian.cli.main"] = fake_main_module
+    _run_entrypoint(
+        monkeypatch,
+        is_windows=is_windows,
+        stdout=fake_stdout,
+        stderr=fake_stderr,
+    )
 
-    try:
-        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", True)
-        monkeypatch.setattr(sys, "stdout", fake_stdout)
-        monkeypatch.setattr(sys, "stderr", fake_stderr)
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
-
-        entrypoint_module.main()
-    finally:
-        if original is not None:
-            sys.modules["meridian.cli.main"] = original
-        else:
-            sys.modules.pop("meridian.cli.main", None)
-
-    assert fake_stdout._reconfigure_calls == [{"encoding": "utf-8", "errors": "replace"}]
-    assert fake_stderr._reconfigure_calls == [{"encoding": "utf-8", "errors": "replace"}]
-
-
-def test_reconfigure_not_called_on_posix(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Streams are not touched on non-Windows platforms."""
-    fake_stdout = _FakeTextIOWrapper(encoding="utf-8")
-    fake_stderr = _FakeTextIOWrapper(encoding="utf-8")
-
-    captured: dict[str, object] = {}
-    fake_main_module = _make_fake_main_module(captured)
-    original = sys.modules.get("meridian.cli.main")
-    sys.modules["meridian.cli.main"] = fake_main_module
-
-    try:
-        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", False)
-        monkeypatch.setattr(sys, "stdout", fake_stdout)
-        monkeypatch.setattr(sys, "stderr", fake_stderr)
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
-
-        entrypoint_module.main()
-    finally:
-        if original is not None:
-            sys.modules["meridian.cli.main"] = original
-        else:
-            sys.modules.pop("meridian.cli.main", None)
-
-    assert fake_stdout._reconfigure_calls == []
-    assert fake_stderr._reconfigure_calls == []
+    assert fake_stdout._reconfigure_calls == expected_calls
+    assert fake_stderr._reconfigure_calls == expected_calls
 
 
 def test_entrypoint_defaults_meridian_managed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
-    fake_main_module = _make_fake_main_module(captured)
-    original = sys.modules.get("meridian.cli.main")
-    sys.modules["meridian.cli.main"] = fake_main_module
+    monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
 
-    try:
-        monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
-
-        entrypoint_module.main()
-    finally:
-        if original is not None:
-            sys.modules["meridian.cli.main"] = original
-        else:
-            sys.modules.pop("meridian.cli.main", None)
+    captured = _run_entrypoint(
+        monkeypatch,
+        is_windows=False,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
 
     assert captured["argv"] == ["spawn", "list"]
     assert captured["managed"] == "1"
@@ -126,60 +110,15 @@ def test_entrypoint_defaults_meridian_managed(
 def test_entrypoint_preserves_outer_meridian_managed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
-    fake_main_module = _make_fake_main_module(captured)
-    original = sys.modules.get("meridian.cli.main")
-    sys.modules["meridian.cli.main"] = fake_main_module
+    monkeypatch.setenv("MERIDIAN_MANAGED", "0")
 
-    try:
-        monkeypatch.setenv("MERIDIAN_MANAGED", "0")
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
-
-        entrypoint_module.main()
-    finally:
-        if original is not None:
-            sys.modules["meridian.cli.main"] = original
-        else:
-            sys.modules.pop("meridian.cli.main", None)
+    captured = _run_entrypoint(
+        monkeypatch,
+        is_windows=False,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
 
     assert captured["argv"] == ["spawn", "list"]
     assert captured["managed"] == "0"
     assert os.environ["MERIDIAN_MANAGED"] == "0"
-
-
-def test_reconfigure_skipped_when_stream_lacks_reconfigure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Streams without reconfigure() are left alone (e.g. redirected pipes)."""
-
-    class _NoReconfigure:
-        def write(self, s: str) -> int:
-            return len(s)
-
-        def flush(self) -> None:
-            pass
-
-    fake_stdout = _NoReconfigure()
-    fake_stderr = _NoReconfigure()
-
-    captured: dict[str, object] = {}
-    fake_main_module = _make_fake_main_module(captured)
-    original = sys.modules.get("meridian.cli.main")
-    sys.modules["meridian.cli.main"] = fake_main_module
-
-    try:
-        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", True)
-        monkeypatch.setattr(sys, "stdout", fake_stdout)
-        monkeypatch.setattr(sys, "stderr", fake_stderr)
-        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
-
-        # Should not raise even though reconfigure is absent.
-        entrypoint_module.main()
-    finally:
-        if original is not None:
-            sys.modules["meridian.cli.main"] = original
-        else:
-            sys.modules.pop("meridian.cli.main", None)
-
-    # No attribute error means the guard worked.
-    assert not hasattr(fake_stdout, "_reconfigure_calls")

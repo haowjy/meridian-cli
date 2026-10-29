@@ -92,6 +92,12 @@ requires the complete recorded native key; no legacy hint repair is allowed.
 
 ### Exact Continue Replay
 
+A continue keeps the spawn's ID. `continue_launch` (step 1, `resolve_continue_target`: pick the spawn that
+owns the chat, before the caller builds anything; steps 2-4, `begin_continue`: take its launch lock, end and sweep the last launch, pre-check the cycle and the
+chat) returns a `ContinueHold`; the caller prepares, then `lifecycle.reopen` commits the next
+launch and the same lock becomes the runner's. `launch/` imports nothing from `ops/` here: callers
+pass the resolved row and target chat in.
+
 Primary `meridian --continue` and subagent `spawn --continue` are exact
 continuations. `continue_replay.py` owns the launch-level seam:
 `ContinueReplaySource` normalizes the resolved reference shape, and
@@ -502,7 +508,8 @@ and captures stdlib warnings; structlog bypasses it and would leak to stderr.
 A run holds its entry chat's lifetime lock (`sessions/<chat>.lock`) until it exits, even after
 `/clear` moves it to another chat. `start_session` waits at most two seconds for that lock (long enough for `doctor`'s brief hold or an owner mid-exit) and then raises
 `ValueError("Chat cN is held ...")`, so `--continue cN` never hangs on a live owner. The continue
-sweep refuses such an owner earlier, and says so when the owner has moved to another chat.
+refuses such an owner earlier (`continue_launch.begin_continue`: the spawn's launch lock is held),
+and says so when the owner has moved to another chat.
 
 `session_scope()` in `session_scope.py` is the context manager for session lifetime.
 Its `finally` block has a two-phase teardown — both phases always run:
@@ -526,8 +533,15 @@ suppressed. It never delays reclamation, and a contended lock just skips the obs
 guaranteed by the context manager. Adding cleanup outside it creates a race between the
 `finally` block and the caller's explicit cleanup.
 
-The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str], object]` for
-test injection; in production it always points to `reclaim_session_owned_scopes_for_chat`.
+Reclamation takes each candidate spawn's launch lock exclusively and without waiting (busy:
+skipped, a live runner owns its scopes), then re-reads the row and re-checks its chat. The
+runner's own spawn is the one it holds, so every `session_scope` caller that is also the
+runner passes `launch_slot` and the exit reclaim uses that handle (a second `acquire` in the
+same process would find its own lock Busy and skip its own scopes).
+
+The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str, LaunchHandle | None],
+object]` for test injection; in production it always points to
+`reclaim_session_owned_scopes_for_chat`.
 
 ### User-Turn Context Threading
 
@@ -687,7 +701,7 @@ exception paths. Do not replicate this logic inline.
 - `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
 - `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation` — exact continue replay contract
 - `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
-- `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, authority lattice
+- `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, who writes the terminal row
 - `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
 
 ## Lateral Links

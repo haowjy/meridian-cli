@@ -12,6 +12,7 @@ from meridian.lib.harness.codex_bootstrap import bootstrap_turn_prompt
 from meridian.lib.harness.codex_idle import CodexIdleSensor, pane_busy, parse_idle_event
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, PinnedIdleSession
+from meridian.lib.state.paths import LaunchPaths
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex_idle"
 MAIN_THREAD = "01a11de2-ce9f-7c41-970f-a07df19fa0e4"
@@ -28,7 +29,7 @@ def _context(
         env={},
         tmux_pane="%42",
         tui_alive=alive,
-        spawn_dir=Path("/unused"),
+        launch=LaunchPaths.preview(Path("/unused")),
     )
 
 

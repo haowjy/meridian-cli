@@ -8,12 +8,11 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
 from meridian.lib.state.jsonl import append_durable_jsonl_line
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 
@@ -60,14 +59,13 @@ class ControlActionCoordinator:
     def __init__(
         self,
         *,
-        spawn_id: SpawnId,
-        spawn_dir: Path,
+        launch: LaunchPaths,
         default_max_attempts: int = 2,
         retry_delay_secs: float = 0.05,
     ) -> None:
-        self._spawn_id = spawn_id
-        self._actions_path = spawn_dir / "control_actions.jsonl"
-        self._runtime_root = spawn_dir.parent.parent
+        self._spawn_id = launch.spawn_id
+        self._actions_path = launch.control_actions
+        self._runtime_root = launch.runtime_root
         self._default_max_attempts = max(1, int(default_max_attempts))
         self._retry_delay_secs = max(0.0, float(retry_delay_secs))
         self._lock = asyncio.Lock()

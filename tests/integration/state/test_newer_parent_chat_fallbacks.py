@@ -16,7 +16,7 @@ def _write_v4_row(runtime_root: Path, *, current_chat_id: str | None) -> None:
     row = runtime_root / "spawns" / "p1" / "state.json"
     row.parent.mkdir(parents=True)
     row.write_text(
-        json.dumps({"v": 4, "id": "p1", "chat_id": "c1", "current_chat_id": current_chat_id}),
+        json.dumps({"v": 5, "id": "p1", "chat_id": "c1", "current_chat_id": current_chat_id}),
         encoding="utf-8",
     )
 

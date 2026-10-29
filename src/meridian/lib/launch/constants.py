@@ -4,25 +4,6 @@ from __future__ import annotations
 
 from typing import Final
 
-OUTPUT_FILENAME: Final[str] = "output.jsonl"
-# Legacy runner event stream. Meridian no longer writes it; the name remains so
-# explicit reads are rejected and legacy archive members restore as bytes.
-HISTORY_FILENAME: Final[str] = "history.jsonl"
-# Every file the removed runner writer produced. Owners: the ``--file`` rejection
-# guard (harness/transcript.py, history only), the legacy ZIP inventory
-# (state/retention_archive.py) and runner-history prune (ops/runner_history_prune.py).
-RETIRED_RUNNER_STREAM_FILENAMES: Final[tuple[str, ...]] = (
-    HISTORY_FILENAME,
-    "last-observed-event.json",
-)
-RUNNER_LIFECYCLE_FILENAME: Final[str] = "runner-lifecycle.jsonl"
-PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
-PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
-STDERR_FILENAME: Final[str] = "stderr.log"
-LAUNCHER_LOG_FILENAME: Final[str] = "launcher.log"
-TOKENS_FILENAME: Final[str] = "tokens.json"
-REPORT_FILENAME: Final[str] = "report.md"
-SYSTEM_PROMPT_FILENAME: Final[str] = "system-prompt.md"
 DRY_RUN_REPORT_PATH: Final[str] = "<spawn-report-path>"
 
 DEFAULT_INFRA_EXIT_CODE: Final[int] = 2
@@ -30,6 +11,8 @@ POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS: Final[float] = 1.0
 REPORT_WATCHDOG_POLL_SECONDS: Final[float] = 1.0
 REPORT_WATCHDOG_GRACE_SECONDS: Final[float] = 60.0
 SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS: Final[float] = 5.0
+# How often a streaming runner touches its lifecycle log so a crashed launch has a recent mtime.
+RUNNER_HEARTBEAT_SECONDS: Final[float] = 5.0
 CURSOR_INACTIVITY_TIMEOUT_SECONDS: Final[float] = 300.0
 
 BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
@@ -101,23 +84,13 @@ __all__ = [
     "CURSOR_INACTIVITY_TIMEOUT_SECONDS",
     "DEFAULT_INFRA_EXIT_CODE",
     "DRY_RUN_REPORT_PATH",
-    "HISTORY_FILENAME",
-    "LAUNCHER_LOG_FILENAME",
-    "OUTPUT_FILENAME",
-    "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
     "PRIMARY_BASE_COMMAND_CLAUDE",
     "PRIMARY_BASE_COMMAND_CODEX",
     "PRIMARY_BASE_COMMAND_OPENCODE",
     "PRIMARY_BASE_COMMAND_PI",
-    "PRIMARY_META_FILENAME",
-    "REPORT_FILENAME",
     "REPORT_WATCHDOG_GRACE_SECONDS",
     "REPORT_WATCHDOG_POLL_SECONDS",
-    "RETIRED_RUNNER_STREAM_FILENAMES",
-    "RUNNER_LIFECYCLE_FILENAME",
-    "STDERR_FILENAME",
+    "RUNNER_HEARTBEAT_SECONDS",
     "SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS",
-    "SYSTEM_PROMPT_FILENAME",
-    "TOKENS_FILENAME",
 ]

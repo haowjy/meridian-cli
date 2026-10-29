@@ -49,7 +49,7 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
                         "customType": "meridian-spawn-watch",
                         "details": {
                             "ids": [str(child_id)],
-                            "work_ids": [str(child_id)],
+                            "work_ids": [f"{child_id}:1"],
                             "delivery_id": "child-admission",
                         },
                     },
@@ -87,8 +87,8 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / str(spawn_id) / "delivery-receipts.json",
-            {"v": 1, "spawn_id": str(spawn_id), "messages": {"child-admission": [str(child_id)]}},
+            tmp_path / "pi-bash" / str(spawn_id) / "launch-receipts.json",
+            {"v": 1, "spawn_id": str(spawn_id), "messages": {"child-admission": [f"{child_id}:1"]}},
         )
         done, _ = await asyncio.wait({completion}, timeout=0.3)
         assert completion not in done

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import NativeKey
@@ -21,6 +21,9 @@ from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor
 
+if TYPE_CHECKING:
+    from pydantic import JsonValue
+
 
 class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for OpenCode artifacts and events."""
@@ -28,7 +31,7 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return extract_opencode_session_id(dict(event.payload))
 
-    def create_fold(self) -> AttemptFold:
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold:
         return OpenCodeFold(self)
 
     def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:

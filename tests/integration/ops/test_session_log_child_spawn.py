@@ -12,13 +12,14 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
+from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 
 
 def _write_spawn_output(
@@ -26,7 +27,7 @@ def _write_spawn_output(
     spawn_id: str,
     *events: dict[str, object],
     artifact: bool = False,
-    filename: str = HISTORY_FILENAME,
+    filename: str = LAUNCH_FILE_NAMES.history,
 ) -> None:
     base_dir = "artifacts" if artifact else "spawns"
     output_path = runtime_root / base_dir / spawn_id / filename
@@ -178,6 +179,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
             runtime_root,
             spawn_id="p42",
             chat_id=child_chat_id,
+            owner_chat_id="c9011",
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -298,7 +300,7 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
             )
         )
 
-    assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
+    assert not launch_paths(runtime_root, "p42").native_transcript.exists()
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
 
@@ -360,13 +362,14 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
         runtime_root,
         spawn_id="p42",
         chat_id="c42",
+        owner_chat_id="c41",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
         prompt="do thing",
         started_at="2026-04-12T14:00:00Z",
     )
-    spawn_store.record_spawn_exited(
+    legacy_rows.record_exited(
         runtime_root,
         "p42",
         exit_code=0,
@@ -437,7 +440,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             kind="primary",
             prompt="primary",
             harness_session_id=primary_session_id,
-        )
+        ).spawn_id
     )
     child_spawn_id = str(
         spawn_store.start_spawn(
@@ -451,7 +454,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             kind="child",
             prompt="child task",
             harness_session_id="thread-child",
-        )
+        ).spawn_id
     )
     _write_codex_rollout(
         sessions_root=codex_home / "sessions",
@@ -459,7 +462,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
         session_id=primary_session_id,
         assistant_text="primary transcript",
     )
-    report_path = runtime_root / "spawns" / child_spawn_id / "report.md"
+    report_path = launch_paths(runtime_root, child_spawn_id).report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("Child spawn report body.\n", encoding="utf-8")
 

@@ -12,6 +12,7 @@ from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_c
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store
+from meridian.lib.state.launch_lock import LaunchSlot
 
 from .execute_init import LaunchUserInputError
 
@@ -84,6 +85,7 @@ def _session_execution_context(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     spawn_id: str | None = None,
+    launch_slot: LaunchSlot,
 ) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
         runtime_root=runtime_root,
@@ -95,6 +97,7 @@ def _session_execution_context(
         execution_cwd=execution_cwd,
         spawn_id=spawn_id,
         startup_attempt_id=uuid.uuid4().hex,
+        launch_slot=launch_slot,
     ) as managed:
         attached_work_id = managed.record.active_work_id
         if attached_work_id is None:

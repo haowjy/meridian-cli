@@ -25,7 +25,9 @@ from meridian.lib.harness.control_action import (
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
 from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import write_accepted_signals
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
@@ -130,13 +132,14 @@ class SpawnManager:
     ) -> HarnessConnection[Any]:
         """Start one connection and register durable drain/control resources."""
 
-        spawn_id = config.spawn_id
+        launch = config.launch
+        spawn_id = launch.spawn_id
         if spawn_id in self._sessions:
             msg = f"Spawn {spawn_id} is already active"
             raise ValueError(msg)
         if event_hook is not None:
             self.register_event_hook(spawn_id, event_hook)
-        for sink in get_harness_bundle(config.harness_id).event_sinks(self._runtime_root, spawn_id):
+        for sink in get_harness_bundle(config.harness_id).event_sinks(launch):
             self.register_event_hook(spawn_id, sink)
 
         started_monotonic = time.monotonic()
@@ -149,7 +152,7 @@ class SpawnManager:
 
             tracer = _DebugTracer(
                 spawn_id=str(spawn_id),
-                debug_path=self._spawn_dir(spawn_id) / "debug.jsonl",
+                debug_path=launch.debug,
             )
 
         connection: HarnessConnection[Any] | None = None
@@ -184,7 +187,7 @@ class SpawnManager:
             await control_server.start()
 
             drain_plan = self._select_drain_plan(
-                spawn_id=spawn_id,
+                launch=launch,
                 receiver=connection,
                 config=config,
             )
@@ -192,7 +195,7 @@ class SpawnManager:
                 drain_plan = drain_plan.with_policy(resolved_policy)
             # Declare once, before any event drains, which `spawn done`/`rearm`
             # signals this plan consumes; the CLI refuses the rest.
-            write_accepted_signals(self._runtime_root, spawn_id, drain_plan.accepted_signals)
+            write_accepted_signals(launch, drain_plan.accepted_signals)
             drain_task = asyncio.create_task(
                 self._drain_loop(
                     spawn_id,
@@ -212,10 +215,7 @@ class SpawnManager:
                 raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
                 teardown=drain_plan.teardown,
                 drain_plan=drain_plan,
-                control_actions=ControlActionCoordinator(
-                    spawn_id=spawn_id,
-                    spawn_dir=self._spawn_dir(spawn_id),
-                ),
+                control_actions=ControlActionCoordinator(launch=launch),
             )
         except BaseException:
             await reap_on_ownership_transfer_failure(_cleanup_unregistered_start)
@@ -263,15 +263,14 @@ class SpawnManager:
     def _select_drain_plan(
         self,
         *,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         receiver: HarnessConnection[Any],
         config: ConnectionConfig,
     ) -> DrainPlan:
         """Choose drain-loop configuration before entering the loop."""
         return build_drain_plan(
             project_root=self._project_root,
-            runtime_root=self._runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             receiver=receiver,
             config=config,
             emit_event=self.emit_event,
@@ -509,13 +508,29 @@ class SpawnManager:
         status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
         error: str | None = None,
+        budget_secs: float | None = None,
     ) -> DrainOutcome | None:
-        """Stop one managed spawn and clean up all associated resources."""
+        """Stop one managed spawn and clean up all associated resources.
+
+        ``budget_secs`` is the total the interrupt, the connection stop, the scope reap and
+        the drain wait and the teardown's second connection stop may spend together (the scope
+        reap's post-SIGKILL wait included); the signal path passes ``SIGNAL_STOP_BUDGET_SECS``
+        so the runner finishes before cancel's grace SIGKILLs it. A step that outruns its
+        share is abandoned and the scope reap finishes the job.
+        """
+        deadline = None if budget_secs is None else time.monotonic() + budget_secs
+
+        def remaining(share: float = 1.0) -> float | None:
+            if deadline is None:
+                return None
+            return max(0.0, (deadline - time.monotonic()) * share)
 
         session = self._sessions.get(spawn_id)
         if session is None:
             self._event_hooks.pop(spawn_id, None)
             return None
+        if deadline is not None:
+            session.stop_deadline = deadline
         if session.terminal_published:
             cleanup_task = self._cleanup_tasks.get(spawn_id)
             if cleanup_task is not None:
@@ -526,8 +541,11 @@ class SpawnManager:
 
         if status == "cancelled" and not session.cancel_sent:
             session.cancel_sent = True
-            with suppress(Exception):
-                await self.interrupt(spawn_id, source="spawn_manager.stop_spawn")
+            with suppress(Exception, TimeoutError):
+                await asyncio.wait_for(
+                    self.interrupt(spawn_id, source="spawn_manager.stop_spawn"),
+                    remaining(0.2),
+                )
             if not session.cancel_event_emitted:
                 session.cancel_event_emitted = True
                 await self._emit_cancelled_terminal_event(
@@ -549,16 +567,26 @@ class SpawnManager:
         if session.debug_tracer is not None:
             session.debug_tracer.close()
 
-        with suppress(Exception):
-            await session.connection.stop(reason="stop_spawn")
+        with suppress(Exception, TimeoutError):
+            await asyncio.wait_for(session.connection.stop(reason="stop_spawn"), remaining(0.4))
 
-        self._terminate_recorded_spawn_scope_backstop(spawn_id)
+        # The SIGKILL reap is outside the SIGTERM grace, so reserve it from what is left.
+        reap_left = remaining()
+        self._terminate_recorded_spawn_scope_backstop(
+            spawn_id,
+            grace_seconds=None
+            if reap_left is None
+            else max(0.0, min(reap_left * 0.5, reap_left - POST_KILL_WAIT_SECS)),
+        )
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
         # hard timeout to prevent indefinite blocking on a stuck drain.
         try:
-            await asyncio.wait_for(asyncio.shield(session.drain_task), timeout=2.0)
+            await asyncio.wait_for(
+                asyncio.shield(session.drain_task),
+                timeout=2.0 if deadline is None else min(2.0, remaining() or 0.0),
+            )
         except (TimeoutError, asyncio.CancelledError, Exception):
             session.drain_task.cancel()
             # Terminal publication is owned by stop_spawn(), not by the
@@ -659,7 +687,9 @@ class SpawnManager:
         finally:
             await self._cleanup_completed_session(spawn_id, session, outcome)
 
-    def _terminate_recorded_spawn_scope_backstop(self, spawn_id: SpawnId) -> None:
+    def _terminate_recorded_spawn_scope_backstop(
+        self, spawn_id: SpawnId, *, grace_seconds: float | None = None
+    ) -> None:
         """Best-effort recorded scope reap after transport stop attempts."""
 
         try:
@@ -670,6 +700,7 @@ class SpawnManager:
                 self._runtime_root,
                 record,
                 reason="stop_spawn",
+                **({} if grace_seconds is None else {"grace_seconds": grace_seconds}),
             )
         except Exception as exc:
             logger.warning(
@@ -835,9 +866,6 @@ class SpawnManager:
                     data={"event_type": event.raw.event_type, "reason": "queue_full"},
                 )
 
-    def _spawn_dir(self, spawn_id: SpawnId) -> Path:
-        return self._runtime_root / "spawns" / str(spawn_id)
-
     async def _cleanup_completed_session(
         self,
         spawn_id: SpawnId,
@@ -854,8 +882,18 @@ class SpawnManager:
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
-        with suppress(Exception):
-            await session.teardown.stop_connection(session.connection, outcome)
+        # A budgeted stop already tried the connection; a second try only runs inside what
+        # is left of that budget.
+        left = (
+            None
+            if session.stop_deadline is None
+            else max(0.0, session.stop_deadline - time.monotonic())
+        )
+        if left is None or left > 0.0:
+            with suppress(Exception, TimeoutError):
+                await asyncio.wait_for(
+                    session.teardown.stop_connection(session.connection, outcome), left
+                )
         with suppress(Exception):
             await session.control_server.stop()
         self._event_hooks.pop(spawn_id, None)

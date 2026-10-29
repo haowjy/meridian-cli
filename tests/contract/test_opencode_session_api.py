@@ -17,6 +17,7 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from tests.support.async_determinism import AsyncDeterminism
+from tests.support.launch_paths import launch_paths
 
 
 class _TestableOpenCodeConnection(OpenCodeConnection):
@@ -87,7 +88,7 @@ class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
 async def test_create_session_uses_spec_model_not_connection_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-1"}, "")])
     connection._config = ConnectionConfig(
-        spawn_id=SpawnId("p-open-1"),
+        launch=launch_paths(tmp_path, SpawnId("p-open-1")),
         harness_id=HarnessId.OPENCODE,
         prompt="hello",
         control_root=tmp_path,
@@ -533,35 +534,28 @@ async def test_followup_recovers_last_committed_user_choice_when_session_has_non
 
 
 @pytest.mark.asyncio
-async def test_respond_request_v1_posts_to_permissions_endpoint() -> None:
-    connection = _TestableOpenCodeConnection([(200, None, "")])
-    connection._pending_requests["per_1"] = "ses_1"
-
-    await connection.respond_request("per_1", "reject")
-
-    assert connection.requests == [
-        ("/session/ses_1/permissions/per_1", {"response": "reject"}),
-    ]
-    assert connection._pending_requests == {}
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("decision", "expected_response"),
+    ("decision", "expected_response", "status", "session_id"),
     (
-        ("accept", "once"),
-        ("once", "once"),
-        ("always", "always"),
-        ("reject", "reject"),
-        ("unrecognized", "once"),
+        ("accept", "once", 204, "ses_1"),
+        ("once", "once", 204, "ses_1"),
+        ("always", "always", 204, "ses_1"),
+        ("reject", "reject", 204, "ses_1"),
+        ("unrecognized", "once", 204, "ses_1"),
+        # No connection-level session: the pending request's own session is used, and 200
+        # is an accepted reply status.
+        ("reject", "reject", 200, None),
     ),
 )
-async def test_respond_request_v1_maps_decision_to_response(
+async def test_respond_request_v1_posts_to_permissions_endpoint(
     decision: str,
     expected_response: str,
+    status: int,
+    session_id: str | None,
 ) -> None:
-    connection = _TestableOpenCodeConnection([(204, None, "")])
-    connection._session_id = "ses_1"
+    connection = _TestableOpenCodeConnection([(status, None, "")])
+    if session_id is not None:
+        connection._session_id = session_id
     connection._pending_requests["per_1"] = "ses_1"
 
     await connection.respond_request("per_1", decision)
@@ -569,6 +563,7 @@ async def test_respond_request_v1_maps_decision_to_response(
     assert connection.requests == [
         ("/session/ses_1/permissions/per_1", {"response": expected_response}),
     ]
+    assert connection._pending_requests == {}
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ from tests.integration.launch.streaming_runner_support import (
     streaming_runner_module,
 )
 from tests.support.fakes import FakeClock
+from tests.support.launch_paths import launch_paths
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -41,8 +42,8 @@ _pi_extension_projection_fixture = _pi_extension_projection_fixture
 class _LifecycleRecorder:
     calls: list[str] = field(default_factory=list)
 
-    def mark_running(self, *_args: object, **_kwargs: object) -> None:
-        self.calls.append("mark_running")
+    def record_launch_facts(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("record_launch_facts")
 
     def record_exited(self, *_args: object, **_kwargs: object) -> None:
         self.calls.append("record_exited")
@@ -237,12 +238,11 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
     attempt = await asyncio.wait_for(
         streaming_runner_module._run_streaming_attempt(
             run=run,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, run.spawn_id),
             launch_mode=FOREGROUND_LAUNCH_MODE,
-            log_dir=tmp_path / "logs",
             manager=HangingStartupManager(),  # type: ignore[arg-type]
             config=ConnectionConfig(
-                spawn_id=run.spawn_id,
+                launch=launch_paths(tmp_path, run.spawn_id),
                 harness_id=HarnessId.CODEX,
                 prompt=run.prompt,
                 control_root=tmp_path,
@@ -347,12 +347,11 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
     attempt = await asyncio.wait_for(
         streaming_runner_module._run_streaming_attempt(
             run=run,
-            runtime_root=tmp_path,
+            launch=launch_paths(tmp_path, run.spawn_id),
             launch_mode=FOREGROUND_LAUNCH_MODE,
-            log_dir=tmp_path / "logs",
             manager=manager,  # type: ignore[arg-type]
             config=ConnectionConfig(
-                spawn_id=run.spawn_id,
+                launch=launch_paths(tmp_path, run.spawn_id),
                 harness_id=HarnessId.CURSOR,
                 prompt=run.prompt,
                 control_root=tmp_path,
@@ -436,7 +435,7 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert row.status == "succeeded"
     assert row.terminal.exit_code == 0
     assert row.terminal.error is None
-    report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
+    report = launch_paths(runtime_root, str(run.spawn_id)).report.read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
 
 

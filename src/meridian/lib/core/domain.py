@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, TypeVar, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from meridian.lib.core.types import (
     ModelId,
@@ -92,6 +92,10 @@ class TokenUsage(BaseModel):
     reasoning_tokens: int | None = None
     total_cost_usd: float | None = None
     cost_is_estimate: bool = False
+    #: The harness's own running total at the end of this launch, for harnesses whose
+    #: reports are cumulative over a resumed session. Opaque outside that harness's
+    #: extractor, which reads it back as the seed of the next launch.
+    harness_cumulative: dict[str, JsonValue] | None = None
 
 
 class Spawn(BaseModel):

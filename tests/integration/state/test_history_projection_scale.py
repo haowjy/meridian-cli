@@ -1,6 +1,6 @@
 """Guard the sessions projection against per-line database round-trips.
 
-Cold history-index initialization runs under a 15s budget. Rebuilding a real
+Cold history-index initialization runs under a 60s budget. Rebuilding a real
 corpus regressed to ~19s when every ``sessions.jsonl`` event was projected with
 its own ORM SELECT/INSERT: ~115k statements for ~24k log lines. The projection
 keeps its working set in memory and publishes in bulk, so a multi-thousand line
@@ -28,7 +28,7 @@ def _write_sessions_log(root: Path, *, spawns: int = 6, events_per_spawn: int = 
     for i in range(spawns):
         key = spawn_store.start_spawn(
             root, chat_id=f"c{i + 1}", prompt="p", model="m", agent="coder", harness="codex"
-        )
+        ).spawn_id
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
         record = spawn_store.get_spawn(root, key)
         assert record is not None

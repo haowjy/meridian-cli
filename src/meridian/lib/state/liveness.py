@@ -1,6 +1,8 @@
 """Process liveness probes."""
 
 import math
+import os
+from contextlib import suppress
 
 import psutil
 
@@ -55,6 +57,27 @@ def _process_alive_with_birth(pid: int | None, birth_epoch: float | None) -> boo
 def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
     """Alive AND exact-birth match (PID-reuse safe). Unknown is not alive."""
     return _process_alive_with_birth(pid, birth_epoch) is True
+
+
+def signal_with_birth(
+    pid: int | None, birth_epoch: float | None, sig: int, *, tree: bool = False
+) -> bool:
+    """Signal a process only when its exact birth matches; with ``tree``, its descendants too.
+
+    A PID whose birth is unknown or differs is never signalled. Returns whether a signal
+    was sent.
+    """
+    if pid is None or pid == os.getpid() or not is_process_alive_with_birth(pid, birth_epoch):
+        return False
+    try:
+        root = psutil.Process(pid)
+        targets = [*root.children(recursive=True), root] if tree else [root]
+    except psutil.Error:
+        return False
+    for proc in targets:
+        with suppress(psutil.Error):
+            proc.send_signal(sig)
+    return True
 
 
 def is_process_alive_born_by(pid: int, epoch: float | None) -> bool:

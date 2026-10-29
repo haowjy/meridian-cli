@@ -25,9 +25,10 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.spawn.repository import Applied
 from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
+from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -87,13 +88,13 @@ def test_spawn_show_sync_renders_finalizing_status_without_partial_terminal_erro
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     _seed_running_spawn(runtime_root, "p1")
-    spawn_store.record_spawn_exited(
+    legacy_rows.record_exited(
         runtime_root,
         "p1",
         exit_code=143,
         exited_at="2026-04-12T14:00:00Z",
     )
-    assert isinstance(spawn_store.mark_finalizing(runtime_root, "p1"), Applied)
+    legacy_rows.mark_finalizing(runtime_root, "p1")
 
     output = spawn_api.spawn_show_sync(
         SpawnShowInput(
@@ -199,7 +200,7 @@ def test_sigkilled_runner_shows_failed_immediately(
         state_path = runtime_root / "spawns" / "p1" / "state.json"
         state = json.loads(state_path.read_text())
         runner_pid = int(state["runner_pid"])
-        scopes_path = runtime_root / "spawns" / "p1" / "process_scopes.json"
+        scopes_path = launch_paths(runtime_root, "p1").process_scopes
         scopes = _until(
             lambda: json.loads(scopes_path.read_text()) if scopes_path.exists() else None
         )

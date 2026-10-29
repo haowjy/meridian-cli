@@ -36,6 +36,7 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.state.paths import resolve_kb_dir
 from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
+from tests.support.launch_paths import launch_paths
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -240,7 +241,7 @@ def build_launch_context(
         context = bind_launch_context(
             prepared=prepared,
             bindings=RuntimeBindings(
-                spawn_id=spawn_id,
+                launch=launch_paths(Path(runtime.runtime_root), spawn_id),
                 runtime_work_id=runtime_work_id,
                 forked_harness_session_id=forked_harness_session_id,
                 plan_overrides=dict(plan_overrides or {}),

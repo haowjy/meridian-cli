@@ -5,34 +5,31 @@ import os
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import structlog
 
-from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
+from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
-from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
 
-from ..runtime import OperationRuntime, runtime_context
+from ..runtime import OperationRuntime, resolve_runtime_root, runtime_context
 from .execute_bg import (
-    BACKGROUND_STDERR_FILENAME,
-    BACKGROUND_STDOUT_FILENAME,
     BackgroundWorkerLaunchRequest,
     _background_worker_main,
     _build_background_worker_command,
@@ -193,24 +190,7 @@ def _prepare_spawn_execution(
     return run_pre_init_boundary(payload=payload, request=request, operation=_operation)
 
 
-def _persist_execution_contract(
-    context: _SpawnContext,
-    execution_contract: SpawnExecutionContract,
-) -> None:
-    execution_cwd_str = execution_contract.execution_cwd.as_posix()
-    spawn_store.update_spawn(
-        context.runtime_root,
-        context.spawn.spawn_id,
-        control_root=execution_contract.control_root.as_posix(),
-        task_cwd=_task_cwd_from_execution(
-            control_root=execution_contract.control_root,
-            execution_cwd=execution_cwd_str,
-        ),
-        execution_cwd=execution_cwd_str,
-    )
-
-
-def _reserve_then_prepare(
+def _prepare_then_reserve(
     *,
     payload: SpawnCreateInput,
     request: SpawnRequest,
@@ -219,17 +199,37 @@ def _reserve_then_prepare(
     launch_mode: LaunchMode,
     runner_pid: int | None = None,
     launch_lock: LaunchSlot,
+    hold: ContinueHold | None,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
+    """Prepare, then write the launch's row: a setup error leaves nothing to clean up.
+
+    ``hold``: a continue's hold on a finished spawn (``launch_lock`` is its slot), so its
+    next launch is committed rather than a new spawn created.
+    """
     resolved_context = runtime_context(ctx)
+    preparation = _prepare_spawn_execution(
+        payload=payload,
+        request=request,
+        runtime=runtime,
+        ctx=ctx,
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+
+    contract = preparation.execution_contract
     reservation = build_spawn_reservation(
         payload=payload,
         request=request,
         desc=payload.desc,
-        work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
-        status=SpawnStatus.QUEUED,
+        # A continue keeps the spawn's work unless it was told one.
+        work_id=(payload.work.strip() or None) if hold is not None else contract.work_id,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
+        control_root=contract.control_root.as_posix(),
+        task_cwd=contract.task_cwd,
+        execution_cwd=contract.execution_cwd.as_posix(),
+        runtime_root=resolve_runtime_root(runtime.project_root),
         ctx=resolved_context,
     )
     logger.debug("spawn_launcher_phase", phase="reservation", launcher_pid=os.getpid())
@@ -237,6 +237,7 @@ def _reserve_then_prepare(
         reservation=reservation,
         launch_lock=launch_lock,
         runtime=runtime,
+        hold=hold,
         ctx=resolved_context,
     )
     logger.debug(
@@ -245,23 +246,12 @@ def _reserve_then_prepare(
         launcher_pid=os.getpid(),
         spawn_id=str(context.spawn.spawn_id),
     )
-    preparation = _prepare_spawn_execution(
-        payload=payload,
-        request=request,
-        runtime=runtime,
-        ctx=ctx,
-    )
-    if isinstance(preparation, SpawnActionOutput):
-        spawn_store.remove_spawn_events(context.runtime_root, context.spawn.spawn_id)
-        return preparation
-
     project_paths = preparation.project_paths
     context = _materialize_spawn_work_item(
         context=context,
         payload=payload,
         project_root=project_paths.project_root,
     )
-    _persist_execution_contract(context, preparation.execution_contract)
     _announce_reserved_spawn(
         context=context,
         request=request,
@@ -278,9 +268,10 @@ def execute_spawn_background(
     request: SpawnRequest,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with LaunchSlot() as launch_lock:
-        reserved = _reserve_then_prepare(
+    with nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock:
+        reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
             runtime=runtime,
@@ -288,6 +279,7 @@ def execute_spawn_background(
             launch_mode=BACKGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
+            hold=hold,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved
@@ -301,12 +293,8 @@ def execute_spawn_background(
         spawn_id_text = str(context.spawn.spawn_id)
         execution_cwd_str = initial_execution_cwd
         parent_launch_cwd_str = execution_contract.control_root.as_posix()
-        log_dir = resolve_spawn_log_dir(
-            project_paths.project_root,
-            context.spawn.spawn_id,
-            runtime_root=context.runtime_root,
-        )
-        log_dir.mkdir(parents=True, exist_ok=True)
+        launch = context.launch
+        launch.dir.mkdir(parents=True, exist_ok=True)
         request_metadata = _build_params_request_metadata(
             request,
             desc=payload.desc,
@@ -314,9 +302,7 @@ def execute_spawn_background(
         )
         try:
             _write_params_json(
-                project_paths,
-                context.runtime_root,
-                context.spawn.spawn_id,
+                launch,
                 request_metadata=request_metadata,
             )
         except Exception:
@@ -340,7 +326,7 @@ def execute_spawn_background(
                 debug=payload.debug,
             )
             _persist_bg_worker_request(
-                log_dir,
+                launch,
                 BackgroundWorkerLaunchRequest(
                     request=persisted_request,
                     runtime=launch_runtime,
@@ -353,8 +339,9 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
-            _cleanup_background_runtime_artifacts(log_dir)
+            _cleanup_background_runtime_artifacts(launch)
             logger.exception(
                 "Failed to persist background worker params.",
                 spawn_id=spawn_id_text,
@@ -381,8 +368,8 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        stdout_path = log_dir / BACKGROUND_STDOUT_FILENAME
-        stderr_path = log_dir / BACKGROUND_STDERR_FILENAME
+        stdout_path = launch.background_stdout
+        stderr_path = launch.background_stderr
 
         # This launches Meridian's background worker, not a harness child.
         launch_env = dict(os.environ)
@@ -432,8 +419,9 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
-            _cleanup_background_runtime_artifacts(log_dir)
+            _cleanup_background_runtime_artifacts(launch)
             logger.exception(
                 "Failed to launch background spawn worker.",
                 spawn_id=spawn_id_text,
@@ -461,9 +449,6 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        build_spawn_lifecycle_service_from_roots(
-            project_paths.project_root, context.runtime_root
-        ).mark_running(context.spawn.spawn_id, launch_mode=BACKGROUND_LAUNCH_MODE)
         # The Popen object goes out of scope without wait(). This is intentional:
         # the child spawns in its own session (start_new_session=True) and is
         # re-parented to init/systemd. We only need the PID for diagnostics.
@@ -496,9 +481,10 @@ def execute_spawn_blocking(
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
+    hold: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with LaunchSlot() as launch_lock:
-        reserved = _reserve_then_prepare(
+    with nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock:
+        reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
             runtime=runtime,
@@ -506,6 +492,7 @@ def execute_spawn_blocking(
             launch_mode=FOREGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
+            hold=hold,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved
@@ -527,6 +514,7 @@ def execute_spawn_blocking(
             warning = value
 
         context_from_resolved = context_ref_values(request.context_refs)
+        launch = context.launch
 
         try:
             execution_cwd_str = initial_execution_cwd
@@ -537,9 +525,7 @@ def execute_spawn_blocking(
             )
             try:
                 _write_params_json(
-                    project_paths,
-                    context.runtime_root,
-                    spawn.spawn_id,
+                    launch,
                     request_metadata=request_metadata,
                 )
             except Exception:
@@ -556,6 +542,7 @@ def execute_spawn_blocking(
             exit_code = asyncio.run(
                 launch_prepared_spawn(
                     spawn=spawn,
+                    launch=launch,
                     request=request,
                     runtime_request=build_spawn_mars_runtime(
                         runtime=runtime,
@@ -575,6 +562,7 @@ def execute_spawn_blocking(
                     stream_stderr_to_terminal=payload.stream,
                     event_observer=event_observer,
                     debug=payload.debug,
+                    launch_slot=launch_lock,
                     ctx=resolved_context,
                     prepared=prepared,
                     warning_observer=_capture_launch_warning,
@@ -586,6 +574,7 @@ def execute_spawn_blocking(
                 project_paths.project_root,
                 spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
             logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
             failure_row = read_spawn_row(project_paths.project_root, spawn_id_text)
@@ -619,11 +608,7 @@ def execute_spawn_blocking(
 
         duration = time.monotonic() - started
         row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
-        _, report_body = read_report(
-            project_paths.project_root,
-            str(spawn.spawn_id),
-            runtime_root=context.runtime_root,
-        )
+        report_body = read_report(launch)
         status = "failed"
         if row is not None:
             status = row.status

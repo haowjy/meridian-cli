@@ -9,7 +9,6 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from functools import partial
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -30,7 +29,8 @@ from meridian.lib.state.project_identity import (
     AdHocOrigin,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import is_live, overlay_derived
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
+from meridian.lib.state.spawn_status import legacy_runner_alive, overlay_derived
 from meridian.lib.state.user_paths import get_context_home
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -420,10 +420,11 @@ def _prune_dir(path: Path) -> bool:
     return True
 
 
-def _can_delete_derived(runtime_root: Path, record: SpawnRecord | None) -> bool:
-    if record is None:
-        return True
-    return not is_live(runtime_root, record.id)
+def _not_running_legacy(record: SpawnRecord | None) -> bool:
+    """The seam holds the launch lock, which proves no runner; a lockless row has only its PID."""
+    return record is None or not (
+        is_active_spawn_status(record.status) and legacy_runner_alive(record)
+    )
 
 
 def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
@@ -523,10 +524,10 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue
 
-            if spawn_store.delete_published_spawn(
+            if delete_published_spawn(
                 runtime_root,
                 artifact.spawn_id,
-                can_delete=partial(_can_delete_derived, runtime_root),
+                can_delete=_not_running_legacy,
             ):
                 removed += 1
     lock_gc = LockGcStats()

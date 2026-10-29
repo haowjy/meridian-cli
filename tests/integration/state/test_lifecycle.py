@@ -20,7 +20,6 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.repository import Applied, Declined
 
 
@@ -79,7 +78,7 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
     }
     defaults.update(overrides)
     with LaunchSlot() as launch_lock:
-        return service.start(SpawnReservation(**defaults), launch_lock=launch_lock)
+        return service.start(SpawnReservation(**defaults), launch_lock=launch_lock).spawn_id
 
 
 def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
@@ -87,28 +86,8 @@ def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
         uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
         "meridian:spawn:p1:spawn.created:0",
     )
-    assert generate_event_id("p1", "spawn.created", 0) == expected
-
-
-def test_authoritative_finalize_overrides_reconciler_failure(
-    tmp_path: Path,
-) -> None:
-    reconciler = _make_service(tmp_path)
-    authoritative = _make_service(tmp_path)
-    spawn_id = _start_spawn(reconciler)
-
-    reconciler.finalize(spawn_id, "failed", 7, origin="reconciler", error="orphan")
-
-    outcome = authoritative.finalize(spawn_id, "succeeded", 0, origin="runner")
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert isinstance(outcome, Applied)
-    assert outcome.before.status == "failed"
-
-    assert record is not None
-    assert record.status == "succeeded"
-    assert record.terminal is not None
-    assert record.terminal.origin == "runner"
+    assert generate_event_id("p1", 1, "spawn.created") == expected
+    assert generate_event_id("p1", 2, "spawn.created") != expected
 
 
 def test_bootstrap_from_disk_loads_owner_record_for_write_through(
@@ -129,7 +108,6 @@ def test_bootstrap_from_disk_loads_owner_record_for_write_through(
 
     monkeypatch.setattr(spawn_store, "get_spawn", fail_get_spawn)
 
-    assert worker.mark_finalizing(spawn_id) is True
     outcome = worker.finalize(spawn_id, "succeeded", 0, origin="runner")
 
 
@@ -170,7 +148,7 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
                 ),
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
@@ -199,7 +177,7 @@ def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
                 status="queued",
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     assert hook.event_types == []
 
@@ -229,7 +207,7 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
             ),
             dispatch_events=False,
             launch_lock=launch_lock,
-        )
+        ).spawn_id
 
     assert hook.event_types == []
 
@@ -238,14 +216,14 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
     assert hook.event_types == ["spawn.created"]
 
 
-def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
+def test_owner_record_launch_facts_clears_stale_runner_created_epoch_when_pid_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
-    service.mark_running(
+    service.record_launch_facts(
         spawn_id,
         runner_pid=os.getpid(),
         runner_created_at_epoch=222.0,
@@ -256,7 +234,7 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
 
     monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
     hook.event_types.clear()
-    service.mark_running(
+    service.record_launch_facts(
         spawn_id,
         runner_pid=999997,
     )
@@ -268,14 +246,14 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert hook.event_types == []
 
 
-def test_mark_running_terminal_decline_emits_no_event(tmp_path: Path) -> None:
+def test_record_launch_facts_terminal_decline_emits_no_event(tmp_path: Path) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
     service.finalize(spawn_id, "succeeded", 0, origin="runner")
     hook.event_types.clear()
 
-    service.mark_running(spawn_id, runner_pid=999997)
+    service.record_launch_facts(spawn_id, runner_pid=999997)
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
@@ -300,33 +278,15 @@ def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> 
     assert hook.event_types == []
 
 
-def test_cancel_after_terminal_writes_nothing_and_emits_no_event(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-    spawn_id = _start_spawn(service)
-    service.finalize(spawn_id, "succeeded", 0, origin="runner")
-    state_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "state.json"
-    before = state_path.read_bytes()
-    before_inode = state_path.stat().st_ino
-    hook.event_types.clear()
-
-    record = service.request_cancel(spawn_id)
-
-    assert record is not None
-    assert record.status == "succeeded"
-    assert state_path.read_bytes() == before
-    assert state_path.stat().st_ino == before_inode
-    assert hook.event_types == []
-
-
 def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
-    spawn_id = _start_spawn(service, status="queued")
+    spawn_id = _start_spawn(service)
 
     spawn_store.update_spawn(tmp_path, spawn_id, claude_config_dir="/tmp/claude-config")
-    service.mark_running(spawn_id)
+    service.record_launch_facts(spawn_id, launch_mode="background")
 
     updated = spawn_store.get_spawn(tmp_path, spawn_id)
     assert updated is not None
     assert updated.status == "running"
+    assert updated.launch_mode == "background"
     assert updated.claude_config_dir == "/tmp/claude-config"

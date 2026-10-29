@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 from tests.support.async_determinism import wait_until
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
@@ -53,12 +54,11 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
         with pytest.raises(RuntimeError, match="injected registration failure"):
             await managed_stdio.launch_managed_stdio(
                 config=ConnectionConfig(
-                    spawn_id=spawn_id,
                     harness_id=HarnessId.PI,
                     prompt="test",
                     control_root=tmp_path,
                     child_env={},
-                    runtime_root=runtime_root,
+                    launch=launch_paths(runtime_root, spawn_id),
                 ),
                 harness_id=HarnessId.PI,
                 command=(sys.executable, "-c", "import time; time.sleep(60)"),
@@ -72,7 +72,7 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
 
         assert len(launched) == 1
         await asyncio.wait_for(launched[0].wait(), timeout=1.0)
-        stderr_log = runtime_root / "spawns" / str(spawn_id) / "stderr.log"
+        stderr_log = launch_paths(runtime_root, str(spawn_id)).stderr_log
         assert stderr_log.resolve() not in {
             Path(open_file.path).resolve() for open_file in psutil.Process().open_files()
         }
@@ -107,11 +107,10 @@ async def test_managed_stdio_cleans_surviving_group_after_leader_exit(tmp_path: 
     )
     child = await managed_stdio.launch_managed_stdio(
         config=ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="test",
             control_root=tmp_path,
-            runtime_root=runtime_root,
+            launch=launch_paths(runtime_root, spawn_id),
             child_env={},
         ),
         harness_id=HarnessId.PI,

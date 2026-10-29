@@ -24,6 +24,7 @@ from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
 from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
+from tests.support.launch_paths import launch_paths
 
 
 @pytest.fixture(autouse=True)
@@ -290,8 +291,7 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
 
     recorded_dirs: list[str] = []
     state = ClaudeAdapter().prepare_prelaunch(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p-test"),
+        launch=launch_paths(tmp_path, SpawnId("p-test")),
         session=SessionRequest(),
         child_cwd=child_root,
         child_env={
@@ -305,7 +305,7 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     expected = str((tmp_path / Path(*expected_suffix)).resolve())
     assert "CLAUDE_CONFIG_DIR" not in state.env_overrides
     assert state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH"] == str(
-        tmp_path / "spawns/p-test/claude-session-boundary.jsonl"
+        tmp_path / "spawns/p-test/launches/1/claude-session-boundary.jsonl"
     )
     assert len(state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE"]) == 64
     assert state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON"] == sys.executable
@@ -338,8 +338,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
     }
 
     state = PiAdapter().prepare_prelaunch(
-        runtime_root=tmp_path / "runtime",
-        spawn_id=SpawnId("p-test"),
+        launch=launch_paths(tmp_path / "runtime", SpawnId("p-test")),
         session=SessionRequest(),
         child_cwd=tmp_path,
         child_env=child_env,

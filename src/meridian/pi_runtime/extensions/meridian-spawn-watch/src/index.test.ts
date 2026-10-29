@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, link } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -56,7 +56,7 @@ async function file(root: string, name: string, value: unknown) {
   await writeJsonAtomic(path.join(root, 'pi-bash', 'p-parent', name), value);
 }
 async function observations(root: string, value: unknown) {
-  await writeJsonAtomic(path.join(root, 'spawns', 'p-parent', 'observed-spawns.json'), value);
+  await writeJsonAtomic(path.join(root, 'spawns', 'p-parent', 'observed-launches.json'), value);
 }
 async function bash(root: string, ...records: BashRecord[]) {
   await file(root, 'bash-records.json', {
@@ -215,6 +215,10 @@ describe('durable result delivery', () => {
     const root = await setup();
     await child(root, 'p1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'direct report text');
+    // A v4 row's report is in its launch directory; a v3 row's (above) is at the top.
+    await child(root, 'p3', null, { v: 4, launch: { n: 2 } });
+    await mkdir(path.join(root, 'spawns', 'p3', 'launches', '2'), { recursive: true });
+    writeFileSync(path.join(root, 'spawns', 'p3', 'launches', '2', 'report.md'), 'launch two report');
     const h = host(false);
     const runtime = owner(h);
 
@@ -223,6 +227,8 @@ describe('durable result delivery', () => {
     expect(formatter).not.toHaveBeenCalled();
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0]!.content).toContain('direct report text');
+    expect(h.notices[0]!.content).toContain('launch two report');
+    expect(h.notices[0]!.content).toContain('Full report: meridian spawn report show p1');
     expect(h.notices[0]!.details).not.toHaveProperty('ids');
   });
 
@@ -236,7 +242,7 @@ describe('durable result delivery', () => {
 
     await runtime.deliverAtBoundary(new AbortController().signal);
 
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1', 'p2:1']);
     expect(h.notices[0]!.content).toContain('p1 failed');
     expect(h.notices[0]!.content).toContain('exit 1');
     expect(h.notices[0]!.content).toContain('Failure: worker failed');
@@ -254,7 +260,7 @@ describe('durable result delivery', () => {
 
     await runtime.deliverAtBoundary(new AbortController().signal);
 
-    expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: ${reportPath}]`);
+    expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: meridian spawn report show p1]`);
     expect(h.notices[0]!.content).not.toContain('TAIL');
   });
 
@@ -317,7 +323,7 @@ describe('durable result delivery', () => {
 
     await runtime.deliverAtBoundary(new AbortController().signal);
 
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('new child report');
   });
 
@@ -340,7 +346,7 @@ describe('durable result delivery', () => {
     await boundary;
 
     expect(h.notices).toHaveLength(1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1', 'p2:1']);
     expect(h.notices[0]!.content).toContain('fresh first report');
     expect(h.notices[0]!.content).toContain('second report');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
@@ -383,7 +389,7 @@ describe('durable result delivery', () => {
     h.idle = true;
     runtime.observeIdle(() => h.idle);
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
   });
 
@@ -415,7 +421,7 @@ describe('durable result delivery', () => {
       signal: new AbortController().signal,
     });
     expect(next.notices).toHaveLength(1);
-    expect(next.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(next.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(next.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
   });
 
@@ -430,9 +436,9 @@ describe('durable result delivery', () => {
       if (idleChecks === 1) {
         // Model a consuming tool persisting its marker immediately before the
         // host reports idle. The final snapshot must happen after this effect.
-        writeFileSync(path.join(root, 'spawns', 'p-parent', 'observed-spawns.json'), JSON.stringify({
+        writeFileSync(path.join(root, 'spawns', 'p-parent', 'observed-launches.json'), JSON.stringify({
           v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(),
-          observed_spawn_ids: ['p1'], waiting_spawn_ids: [], wait_reservations: {},
+          observed_launches: ['p1:1'], wait_reservations: {},
         }));
         h.idle = true;
       }
@@ -481,7 +487,7 @@ describe('durable result delivery', () => {
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'terminal after scoped poll');
 
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('terminal after scoped poll');
   });
 
@@ -511,7 +517,7 @@ describe('durable result delivery', () => {
         await vi.advanceTimersByTimeAsync(500);
         return h.notices.length === 1;
       });
-      expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+      expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     } finally {
       vi.useRealTimers();
     }
@@ -537,7 +543,7 @@ describe('durable result delivery', () => {
     await boundary;
 
     expect(h.notices).toHaveLength(1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('stable selected child');
   });
 
@@ -566,13 +572,13 @@ describe('durable result delivery', () => {
     writeFileSync(held.releasePath, 'release');
     await pause(800);
     if (withStableSpawn) await until(() => h.notices.length === 1);
-    expect(h.notices.map(notice => notice.details.work_ids)).toEqual(withStableSpawn ? [['p2']] : []);
+    expect(h.notices.map(notice => notice.details.work_ids)).toEqual(withStableSpawn ? [['p2:1']] : []);
 
     await child(root, 'p1', 'b1');
     h.idle = true;
     runtime.observeIdle(() => h.idle);
     await until(() => h.notices.length === (withStableSpawn ? 2 : 1));
-    expect(h.notices.at(-1)!.details.work_ids).toEqual(['p1']);
+    expect(h.notices.at(-1)!.details.work_ids).toEqual(['p1:1']);
   });
 
   it('revalidates child correlation before sending a bare launcher result', async () => {
@@ -594,7 +600,7 @@ describe('durable result delivery', () => {
     await child(root, 'p1', 'b1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'child owns launcher outcome');
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('child owns launcher outcome');
   });
 
@@ -626,7 +632,7 @@ describe('durable result delivery', () => {
     await child(root, 'p2');
     writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), 'repaired discovery report');
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p2:1']);
     await until(async () => JSON.parse(
       await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')
     ).error === null);
@@ -665,16 +671,16 @@ describe('durable result delivery', () => {
     await child(root, 'p1');
     await child(root, 'p2');
     await observations(root, {
-      v: 1, spawn_id: 'p-parent', observed_spawn_ids: [], waiting_spawn_ids: ['p1', 'p2'],
+      v: 1, spawn_id: 'p-parent', observed_launches: [],
       wait_reservations: {
-        dead: {owner_pid: 2147483647, owner_birth_epoch: 1, expires_at_epoch: Date.now()/1000+30, spawn_ids: ['p1']},
-        expired: {owner_pid: process.pid, owner_birth_epoch: 1, expires_at_epoch: 1, spawn_ids: ['p2']},
+        dead: {owner_pid: 2147483647, owner_birth_epoch: 1, expires_at_epoch: Date.now()/1000+30, launches: ['p1:1']},
+        expired: {owner_pid: process.pid, owner_birth_epoch: 1, expires_at_epoch: 1, launches: ['p2:1']},
       },
     });
     const h = host();
     owner(h);
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1', 'p2:1']);
   });
   it('supervises a receipt write failure without claiming admission', async () => {
     const root = await setup();
@@ -682,7 +688,7 @@ describe('durable result delivery', () => {
     const h = host();
     const runtime = owner(h);
     await until(() => h.notices.length === 1);
-    const receiptsPath = path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json');
+    const receiptsPath = path.join(root, 'pi-bash', 'p-parent', 'launch-receipts.json');
     await mkdir(receiptsPath);
     await expect(runtime.admitMessage({role: 'custom', ...h.notices[0]})).resolves.toBeUndefined();
     const fault = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8'));
@@ -739,12 +745,12 @@ describe('durable result delivery', () => {
         delivery_id: 'unrelated', work_ids: ['b1']
       }
     });
-    await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'))).rejects.toThrow();
+    await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'launch-receipts.json'))).rejects.toThrow();
     await runtime.admitMessage({
       role: 'custom', ...h.notices[0]
     });
     runtime.stop();
-    const receipt = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'), 'utf8'));
+    const receipt = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'launch-receipts.json'), 'utf8'));
     expect(Object.values(receipt.messages)).toEqual([['b1']]);
     const restarted = host();
     owner(restarted);
@@ -777,7 +783,7 @@ describe('durable result delivery', () => {
 
     h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('owed before the resume');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
   });
@@ -796,15 +802,61 @@ describe('durable result delivery', () => {
 
     h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('result from the crashed generation');
 
     // Admission stays on the current spawn; core unions its generations.
     await h.handlers.get('message_start')!({ message: { role: 'custom', ...h.notices[0] } });
     const receipt = JSON.parse(await readFile(
-      path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'), 'utf8',
+      path.join(root, 'pi-bash', 'p-parent', 'launch-receipts.json'), 'utf8',
     ));
-    expect(Object.values(receipt.messages)).toEqual([['p1']]);
+    expect(Object.values(receipt.messages)).toEqual([['p1:1']]);
+  });
+
+  describe('a spawn continued into a second launch', () => {
+    // p1 is on launch 2; launch 1 is archived and still owed to the parent.
+    async function continued(root: string) {
+      await child(root, 'p1', null, { launch: { n: 2 }, owed_launches: [{ n: 1, parent_id: 'p-parent' }] });
+      const canonical = JSON.parse(await readFile(new URL('../fixtures/canonical-child-state.json', import.meta.url), 'utf8'));
+      await writeJsonAtomic(path.join(root, 'spawns', 'p1', 'launches', '1', 'launch.json'), {
+        ...canonical, id: 'p1', parent_id: 'p-parent', launch: { n: 1 },
+      });
+      writeFileSync(path.join(root, 'spawns', 'p1', 'launches', '1', 'report.md'), 'first launch report');
+      mkdirSync(path.join(root, 'spawns', 'p1', 'launches', '2'), { recursive: true });
+      writeFileSync(path.join(root, 'spawns', 'p1', 'launches', '2', 'report.md'), 'second launch report');
+    }
+    async function deliver(h: ReturnType<typeof host>) {
+      await owner(h).deliverAtBoundary(new AbortController().signal);
+    }
+
+    it('owes the launch it moved past and the current one, each from its own directory', async () => {
+      const root = await setup();
+      await continued(root);
+      const h = host(false);
+      await deliver(h);
+      expect(h.notices[0]!.details.work_ids.sort()).toEqual(['p1:1', 'p1:2']);
+      expect(h.notices[0]!.content).toContain('first launch report');
+      expect(h.notices[0]!.content).toContain('second launch report');
+    });
+
+    it('owes the next launch again once the earlier one was consumed', async () => {
+      const root = await setup();
+      await continued(root);
+      await file(root, 'launch-receipts.json', { v: 1, spawn_id: 'p-parent', messages: { 'd-1': ['p1:1'] } });
+      const h = host(false);
+      await deliver(h);
+      expect(h.notices[0]!.details.work_ids).toEqual(['p1:2']);
+      expect(h.notices[0]!.content).not.toContain('first launch report');
+    });
+
+    it('reads an entry from before launches as launch 1 only', async () => {
+      const root = await setup();
+      await continued(root);
+      await file(root, 'delivery-receipts.json', { v: 1, spawn_id: 'p-parent', messages: { 'd-old': ['p1'] } });
+      const h = host(false);
+      await deliver(h);
+      expect(h.notices[0]!.details.work_ids).toEqual(['p1:2']);
+    });
   });
 
   it('does not redeliver a prior generation\'s child any generation consumed', async () => {
@@ -829,7 +881,7 @@ describe('durable result delivery', () => {
 
     await runtime.deliverAtBoundary(new AbortController().signal);
 
-    expect(h.notices[0]!.details.work_ids).toEqual(['p3']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p3:1']);
   });
 
   it('keeps the widened scope across a reload', async () => {
@@ -849,7 +901,7 @@ describe('durable result delivery', () => {
       signal: new AbortController().signal,
     });
 
-    expect(next.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(next.notices[0]!.details.work_ids).toEqual(['p1:1']);
   });
 
   it('leaves a child its launcher waited for to the launcher result', async () => {
@@ -938,9 +990,9 @@ describe('durable result delivery', () => {
       encoding: 'utf8'
     }).trim()) / 1000;
     const observation = {
-      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: [], waiting_spawn_ids: ['p1'], wait_reservations: {
+      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_launches: [], wait_reservations: {
         live: {
-          owner_pid: process.pid, owner_birth_epoch: birth, expires_at_epoch: Date.now() / 1000 + 30, spawn_ids: ['p1']
+          owner_pid: process.pid, owner_birth_epoch: birth, expires_at_epoch: Date.now() / 1000 + 30, launches: ['p1:1']
         }
       }
     };
@@ -950,10 +1002,10 @@ describe('durable result delivery', () => {
     await pause(800);
     expect(h.notices).toHaveLength(0);
     await observations(root, {
-      ...observation, wait_reservations: {}, waiting_spawn_ids: []
+      ...observation, wait_reservations: {}
     });
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
   });
   it.each([
     { path: 'idle', idle: true, deliverAs: 'followUp' },
@@ -969,12 +1021,12 @@ describe('durable result delivery', () => {
     const delivery = idle ? undefined : runtime.deliverAtBoundary(new AbortController().signal);
     await until(() => exists(held.enteredPath));
     await observations(root, {
-      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
+      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_launches: ['p1:1'], wait_reservations: {}
     });
     writeFileSync(held.releasePath, 'release');
     await delivery;
     await until(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p2:1']);
     expect(h.notices[0]!.content).toContain('still owed report');
     expect(h.notices[0]!.content).not.toContain('consumed report');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs });

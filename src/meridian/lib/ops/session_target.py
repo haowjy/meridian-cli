@@ -34,7 +34,7 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.query import read_stored_spawn_row
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
-from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.retention_archive import (
     archive_locations,
     read_receipts,
@@ -195,7 +195,7 @@ def _restored_target(runtime_root: Path, row: SpawnRecord, *, ref: str) -> Sessi
     """Read a restored aggregate's own sealed snapshot; restored refs stay inert."""
     if row.record_mode != "historical":
         raise ValueError(f"{row.id} is not a historical record")
-    path = runtime_root / "spawns" / row.id / NATIVE_SNAPSHOT_FILENAME
+    path = LaunchPaths.for_row(runtime_root, row).native_transcript
     if not path.is_file():
         raise FileNotFoundError(f"{ref} is historical and has no retained native snapshot")
     return SessionLogTarget(
@@ -310,8 +310,8 @@ def resolve_run_sources(
 ) -> tuple[TranscriptSource, ...]:
     """Every exact native source holding a run's turns: its log chat and its entry chat."""
     sources = [_spawn_target(row=row, record_for=sessions.get).source]
-    if row.chat_id is not None and row.chat_id != row.continue_chat_id:
-        entry = sessions.get(row.chat_id)
+    if row.entry_chat_id is not None and row.entry_chat_id != row.continue_chat_id:
+        entry = sessions.get(row.entry_chat_id)
         if entry is None:
             raise NativeSessionUnavailable(row.id, "unbound")
         sources.append(_target_from_record(entry).source)

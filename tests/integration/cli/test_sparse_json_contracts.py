@@ -17,8 +17,15 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.conftest import posix_only
 from tests.support.executables import prepend_fake_executables
+from tests.support.launch_paths import launch_paths
 
-_NOISY_KEYS = {"stdout", "stderr", "harness_session_id", "report_body"}
+_NOISY_KEYS = {
+    "stdout",
+    "stderr",
+    "harness_session_id",
+    "report_body",
+    "log_path",
+}
 
 
 @pytest.fixture
@@ -156,7 +163,7 @@ def _seed_terminal_spawn(
         origin="runner",
         duration_secs=1.25,
     )
-    report_path = runtime_root / "spawns" / spawn_id / "report.md"
+    report_path = launch_paths(runtime_root, spawn_id).report
     report_path.write_text("Completed the sparse JSON projection.\n", encoding="utf-8")
 
 
@@ -243,7 +250,6 @@ def test_spawn_show_multi_id_json_contract(
             "status",
             "model",
             "harness",
-            "report_path",
             "report_summary",
         } <= item.keys()
     _assert_noisy_keys_absent(payload)
@@ -259,7 +265,7 @@ def test_spawn_status_json_contract(
 
     payload = _run_json(project_root, env, "spawn", "status", "p1")
 
-    assert {"spawn_id", "status", "model", "harness", "report_path", "report_summary"} <= (
+    assert {"spawn_id", "status", "model", "harness", "report_summary"} <= (
         payload.keys()
     )
     _assert_noisy_keys_absent(payload)
@@ -283,7 +289,6 @@ def test_spawn_status_multi_id_json_contract(
             "status",
             "model",
             "harness",
-            "report_path",
             "report_summary",
         } <= item.keys()
     _assert_noisy_keys_absent(payload)
@@ -345,7 +350,7 @@ def test_spawn_collect_and_ack_json_contract(
         launch_mode="background",
     )
     spawn_store.finalize_spawn(runtime_root, "p2", "succeeded", 0, origin="runner")
-    (runtime_root / "spawns" / "p2" / "report.md").write_text(
+    launch_paths(runtime_root, "p2").report.write_text(
         "Delivered from the child.\n",
         encoding="utf-8",
     )
@@ -362,7 +367,7 @@ def test_spawn_collect_and_ack_json_contract(
         launch_mode="background",
     )
     spawn_store.finalize_spawn(runtime_root, "p3", "failed", 1, origin="runner")
-    (runtime_root / "spawns" / "p3" / "report.md").write_text(
+    launch_paths(runtime_root, "p3").report.write_text(
         "Another delivered child report.\n",
         encoding="utf-8",
     )

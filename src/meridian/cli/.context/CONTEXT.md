@@ -296,8 +296,8 @@ human-facing spawn output.
 the message with a `[Meridian]` line naming the sender and, when the sender's active
 record is a child spawn or a primary harness with an inbox port, the
 `meridian spawn message <sender chat>` command that answers it. The reply names the
-sender's current chat (`continue_chat_id`, so the address survives a `/clear`) because
-a primary's spawn ID changes on each `--continue`. The chat id comes from
+sender's current chat (`continue_chat_id`, so the address survives a `/clear`),
+which is the chat the sender's primary runs in. The chat id comes from
 the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the conversation that launched it.
 A session that receives a message otherwise cannot tell which session sent it or
 where to reply.

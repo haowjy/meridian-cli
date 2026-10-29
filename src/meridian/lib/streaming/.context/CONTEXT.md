@@ -285,8 +285,9 @@ A stream probe is unsafe here: macOS can refuse a live listener with a full back
 Uncertain errors, symlinks, other owners and other names are left alone.
 
 Each runner holds `spawns/<id>/launch.lock` for its lifetime (see
-[launch lock ownership](../../state/launch_lock.py)). `spawn --continue` allocates a
-new spawn ID, hence a new socket name; another runner cannot rebind a swept name.
+[launch lock ownership](../../state/launch_lock.py)). The launch lock serializes the
+runners of one spawn (a `spawn --continue` keeps the ID and the socket name), so no second runner
+binds a name while a live one holds the lock.
 The identity recheck does not replace that invariant. The sweep skips its own endpoint, whose
 startup/stop unlink remains owned by that runner. No extra socket registry or lock
 files are needed. Recovery runs on the next spawn start, not a timer.
@@ -317,7 +318,6 @@ the connection exposes the needed seam.
 ## Specialized Context
 
 - [Pi drain](pi-drain.md) — Pi-specific quiescence, child-wave, and cleanup behavior.
-- [Signal cancellation](signal-cancellation.md) — CLI/app cancellation dispatch and scope cleanup.
 
 ## Anti-Patterns
 

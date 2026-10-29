@@ -32,10 +32,11 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
 from tests.support.launch import build_launch_context
+from tests.support.launch_paths import launch_paths
 from tests.support.pi import FakePiConnection, pi_event
 from tests.support.pi_extensions import configure_pi_extension_projection
 
@@ -124,7 +125,7 @@ class _ReportThenHangConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         self.state = "connected"
 
@@ -150,11 +151,8 @@ class _ReportThenHangConnection:
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(
-            project_root,
-            self._spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(project_root),
-        )
+        runtime_root = resolve_project_runtime_root_for_write(project_root)
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nWatchdog fallback completed.\n",
@@ -247,14 +245,14 @@ class _OpenCodeTerminalWithScopeConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         current_scope = self._scope_snapshot
         assert current_scope is not None
         self._scope_snapshot = ProcessScopeSnapshot(
             scope_id=current_scope.scope_id,
             owner_policy=current_scope.owner_policy,
-            owner_id=str(config.spawn_id),
+            owner_id=str(config.launch.spawn_id),
             role=current_scope.role,
             containment=current_scope.containment,
             root_pid=current_scope.root_pid,
@@ -297,11 +295,8 @@ class _OpenCodeTerminalWithScopeConnection:
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(
-            project_root,
-            self._spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(project_root),
-        )
+        runtime_root = resolve_project_runtime_root_for_write(project_root)
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
         yield RawHarnessEvent(
@@ -376,7 +371,7 @@ class _ResidentDeadlineConnection:
         _ResidentDeadlineConnection.resident_deadlines.append(
             config.resident_deadline_seconds
         )
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self.state = "connected"
 
     async def stop(
@@ -436,17 +431,14 @@ class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(
-            project_root,
-            self._spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(project_root),
-        )
+        runtime_root = resolve_project_runtime_root_for_write(project_root)
+        spawn_dir = launch_paths(runtime_root, self._spawn_id).dir
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nGuardrail input completed.\n",
             encoding="utf-8",
         )
-        write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
+        write_spawn_signal(launch_paths(type(self).runtime_root, self._spawn_id), "done")
         yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
@@ -555,6 +547,6 @@ async def _execute_with_context(
         request=request,
         launch_context=launch_context,
         project_root=project_root,
-        runtime_root=runtime_root,
+        launch=launch_paths(runtime_root, run.spawn_id),
         **kwargs,
     )

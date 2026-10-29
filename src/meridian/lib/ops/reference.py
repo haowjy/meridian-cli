@@ -16,7 +16,7 @@ from meridian.lib.ops.reference_recovery import (
     recover_harness_session_id,
 )
 from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -154,6 +154,10 @@ def _resolve_spawn_reference(
             spawn_id=target.spawn_id,
         )
         return replace(selected, source_spawn_id=row.id, source_goal=row.goal)
+    if target_chat_id is None and (row.has_no_session_of_its_own):
+        raise ValueError(
+            f"{ref} never started a session; nothing to continue, use --fork or a new spawn"
+        )
     if target_chat_id != row.chat_id:
         # A missing selected chat never falls back to an older conversation.
         raise NativeSessionUnavailable(ref, "unbound")
@@ -166,16 +170,14 @@ def _resolve_spawn_reference(
     )
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
-        source_execution_cwd = resolve_spawn_log_dir(
-            project_root, ref, runtime_root=runtime_root
-        ).as_posix()
+        source_execution_cwd = LaunchPaths.for_row(runtime_root, row).dir.as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
     bound_session = session_identity.get_session_record_for_spawn(runtime_root, row.id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=_normalize_optional(row.harness),
-        source_chat_id=_normalize_optional(row.chat_id),
+        source_chat_id=_normalize_optional(row.entry_chat_id),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,

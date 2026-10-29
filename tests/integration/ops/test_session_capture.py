@@ -19,17 +19,14 @@ from meridian.lib.ops.session_archive import (
 from meridian.lib.ops.session_target import resolve_capture_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.native_snapshot import (
-    NATIVE_SNAPSHOT_FILENAME,
-    TranscriptValidation,
-    read_snapshot,
-)
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.native_snapshot import TranscriptValidation, read_snapshot
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
+from tests.support.launch_paths import launch_paths
 
 
 def _snapshot_path(root: Path, key: str) -> Path:
-    return root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME
+    return launch_paths(root, key).native_transcript
 
 
 def _assert_sealed_snapshot(path: Path, *, contains: str, excludes: str | None = None) -> None:
@@ -85,7 +82,7 @@ def test_stop_maintenance_captures_completed_spawn_with_another_chat(
             agent="coder",
             kind="primary",
             harness_session_id=native_id,
-        )
+        ).spawn_id
         keys.append(key)
         session_store.start_session(
             root,
@@ -142,7 +139,7 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
         agent="coder",
         kind="primary",
         harness_session_id=native_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
@@ -209,10 +206,9 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
 def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     write_primary_metadata(
-        root / "spawns" / key,
+        launch_paths(root, key),
         PrimaryMetadata(managed_backend=True, harness_session_id="other-native"),
-        runtime_root=root,
-        spawn_id=key,
+        guarded=True,
     )
     target = resolve_capture_source(project_root=project, runtime_root=root, spawn_id=key)
     assert target.source.session_id == "exact-native"
@@ -229,7 +225,7 @@ def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, m
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     with pytest.raises(NativeCaptureDeferred, match="active owner") as deferred:
         materialize_native_history(project, root, key)
     assert deferred.value.owner == f"spawn {owner}"
@@ -276,7 +272,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
         prompt="before crash",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     process = multiprocessing.get_context("spawn").Process(
         target=_start_session_then_abandon,
         args=(root, native_root, str(old_run)),
@@ -303,7 +299,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
         prompt="after crash",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         "pi",
@@ -340,7 +336,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     )
     assert session_stop_maintenance(project, str(old_run)) is None
     _assert_not_captured(root, str(old_run))
-    assert not tuple((root / "spawns" / old_run).glob(".native-transcript.jsonl.*.tmp"))
+    assert not tuple(launch_paths(root, old_run).dir.glob(".native-transcript.jsonl.*.tmp"))
 
     session_store.stop_session(root, "c1")
     spawn_store.finalize_spawn(
@@ -378,7 +374,7 @@ def test_stop_capture_deferral_does_not_skip_automatic_archive(
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "true")
     monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", str(tmp_path / "archives"))
 
@@ -413,7 +409,7 @@ def test_capture_defers_for_live_observer_of_native_chat(tmp_path: Path, monkeyp
         prompt="observing",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         "pi",
@@ -478,7 +474,7 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     # Its native binding is only in its exact session generation, not state.json.
     session_store.start_session(
         root,
@@ -502,13 +498,13 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
         job_name=None,
         degraded_reason=None,
     )
-    record_scope(root, SpawnId(owner), scope)
+    record_scope(launch_paths(root, SpawnId(owner)), scope)
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     with pytest.raises(NativeCaptureDeferred, match="active owner"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
-    assert not tuple((root / "spawns" / key).glob(".native-transcript.jsonl.*.tmp"))
-    mark_scope_released(root, SpawnId(owner), scope.release_id)
+    assert not tuple(launch_paths(root, key).dir.glob(".native-transcript.jsonl.*.tmp"))
+    mark_scope_released(launch_paths(root, SpawnId(owner)), scope.release_id)
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
 
@@ -543,7 +539,7 @@ def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
     with pytest.raises(NativeCaptureDeferred, match="active owner"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
-    assert not tuple((root / "spawns" / key).glob(".native-transcript.jsonl.*.tmp"))
+    assert not tuple(launch_paths(root, key).dir.glob(".native-transcript.jsonl.*.tmp"))
 
 
 @pytest.mark.parametrize("binding", ["state", "sidecar"])
@@ -561,16 +557,15 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         model="test",
         agent="coder",
         harness_session_id="exact-native" if binding == "state" else None,
-    )
+    ).spawn_id
     session_store.start_session(
         root, "pi", "", "test", chat_id="c2", kind="primary", spawn_id=owner
     )
     if binding == "sidecar":
         write_primary_metadata(
-            root / "spawns" / owner,
+            launch_paths(root, owner),
             PrimaryMetadata(managed_backend=True, harness_session_id="exact-native"),
-            runtime_root=root,
-            spawn_id=owner,
+            guarded=True,
         )
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     try:
@@ -620,7 +615,7 @@ def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, m
         prompt="child",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.start_session(
         root,
@@ -687,7 +682,7 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
         prompt="headless prompt",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.start_session(
         root,
@@ -700,7 +695,8 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
         native_store=str(native_root),
     )
     session_store.stop_session(root, "c2")
-    (root / "spawns" / key / "history.jsonl").write_text(json.dumps({"type": "runner-only"}) + "\n")
+    runner_history = launch_paths(root, key).dir / LAUNCH_FILE_NAMES.history
+    runner_history.write_text(json.dumps({"type": "runner-only"}) + "\n")
 
     dry_run = archive_history(
         root,
@@ -752,7 +748,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
         prompt="child",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, legacy_key, status="succeeded", exit_code=0, origin="runner")
     legacy_state = spawn_store.get_spawn(root, legacy_key)
     assert legacy_state is not None and legacy_state.history_id is not None
@@ -761,7 +757,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
         {"event_type": "legacy.runner.boundary", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
-    legacy = root / "spawns" / legacy_key / "history.jsonl"
+    legacy = launch_paths(root, legacy_key).dir / LAUNCH_FILE_NAMES.history
     legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
     result = archive_history(
         root,
@@ -787,14 +783,15 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
     restored_ids = restore_archive(
         tmp_path / "restored-runtime", archive_path, (str(legacy_state.history_id),)
     )
-    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0]
     from meridian.lib.state.retention_archive import inventory
 
     # Byte inventory is the only supported interpretation of legacy members.
-    original_member = next(m for m in inventory(legacy.parent) if m.name == "history.jsonl")
-    restored_member = next(
-        m for m in inventory(restored_history.parent) if m.name == "history.jsonl"
+    member_name = f"launches/1/{LAUNCH_FILE_NAMES.history}"
+    original_member = next(
+        m for m in inventory(legacy.parents[2]) if m.name == member_name
     )
+    restored_member = next(m for m in inventory(restored_history) if m.name == member_name)
     assert restored_member == original_member
     with pytest.raises(ValueError, match="members are inert"):
         list(iter_archived_events(archive_path, legacy_state.history_id))
@@ -834,7 +831,7 @@ def test_capture_conflicting_owner_facts_are_conservative_without_cross_harness_
         model="test",
         agent="coder",
         harness_session_id="exact-native",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         linked_harness,
@@ -970,7 +967,7 @@ def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
 
 def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
-    stale_snapshot = root / "spawns" / key / ".native-transcript.jsonl.deadbeef.tmp"
+    stale_snapshot = launch_paths(root, key).dir / ".native-transcript.jsonl.deadbeef.tmp"
     stale_snapshot.write_text("partial snapshot")
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
@@ -1115,7 +1112,7 @@ def _opencode_capture_fixture(
         agent="coder",
         kind="primary",
         harness_session_id=session_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key
@@ -1198,7 +1195,7 @@ def _opencode_v2_capture_fixture(
         agent="coder",
         kind="primary",
         harness_session_id=session_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key

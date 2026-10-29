@@ -1,4 +1,4 @@
-"""Spawn v3 state-file persistence helpers.
+"""Spawn state-file (v3, v4) persistence helpers.
 
 The helpers in this module persist one ``state.json`` per spawn under the
 runtime spawns directory.
@@ -15,12 +15,18 @@ from pathlib import Path
 from typing import Any, Literal, Self, cast
 from uuid import uuid4
 
-from pydantic import ValidationError, model_validator
+from pydantic import (
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.paths import LaunchPaths, launch_archive
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -29,17 +35,18 @@ from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 from meridian.lib.utils.json_shapes import json_object
 
 # The newest ``state.json`` version this build reads; P0's newer-format check compares against it.
-MAX_STATE_VERSION = 3
+MAX_STATE_VERSION = 4
+V4_ONLY_FIELDS = ("launch", "prior_usage", "owed_launches")
 
 
 class StoredSpawnState(SpawnStateFields):
-    """On-disk v3 ``state.json`` representation.
+    """On-disk ``state.json`` representation: v3, or v4 when ``launch`` is present.
 
     The prompt body is stored separately in ``starting-prompt.md``; this model
     keeps only ``prompt_length`` metadata so state reads can stay lightweight.
     """
 
-    v: Literal[3]
+    v: Literal[3, 4]
     prompt_length: int | None = None
 
     @model_validator(mode="after")
@@ -48,7 +55,20 @@ class StoredSpawnState(SpawnStateFields):
 
         if (self.status in TERMINAL_SPAWN_STATUSES) != (self.terminal is not None):
             raise ValueError("terminal status and terminal facts must appear together")
+        if (self.v == 4) != (self.launch is not None):
+            raise ValueError("state v4 and the launch field must appear together")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_v4_fields_from_v3(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """A v3 row carries none of the v4 fields: older builds quarantine unknown keys."""
+        data = cast("dict[str, Any]", handler(self))
+        if self.launch is None:
+            for name in V4_ONLY_FIELDS:
+                data.pop(name, None)
+            if isinstance(data.get("terminal"), dict):
+                data["terminal"].pop("harness_cumulative", None)
+        return data
 
 
 # Flat run-boundary fields of the PR-1 dogfood build; retire with dogfood_migration.
@@ -177,10 +197,6 @@ def _state_path(spawns_dir: Path, spawn_id: str) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "state.json"
 
 
-def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
-    return _spawn_dir(spawns_dir, spawn_id) / "starting-prompt.md"
-
-
 def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
     """Return the stable external-writer lock for one published spawn."""
     return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
@@ -189,12 +205,17 @@ def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
 def record_to_stored_state(
     record: SpawnRecord,
 ) -> StoredSpawnState:
-    """Convert a spawn projection to v3 on-disk state without prompt body."""
+    """Convert a spawn projection to on-disk state without prompt body.
+
+    ``v`` follows ``launch``: older builds read v3 and quarantine v4, so only a writer
+    that holds the launch lock (proving no older runner is alive) ever sets ``launch``,
+    and a row without one stays v3 and carries none of the v4 fields.
+    """
 
     return StoredSpawnState.model_validate(
         {
             **record.model_dump(exclude={"prompt"}),
-            "v": 3,
+            "v": 4 if record.launch is not None else 3,
             "prompt_length": len(record.prompt) if record.prompt is not None else None,
         }
     )
@@ -204,19 +225,28 @@ def stored_state_to_record(
     stored: StoredSpawnState,
     prompt: str | None = None,
 ) -> SpawnRecord:
-    """Convert v3 on-disk state to a ``SpawnRecord`` projection."""
+    """Convert on-disk state to a ``SpawnRecord`` projection."""
 
     return SpawnRecord.model_validate(
         {**stored.model_dump(exclude={"v", "prompt_length"}), "prompt": prompt}
     )
 
 
-def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
-    """Read a spawn's starting prompt body, if present."""
+def read_launch_archive(runtime_root: Path, spawn_id: str, n: int) -> SpawnRecord | None:
+    """Launch ``n``'s finished row as archived by the holder that started launch ``n+1``."""
 
-    path = _prompt_path(spawns_dir, spawn_id)
     try:
-        return path.read_text(encoding="utf-8")
+        text = launch_archive(runtime_root, spawn_id, n).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    return stored_state_to_record(StoredSpawnState.model_validate_json(text))
+
+
+def read_prompt(launch: LaunchPaths) -> str | None:
+    """Read a launch's starting prompt body, if present."""
+
+    try:
+        return launch.starting_prompt.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
 
@@ -315,7 +345,9 @@ def read_state(
     stored = _read_stored_state(spawns_dir, spawn_id)
     if stored is None:
         return None
-    prompt = read_prompt(spawns_dir, spawn_id) if include_prompt else None
+    prompt = (
+        read_prompt(LaunchPaths.for_row(spawns_dir.parent, stored)) if include_prompt else None
+    )
     return stored_state_to_record(stored, prompt=prompt)
 
 

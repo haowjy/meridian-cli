@@ -93,7 +93,6 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.constants import (
     BASE_COMMAND_PI_SUBPROCESS,
-    PI_RUNTIME_META_FILENAME,
     PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
@@ -101,7 +100,7 @@ from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import HistoryIndexIncomplete
-from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_ownership import owned_parent_ids
@@ -153,20 +152,18 @@ def _pi_owed_parent_ids(
 
 def _write_pi_runtime_metadata_sidecar(
     *,
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     payload: dict[str, str | None],
 ) -> None:
     """Persist the resolved Pi runtime metadata sidecar for one spawn."""
 
     if payload.get("runtime_path") is None:
         return
-    metadata_path = runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
     mutate_published_spawn_artifact(
-        runtime_root,
-        spawn_id,
+        launch.runtime_root,
+        launch.spawn_id,
         lambda: atomic_write_text(
-            metadata_path,
+            launch.pi_runtime_meta,
             json.dumps(payload, separators=(",", ":")) + "\n",
         ),
     )
@@ -339,8 +336,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def prepare_prelaunch(
         self,
         *,
-        runtime_root: Path,
-        spawn_id: SpawnId,
+        launch: LaunchPaths,
         session: SessionRequest,
         child_cwd: Path,
         child_env: dict[str, str],
@@ -348,11 +344,12 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
         _ = (
-            spawn_id,
             session,
             resolved_harness_session_id,
             record_effective_config_dir,
         )
+        runtime_root = launch.runtime_root
+        spawn_id = launch.spawn_id
         role = child_env.get("MERIDIAN_SESSION_ROLE", "").strip().lower()
         launch_role = "primary" if role == "primary" else "spawned"
         try:
@@ -371,9 +368,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_env.update(state_dir_overrides)
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
-            "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(
-                (runtime_root / spawn_log_subpath(spawn_id) / "pi-session-boundary.json").resolve()
-            ),
+            "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(launch.pi_session_boundary.resolve()),
             "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
         }
         if launch_role == "primary":
@@ -386,8 +381,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 env_overrides[PI_OWED_PARENT_IDS_ENV] = ",".join(owed_parents)
 
         _write_pi_runtime_metadata_sidecar(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             payload={
                 "runtime_kind": resolved_runtime.runtime_kind,
                 "runtime_path": resolved_runtime.binary_path,
@@ -649,17 +643,13 @@ PI_SEMANTICS = HarnessSemantics(
 )
 
 
-def _event_sinks(
-    runtime_root: Path, spawn_id: SpawnId
-) -> tuple[Callable[[RawHarnessEvent], None], ...]:
+def _event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], None], ...]:
     def lifecycle_sink(event: RawHarnessEvent) -> None:
         if event.event_type != PI_PHASE_EVENT_TYPE:
             return
         phase = event.payload.get("phase")
         if isinstance(phase, str) and phase.strip():
-            pi_lifecycle.record(
-                runtime_root, spawn_id, pi_lifecycle.PiLifecycle.model_validate(event.payload)
-            )
+            pi_lifecycle.record(launch, pi_lifecycle.PiLifecycle.model_validate(event.payload))
 
     return (lifecycle_sink,)
 

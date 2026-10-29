@@ -24,11 +24,12 @@ from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.launch_paths import launch_paths
 
 
 def _build_config(spawn_id: SpawnId, project_root: Path) -> ConnectionConfig:
     return ConnectionConfig(
-        spawn_id=spawn_id,
+        launch=launch_paths(resolve_runtime_paths(project_root).root_dir, spawn_id),
         harness_id=HarnessId.CODEX,
         prompt="hello",
         control_root=project_root,
@@ -43,7 +44,7 @@ def _build_spec() -> ResolvedLaunchSpec:
 
 
 def _read_permission_statuses(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
-    journal_path = runtime_root / "spawns" / str(spawn_id) / "permission_requests.jsonl"
+    journal_path = launch_paths(runtime_root, str(spawn_id)).permission_requests
     if not journal_path.exists():
         return []
     statuses: list[str] = []
@@ -127,7 +128,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
             if self._request_handler is None:
                 raise AssertionError("expected runtime HITL request handler")
@@ -194,7 +195,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
     await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
 
@@ -282,7 +283,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
             if self._request_handler is None:
                 raise AssertionError("expected runtime HITL request handler")
@@ -355,7 +356,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
     await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
 
@@ -444,7 +445,7 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
             if self._request_handler is None:
                 raise AssertionError("expected runtime HITL request handler")
@@ -511,7 +512,7 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
     config = replace(_build_config(spawn_id, project_root), harness_id=HarnessId.OPENCODE)
     await manager.start_spawn(config, _build_spec())

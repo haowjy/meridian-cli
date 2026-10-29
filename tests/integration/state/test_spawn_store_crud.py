@@ -2,7 +2,7 @@
 
 """CRUD operation tests for the spawn store.
 
-Covers: start, get, list, update, next_id, reserve, mark_running, and
+Covers: start, get, list, update, next_id, reserve, record_launch_facts, and
 attempt-exit and runner-exit metadata writes. Finalization and concurrency live in
 test_spawn_store_finalize.py.
 """
@@ -22,10 +22,8 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import RuntimePaths, staged_starting_prompt
 from meridian.lib.state.spawn.repository import (
-    Applied,
-    Declined,
     SpawnStateQuarantined,
     StoredSpawnState,
     read_state,
@@ -35,10 +33,7 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
-    record_cancel_intent,
-    record_runner_exit,
-    record_spawn_exited,
-    reserve_spawn_id,
+    reserve_launch,
     start_spawn,
     update_spawn,
 )
@@ -61,7 +56,7 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
-        )
+        ).spawn_id
     )
 
 
@@ -77,7 +72,7 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
             prompt="hello",
             launch_mode="app",
             runner_pid=1111,
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -109,7 +104,7 @@ def test_spawn_path_fields_are_normalized_at_write_boundary(
             control_root="project/./root/",
             task_cwd=None,
             execution_cwd="project/root/../initial-task/",
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -305,7 +300,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
                         harness="codex",
                         prompt="hello",
                         spawn_id=spawn_id,
-                    )
+                    ).spawn_id
                 )
             )
         except BaseException as exc:
@@ -321,7 +316,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
         assert len(staged_dirs) == 1
         stage_dir = staged_dirs[0]
         assert stage_dir.parent == paths.spawns_dir / ".staging"
-        assert (stage_dir / "starting-prompt.md").read_text(encoding="utf-8") == "hello"
+        assert staged_starting_prompt(stage_dir, 1).read_text(encoding="utf-8") == "hello"
         staged_row = StoredSpawnState.model_validate_json((stage_dir / "state.json").read_bytes())
         assert staged_row.id == spawn_id
         assert staged_row.prompt_length == len("hello")
@@ -333,7 +328,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
     assert errors == []
     assert created_spawn_ids == [spawn_id]
     assert scan_spawn_ids(paths.spawns_dir) == [spawn_id]
-    assert (paths.spawns_dir / spawn_id / "starting-prompt.md").read_text(
+    assert staged_starting_prompt(paths.spawns_dir / spawn_id, 1).read_text(
         encoding="utf-8"
     ) == "hello"
     row = read_state(paths.spawns_dir, spawn_id)
@@ -416,7 +411,7 @@ def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
             control_root=control_root.as_posix(),
             task_cwd=task_cwd.as_posix(),
             execution_cwd=task_cwd.as_posix(),
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -441,7 +436,7 @@ def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
                 work_id="  w-goal  ",
                 goal="  keep scope tight  ",
             ),
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -493,7 +488,7 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
             harness="claude",
             prompt="hello",
             launch_policy_snapshot=snapshot,
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -528,7 +523,7 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
             harness="claude",
             prompt="hello",
             launch_policy_snapshot=snapshot,
-        )
+        ).spawn_id
     )
 
     spawn_dir = runtime_root / "spawns" / spawn_id
@@ -554,7 +549,7 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
             agent="coder",
             harness="codex",
             prompt="hello",
-        )
+        ).spawn_id
     )
     paths = RuntimePaths.from_root_dir(runtime_root)
     state_path = paths.spawns_dir / spawn_id / "state.json"
@@ -565,56 +560,6 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
     row = read_state(paths.spawns_dir, spawn_id)
     assert row is not None
     assert row.launch_policy_snapshot is None
-
-
-def test_record_cancel_intent_persists_first_request_and_skips_terminal(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    first = record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=130,
-        error="cancelled",
-        requested_at="2026-06-03T01:00:00Z",
-    )
-    second = record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=143,
-        error="terminated",
-        requested_at="2026-06-03T01:01:00Z",
-    )
-
-    assert isinstance(first, Applied)
-
-    first_record = first.after
-    assert first_record.cancel_intent is not None
-    assert first_record.cancel_intent.exit_code == 130
-    assert isinstance(second, Declined)
-    assert second.reason == "cancel intent already recorded"
-    assert second.snapshot.cancel_intent == first_record.cancel_intent
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.cancel_intent == first_record.cancel_intent
-
-    terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
-    finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
-
-    result = record_cancel_intent(
-        runtime_root,
-        terminal_spawn_id,
-        exit_code=130,
-        error="cancelled",
-        requested_at="2026-06-03T01:00:00Z",
-    )
-
-    assert isinstance(result, Declined)
-
-    assert result.snapshot.status == "succeeded"
-    assert result.snapshot.cancel_intent is None
 
 
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
@@ -646,11 +591,12 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
             harness="codex",
             prompt="world",
             desc="desc-2",
-        )
+            work_id="w2",
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
-    filtered = list_spawns(runtime_root, chat_id="c2")
+    filtered = list_spawns(runtime_root, work_id="w2")
 
     assert [spawn.id for spawn in filtered.records] == [p2]
     assert filtered.records[0].prompt is None
@@ -680,7 +626,7 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
             agent="coder",
             harness="codex",
             prompt="world",
-        )
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
@@ -712,47 +658,7 @@ def test_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
             (spawn_dir / "state.json").write_text(state_payload, encoding="utf-8")
     (runtime_root / "spawn-id-counter").write_text("20\n", encoding="utf-8")
 
-    assert reserve_spawn_id(runtime_root) == "p21"
+    assert reserve_launch(runtime_root).spawn_id == "p21"
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
 
 
-def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    record_spawn_exited(
-        runtime_root,
-        spawn_id,
-        exit_code=143,
-        exited_at="2026-04-12T14:00:00Z",
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-    assert row.last_attempt_exited_at == "2026-04-12T14:00:00Z"
-    assert row.last_attempt_exit_code == 143
-    assert row.terminal is None
-
-
-def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="failed",
-        exit_code=42,
-        error="guardrail_failed",
-        exited_at="2026-04-12T14:03:00Z",
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-    assert row.runner_exit is not None
-    assert row.runner_exit.status == "failed"
-    assert row.runner_exit.exit_code == 42
-    assert row.runner_exit.error == "guardrail_failed"
-    assert row.runner_exit.exited_at == "2026-04-12T14:03:00Z"

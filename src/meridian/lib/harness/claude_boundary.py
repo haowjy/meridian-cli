@@ -15,15 +15,13 @@ from meridian.lib.core.native_identity import (
     NativeObservationBatch,
     Operation,
 )
-from meridian.lib.core.types import SpawnId
-from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.control_socket import UNIX_SOCKET_PATH_MAX_BYTES
 
 _READ_LIMIT = 64 * 1024
 _RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
 _JOURNAL_READ_LIMIT = _JOURNAL_LIMIT + _RECORD_LIMIT
-_JOURNAL_FILENAME = "claude-session-boundary.jsonl"
 _ENTRY_OPERATIONS: dict[str, Operation] = {"startup": "create", "resume": "resume", "fork": "fork"}
 
 
@@ -51,10 +49,10 @@ class _Record(BaseModel):
         )
 
 
-def claude_boundary_journal_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def claude_boundary_journal_path(launch: LaunchPaths) -> Path:
     """Return the launch-owned Claude SessionStart journal path."""
 
-    return (runtime_root / spawn_log_subpath(spawn_id) / _JOURNAL_FILENAME).resolve()
+    return launch.claude_boundary.resolve()
 
 
 def _parse_record(line: bytes) -> _Record | None:

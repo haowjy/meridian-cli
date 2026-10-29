@@ -12,6 +12,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -19,9 +20,9 @@ from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
-    """Return the exact session chat id recorded on a spawn row."""
+    """Return the exact session chat id recorded on a spawn row, or None if it has none."""
 
-    return row.chat_id
+    return row.entry_chat_id
 
 
 def spawn_owner_chat_id(row: SpawnRecord) -> str | None:
@@ -88,10 +89,17 @@ def session_records_for_spawns(
 ) -> dict[str, SessionRecord]:
     """Return unmodified authoritative generations; ambiguous linkage is a conflict.
 
+    The one exception: a row with a ``chat_id`` and no ``session_instance_id`` (a reopened
+    spawn not yet bound) resolves to the newest generation linked to it in that chat.
+
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
-    records = tuple(records)
+    # A row with no session of its own (chat-less by design, or a legacy placeholder
+    # chat) has none to find; only older chat-less rows still need the full scan.
+    records = tuple(row for row in records if not row.has_no_session_of_its_own)
+    if not records:
+        return {}
     chats = {row.chat_id for row in records if row.chat_id}
     generations = session_store.fold_session_generations(
         session_store.chats_rows(
@@ -117,7 +125,12 @@ def session_records_for_spawns(
                 raise ValueError(f"Session generation conflicts with history: {record.id}")
             candidates = [session] if session is not None else []
         if len(candidates) > 1:
-            raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+            if not record.chat_id or record.session_instance_id:
+                raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+            # A continue between its commit and its bind: the row has its chat but no
+            # generation of its own yet, and every earlier launch linked one in that chat.
+            # The newest is the latest.
+            candidates = candidates[-1:]
         if candidates:
             session = candidates[0]
             if session.spawn_id not in {None, record.id} or session.history_id not in {
@@ -147,7 +160,7 @@ def native_identity_candidates(
         value.strip()
         for value in (
             row.harness_session_id,
-            read_primary_harness_session_id(runtime_root, row.id)
+            read_primary_harness_session_id(LaunchPaths.for_row(runtime_root, row))
             if row.kind == "primary"
             else None,
             session.harness_session_id if session else None,
@@ -194,7 +207,7 @@ def live_observer_for_chat(
             session_instance_id=row.session_instance_id,
         ):
             return row.id
-        scopes = read_scope_projection(runtime_root, SpawnId(row.id))
+        scopes = read_scope_projection(LaunchPaths.for_row(runtime_root, row))
         if any(
             scope_liveness(scope)["likely_serving"]
             for scope in scopes.scopes
@@ -217,11 +230,14 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    if row is None:
+    if row is None or row.has_no_session_of_its_own:
         return None
+    entry_chat_id = spawn_exact_chat_id(row)
+    # An older chat-less row (app spawn, pre-v3) names no session itself: only a
+    # generation whose start event names this spawn can be its own.
     generations = (
-        session_store.chat_generations(runtime_root, row.chat_id)
-        if row.chat_id
+        session_store.chat_generations(runtime_root, entry_chat_id)
+        if entry_chat_id
         else session_store.fold_session_generations(
             session_store.chats_rows(runtime_root, None).ordered,
         )
@@ -248,11 +264,10 @@ def get_session_record_for_spawn(
             continue
         return record
 
-    exact_chat_id = spawn_exact_chat_id(row)
-    if exact_chat_id is None:
+    if entry_chat_id is None:
         return None
 
-    record = session_store.chat_record(runtime_root, exact_chat_id)
+    record = session_store.chat_record(runtime_root, entry_chat_id)
     if record is None:
         return None
     linked_spawn_id = normalize_optional_identity(record.spawn_id)

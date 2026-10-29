@@ -39,6 +39,7 @@ from tests.integration.launch.streaming_runner_support import (
 from tests.support.fakes import FakeClock
 from tests.support.history import warm_history_index
 from tests.support.launch import FakeBundleResult
+from tests.support.launch_paths import launch_paths
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
@@ -135,10 +136,10 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 3
     assert row.terminal.error == "timeout"
-    report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text()
+    report = launch_paths(runtime_root, str(run.spawn_id)).report.read_text()
     assert report == "# Spawn failed\n\ntimeout\n"
     lifecycle = json.loads(
-        (runtime_root / "spawns" / str(run.spawn_id) / "pi-lifecycle.json").read_text()
+        launch_paths(runtime_root, str(run.spawn_id)).pi_lifecycle.read_text()
     )
     assert lifecycle["phase"] == "cleanup_completed"
     assert lifecycle["cleanup_status"] == "completed"
@@ -203,6 +204,9 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
         spawn_id=SpawnId("r-resident-deadline-child"),
         launch_mode="background",
         status="running",
+        # A lockless row with no runner PID counts as starting for 15 s; this child's runner
+        # is long gone, so the deadline cleanup must not wait that out.
+        started_at="2026-01-01T00:00:00Z",
     )
     request = _build_request()
     exit_code = await asyncio.wait_for(
@@ -364,6 +368,6 @@ async def test_guardrail_failure_does_not_rerun_harness(
     assert row is not None and row.terminal is not None
     assert row.status == "failed"
     assert row.terminal.error == "guardrail_failed"
-    assert (runtime_root / "spawns" / str(run.spawn_id) / "stderr.log").read_text(
+    assert launch_paths(runtime_root, str(run.spawn_id)).stderr_log.read_text(
         encoding="utf-8"
     ).endswith(f"Guardrail validation failed:\n- {guardrail} (exit 1)\n")

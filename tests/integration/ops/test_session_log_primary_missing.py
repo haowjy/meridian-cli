@@ -12,17 +12,16 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(
     runtime_root: Path,
     spawn_id: str,
     *events: dict[str, object],
-    filename: str = HISTORY_FILENAME,
+    filename: str = LAUNCH_FILE_NAMES.history,
 ) -> None:
     output_path = runtime_root / "spawns" / spawn_id / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)

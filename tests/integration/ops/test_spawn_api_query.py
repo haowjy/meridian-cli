@@ -14,7 +14,6 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCancelAllInput,
@@ -31,7 +30,8 @@ from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
-from meridian.lib.state.spawn.repository import Applied
+from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 
 
 def _state_root(project_root: Path) -> Path:
@@ -54,7 +54,7 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
         agent="coder",
         harness="pi",
         prompt="finished",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
     observer_id = spawn_store.start_spawn(
         runtime_root,
@@ -63,18 +63,19 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
         agent="coder",
         harness="pi",
         prompt="observer",
-    )
+    ).spawn_id
     result = spawn_api.spawn_wait_sync(
         SpawnWaitInput(project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe),
         ctx=RuntimeContext(spawn_id=observer_id),
     )
     assert result.total_runs == 1
     assert result.spawns[0].status == "succeeded"
-    observed_path = runtime_root / "spawns" / str(observer_id) / "observed-spawns.json"
+    observed_path = runtime_root / "spawns" / str(observer_id) / "observed-launches.json"
     if observe:
         observed = json.loads(observed_path.read_text())
-        assert observed["observed_spawn_ids"] == [str(spawn_id)]
-        assert observed["waiting_spawn_ids"] == []
+        assert observed["observed_launches"] == [f"{spawn_id}:1"]
+        assert observed["waiting_launches"] == []
+        assert observed["wait_pins"] == {}
     else:
         assert not observed_path.exists()
 
@@ -87,7 +88,7 @@ def _write_primary_meta(
     backend_pid: int | None = None,
     tui_pid: int | None = None,
 ) -> None:
-    meta_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    meta_path = launch_paths(runtime_root, spawn_id).primary_meta
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(
         json.dumps(
@@ -110,12 +111,13 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     verified_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c9006",
+        owner_chat_id="c9000",
         model="test",
         agent="coder",
         harness="pi",
         harness_session_id="native-entry",
         prompt="finished",
-    )
+    ).spawn_id
     start_session(
         runtime_root,
         "pi",
@@ -140,11 +142,12 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     unresolved_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c-pi-unresolved",
+        owner_chat_id="c9000",
         model="test",
         agent="coder",
         harness="pi",
         prompt="finished",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(
         runtime_root, unresolved_id, status="succeeded", exit_code=0, origin="runner"
     )
@@ -190,7 +193,7 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
             harness="codex",
             prompt="running",
             launch_lock=running_launch,
-        )
+        ).spawn_id
         finalizing_id = spawn_store.start_spawn(
             runtime_root,
             chat_id="c2",
@@ -199,8 +202,8 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
             harness="codex",
             prompt="finalizing",
             launch_lock=finalizing_launch,
-        )
-        assert isinstance(spawn_store.mark_finalizing(runtime_root, finalizing_id), Applied)
+        ).spawn_id
+        legacy_rows.mark_finalizing(runtime_root, str(finalizing_id))
         succeeded_id = spawn_store.start_spawn(
             runtime_root,
             chat_id="c3",
@@ -208,7 +211,7 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
             agent="coder",
             harness="codex",
             prompt="done",
-        )
+        ).spawn_id
         spawn_store.finalize_spawn(
             runtime_root,
             succeeded_id,
@@ -289,7 +292,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
             harness="codex",
             prompt="running",
             launch_lock=launch,
-        )
+        ).spawn_id
         cancel_context = RuntimeContext(spawn_id="p9005", chat_id="c11")
 
         def _fake_spawn_cancel_sync(
@@ -343,7 +346,7 @@ def test_spawn_cancel_all_finalizes_dead_stored_active_spawn(tmp_path: Path) -> 
             harness="codex",
             prompt="running",
             launch_lock=launch,
-        )
+        ).spawn_id
 
     output = spawn_api.spawn_cancel_all_sync(
         SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
@@ -372,8 +375,8 @@ def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path:
             harness="codex",
             prompt="hello",
             launch_lock=launch,
-        )
-        spawn_store.record_spawn_exited(
+        ).spawn_id
+        legacy_rows.record_exited(
             runtime_root,
             spawn_id,
             exit_code=143,
@@ -401,7 +404,7 @@ def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
         agent="reviewer",
         harness="codex",
         prompt="review",
-    )
+    ).spawn_id
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c2",
@@ -435,7 +438,7 @@ def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
         agent="coder",
         harness="codex",
         prompt="timeout",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(
         runtime_root,
         timed_out_id,
@@ -478,7 +481,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
         agent="coder",
         harness="codex",
         prompt="fail",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
     with LaunchSlot() as pending_launch:
         pending_id = spawn_store.start_spawn(
@@ -490,7 +493,7 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
             harness="codex",
             prompt="keep running",
             launch_lock=pending_launch,
-        )
+        ).spawn_id
 
         output = spawn_api.spawn_wait_sync(
             SpawnWaitInput(
@@ -529,7 +532,7 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
         agent="coder",
         harness="codex",
         prompt="fail",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
     with LaunchSlot() as finishing_launch:
         finishing_id = spawn_store.start_spawn(
@@ -541,27 +544,25 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
             harness="codex",
             prompt="finish during snapshot",
             launch_lock=finishing_launch,
-        )
+        ).spawn_id
 
-        original_read_spawn_row = spawn_api.read_spawn_row
-        finishing_reads = 0
+        original_poll_launch = spawn_api.poll_launch
+        finished = False
 
         def _finish_before_snapshot_read(*args, **kwargs):
-            nonlocal finishing_reads
-            spawn_id = args[1]
-            if spawn_id == str(finishing_id):
-                finishing_reads += 1
-                if finishing_reads == 2:
-                    spawn_store.finalize_spawn(
-                        runtime_root,
-                        finishing_id,
-                        "succeeded",
-                        0,
-                        origin="runner",
-                    )
-            return original_read_spawn_row(*args, **kwargs)
+            nonlocal finished
+            if args[1] == str(finishing_id) and not finished:
+                finished = True
+                spawn_store.finalize_spawn(
+                    runtime_root,
+                    finishing_id,
+                    "succeeded",
+                    0,
+                    origin="runner",
+                )
+            return original_poll_launch(*args, **kwargs)
 
-        monkeypatch.setattr(spawn_api, "read_spawn_row", _finish_before_snapshot_read)
+        monkeypatch.setattr(spawn_api, "poll_launch", _finish_before_snapshot_read)
 
         output = spawn_api.spawn_wait_sync(
             SpawnWaitInput(
@@ -571,7 +572,6 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
             )
         )
 
-        assert finishing_reads == 2
         assert not output.fail_fast
         assert output.pending_ids == ()
         assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
@@ -593,8 +593,8 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
         agent="coder",
         harness="codex",
         prompt="hello",
-    )
-    report_path = runtime_root / "spawns" / str(spawn_id) / "report.md"
+    ).spawn_id
+    report_path = launch_paths(runtime_root, str(spawn_id)).report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("report body\n", encoding="utf-8")
     spawn_store.finalize_spawn(
@@ -619,7 +619,7 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
     )
 
-    assert status_detail.report_path == report_path.as_posix()
+    assert status_detail.report_summary is not None
     assert status_detail.report_body is None
     assert reported_status_detail.report_body == "report body"
     assert show_detail.report_body == "report body"
@@ -639,7 +639,7 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
         harness="codex",
         kind="primary",
         prompt="done",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(runtime_root, primary_id, "succeeded", 0, origin="runner")
     _write_primary_meta(
         runtime_root,
@@ -657,8 +657,8 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
         agent="coder",
         harness="pi",
         prompt="hello",
-    )
-    lifecycle_path = runtime_root / "spawns" / str(pi_id) / "pi-lifecycle.json"
+    ).spawn_id
+    lifecycle_path = launch_paths(runtime_root, str(pi_id)).pi_lifecycle
     lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
     lifecycle_path.write_text(
         json.dumps(
@@ -713,7 +713,7 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         harness="codex",
         prompt="parent prompt",
         goal="parent goal",
-    )
+    ).spawn_id
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p9001",
@@ -725,7 +725,7 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         prompt="child prompt label",
         desc=None,
         goal=None,
-    )
+    ).spawn_id
 
     listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
     assert len(listed.records) == 1
@@ -761,7 +761,7 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
         agent="coder",
         harness="codex",
         prompt="parent prompt",
-    )
+    ).spawn_id
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p9001",
@@ -772,7 +772,7 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
         harness="codex",
         prompt="ignored prompt summary",
         goal="ship the feature",
-    )
+    ).spawn_id
 
     listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
     assert listed.records[0].display_label is None
@@ -798,7 +798,7 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
         agent="coder",
         harness="codex",
         prompt="parent prompt",
-    )
+    ).spawn_id
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p9001",
@@ -810,7 +810,7 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
         prompt="legacy prompt body",
         desc=None,
         goal=None,
-    )
+    ).spawn_id
     state_path = runtime_root / "spawns" / str(child_id) / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state.pop("display_label", None)
@@ -846,7 +846,7 @@ def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path
         work_id="feature-x",
         control_root=project_root.as_posix(),
         task_cwd=task_cwd.as_posix(),
-    )
+    ).spawn_id
 
     detail = spawn_api.spawn_show_sync(
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))

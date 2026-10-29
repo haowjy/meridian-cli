@@ -85,7 +85,9 @@ def test_generated_lookup_equivalence(tmp_path: Path, monkeypatch: pytest.Monkey
         }
         identities |= {("claude", "id1"), ("claude", "id2")}
         compare_reads(tmp_path, [f"c{i}" for i in range(1, 8)], identities)
-        records = [SpawnRecord(id=f"p{i}", chat_id=f"c{i}") for i in range(4, 7)]
+        records = [
+            SpawnRecord(id=f"p{i}", chat_id=f"c{i}", owner_chat_id="c0") for i in range(4, 7)
+        ]
         assert session_identity.session_records_for_spawns(
             tmp_path, records
         ) == old.session_records_for_spawns(tmp_path, records)
@@ -176,7 +178,8 @@ def test_native_ids_covers_model_fields_and_raw_legacy_rows(tmp_path: Path) -> N
     models = (*get_args(s.SessionEvent.__value__), s.SessionModelObservationEvent, s.SessionRecord)
     fields = {
         model.__name__: {
-            name for name, field in model.model_fields.items()
+            name
+            for name, field in model.model_fields.items()
             if HarnessSessionId in (field.annotation, *get_args(field.annotation))
         }
         for model in models
@@ -270,7 +273,9 @@ def test_unbound_witness_stays_in_named_chat(tmp_path: Path) -> None:
 
     (tmp_path / "sessions.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows))
     for status in ("queued", "succeeded"):
-        row = SpawnRecord(id="p1", chat_id="c1", status=status, history_id=rows[0].history_id)
+        row = SpawnRecord(
+            id="p1", chat_id="c1", owner_chat_id="c0", status=status, history_id=rows[0].history_id
+        )
         assert session_identity.session_records_for_spawns(tmp_path, [row])["p1"].chat_id == "c1"
 
 

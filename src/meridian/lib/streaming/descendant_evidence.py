@@ -19,6 +19,8 @@ from meridian.lib.state.history_index import (
     HistoryIndexBusy,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_observations import LaunchKey
+from meridian.lib.state.spawn_ownership import owed_launches
 from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.streaming.completion_contracts import (
     DiagnosticBlocker,
@@ -35,6 +37,8 @@ class DescendantProjection:
 
     assessment: WorkAssessment
     records: tuple[SpawnRecord, ...] = ()
+    # Launches owed to the root (``owed_launches``), read in the same pass as the records.
+    owed: tuple[LaunchKey, ...] = ()
 
 
 class ReconciledDescendantEvidence:
@@ -60,7 +64,7 @@ class ReconciledDescendantEvidence:
 
         try:
             if self._blocker_reader is None:
-                records = self._read_records()
+                records, owed = self._read_records()
                 blockers = tuple(
                     DiagnosticBlocker(
                         source="persisted_descendant",
@@ -71,7 +75,7 @@ class ReconciledDescendantEvidence:
                     if is_active_spawn_status(row.status)
                 )
             else:
-                records = ()
+                records, owed = (), ()
                 blockers = self._blocker_reader()
         except Exception as exc:
             code = (
@@ -97,21 +101,23 @@ class ReconciledDescendantEvidence:
                     generation=0,
                 ),
                 records,
+                owed,
             )
         return DescendantProjection(
             WorkAssessment(disposition="ready", blockers=(), generation=0),
             records,
+            owed,
         )
 
     def _read_records(
         self,
-    ) -> tuple[SpawnRecord, ...]:
+    ) -> tuple[tuple[SpawnRecord, ...], tuple[LaunchKey, ...]]:
         index = HistoryIndex(self._runtime_root)
         cold_deadline = time.monotonic() + INITIALIZATION_TIMEOUT
         if index.classify(deadline=cold_deadline).baseline == "absent":
             index.initialize(deadline=cold_deadline)
         selected = index.descendant_projection(
-            str(self._root_spawn_id),
+            (str(self._root_spawn_id),),
             deadline=time.monotonic() + QUERY_TIMEOUT,
         )
         stored_descendants: list[SpawnRecord] = []
@@ -122,7 +128,10 @@ class ReconciledDescendantEvidence:
             if row is None:
                 raise RuntimeError(f"indexed descendant state is missing: {spawn_id}")
             stored_descendants.append(row)
-        return tuple(overlay_derived(self._runtime_root, stored_descendants))
+        owed = owed_launches(
+            index, (str(self._root_spawn_id),), deadline=time.monotonic() + QUERY_TIMEOUT
+        )
+        return tuple(overlay_derived(self._runtime_root, stored_descendants)), owed
 
 
 @dataclass(frozen=True)
@@ -130,6 +139,7 @@ class RefreshSnapshot:
     assessment: WorkAssessment
     completed_request: int
     records: tuple[SpawnRecord, ...] = ()
+    owed: tuple[LaunchKey, ...] = ()
 
 
 class DescendantRefreshOwner:
@@ -161,6 +171,10 @@ class DescendantRefreshOwner:
     @property
     def records(self) -> tuple[SpawnRecord, ...]:
         return self._snapshot.records if self._snapshot is not None else ()
+
+    @property
+    def owed(self) -> tuple[LaunchKey, ...]:
+        return self._snapshot.owed if self._snapshot is not None else ()
 
     @property
     def assessment(self) -> WorkAssessment:
@@ -245,7 +259,13 @@ class DescendantRefreshOwner:
                 )
             )
         raw = projection.assessment
-        signature = (raw.disposition, raw.blockers, raw.failure, projection.records)
+        signature = (
+            raw.disposition,
+            raw.blockers,
+            raw.failure,
+            projection.records,
+            projection.owed,
+        )
         if signature != self._signature:
             self._generation += 1
             self._signature = signature
@@ -255,7 +275,9 @@ class DescendantRefreshOwner:
             generation=self._generation,
             failure=raw.failure,
         )
-        self._snapshot = RefreshSnapshot(assessment, self._task_request, projection.records)
+        self._snapshot = RefreshSnapshot(
+            assessment, self._task_request, projection.records, projection.owed
+        )
         self._next_due = self._clock() + self._poll_seconds
         if self._on_commit is not None:
             try:

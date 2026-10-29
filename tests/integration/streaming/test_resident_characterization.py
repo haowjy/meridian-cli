@@ -15,6 +15,7 @@ from meridian.lib.streaming import resident_drain as resident_drain_module
 from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from tests.support.async_determinism import FakeClock, TaskGate
+from tests.support.launch_paths import launch_paths
 from tests.support.resident_drain import (
     FakeResidentConnection,
     descendant_cancellation_from_roots,
@@ -50,8 +51,7 @@ def _coordinator(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
+        launch=launch_paths(tmp_path, SpawnId("p1")),
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
@@ -137,7 +137,7 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
     assert initial.emit_turn_boundary is True
 
     clock.advance(1.0)
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     cancelled = TerminalEventOutcome(
         status="cancelled",
         exit_code=130,
@@ -162,8 +162,8 @@ async def test_terminal_rearm_overrides_done_and_rejects_candidate(
     clock.advance(1.0)
     candidate = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert candidate.emit_turn_boundary is True
-    write_spawn_signal(tmp_path, "p1", "done")
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
 
     requested = await coordinator.handle_timeout()
 
@@ -196,7 +196,7 @@ async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
         0,
         origin="runner",
     )
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     rearmed = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert rearmed.recorded_outcome is None
     assert rearmed.emit_turn_boundary is True
@@ -238,11 +238,11 @@ async def test_resident_rearm_budget_exhaustion_ignores_signal_and_times_out_dis
     clock.advance(5.0)
     coordinator.observe_activity_transition("turn_active")
     spawn_store.finalize_spawn(tmp_path, "p2", "succeeded", 0, origin="runner")
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
 
     clock.advance(10.0)
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     expired = await coordinator.handle_timeout()
 
     assert expired.recorded_outcome is not None
@@ -264,7 +264,7 @@ async def test_zero_resident_rearm_budget_expires_without_grant(
         rearm_budget=0,
     )
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    write_spawn_signal(tmp_path, "p1", "rearm")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
 
     clock.advance(10.0)
@@ -399,7 +399,7 @@ async def test_wait_done_signal_beats_already_expired_deadline(
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
-    write_spawn_signal(tmp_path, "p1", "done")
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
     requested = await coordinator.handle_timeout()
     decision = await _after_refresh(coordinator)
 
@@ -575,14 +575,14 @@ async def test_one_confirmation_injection_per_candidate(
         deadline_seconds=20.0,
     )
     try:
-        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
+        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
         first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
         assert first.emit_turn_boundary
         await coordinator.wait_for_aux_wake()
         assert (await coordinator.handle_aux_wake()).recorded_outcome is None
         assert len(connection.fake_resident_backend.injected_messages) == 1
 
-        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "rearm")
         assert (await coordinator.handle_timeout()).recorded_outcome is None
         row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
         assert row is not None
@@ -592,8 +592,8 @@ async def test_one_confirmation_injection_per_candidate(
             assert (await coordinator.handle_timeout()).recorded_outcome is None
         assert len(connection.fake_resident_backend.injected_messages) == 1
 
-        write_spawn_signal(tmp_path, SpawnId("p1"), "done")
-        write_spawn_signal(tmp_path, SpawnId("p1"), "rearm")
+        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
+        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "rearm")
         assert (await coordinator.handle_timeout()).recorded_outcome is None
         row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
         assert row is not None

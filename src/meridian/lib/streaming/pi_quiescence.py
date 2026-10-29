@@ -10,7 +10,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.pi_private_state import DeliveryObservations, DeliveryReceipts
+from meridian.lib.harness.pi_private_state import (
+    DELIVERY_RECEIPTS_FILENAME,
+    DeliveryObservations,
+    DeliveryReceipts,
+)
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
@@ -87,7 +91,7 @@ class PiQuiescenceTracker:
         """Fence a causal admission before acknowledging its public event."""
         self.mark_turn_active()
         receipts_file = (
-            self.runtime_root / "pi-bash" / str(self.spawn_id) / "delivery-receipts.json"
+            self.runtime_root / "pi-bash" / str(self.spawn_id) / DELIVERY_RECEIPTS_FILENAME
         )
         try:
             receipts = DeliveryReceipts.model_validate_json(

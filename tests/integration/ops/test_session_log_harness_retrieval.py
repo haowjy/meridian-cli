@@ -14,11 +14,10 @@ from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
-from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_db_session_with_parts,
@@ -127,6 +126,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -280,6 +280,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
     spawn_store.start_spawn(
         runtime_root,
         chat_id=chat_id,
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -358,6 +359,7 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -442,6 +444,7 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -505,6 +508,7 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -568,6 +572,7 @@ def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -591,7 +596,7 @@ def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
 
 
 def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
-    history_path = runtime_root / "spawns" / spawn_id / HISTORY_FILENAME
+    history_path = runtime_root / "spawns" / spawn_id / LAUNCH_FILE_NAMES.history
     history_path.write_text(
         json.dumps(
             {
@@ -659,6 +664,7 @@ def test_empty_opencode_session_never_substitutes_runner_history(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.3-codex",
         agent="coder",
         harness="opencode",
@@ -715,6 +721,7 @@ def test_session_log_resolves_codex_session_file_from_codex_home_env(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="gpt-5.4",
         agent="coder",
         harness="codex",
@@ -770,6 +777,7 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="claude-opus",
         agent="coder",
         harness="claude",
@@ -831,6 +839,7 @@ def test_session_log_resolves_tracked_claude_session_refuses_ambient_fallback(
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
+        owner_chat_id="c0",
         model="claude-opus",
         agent="coder",
         harness="claude",

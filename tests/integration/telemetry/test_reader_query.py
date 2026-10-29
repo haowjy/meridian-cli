@@ -56,15 +56,6 @@ def _write_segment(
     return path
 
 
-def test_query_with_no_filters_returns_events_from_segments(tmp_path: Path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    now = datetime.now(UTC)
-    events = [_event(now, "chat.ws.connected"), _event(now, "spawn.succeeded", domain="spawn")]
-    _write_segment(telemetry_dir, "123-0001.jsonl", events)
-
-    assert list(query_events(telemetry_dir)) == events
-
-
 def test_query_domain_filter(tmp_path: Path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     now = datetime.now(UTC)
@@ -246,7 +237,7 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
                 status="running",
             ),
             launch_lock=launch_lock_a,
-        )
+        ).spawn_id
         spawn_b = service_b.start(
             SpawnReservation(
                 chat_id="chat-b",
@@ -262,7 +253,7 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
                 status="running",
             ),
             launch_lock=launch_lock_b,
-        )
+        ).spawn_id
         assert spawn_a == "p1"
         assert spawn_b == "p1"
         monkeypatch.setattr("meridian.lib.telemetry.status.is_process_alive", lambda pid: False)

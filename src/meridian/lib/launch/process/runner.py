@@ -9,17 +9,16 @@ import signal
 import threading
 import time
 import uuid
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
@@ -29,6 +28,7 @@ from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -55,11 +55,7 @@ from meridian.lib.launch.artifact_io import (
     record_identity_failure,
     write_projection_artifacts,
 )
-from meridian.lib.launch.constants import (
-    LAUNCHER_LOG_FILENAME,
-    OUTPUT_FILENAME,
-    PRIMARY_META_FILENAME,
-)
+from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
@@ -69,7 +65,7 @@ from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import (
     ActivityState,
     PrimaryMetadata,
@@ -81,7 +77,7 @@ from meridian.lib.state.session_store import (
     update_session_claude_config_dir,
     update_session_spawn_id,
 )
-from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
+from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE, SpawnRecord
 
 from ..context import (
     LaunchContext,
@@ -90,7 +86,7 @@ from ..context import (
     bind_launch_context,
     materialize_launch_context,
 )
-from ..fork import materialize_fork
+from ..fork import fork_usage_seed, materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
@@ -130,9 +126,7 @@ class ProcessOutcome(BaseModel):
 
 def _write_native_primary_metadata(
     *,
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    spawn_dir: Path,
+    launch: LaunchPaths,
     command: tuple[str, ...],
     launch_cwd: Path,
     launcher_pid: int,
@@ -148,7 +142,7 @@ def _write_native_primary_metadata(
 
     try:
         write_primary_metadata(
-            spawn_dir,
+            launch,
             PrimaryMetadata(
                 managed_backend=False,
                 launcher_pid=launcher_pid,
@@ -168,8 +162,7 @@ def _write_native_primary_metadata(
                 session_dir=runtime_metadata.session_dir if runtime_metadata else None,
                 auth_policy=runtime_metadata.auth_policy if runtime_metadata else None,
             ),
-            runtime_root=runtime_root,
-            spawn_id=str(spawn_id),
+            guarded=True,
         )
     except Exception:
         logger.debug("Failed to write native primary metadata", exc_info=True)
@@ -208,11 +201,12 @@ RunPrimaryProcessWithCapture = Callable[
     ],
     PrimaryProcessResult,
 ]
+# ``harness_cumulative`` of the launch before this one; ``None`` for a first launch.
+UsageSeed = Mapping[str, JsonValue] | None
 RunPrimaryAttach = Callable[
     [
         HarnessId,
-        SpawnId,
-        Path,
+        LaunchPaths,
         Path,
         Path | None,
         dict[str, str],
@@ -220,6 +214,7 @@ RunPrimaryAttach = Callable[
         ProcessLauncher,
         Callable[[ProcessIdentity], None] | None,
         Callable[[str], None],
+        UsageSeed,
     ],
     PrimaryAttachOutcome,
 ]
@@ -326,19 +321,16 @@ def run_primary_process_with_capture(
     )
 
 
-def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
+def _cleanup_managed_primary_sidecars(launch: LaunchPaths) -> None:
     """Delete managed sidecars when attach startup falls back to black-box launch."""
 
-    for filename in (
-        PRIMARY_META_FILENAME,
-        OUTPUT_FILENAME,
-    ):
+    for sidecar in (launch.primary_meta, launch.output):
         with suppress(OSError):
-            (spawn_dir / filename).unlink()
+            sidecar.unlink()
 
 
-def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -> str | None:
-    stderr_path = spawn_dir / "stderr.log"
+def _managed_primary_stderr_excerpt(launch: LaunchPaths, *, max_chars: int = 1200) -> str | None:
+    stderr_path = launch.stderr_log
     max_bytes = max(max_chars * 4, 4096)
     try:
         file_size = stderr_path.stat().st_size
@@ -365,8 +357,7 @@ def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -
 def _execute_via_managed_attach(
     *,
     harness_id: HarnessId,
-    primary_spawn_id: SpawnId,
-    log_dir: Path,
+    launch: LaunchPaths,
     control_root: Path,
     task_cwd: Path | None,
     child_env: dict[str, str],
@@ -375,13 +366,13 @@ def _execute_via_managed_attach(
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[ProcessIdentity], None],
+    usage_seed: UsageSeed,
 ) -> PrimaryExecutionResult:
     """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
         harness_id,
-        primary_spawn_id,
-        log_dir,
+        launch,
         control_root,
         task_cwd,
         child_env,
@@ -389,6 +380,7 @@ def _execute_via_managed_attach(
         process_launcher,
         on_running,
         native_run.observe,
+        usage_seed,
     )
     return PrimaryExecutionResult(
         exit_code=managed_outcome.exit_code,
@@ -426,8 +418,7 @@ def _execute_via_blackbox(
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
-    primary_spawn_id: SpawnId,
-    log_dir: Path,
+    launch: LaunchPaths,
     control_root: Path,
     launch_cwd: Path,
     task_cwd: Path | None,
@@ -439,12 +430,13 @@ def _execute_primary_process(
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[ProcessIdentity], None],
+    usage_seed: UsageSeed,
 ) -> PrimaryExecutionResult:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
-    launcher_diagnostics_path = log_dir / LAUNCHER_LOG_FILENAME
+    launcher_diagnostics_path = launch.launcher_log
     if use_managed_backend:
         process_launcher = select_process_launcher(
             None, terminal_surface_mode=terminal_surface_mode
@@ -452,8 +444,7 @@ def _execute_primary_process(
         try:
             return _execute_via_managed_attach(
                 harness_id=harness_id,
-                primary_spawn_id=primary_spawn_id,
-                log_dir=log_dir,
+                launch=launch,
                 control_root=control_root,
                 task_cwd=task_cwd,
                 child_env=child_env,
@@ -462,11 +453,12 @@ def _execute_primary_process(
                 native_run=native_run,
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
+                usage_seed=usage_seed,
             )
         except PrimaryAttachError as exc:
             if harness_contract.primary_attach_failure_policy == "raise":
                 raise
-            stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
+            stderr_excerpt = _managed_primary_stderr_excerpt(launch)
             logger.warning(
                 "Managed backend failed, falling back to black-box TUI: %s%s",
                 exc,
@@ -474,28 +466,27 @@ def _execute_primary_process(
                 if stderr_excerpt is not None
                 else "",
             )
-            _cleanup_managed_primary_sidecars(log_dir)
+            _cleanup_managed_primary_sidecars(launch)
 
     output_log_path = (
-        log_dir / OUTPUT_FILENAME
+        launch.output
         if (harness_contract.capabilities.captures_blackbox_output and "--print" in command)
         else None
     )
     blackbox_env = dict(child_env)
     if harness_contract.primary_stderr_log:
-        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
+        blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(launch.stderr_log)
 
     def record_blackbox_started(identity: ProcessIdentity) -> None:
         captured = output_log_path is not None
         record_scope(
-            log_dir.parent.parent,
-            primary_spawn_id,
+            launch,
             scope_from_identity(
                 identity,
                 scope_id="stdio" if captured else "tui",
                 role="harness_stdio" if captured else "harness_tui",
                 owner_policy="spawn_owned",
-                owner_id=str(primary_spawn_id),
+                owner_id=str(launch.spawn_id),
             ),
         )
         on_running(identity)
@@ -512,7 +503,7 @@ def _execute_primary_process(
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=record_blackbox_started,
     )
-    fold = get_harness_bundle(harness_id).extractor.create_fold()
+    fold = get_harness_bundle(harness_id).extractor.create_fold(usage_seed)
     if output_log_path is not None and output_log_path.is_file():
         fold.fold_stdout(output_log_path, harness_id)
     return PrimaryExecutionResult(
@@ -526,12 +517,11 @@ def _execute_primary_process(
 
 def _finalize_lifecycle(
     *,
-    primary_spawn_id: SpawnId | None,
+    launch: LaunchPaths | None,
     exit_code: int,
     harness_adapter: Any,
     project_root: Path,
     model_id: str | None,
-    runtime_root: Path,
     primary_started: float,
     spawn_service: SpawnApplicationService,
     facts: AttemptFacts,
@@ -542,14 +532,13 @@ def _finalize_lifecycle(
     """Complete execution after native identity validation and attribution."""
 
     resolved_exit_code = exit_code
-    if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
+    if launch is not None:
+        primary_spawn_id = launch.spawn_id
         extraction = enrich_finalize(
             extractor=get_harness_bundle(harness_adapter.id).extractor,
             facts=facts,
             native_key=native_key,
-            spawn_id=primary_spawn_id,
-            log_dir=log_dir,
+            launch=launch,
             model_id=model_id,
             harness_id=harness_adapter.id,
             project_root=project_root,
@@ -590,7 +579,7 @@ def _create_managed_primary_connection(
     connection_factory: Callable[..., HarnessConnection[Any]],
     harness_contract: HarnessContract,
     harness_adapter: SubprocessHarness,
-    spawn_dir: Path,
+    launch: LaunchPaths,
 ) -> HarnessConnection[Any]:
     """Build one managed-primary connection configured from harness contract data."""
 
@@ -614,7 +603,7 @@ def _create_managed_primary_connection(
             policy=policy,
             event_sink=_event_sink,
             request_handler=harness_adapter.build_primary_runtime_request_handler(
-                spawn_dir=spawn_dir,
+                launch=launch,
                 event_sink=_event_sink,
             ),
         )
@@ -627,8 +616,7 @@ def _create_managed_primary_connection(
 async def _run_primary_attach(
     *,
     harness_id: HarnessId,
-    spawn_id: SpawnId,
-    spawn_dir: Path,
+    launch: LaunchPaths,
     control_root: Path,
     task_cwd: Path | None,
     env: dict[str, str],
@@ -636,6 +624,7 @@ async def _run_primary_attach(
     process_launcher: ProcessLauncher,
     on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
+    usage_seed: UsageSeed = None,
 ) -> PrimaryAttachOutcome:
     """Launch managed backend + primary TUI attach flow for supported harnesses."""
 
@@ -651,24 +640,22 @@ async def _run_primary_attach(
             connection_factory=connection_factory,
             harness_contract=harness_adapter.contract,
             harness_adapter=harness_adapter,
-            spawn_dir=spawn_dir,
+            launch=launch,
         )
         config = passthrough.build_config(
-            spawn_id=spawn_id,
+            launch=launch,
             spec=spec,
             control_root=control_root,
             task_cwd=task_cwd,
             env=env,
         )
-        fold = harness_bundle.extractor.create_fold()
+        fold = harness_bundle.extractor.create_fold(usage_seed)
 
         launcher = PrimaryAttachLauncher(
-            spawn_id=spawn_id,
-            spawn_dir=spawn_dir,
+            launch=launch,
             connection=connection,
             tui_command_builder=passthrough.build_tui_command(connection, spec),
             process_launcher=process_launcher,
-            runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
             session_id_observer=session_id_observer,
             fold=fold,
@@ -691,8 +678,7 @@ async def _run_primary_attach(
 
 def run_primary_attach(
     harness_id: HarnessId,
-    spawn_id: SpawnId,
-    spawn_dir: Path,
+    launch: LaunchPaths,
     control_root: Path,
     task_cwd: Path | None,
     env: dict[str, str],
@@ -700,6 +686,7 @@ def run_primary_attach(
     process_launcher: ProcessLauncher,
     on_running: Callable[[ProcessIdentity], None] | None = None,
     session_id_observer: Callable[[str], None] | None = None,
+    usage_seed: UsageSeed = None,
 ) -> PrimaryAttachOutcome:
     """Run managed primary attach lifecycle from sync runner code."""
 
@@ -709,8 +696,7 @@ def run_primary_attach(
         return asyncio.run(
             _run_primary_attach(
                 harness_id=harness_id,
-                spawn_id=spawn_id,
-                spawn_dir=spawn_dir,
+                launch=launch,
                 control_root=control_root,
                 task_cwd=task_cwd,
                 env=env,
@@ -718,6 +704,7 @@ def run_primary_attach(
                 process_launcher=process_launcher,
                 on_running=on_running,
                 session_id_observer=session_id_observer,
+                usage_seed=usage_seed,
             )
         )
     raise PrimaryAttachError("Managed primary attach cannot run inside an active event loop")
@@ -734,6 +721,7 @@ def run_harness_process(
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
     activate_work_fn: Callable[[Path, str, str], object] = activate_work,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
+    hold: ContinueHold | None = None,
 ) -> ProcessOutcome:
     """Start session, spawn tracking, launch process, wait for exit."""
 
@@ -760,6 +748,7 @@ def run_harness_process(
     harness_id = HarnessId(session_metadata.harness)
     chat_id: str | None = None
     primary_spawn_id: SpawnId | None = None
+    launch: LaunchPaths | None = None
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
@@ -784,9 +773,73 @@ def run_harness_process(
     startup_attempt_id = uuid.uuid4().hex
     # The session's first event names the spawn that runs it. A crash between this
     # reservation and the row write leaves a link to no row, which readers skip.
-    reserved_spawn_id = spawn_store.reserve_spawn_id(runtime_root)
+    # A continue keeps its spawn's ID and commits its next launch before the session starts.
+    reopened: SpawnRecord | None = None
+
+    # A fork resumes its source's native session, whose running total already holds the
+    # source's usage: count this launch from there.
+    usage_seed = fork_usage_seed(runtime_root, preview_request.session)
+
+    def primary_reservation(
+        *, chat_id: str | None, work_id: str | None, harness_session_id: str | None
+    ) -> SpawnReservation:
+        # A primary's goal is its conversation's identity, so a `--continue` inherits it
+        # from the row.
+        return SpawnReservation(
+            chat_id=chat_id,
+            session_metadata=session_metadata,
+            spawn_id=str(reserved_spawn_id),
+            kind="primary",
+            prompt=preview_request.prompt,
+            harness_session_id=harness_session_id,
+            control_root=str(control_root),
+            task_cwd=None,
+            execution_cwd=str(execution_cwd),
+            launch_mode=FOREGROUND_LAUNCH_MODE,
+            work_id=work_id,
+            goal=preview_request.goal,
+            runner_pid=os.getpid(),
+            metadata=SpawnStartMetadata(usage_seed=usage_seed),
+        )
+
+    @contextmanager
+    def fail_unstarted_launch() -> Generator[None]:
+        """The next launch was committed but its session could not start (the chat is held,
+        or Ctrl-C arrived while waiting): no runner will write its outcome, so write it
+        before the launch lock is released."""
+        try:
+            yield
+        except BaseException as exc:
+            if reopened is not None and chat_id is None:
+                asyncio.run(
+                    spawn_service.complete_spawn(
+                        SpawnId(reopened.id),
+                        "failed",
+                        1,
+                        origin="launcher",
+                        error=str(exc) or type(exc).__name__,
+                    )
+                )
+            raise
+
+    reserved_spawn_id = (
+        SpawnId(hold.spawn.id)
+        if hold is not None
+        else spawn_store.reserve_launch(runtime_root).spawn_id
+    )
     try:
-        with LaunchSlot() as launch_lock, session_scope(
+        if hold is not None:
+            reopened = lifecycle_service.reopen(
+                primary_reservation(
+                    chat_id=resume_chat_id,
+                    work_id=preview_context.work_id,
+                    harness_session_id=resolved_harness_session_id,
+                ),
+                launch_lock=hold.slot,
+            )
+        with (
+            nullcontext(hold.slot) if hold is not None else LaunchSlot()
+        ) as launch_lock, fail_unstarted_launch(), session_scope(
             runtime_root=runtime_root,
             metadata=session_metadata,
             request=preview_request.session,
@@ -797,6 +850,7 @@ def run_harness_process(
             kind="primary",
             spawn_id=str(reserved_spawn_id),
             startup_attempt_id=startup_attempt_id,
+            launch_slot=launch_lock,
         ) as managed:
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(
@@ -819,27 +873,16 @@ def run_harness_process(
                     is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
-                primary_spawn_id = SpawnId(
-                    lifecycle_service.start(
-                        SpawnReservation(
+                launch = (
+                    LaunchPaths.for_row(runtime_root, reopened)
+                    if reopened is not None
+                    else lifecycle_service.start(
+                        primary_reservation(
                             chat_id=chat_id,
-                            session_metadata=session_metadata,
-                            spawn_id=str(reserved_spawn_id),
-                            kind="primary",
-                            prompt=preview_request.prompt,
+                            work_id=attached_work_id,
                             harness_session_id=(
                                 None if should_fork else resolved_harness_session_id
                             ),
-                            control_root=str(control_root),
-                            task_cwd=None,
-                            execution_cwd=str(execution_cwd),
-                            launch_mode=FOREGROUND_LAUNCH_MODE,
-                            work_id=attached_work_id,
-                            # A primary's goal is its conversation's identity, so a
-                            # `--continue` inherits it from the row.
-                            goal=preview_request.goal,
-                            runner_pid=os.getpid(),
-                            status=SpawnStatus.QUEUED,
                         ),
                         launch_lock=launch_lock,
                     )
@@ -847,8 +890,9 @@ def run_harness_process(
                 # The start event already names the spawn; the spawn's history ID only
                 # exists once its row is written, and the session listing matches
                 # archived primaries to their session by it.
+                primary_spawn_id = launch.spawn_id
                 update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
-                lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
+                lifecycle = LifecycleLog.for_launch(launch)
                 forked_session_id: str | None = None
                 if should_fork:
                     source_session_id = (
@@ -864,9 +908,6 @@ def run_harness_process(
                     resolved_harness_session_id = forked_session_id
                 if forked_session_id:
                     expected_harness_session_id = forked_session_id
-                log_dir = resolve_spawn_log_dir(
-                    config_root, primary_spawn_id, runtime_root=runtime_root
-                )
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -893,7 +934,7 @@ def run_harness_process(
                 runtime_context = bind_launch_context(
                     prepared=prepared,
                     bindings=RuntimeBindings(
-                        spawn_id=str(primary_spawn_id),
+                        launch=launch,
                         runtime_work_id=attached_work_id,
                         forked_harness_session_id=forked_session_id,
                         chat_id=chat_id,
@@ -906,7 +947,7 @@ def run_harness_process(
                 )
                 runtime_context = materialize_launch_context(runtime_context)
                 write_projection_artifacts(
-                    log_dir=log_dir,
+                    launch=launch,
                     launch_context=runtime_context,
                     surface="primary",
                 )
@@ -970,8 +1011,7 @@ def run_harness_process(
                         )
 
                 prelaunch_state = harness_adapter.prepare_prelaunch(
-                    runtime_root=runtime_root,
-                    spawn_id=primary_spawn_id,
+                    launch=launch,
                     session=preview_request.session,
                     child_cwd=launch_child_cwd,
                     child_env=child_env,
@@ -1001,9 +1041,7 @@ def run_harness_process(
                 )
                 if write_native_primary_metadata:
                     _write_native_primary_metadata(
-                        runtime_root=runtime_root,
-                        spawn_id=primary_spawn_id,
-                        spawn_dir=log_dir,
+                        launch=launch,
                         command=native_primary_metadata_command,
                         launch_cwd=launch_child_cwd,
                         launcher_pid=os.getpid(),
@@ -1027,16 +1065,14 @@ def run_harness_process(
                         child_pid = identity.pid
                         native_primary_tui_pid = child_pid
                         observe_child(child_pid)
-                        lifecycle_service.mark_running(
+                        lifecycle_service.record_launch_facts(
                             primary_spawn_id,
                             launch_mode=FOREGROUND_LAUNCH_MODE,
                             worker_pid=child_pid,
                         )
                         if write_native_primary_metadata:
                             _write_native_primary_metadata(
-                                runtime_root=runtime_root,
-                                spawn_id=primary_spawn_id,
-                                spawn_dir=log_dir,
+                                launch=launch,
                                 command=native_primary_metadata_command,
                                 launch_cwd=launch_child_cwd,
                                 launcher_pid=os.getpid(),
@@ -1052,8 +1088,7 @@ def run_harness_process(
                     identity_error_phase = "running"
                     execution_result = _execute_primary_process(
                         harness_id=harness_id,
-                        primary_spawn_id=primary_spawn_id,
-                        log_dir=log_dir,
+                        launch=launch,
                         control_root=control_root,
                         launch_cwd=launch_child_cwd,
                         task_cwd=task_cwd,
@@ -1065,6 +1100,9 @@ def run_harness_process(
                         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                         run_primary_attach_fn=run_primary_attach_fn,
                         on_running=_record_primary_started,
+                        usage_seed=(
+                            reopened.prior_usage.harness_cumulative if reopened else usage_seed
+                        ),
                     )
                     exit_code = execution_result.exit_code
                     cancelled = execution_result.cancelled
@@ -1112,12 +1150,11 @@ def run_harness_process(
                     if identity_error is not None:
                         exit_code = 1
                     exit_code = _finalize_lifecycle(
-                        primary_spawn_id=primary_spawn_id,
+                        launch=launch,
                         exit_code=exit_code,
                         harness_adapter=harness_adapter,
                         project_root=control_root,
                         model_id=session_metadata.model,
-                        runtime_root=runtime_root,
                         primary_started=primary_started,
                         spawn_service=spawn_service,
                         facts=facts,
@@ -1127,13 +1164,9 @@ def run_harness_process(
                         if identity_error
                         else None,
                     )
-                    if write_native_primary_metadata and primary_spawn_id is not None:
+                    if write_native_primary_metadata and launch is not None:
                         _write_native_primary_metadata(
-                            runtime_root=runtime_root,
-                            spawn_id=primary_spawn_id,
-                            spawn_dir=resolve_spawn_log_dir(
-                                config_root, primary_spawn_id, runtime_root=runtime_root
-                            ),
+                            launch=launch,
                             command=native_primary_metadata_command,
                             launch_cwd=launch_child_cwd,
                             launcher_pid=os.getpid(),

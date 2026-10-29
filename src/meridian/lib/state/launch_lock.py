@@ -16,6 +16,7 @@ from pathlib import Path
 from types import TracebackType
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.state.paths import resolve_spawn_dir
 
 HANDOFF_ENV = "_MERIDIAN_LAUNCH_LOCK_FD"
 
@@ -30,6 +31,11 @@ class Contended(ValueError):
 
 class NotFound(ValueError):
     """The published spawn or its lock no longer exists."""
+
+
+def lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """The spawn-level lock, shared by every launch of the spawn."""
+    return resolve_spawn_dir(runtime_root, spawn_id) / "launch.lock"
 
 
 @contextmanager
@@ -92,13 +98,19 @@ class LaunchHandle(AbstractContextManager["LaunchHandle"]):
 class LaunchSlot(AbstractContextManager["LaunchSlot"]):
     """Own a staged capability before the spawn ID has been allocated."""
 
-    def __init__(self) -> None:
-        self._handle: LaunchHandle | None = None
+    def __init__(self, handle: LaunchHandle | None = None) -> None:
+        """``handle``: one the process already holds (a background worker's adopted one)."""
+        self._handle: LaunchHandle | None = handle
 
     @property
     def handle(self) -> LaunchHandle:
         if self._handle is None:
             raise RuntimeError("Launch slot is not bound")
+        return self._handle
+
+    @property
+    def held(self) -> LaunchHandle | None:
+        """The bound handle, or ``None`` before the slot is bound."""
         return self._handle
 
     def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
@@ -129,13 +141,14 @@ class LaunchSlot(AbstractContextManager["LaunchSlot"]):
         self.close()
 
 
-def acquire(spawn_dir: Path) -> LaunchHandle:
-    """Acquire a published launch, distinguishing runners from brief readers."""
-    path = spawn_dir / "launch.lock"
+def acquire(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
+    """Acquire a published spawn's lock, distinguishing runners from brief readers."""
+    spawn_dir = resolve_spawn_dir(runtime_root, spawn_id)
+    path = lock_path(runtime_root, spawn_id)
     try:
         fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
     except FileNotFoundError as exc:
-        raise NotFound(f"Spawn '{spawn_dir.name}' has no launch lock") from exc
+        raise NotFound(f"Spawn '{spawn_id}' has no launch lock") from exc
     deadline = time.monotonic() + 1.0
     try:
         while True:
@@ -145,17 +158,43 @@ def acquire(spawn_dir: Path) -> LaunchHandle:
             except BlockingIOError:
                 readers_only = shared_try(path)
                 if readers_only is None:
-                    raise NotFound(f"Spawn '{spawn_dir.name}' no longer exists") from None
+                    raise NotFound(f"Spawn '{spawn_id}' no longer exists") from None
                 if not readers_only:
-                    raise Busy(SpawnId(spawn_dir.name)) from None
+                    raise Busy(SpawnId(spawn_id)) from None
                 if time.monotonic() >= deadline:
-                    raise Contended(f"{spawn_dir.name} launch lock is contended; retry") from None
+                    raise Contended(f"{spawn_id} launch lock is contended; retry") from None
                 time.sleep(0.01)
         _validate(fd, spawn_dir)
-        return LaunchHandle(SpawnId(spawn_dir.name), fd)
+        return LaunchHandle(SpawnId(spawn_id), fd)
     except BaseException:
         os.close(fd)
         raise
+
+
+@contextmanager
+def try_exclusive(
+    runtime_root: Path, spawn_id: SpawnId | str, held: LaunchHandle | None = None
+) -> Generator[bool | None]:
+    """Hold a published spawn's launch lock exclusively, without waiting, for the caller's work.
+
+    ``True``: held, so no runner of this spawn is alive. ``False``: a runner or a brief
+    holder has it; skip, never retry. ``None``: a row from before launch locks, whose
+    liveness the caller must judge itself. ``held`` is a handle the caller's process already
+    holds: a second ``acquire`` there would find it Busy, so a matching one counts as held.
+    """
+    if held is not None and str(held.spawn_id) == str(spawn_id):
+        yield True
+        return
+    try:
+        handle = acquire(runtime_root, spawn_id)
+    except NotFound:
+        yield None
+        return
+    except (Busy, Contended):
+        yield False
+        return
+    with handle:
+        yield True
 
 
 def take_handoff_fd() -> int:
@@ -165,15 +204,15 @@ def take_handoff_fd() -> int:
     return fd
 
 
-def adopt_handoff(fd: int, spawn_dir: Path) -> LaunchHandle:
-    """Validate the inherited description and publish this worker's identity."""
-    from meridian.lib.state.spawn_store import update_spawn
+def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchSlot:
+    """Validate the inherited description, publish this worker's identity, return its bound slot."""
+    from meridian.lib.state.spawn_store import record_spawn_launch_facts
 
-    handle = LaunchHandle(SpawnId(spawn_dir.name), fd)
+    handle = LaunchHandle(SpawnId(spawn_id), fd)
     try:
-        _validate(fd, spawn_dir)
-        update_spawn(spawn_dir.parent.parent, spawn_dir.name, runner_pid=os.getpid())
+        _validate(fd, resolve_spawn_dir(runtime_root, spawn_id))
+        record_spawn_launch_facts(runtime_root, spawn_id, runner_pid=os.getpid())
     except BaseException:
         handle.close()
         raise
-    return handle
+    return LaunchSlot(handle)

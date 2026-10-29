@@ -170,6 +170,7 @@ def test_system_prompt_is_stable_across_launches(
         start_spawn(
             runtime_root,
             chat_id=chat_id,
+            owner_chat_id="c1",
             model=_MODEL,
             agent="coder",
             harness=HarnessId.CLAUDE.value,

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -50,8 +51,7 @@ BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationServ
 def build_drain_plan(
     *,
     project_root: Path,
-    runtime_root: Path,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     receiver: HarnessConnection[Any],
     config: ConnectionConfig,
     emit_event: EmitEvent,
@@ -59,6 +59,9 @@ def build_drain_plan(
     build_spawn_application_service: BuildSpawnApplicationService,
 ) -> DrainPlan:
     """Build the complete drain-loop configuration for one active spawn."""
+
+    runtime_root = launch.runtime_root
+    spawn_id = launch.spawn_id
 
     def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
         emit_event(
@@ -100,8 +103,7 @@ def build_drain_plan(
             else _send_completion_nudge
         )
         coordinator = ResidentDrainCoordinator.build(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             # A resident backend starts its own follow-up turn; other harnesses
             # take the nudge through the manager's serialized inject.
             send_nudge=send_nudge,
@@ -124,8 +126,7 @@ def build_drain_plan(
 
     if receiver.harness_id is HarnessId.PI:
         coordinator = PiDrainCoordinator.for_connection(
-            runtime_root=runtime_root,
-            spawn_id=spawn_id,
+            launch=launch,
             receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
             session_role=config.pi_session_role,
             child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
