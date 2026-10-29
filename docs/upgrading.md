@@ -200,6 +200,38 @@ IDs count per project.
 `--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
 and works until the next minor release. Pass the ref positionally instead.
 
+## Mars 0.26.0
+
+Meridian pins `mars-agents==0.26.0`, up from 0.24.1, so 0.25.0 and 0.26.0 arrive
+together. Run `meridian mars sync` after upgrading, and `meridian mars --user sync`
+for a user root.
+
+### Package hooks are portable
+
+A package writes a hook once in `hook.toml` as `[[hooks.<Event>]]` and Mars renders it
+for Claude, Codex, OpenCode and Pi. The per-target native file is now named with
+`native-hook`; the old `fragment` key still works for one release and warns
+`hook-fragment-deprecated`. Sync reports what a target cannot render
+(`hook-event-skipped`, `hook-answer-unsupported`), and Codex asks you to review new or
+moved handlers in `/hooks` once. A plugin package that moves an `opencode.ts` fragment
+into `[hooks]` loses it in the OpenCode plugin tree until
+[mars-agents#290](https://github.com/haowjy/mars-agents/issues/290); keep the fragment
+for that tree.
+
+### State written by Mars 0.23 and earlier is not migrated
+
+Mars 0.25 removed the migration. It drops records it cannot interpret with a warning
+and deletes nothing.
+
+### Renamed diagnostics
+
+`hook-fragment-*` is now `hook-native-*`, `plugin-hook-fragment-dropped` is
+`plugin-native-hook-dropped`, and `hook.fragment-*` is `hook.native-hook-*`.
+
+Mars's [0.25.0](https://github.com/haowjy/mars-agents/releases/tag/v0.25.0) and
+[0.26.0](https://github.com/haowjy/mars-agents/releases/tag/v0.26.0) release notes
+list the rest.
+
 ## Mars 0.24.1
 
 Meridian pins `mars-agents==0.24.1`, up from 0.23.4. Run `meridian mars sync` after upgrading
