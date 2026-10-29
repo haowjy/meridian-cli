@@ -1,6 +1,7 @@
 """Explicit continue, steps 1-4: take a finished spawn's launch lock and leave it ready to reopen.
 
-A continue keeps the spawn's ID. This module decides which spawn a continue reopens, takes its
+A continue keeps the spawn's ID. ``resolve_continue_target`` decides which spawn a continue
+reopens; the caller builds the whole launch from that spawn, then ``begin_continue`` takes its
 launch lock, ends the last launch (outcome written, processes swept, reaper claim resolved)
 and checks what would make the next one fail. Preparing the launch and committing it
 (``spawn_store.reopen_spawn``) belong to the caller, which holds the returned ``ContinueHold``
@@ -58,13 +59,11 @@ class ContinueHold:
 
     ``slot`` owns the lock: the caller enters it once (``with hold.slot``), and what it calls
     uses it without closing; the runner's handover closes it early.
-    ``spawn`` is the stored row, whose launch has an outcome. ``notice`` is set when the
-    continue reopened a different spawn than the one named.
+    ``spawn`` is the stored row, whose launch has an outcome.
     """
 
     slot: LaunchSlot
     spawn: SpawnRecord
-    notice: str | None = None
 
 
 def _legacy_live_error(spawn_id: str) -> ValueError:
@@ -156,7 +155,7 @@ def _sweep_scopes(launch: LaunchPaths, spawn_id: str) -> None:
         mark_scope_released(launch, scope.release_id)
 
 
-def _target(
+def resolve_continue_target(
     runtime_root: Path,
     named: SpawnRecord,
     *,
@@ -166,6 +165,9 @@ def _target(
     kind: SpawnKind,
 ) -> tuple[SpawnRecord, str | None]:
     """Step 1: the spawn this continue reopens, and a notice when it is not the one named.
+
+    Pure reads. The caller builds the launch (model, goal, policy, session) from the returned
+    spawn, never from ``named``.
 
     A chat's conversation belongs to the spawn that ran it last, so naming an older spawn of the
     chat (chains continued before IDs were kept) or the chat itself reopens that spawn. The
@@ -284,30 +286,20 @@ def begin_continue(
     *,
     project_root: Path,
     runtime_root: Path,
-    named: SpawnRecord,
-    named_by_spawn_ref: bool,
+    target: SpawnRecord,
     chat_id: str | None,
     parent_id: str | None,
-    kind: SpawnKind,
     caller_spawn_id: str | None,
     dry_run: bool,
 ) -> ContinueHold | None:
-    """Steps 1-4 of a continue; ``None`` for ``dry_run``, which probes and writes nothing.
+    """Steps 2-4 of a continue; ``None`` for ``dry_run``, which probes and writes nothing.
 
-    ``named`` is the spawn the reference resolved to and ``chat_id`` the chat to resume.
-    ``parent_id`` and ``kind`` are what the continue makes the spawn: its caller's child, or
-    a primary with no parent. Refuses before any write when the spawn is running (a
+    ``target`` is ``resolve_continue_target``'s spawn and ``chat_id`` the chat to resume.
+    ``parent_id`` is what the continue makes the spawn's parent: its caller, or none for a
+    primary. Refuses before any write when the spawn is running (a
     repair or another continue holds the lock for seconds, so there is no retry), or when
     the last launch's processes cannot be stopped.
     """
-    target, notice = _target(
-        runtime_root,
-        named,
-        named_by_spawn_ref=named_by_spawn_ref,
-        chat_id=chat_id,
-        parent_id=parent_id,
-        kind=kind,
-    )
     spawn_id = target.id
     if dry_run:
         lock_free = shared_try(lock_path(runtime_root, spawn_id))
@@ -336,7 +328,7 @@ def begin_continue(
     except BaseException:
         slot.close()
         raise
-    return ContinueHold(slot=slot, spawn=row, notice=notice)
+    return ContinueHold(slot=slot, spawn=row)
 
 
-__all__ = ["ContinueHold", "begin_continue"]
+__all__ = ["ContinueHold", "begin_continue", "resolve_continue_target"]

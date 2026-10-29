@@ -28,9 +28,18 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
 **What changed**
 
 - Each run writes its files into its own directory under `spawns/pN/`. Use
-  `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths;
-  `spawn show --format json` and the human output no longer print `report_path` or
-  `log_path`. A run that wrote no report shows none; it never shows an earlier run's.
+  `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths.
+  The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search`
+  and `spawn wait` no longer prints a report path (the `spawn wait` table drops its `report`
+  column). `report_path` stays in the JSON of `spawn show`, `spawn status`,
+  `spawn report show` and `spawn report search` (the current run's report; a search hit's own
+  file) but is deprecated and goes in the next minor release. `log_path` was never in the JSON.
+  A run that wrote no report shows none; it never shows an earlier run's.
+- An earlier run's report is still reachable: `spawn report search` looks in every run's
+  report and names the spawn by ID, and `meridian session log pN` reads the conversation.
+- Hooks: a continue fires `spawn.started` and later `spawn.finished` for the same spawn ID,
+  not `spawn.created` for a new one. `spawn.finished` fires once per run, with a different
+  `event_id` each time.
 - Cost, tokens and duration are totals across every run of the spawn. A continue no longer
   restarts them. A spawn created before v0.18.0 counts the conversation's earlier usage again on
   its first continue: the harness reports the whole conversation's usage, and the older
@@ -49,8 +58,8 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
 - `--dry-run` still reports without writing or stopping anything.
 
 **Mixed versions.** Before running v0.18.0, update every worktree and install that shares this
-project's runtime to v0.17.N or later (N is set when that patch ships). Builds older than
-v0.17.N stop listing spawns and stop launching primaries once v0.18.0 has written a spawn.
+project's runtime to v0.17.5 or later. Builds older than
+v0.17.5 stop listing spawns and stop launching primaries once v0.18.0 has written a spawn.
 v0.17.x builds refuse the spawns v0.18.0 created or continued, refuse prune and archive while
 those exist, and may show a child's result a second time: an older build re-delivers a result
 v0.18.0 already consumed, and never loses one. Spawns that an older build archives are not in

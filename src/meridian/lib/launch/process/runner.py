@@ -28,6 +28,7 @@ from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -85,7 +86,7 @@ from ..context import (
     bind_launch_context,
     materialize_launch_context,
 )
-from ..fork import materialize_fork
+from ..fork import fork_usage_seed, materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
@@ -775,6 +776,10 @@ def run_harness_process(
     # A continue keeps its spawn's ID and commits its next launch before the session starts.
     reopened: SpawnRecord | None = None
 
+    # A fork resumes its source's native session, whose running total already holds the
+    # source's usage: count this launch from there.
+    usage_seed = fork_usage_seed(runtime_root, preview_request.session)
+
     def primary_reservation(
         *, chat_id: str | None, work_id: str | None, harness_session_id: str | None
     ) -> SpawnReservation:
@@ -794,6 +799,7 @@ def run_harness_process(
             work_id=work_id,
             goal=preview_request.goal,
             runner_pid=os.getpid(),
+            metadata=SpawnStartMetadata(usage_seed=usage_seed),
         )
 
     @contextmanager
@@ -1094,7 +1100,9 @@ def run_harness_process(
                         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                         run_primary_attach_fn=run_primary_attach_fn,
                         on_running=_record_primary_started,
-                        usage_seed=reopened.prior_usage.harness_cumulative if reopened else None,
+                        usage_seed=(
+                            reopened.prior_usage.harness_cumulative if reopened else usage_seed
+                        ),
                     )
                     exit_code = execution_result.exit_code
                     cancelled = execution_result.cancelled

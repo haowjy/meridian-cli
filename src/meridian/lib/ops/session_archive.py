@@ -170,7 +170,7 @@ def _protected(
     if scan.quarantines:
         raise ValueError(
             "Cannot establish retention safety while spawn records are quarantined: "
-            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
+            + spawn_store.quarantine_hint(scan.quarantines)
         )
     # Destructive selection uses stored status; liveness questions use derived status.
     # A stored-active row remains protected until doctor or cancel persists an outcome.
@@ -667,7 +667,7 @@ def _native_session_owners(
     if scan.quarantines:
         raise ValueError(
             "Cannot establish native capture ownership with quarantined spawn records: "
-            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
+            + spawn_store.quarantine_hint(scan.quarantines)
         )
     chats = set(session_store.native_chats(root, session_id))
     # A spawn/primary sidecar can name S before its chat binds S. Its exact

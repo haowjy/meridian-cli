@@ -17,8 +17,10 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import ModelId
 from meridian.lib.launch.continue_launch import ContinueHold
+from meridian.lib.launch.fork import fork_usage_seed
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
@@ -180,6 +182,7 @@ def build_spawn_reservation(
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
+    runtime_root: Path,
     ctx: RuntimeContext | None = None,
 ) -> SpawnReservation:
     """Build the typed reservation for a child spawn row."""
@@ -222,6 +225,7 @@ def build_spawn_reservation(
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=launch_policy_snapshot or request.launch_policy_snapshot,
+        metadata=SpawnStartMetadata(usage_seed=fork_usage_seed(runtime_root, request.session)),
     )
 
 

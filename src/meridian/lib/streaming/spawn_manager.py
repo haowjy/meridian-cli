@@ -25,6 +25,7 @@ from meridian.lib.harness.control_action import (
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import write_accepted_signals
@@ -512,7 +513,8 @@ class SpawnManager:
         """Stop one managed spawn and clean up all associated resources.
 
         ``budget_secs`` is the total the interrupt, the connection stop, the scope reap and
-        the drain wait may spend together; the signal path passes ``SIGNAL_STOP_BUDGET_SECS``
+        the drain wait and the teardown's second connection stop may spend together (the scope
+        reap's post-SIGKILL wait included); the signal path passes ``SIGNAL_STOP_BUDGET_SECS``
         so the runner finishes before cancel's grace SIGKILLs it. A step that outruns its
         share is abandoned and the scope reap finishes the job.
         """
@@ -527,6 +529,8 @@ class SpawnManager:
         if session is None:
             self._event_hooks.pop(spawn_id, None)
             return None
+        if deadline is not None:
+            session.stop_deadline = deadline
         if session.terminal_published:
             cleanup_task = self._cleanup_tasks.get(spawn_id)
             if cleanup_task is not None:
@@ -564,9 +568,16 @@ class SpawnManager:
             session.debug_tracer.close()
 
         with suppress(Exception, TimeoutError):
-            await asyncio.wait_for(session.connection.stop(reason="stop_spawn"), remaining(0.5))
+            await asyncio.wait_for(session.connection.stop(reason="stop_spawn"), remaining(0.4))
 
-        self._terminate_recorded_spawn_scope_backstop(spawn_id, grace_seconds=remaining(0.5))
+        # The SIGKILL reap is outside the SIGTERM grace, so reserve it from what is left.
+        reap_left = remaining()
+        self._terminate_recorded_spawn_scope_backstop(
+            spawn_id,
+            grace_seconds=None
+            if reap_left is None
+            else max(0.0, min(reap_left * 0.5, reap_left - POST_KILL_WAIT_SECS)),
+        )
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
@@ -871,8 +882,18 @@ class SpawnManager:
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
-        with suppress(Exception):
-            await session.teardown.stop_connection(session.connection, outcome)
+        # A budgeted stop already tried the connection; a second try only runs inside what
+        # is left of that budget.
+        left = (
+            None
+            if session.stop_deadline is None
+            else max(0.0, session.stop_deadline - time.monotonic())
+        )
+        if left is None or left > 0.0:
+            with suppress(Exception, TimeoutError):
+                await asyncio.wait_for(
+                    session.teardown.stop_connection(session.connection, outcome), left
+                )
         with suppress(Exception):
             await session.control_server.stop()
         self._event_hooks.pop(spawn_id, None)

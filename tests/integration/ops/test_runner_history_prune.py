@@ -359,7 +359,7 @@ def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
 
     result = prune(project)
 
-    assert result.quarantined == (key,)
+    assert [r.spawn_id for r in result.quarantined] == [key]
     hint = f"1 spawns; run `meridian doctor`: {key}"
     assert f"Skipped quarantined: {hint}" in result.format_text()
     with pytest.raises(ValueError, match=f"quarantined: {hint}"):

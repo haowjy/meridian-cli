@@ -83,6 +83,9 @@ against a recreated inode (split-brain).
   owns the new launch seeds its extractor with it (`create_fold(seed)`, subtract per model),
   from the row it committed: the streaming, primary and black-box runners all do. No stored
   total (a v3 row, a crashed launch with nothing earlier) seeds zero.
+  A fork resumes its source's native session, so its new row starts with the source's stored total
+  as `prior_usage.harness_cumulative` (`SpawnStartMetadata.usage_seed`, from `launch/fork.fork_usage_seed`);
+  `--from` starts a fresh session and seeds nothing.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

@@ -12,6 +12,7 @@ from contextlib import suppress
 import psutil
 
 from meridian.lib.platform.process_scope.base import (
+    POST_KILL_WAIT_SECS,
     PROCESS_BIRTH_UNKNOWN_EPOCH,
     CleanupResult,
     birth_time_unverified,
@@ -119,7 +120,7 @@ async def terminate_tree(
         for proc in alive:
             with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 proc.kill()
-        await asyncio.to_thread(psutil.wait_procs, alive, timeout=1.0)
+        await asyncio.to_thread(psutil.wait_procs, alive, timeout=POST_KILL_WAIT_SECS)
 
     return CleanupResult(
         scope_id=scope_id,
@@ -186,7 +187,7 @@ def terminate_tree_sync(
         for proc in alive:
             with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 proc.kill()
-        psutil.wait_procs(alive, timeout=1.0)
+        psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
 
     return CleanupResult(
         scope_id=scope_id,

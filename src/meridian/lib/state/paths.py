@@ -415,6 +415,23 @@ def launch_subdir(n: int | None) -> Path:
     return Path() if n is None else Path("launches") / str(n)
 
 
+def spawn_report_files(runtime_root: Path, spawn_id: SpawnId | str) -> tuple[Path, ...]:
+    """Every launch's report that exists, newest first.
+
+    ``launches/<n>/report.md`` by descending ``n``, then the spawn directory's own report:
+    a v3 row's launch 1, which a continue leaves in place.
+    """
+
+    spawn_dir = resolve_spawn_dir(runtime_root, spawn_id)
+    numbers = sorted(
+        (int(entry.name) for entry in (spawn_dir / "launches").glob("*") if entry.name.isdigit()),
+        reverse=True,
+    )
+    candidates = [spawn_dir / launch_subdir(n) / _REPORT_FILENAME for n in numbers]
+    candidates.append(spawn_dir / _REPORT_FILENAME)
+    return tuple(path for path in candidates if path.is_file())
+
+
 def row_launch_subdir(launch: "LaunchRef | None") -> Path:
     """``launch_subdir`` for a row's ``launch`` field (None on a v3 row)."""
 

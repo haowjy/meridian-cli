@@ -34,6 +34,7 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn.model import SpawnRecord
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -682,7 +683,7 @@ def test_spawn_fork_uses_recovered_session_id(
 def test_continue_of_a_pre_upgrade_chain_reopens_its_newest_spawn(tmp_path: Path) -> None:
     """Older builds minted a successor per continue: p1 continued as p2 in chat c9001. Naming
     p1 reopens p2, unless that would change p2's parent."""
-    from meridian.lib.launch.continue_launch import begin_continue
+    from meridian.lib.launch.continue_launch import begin_continue, resolve_continue_target
 
     runtime_root = _state_root(tmp_path)
     _seed_spawn(runtime_root, spawn_id="p1", harness_session_id="session-1")
@@ -690,23 +691,29 @@ def test_continue_of_a_pre_upgrade_chain_reopens_its_newest_spawn(tmp_path: Path
     named = spawn_store.get_spawn(runtime_root, "p1")
     assert named is not None
 
-    def begin(parent_id: str | None) -> object:
-        return begin_continue(
-            project_root=tmp_path,
-            runtime_root=runtime_root,
-            named=named,
+    def target(parent_id: str | None) -> tuple[SpawnRecord, str | None]:
+        return resolve_continue_target(
+            runtime_root,
+            named,
             named_by_spawn_ref=True,
             chat_id="c9001",
             parent_id=parent_id,
             kind="child",
-            caller_spawn_id=parent_id,
-            dry_run=False,
         )
 
     with pytest.raises(ValueError, match="p2 under a different caller"):
-        begin("p7")
-    hold = begin(None)
+        target("p7")
+    reopened, notice = target(None)
+    assert notice == "p1's conversation continues as p2"
+    hold = begin_continue(
+        project_root=tmp_path,
+        runtime_root=runtime_root,
+        target=reopened,
+        chat_id="c9001",
+        parent_id=None,
+        caller_spawn_id=None,
+        dry_run=False,
+    )
     assert hold is not None
-    with hold.slot:  # type: ignore[attr-defined]
-        assert hold.spawn.id == "p2"  # type: ignore[attr-defined]
-        assert hold.notice == "p1's conversation continues as p2"  # type: ignore[attr-defined]
+    with hold.slot:
+        assert hold.spawn.id == "p2"

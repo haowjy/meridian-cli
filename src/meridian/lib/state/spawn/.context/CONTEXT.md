@@ -120,7 +120,8 @@ Frozen sub-model holding the complete finalized state (`exit_code`,
 status; top-level `status` is the sole status authority. A *derived* terminal (dead launch,
 no stored terminal) takes `finished_at` from an older exit time on the row, else the newest
 mtime of the files only the runner appends to (`LaunchPaths.runner_activity`: output, stderr,
-debug, runner lifecycle log, report), else `started_at`: never `""`, and the
+debug, runner lifecycle log, report; a streaming runner touches the lifecycle log every
+`RUNNER_HEARTBEAT_SECONDS` while a turn runs), else `started_at`: never `""`, and the
 same on every read.
 
 ### PID-liveness hardening: `runner_created_at_epoch`

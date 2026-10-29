@@ -51,6 +51,7 @@ from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
+    RUNNER_HEARTBEAT_SECONDS,
     SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
@@ -394,6 +395,18 @@ async def _report_watchdog(
     return True
 
 
+async def _runner_heartbeat(*, launch: LaunchPaths, completion_event: asyncio.Event) -> None:
+    """Touch the runner's lifecycle log while the turn runs.
+
+    A turn can go minutes without the runner writing a file, and a dead launch's derived
+    ``finished_at`` is the newest mtime of ``LaunchPaths.runner_activity``; without this it
+    would read as the start.
+    """
+    while not await _wait_for_event_or_timeout(completion_event, RUNNER_HEARTBEAT_SECONDS):
+        with suppress(OSError):
+            os.utime(launch.runner_lifecycle)
+
+
 async def _inactivity_watchdog(
     *,
     last_event_at: list[float],
@@ -547,6 +560,9 @@ async def run_streaming_spawn(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
 
         outcome = await completion_task
@@ -610,6 +626,7 @@ async def _run_streaming_attempt(
     budget_task: asyncio.Task[bool] | None = None
     watchdog_task: asyncio.Task[bool] | None = None
     inactivity_task: asyncio.Task[bool] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
     consume_task: asyncio.Task[None] | None = None
     completion_event = asyncio.Event()
     budget_signal = asyncio.Event()
@@ -693,6 +710,9 @@ async def _run_streaming_attempt(
                 manager=manager,
                 spawn_id=run.spawn_id,
             )
+        )
+        heartbeat_task = asyncio.create_task(
+            _runner_heartbeat(launch=launch, completion_event=completion_event)
         )
         if config.harness_id == HarnessId.CURSOR:
             inactivity_task = asyncio.create_task(
@@ -806,6 +826,7 @@ async def _run_streaming_attempt(
             budget_task,
             watchdog_task,
             inactivity_task,
+            heartbeat_task,
             consume_task,
         ):
             if task is not None and not task.done():
@@ -1309,35 +1330,38 @@ async def execute_with_streaming(
             runtime_root,
             lifecycle=lifecycle_service,
         )
-        execution_outcome = await spawn_service.complete_execution(
-            run.spawn_id,
-            terminal_facts,
-            origin="runner",
-            duration_secs=duration_seconds,
-            usage=finalized_usage,
-        )
-        conclusion.exit_code = execution_outcome.resolved.exit_code
-        conclusion.failure_reason = execution_outcome.resolved.error
-        outcome = execution_outcome.completion
-        if not outcome.wrote:
-            logger.info(
-                "Runner finalize skipped; spawn already terminal or missing.",
-                spawn_id=str(run.spawn_id),
-                harness_id=str(launch_context.harness.id),
+        # Defer a SIGTERM racing the finish until runner_completed, the scope-release marks and
+        # the atexit unregister are done; it is re-delivered when the mask exits.
+        with signal_coordinator().mask_termination():
+            execution_outcome = await spawn_service.complete_execution(
+                run.spawn_id,
+                terminal_facts,
+                origin="runner",
+                duration_secs=duration_seconds,
+                usage=finalized_usage,
             )
+            conclusion.exit_code = execution_outcome.resolved.exit_code
+            conclusion.failure_reason = execution_outcome.resolved.error
+            outcome = execution_outcome.completion
+            if not outcome.wrote:
+                logger.info(
+                    "Runner finalize skipped; spawn already terminal or missing.",
+                    spawn_id=str(run.spawn_id),
+                    harness_id=str(launch_context.harness.id),
+                )
 
-        runner_phase[0] = "completed"
-        lifecycle_active[0] = False
-        if lifecycle is not None:
-            _append_runner_lifecycle_event(
-                launch,
-                clock=resolved_clock,
-                event="runner_completed",
-                phase=runner_phase[0],
-                exit_code=conclusion.exit_code,
-            )
-        if atexit_callback is not None:
-            atexit.unregister(atexit_callback)
+            runner_phase[0] = "completed"
+            lifecycle_active[0] = False
+            if lifecycle is not None:
+                _append_runner_lifecycle_event(
+                    launch,
+                    clock=resolved_clock,
+                    event="runner_completed",
+                    phase=runner_phase[0],
+                    exit_code=conclusion.exit_code,
+                )
+            if atexit_callback is not None:
+                atexit.unregister(atexit_callback)
 
     return conclusion.exit_code
 

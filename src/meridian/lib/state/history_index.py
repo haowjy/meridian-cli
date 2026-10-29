@@ -74,6 +74,7 @@ from meridian.lib.state.session_fold import (
 from meridian.lib.state.session_store import parse_model_observation
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
+    SpawnStateNewer,
     SpawnStateQuarantined,
     read_state,
     scan_spawn_ids,
@@ -82,7 +83,9 @@ from meridian.lib.state.spawn_store import SpawnScan, read_spawn_counter
 
 logger = logging.getLogger(__name__)
 
-INITIALIZATION_TIMEOUT = 15.0
+# A cold build is paid once and exhaustion is sticky, so the budget matches the explicit
+# rebuild's: ~12k spawns take ~15 s, and failing after that costs the user a manual rebuild.
+INITIALIZATION_TIMEOUT = 60.0
 QUERY_TIMEOUT = 2.0
 _REBUILD_COMMAND = "meridian session index rebuild --metadata-only"
 
@@ -511,12 +514,24 @@ class HistoryIndex:
             return
         record = SpawnRecord.model_validate_json(location["record_json"])
         receipt = json.loads(location["receipt_json"]) if location["receipt_json"] else None
-        active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         activity = (
             location["activity"]
             if location["kind"] == "spawn"
             else last_activity(record, None, location["activity"])
         )
+        archive_id = receipt["archive_id"] if receipt else None
+        self._insert_record(db, history_id, record, record.index_json(), activity, archive_id)
+
+    @staticmethod
+    def _insert_record(
+        db: Connection,
+        history_id: str,
+        record: SpawnRecord,
+        record_json: str,
+        activity: str,
+        archive_id: str | None,
+    ) -> None:
+        active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         db.exec_driver_sql(
             "INSERT INTO records (history_id, local_id, chat, owner, parent, work, status, "
             "kind, started, activity, active, archive_id, record_json) "
@@ -532,9 +547,9 @@ class HistoryIndex:
                 record.kind,
                 canonical_time(record.started_at or ""),
                 activity,
-                int(active and receipt is None),
-                receipt["archive_id"] if receipt else None,
-                record.model_dump_json(),
+                int(active and archive_id is None),
+                archive_id,
+                record_json,
             ),
         )
 
@@ -543,11 +558,17 @@ class HistoryIndex:
         old = db.exec_driver_sql(
             "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
         ).first()
-        record = read_state(self.root / "spawns", key, include_prompt=False)
+        try:
+            record = read_state(self.root / "spawns", key, include_prompt=False)
+        except SpawnStateNewer as exc:
+            # A later build wrote this row: treat it as absent (delete-and-refresh below).
+            logger.warning("%s; skipped", exc)
+            record = None
         active = record is not None and (
             record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         )
-        if record is not None and old and old[1] == record.model_dump_json():
+        record_json = record.index_json() if record is not None else ""
+        if record is not None and old and old[1] == record_json:
             return active  # Unchanged: rewriting would only cost a FULL-sync commit.
         db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
         db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
@@ -576,10 +597,13 @@ class HistoryIndex:
             "INSERT INTO locations (source_id, history_id, kind, ordinal, activity, "
             "record_json, receipt_json, portable_digest) "
             "VALUES (?, ?, 'spawn', 0, ?, ?, NULL, NULL)",
-            (source_id, history_id, activity, record.model_dump_json()),
+            (source_id, history_id, activity, record_json),
         )
         self._aliases(db, source_id, history_id, state=record)
-        self._refresh(db, history_id)
+        # The loose copy just inserted is the one ``_refresh`` would pick (it must be
+        # unique, checked above), so project it directly instead of reading it back.
+        db.exec_driver_sql("DELETE FROM records WHERE history_id = ?", (history_id,))
+        self._insert_record(db, history_id, record, record_json, activity, None)
         return active
 
     def _sessions(self, db: Connection) -> None:
@@ -1114,7 +1138,9 @@ class HistoryIndex:
             warnings=warnings,
         )
 
-    def rebuild(self, *, reset: bool = False, timeout: float = 60) -> IndexCoverage:
+    def rebuild(
+        self, *, reset: bool = False, timeout: float = INITIALIZATION_TIMEOUT
+    ) -> IndexCoverage:
         deadline = time.monotonic() + timeout
         with (
             lock_file(self.catchup_lock, timeout=_remaining(deadline)),
@@ -1175,7 +1201,26 @@ class HistoryIndex:
             return None
         if generation is not None and failure.generation not in {None, generation}:
             return None
+        if failure.code == "authority" and self._quarantine_is_newer_format(failure.reason):
+            return None  # An older build latched this; this build skips such rows.
         return failure.reason
+
+    @staticmethod
+    def _quarantine_is_newer_format(reason: str) -> bool:
+        """Whether a latched ``Spawn state quarantined: <path>`` names a newer-format row."""
+        prefix = "Spawn state quarantined: "
+        if not reason.startswith(prefix):
+            return False
+        path = Path(reason.removeprefix(prefix))
+        if path.name != "state.json":
+            return False
+        try:
+            read_state(path.parent.parent, path.parent.name, include_prompt=False)
+        except SpawnStateNewer:
+            return True
+        except SpawnStateQuarantined:
+            return False
+        return False
 
     @staticmethod
     def _initialization_error(reason: str, *, persisted: bool = True) -> HistoryIndexIncomplete:

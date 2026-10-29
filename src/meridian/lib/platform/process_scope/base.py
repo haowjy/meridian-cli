@@ -17,6 +17,10 @@ logger = structlog.get_logger(__name__)
 
 PROCESS_BIRTH_UNKNOWN_EPOCH = 0.0
 
+# How long a terminate waits for SIGKILLed processes to be reaped, on top of its SIGTERM grace.
+# A caller bounding the whole terminate subtracts this from its budget.
+POST_KILL_WAIT_SECS = 1.0
+
 
 def birth_time_unverified(created_at_epoch: float) -> bool:
     """Return True when process birth time was not observed.
@@ -302,6 +306,7 @@ def _emit_termination_event(
 
 
 __all__ = [
+    "POST_KILL_WAIT_SECS",
     "PROCESS_BIRTH_UNKNOWN_EPOCH",
     "CleanupResult",
     "ProcessScopeSnapshot",

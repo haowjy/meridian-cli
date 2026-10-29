@@ -31,8 +31,9 @@ env (`launch/`). Contracts, wait scoping, delivery, wire shapes: `.context/CONTE
   [contract](../../launch/.context/CONTEXT.md#exact-continue-replay)), allows only model
   overrides, and treats agent opt-out as a launch-identity mutation. Native-ID
   continuation never substitutes an owner's newest spawn.
-- **A continue keeps the spawn ID.** `spawn_continue_sync` takes the spawn's launch lock
-  (`launch/continue_launch.begin_continue`), prepares, then `_prepare_then_reserve` commits the
+- **A continue keeps the spawn ID.** `spawn_continue_sync` resolves the spawn it reopens
+  (`continue_launch.resolve_continue_target`, before anything is built from it), takes its launch
+  lock (`begin_continue`), prepares, then `_prepare_then_reserve` commits the
   next launch (`lifecycle.reopen`) instead of creating a row; the `ContinueHold`'s slot is the
   runner's lock (`execute_*(hold=hold)`). Every spawn prepares before it writes a row, so a
   setup error leaves nothing to remove. A continue emits `spawn.started`, never `spawn.created`.

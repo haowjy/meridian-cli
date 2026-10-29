@@ -11,7 +11,11 @@ from contextlib import suppress
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
+from meridian.lib.platform.process_scope.base import (
+    POST_KILL_WAIT_SECS,
+    CleanupResult,
+    birth_time_unverified,
+)
 
 
 def is_pgid_reachable(pgid: int) -> bool:
@@ -166,7 +170,7 @@ def terminate_pgid(
             for proc in alive:
                 with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                     proc.kill()
-            psutil.wait_procs(alive, timeout=1.0)
+            psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
 
     return CleanupResult(
         scope_id=scope_id,

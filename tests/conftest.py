@@ -103,12 +103,15 @@ _NATIVE_STORE_ENV = frozenset({
 @pytest.fixture(autouse=True)
 def _clean_meridian_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
     _isolate_meridian_home: None,
 ) -> None:
     """Isolate tests from parent harness runtime state environment.
 
     Harness store variables are cleared too: a test that swaps HOME must not
     reach the user's real native stores through an inherited CODEX_HOME etc.
+    A real `mars` gets an empty user config and cache, since the developer's
+    `~/.config/mars/config.toml` is a config layer (agents, models, settings).
     """
 
     session_home = os.environ.get("MERIDIAN_HOME")
@@ -118,6 +121,10 @@ def _clean_meridian_runtime_env(
 
     if session_home is not None:
         monkeypatch.setenv("MERIDIAN_HOME", session_home)
+
+    mars_user = tmp_path_factory.mktemp("mars-user")
+    monkeypatch.setenv("MARS_CONFIG_DIR", str(mars_user / "config"))
+    monkeypatch.setenv("MARS_CACHE_DIR", str(mars_user / "cache"))
 
 
 @pytest.fixture(autouse=True)

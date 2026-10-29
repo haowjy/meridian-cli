@@ -274,6 +274,9 @@ def detail_from_row(
         reasoning_tokens=usage.reasoning_tokens,
         cost_usd=usage.total_cost_usd,
         cost_is_estimate=usage.cost_is_estimate,
+        report_path=(
+            launch.report.as_posix() if launch is not None and launch.report.is_file() else None
+        ),
         report_summary=report_summary,
         report_body=report_body,
         harness_session_id=row.harness_session_id,
