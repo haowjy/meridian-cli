@@ -10,6 +10,7 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -429,6 +430,15 @@ def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> No
     assert not (paths.spawns_dir / spawn_id).exists()
 
 
+def _reopening(**overrides: Any) -> LaunchInput:
+    fields: dict[str, Any] = dict(
+        chat_id="c1", prompt="x", kind="child", owner_chat_id=None, parent_id=None, goal=None,
+        harness_session_id=None, launch_mode=None, worker_pid=None, runner_pid=None,
+        runner_created_at_epoch=None,
+    )
+    return LaunchInput(**{**fields, **overrides})
+
+
 def test_new_spawn_layout(tmp_path: Path) -> None:
     """A new spawn is state v4 with launch 1 in ``launches/1/``; a v3 row keeps its files at
     the top; ``reopen_spawn`` converts a v3 row only under its lock; nothing printed names
@@ -455,7 +465,6 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
         row = get_spawn(runtime_root, launch.spawn_id)
         assert row is not None and row.launch == LaunchRef(n=1) and row.prompt == "hello"
         assert json.loads((spawn_dir / "state.json").read_text())["v"] == 4
-
         # An older build's row: v3, launch 1 at the top level.
         legacy_dir = resolve_spawn_dir(runtime_root, "p9")
         shutil.copytree(spawn_dir, legacy_dir)
@@ -477,24 +486,27 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
         # The holder reopens the finished launch: K archived, usage folded, v3 -> v4.
         finalize_spawn(
             runtime_root, "p9", "succeeded", 0, origin="runner", duration_secs=5.0,
-            usage=TokenUsage(total_cost_usd=0.5, input_tokens=10, output_tokens=2),
+            usage=TokenUsage(
+                total_cost_usd=0.5, input_tokens=10, output_tokens=2,
+                harness_cumulative={"total": {"inputTokens": 10}},
+            ),
         )
         with acquire_lock(runtime_root, "p9") as handle:
             with pytest.raises(ValueError, match="different parent"):
                 reopen_spawn(
                     handle,
                     runtime_root,
-                    LaunchInput(chat_id="c1", kind="child", prompt="x", parent_id="p1"),
+                    _reopening(parent_id="p1"),
                 )
             with pytest.raises(ValueError, match="--goal cannot be empty"):
                 reopen_spawn(
                     handle,
                     runtime_root,
-                    LaunchInput(chat_id="c1", kind="child", prompt="x", goal=" "),
+                    _reopening(goal=" "),
                 )
             assert not (legacy_dir / "launches").exists()  # refused before any write
             reopened = reopen_spawn(
-                handle, runtime_root, LaunchInput(chat_id="c1", kind="child", prompt="again")
+                handle, runtime_root, _reopening(prompt="again")
             )
         assert reopened.dir == legacy_dir / "launches" / "2"
         archived = launch_archive(runtime_root, "p9", 1)
@@ -502,6 +514,9 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
         after = get_spawn(runtime_root, "p9")
         assert after is not None and after.launch == LaunchRef(n=2) and after.terminal is None
         assert after.prior_usage.duration_secs == 5.0 and after.prior_usage.total_cost_usd == 0.5
+        # A v3 row's terminal cannot carry the key an older build would quarantine.
+        assert after.prior_usage.harness_cumulative is None
+        assert "harness_cumulative" not in json.loads(archived.read_text())["terminal"]
         assert (
             after.total_usage is not None
             and after.total_usage.duration_secs == 5.0
@@ -513,3 +528,17 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
             project_root=tmp_path, row=after, include_report_body=True, runtime_root=runtime_root
         )
         assert "launches/" not in detail.format_text() + json.dumps(detail.to_cli_wire())
+
+        # A v4 row's terminal keeps the harness's running total; the next launch is seeded from it.
+        finalize_spawn(
+            runtime_root, launch.spawn_id, "succeeded", 0, origin="runner",
+            usage=TokenUsage(harness_cumulative={"total": {"inputTokens": 7}}),
+        )
+        stored_terminal = json.loads((spawn_dir / "state.json").read_text())["terminal"]
+        assert stored_terminal["harness_cumulative"] == {"total": {"inputTokens": 7}}
+        finished = get_spawn(runtime_root, launch.spawn_id)
+        assert finished is not None
+        folded = finished.prior_usage.plus(finished.terminal)
+        assert folded.harness_cumulative == {"total": {"inputTokens": 7}}
+        assert folded.plus(None).harness_cumulative == folded.harness_cumulative
+

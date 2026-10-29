@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, Self, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -66,6 +66,8 @@ class TerminalFacts(BaseModel):
     cache_creation_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cost_is_estimate: bool = False
+    harness_cumulative: dict[str, JsonValue] | None = None
+    """The harness's running total at this launch's end; the next launch is seeded with it."""
     error: str | None = None
     origin: SpawnOrigin
     #: The reconciler decided this terminal row still owns managed-primary
@@ -119,6 +121,9 @@ class PriorUsage(BaseModel):
     cache_creation_input_tokens: int = 0
     reasoning_tokens: int = 0
     cost_is_estimate: bool = False
+    harness_cumulative: dict[str, JsonValue] | None = None
+    """The last finished launch's ``TerminalFacts.harness_cumulative``: what the running launch's
+    extractor starts from, since its own ``terminal`` is not there yet."""
 
     def plus(self, terminal: TerminalFacts | None) -> PriorUsage:
         """These totals with one more launch's outcome added (cost estimates OR together)."""
@@ -137,6 +142,8 @@ class PriorUsage(BaseModel):
             ),
             reasoning_tokens=self.reasoning_tokens + (terminal.reasoning_tokens or 0),
             cost_is_estimate=self.cost_is_estimate or terminal.cost_is_estimate,
+            # A launch that reported no total (it crashed) leaves the earlier one as the seed.
+            harness_cumulative=terminal.harness_cumulative or self.harness_cumulative,
         )
 
     def totals(self, terminal: TerminalFacts | None) -> UsageTotals:
@@ -336,6 +343,5 @@ __all__ = [
     "SpawnStateFields",
     "TerminalFacts",
     "TerminalSpawnStatus",
-    "UsageTotals",
     "UsageTotals",
 ]

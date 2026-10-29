@@ -66,6 +66,8 @@ class StoredSpawnState(SpawnStateFields):
         if self.launch is None:
             for name in V4_ONLY_FIELDS:
                 data.pop(name, None)
+            if isinstance(data.get("terminal"), dict):
+                data["terminal"].pop("harness_cumulative", None)
         return data
 
 

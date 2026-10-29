@@ -84,7 +84,8 @@ O(1) instead of replaying an O(n) global event log. The directory layout came fr
 the v2 migration; published rows use schema v3, or v4 once they have a `launch`.
 
 **State v4** is v3 plus three spawn-level fields: `launch: {n}` (which launch the flat
-row describes), `prior_usage` (duration, cost and every token count of launches before `n`; every
+row describes), `prior_usage` (duration, cost and every token count of launches before `n`, plus the last
+`harness_cumulative` that seeds the next extractor; every
 surface, Pi included, shows it plus the current launch) and `owed_launches` (background launches a
 continue moved past before the parent consumed them). The serializer writes `v: 4` when
 `launch` is present and `v: 3` when it is not, in one conditional

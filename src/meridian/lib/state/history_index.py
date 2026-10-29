@@ -78,7 +78,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
-from meridian.lib.state.spawn_store import SpawnScan
+from meridian.lib.state.spawn_store import SpawnScan, read_spawn_counter
 
 logger = logging.getLogger(__name__)
 
@@ -219,19 +219,11 @@ CURSORS = Table(
     Column("unsupported", Text),
 )
 
-# The shared ``spawn-id-counter`` every build advances; the ``spawns`` cursor records how far
-# this index has looked, so IDs an older build reserved after the build are found.
-SPAWN_COUNTER_FILE = "spawn-id-counter"
+# The ``spawns`` cursor records how far into the shared spawn-ID counter this index has looked,
+# so IDs an older build reserved after the build are found.
 # Reserved-but-unpublished IDs (primaries, restores) retried on later catch-ups; the newest
 # survive, so an ID whose start failed for good cannot grow the set without bound.
 MAX_UNPUBLISHED_SPAWN_IDS = 128
-
-
-def _spawn_counter(root: Path) -> int:
-    try:
-        return int((root / SPAWN_COUNTER_FILE).read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
 
 
 def _metadata_match(
@@ -953,11 +945,12 @@ class HistoryIndex:
         row = db.exec_driver_sql(
             "SELECT extent, tail FROM cursors WHERE source = 'spawns'"
         ).first()
-        counter = _spawn_counter(self.root)
+        counter = read_spawn_counter(self.root)
         if row is None or (counter == row[0] and not row[1]):
             return []
         seen = row[0] or 0
-        candidates = {*json.loads(row[1] or "[]"), *range(seen + 1, counter + 1)}
+        stored: list[int] = json.loads(row[1] or "[]")
+        candidates = {*stored, *range(seen + 1, counter + 1)}
         active: list[str] = []
         unpublished: list[int] = []
         for number in sorted(candidates):
@@ -975,7 +968,8 @@ class HistoryIndex:
                         active.append(key)
             except FileLockTimeout:
                 unpublished.append(number)
-        self._write_spawn_cursor(db, max(counter, seen), unpublished)
+        if counter > seen or unpublished[-MAX_UNPUBLISHED_SPAWN_IDS:] != stored:
+            self._write_spawn_cursor(db, max(counter, seen), unpublished)
         db.commit()
         return active
 
@@ -1011,7 +1005,7 @@ class HistoryIndex:
                 db.execute(
                     insert(META).values(version=SCHEMA_VERSION, generation=generation, build=build)
                 )
-                counter = _spawn_counter(self.root)  # Before the scan: later IDs are rechecked.
+                counter = read_spawn_counter(self.root)  # Before the scan: later IDs are rechecked.
                 scanned = scan_spawn_ids(self.root / "spawns")
                 for key in scanned:
                     with _source_lock(

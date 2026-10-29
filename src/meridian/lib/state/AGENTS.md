@@ -71,8 +71,14 @@ against a recreated inode (split-brain).
   transaction under `spawns_flock` that is not written yet. It has no CLI caller yet.
   `LaunchInput` (validates goal, resolves the runner's start time) feeds the one builder
   `_launch_fields` that `start_spawn` and `reopen_spawn` share; add a per-launch field
-  there. A launch's `TerminalFacts` usage must be that launch's own (extractors subtract a
-  harness's session-cumulative totals), or the `prior_usage` fold double counts.
+  there. A launch's `TerminalFacts` usage must be that launch's own, or the `prior_usage`
+  fold double counts. Claude and Codex report session-cumulative usage, so a launch stores
+  the harness's raw running total as `TerminalFacts.harness_cumulative` (opaque here);
+  `reopen_spawn` carries it to `prior_usage.harness_cumulative`, and the runner that owns
+  the new launch seeds its extractor with it (`create_fold(seed)`, subtract per model). No
+  stored total (a v3 row, a crashed launch with nothing earlier) seeds zero. Only the
+  streaming runner passes the seed so far; the primary paths start fresh spawns, and
+  must pass the row's seed when continue reopens a primary.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

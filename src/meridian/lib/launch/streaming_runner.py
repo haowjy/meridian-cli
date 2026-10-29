@@ -1053,7 +1053,11 @@ async def execute_with_streaming(
                 runtime_root=runtime_root,
                 spawn_id=run.spawn_id,
             ):
-                fold = harness_bundle.extractor.create_fold()
+                # The row's launch is the one this runner owns; a resumed launch's usage
+                # is counted from where the previous launch ended.
+                fold = harness_bundle.extractor.create_fold(
+                    spawn_row.prior_usage.harness_cumulative
+                )
                 facts = fold.facts
                 runner_phase[0] = "starting_attempt"
                 _record_lifecycle("attempt_started", attempt=1)

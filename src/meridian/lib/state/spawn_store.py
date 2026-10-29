@@ -103,12 +103,10 @@ def _spawn_counter_path(paths: RuntimePaths) -> Path:
     return paths.root_dir / "spawn-id-counter"
 
 
-def _read_spawn_counter(paths: RuntimePaths) -> int:
-    counter_path = _spawn_counter_path(paths)
-    if not counter_path.is_file():
-        return 0
+def read_spawn_counter(runtime_root: Path) -> int:
+    """The last ID reserved from the counter every build shares (0 when unreadable)."""
     try:
-        return int(counter_path.read_text(encoding="utf-8").strip())
+        return int((runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return 0
 
@@ -133,7 +131,7 @@ def reserve_launch(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.spawns_flock):
-        current = _read_spawn_counter(paths)
+        current = read_spawn_counter(paths.root_dir)
         if current == 0 and not _spawn_counter_path(paths).is_file():
             current = _seed_spawn_counter_from_dirs(paths)
         next_value = current + 1
@@ -216,20 +214,23 @@ class LaunchInput:
     Construction validates and resolves, so a bad input fails before any file is written:
     ``goal`` is stripped (``None`` means the caller keeps the row's goal) and
     ``runner_created_at_epoch`` is looked up from ``runner_pid`` when not given.
+
+    No field has a default: ``start_spawn`` builds this from its own parameters, and a
+    field it forgot to forward is then a type error, not a silent default. The status is
+    not here: a creation chooses it, a reopen is always running.
     """
 
     chat_id: str | None
     prompt: str
     kind: SpawnKind
-    owner_chat_id: str | None = None
-    parent_id: str | None = None
-    goal: str | None = None
-    harness_session_id: str | None = None
-    launch_mode: LaunchMode | None = None
-    worker_pid: int | None = None
-    runner_pid: int | None = None
-    runner_created_at_epoch: float | None = None
-    status: SpawnStatus = SpawnStatus.RUNNING
+    owner_chat_id: str | None
+    parent_id: str | None
+    goal: str | None
+    harness_session_id: str | None
+    launch_mode: LaunchMode | None
+    worker_pid: int | None
+    runner_pid: int | None
+    runner_created_at_epoch: float | None
 
     def __post_init__(self) -> None:
         if self.goal is not None:
@@ -277,6 +278,7 @@ def _launch_fields(
     desc: str | None,
     forked_from_history_id: UUID | None,
     started_at: str,
+    status: SpawnStatus,
 ) -> _LaunchFields:
     """Every field of a row that one launch owns, or derives from who starts it.
 
@@ -316,7 +318,7 @@ def _launch_fields(
         "worker_pid": launch.worker_pid,
         "runner_pid": launch.runner_pid,
         "runner_created_at_epoch": launch.runner_created_at_epoch,
-        "status": launch.status,
+        "status": status,
         "prompt": launch.prompt,
         "started_at": started_at,
         "current_chat_id": None,
@@ -388,7 +390,6 @@ def start_spawn(
         worker_pid=worker_pid,
         runner_pid=runner_pid,
         runner_created_at_epoch=runner_created_at_epoch,
-        status=status,
     )
     resolved_launch_policy_snapshot = (
         launch_policy_snapshot or start_metadata.launch_policy_snapshot
@@ -402,7 +403,7 @@ def start_spawn(
                 raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
             resolved_spawn_id = SpawnId(explicit_spawn_id)
         else:
-            current = _read_spawn_counter(paths)
+            current = read_spawn_counter(paths.root_dir)
             if current == 0 and not _spawn_counter_path(paths).is_file():
                 current = _seed_spawn_counter_from_dirs(paths)
             next_value = current + 1
@@ -438,6 +439,7 @@ def start_spawn(
                 desc=start_metadata.desc,
                 forked_from_history_id=start_metadata.forked_from_history_id,
                 started_at=started,
+                status=status,
             ),
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
@@ -520,6 +522,7 @@ def reopen_spawn(
                     desc=current.desc,
                     forked_from_history_id=current.forked_from_history_id,
                     started_at=started,
+                    status=SpawnStatus.RUNNING,
                 ),
                 "session_instance_id": None,
                 "goal": effective_goal,

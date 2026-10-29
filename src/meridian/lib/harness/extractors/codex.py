@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.common import coerce_optional_int, extract_codex_thread_id, extract_text
@@ -11,6 +11,9 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import AttemptFold, HarnessExtractor
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 
 def _owned_session_id(payload: Mapping[str, object], event_type: str) -> str | None:
@@ -34,15 +37,12 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return _owned_session_id(event.payload, event.event_type)
 
-    def create_fold(self) -> AttemptFold:
-        return CodexFold(self)
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold:
+        return CodexFold(self, seed=seed)
 
 
 class CodexFold(AttemptFold):
     main_thread_id: str | None = None
-    usage_baseline: TokenUsage = TokenUsage()
-    thread_idle = False  # Idle before any activity: a resumed thread.
-    thread_active = False
 
     def accepts(self, kind: str, event: RawHarnessEvent) -> bool:
         thread_id = extract_codex_thread_id(event.payload)
@@ -64,13 +64,7 @@ class CodexFold(AttemptFold):
             elif kind == "item.started" and item_type == "commandexecution":
                 facts.final_text = None
                 self.text_source = None
-        if kind == "thread.status.changed":
-            status = payload.get("status")
-            if isinstance(status, dict):
-                state = cast("dict[str, object]", status).get("type")
-                self.thread_idle |= state == "idle" and not self.thread_active
-                self.thread_active |= state == "active"
-        elif kind == "thread.tokenusage.updated":
+        if kind == "thread.tokenusage.updated":
             token_usage = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
             if isinstance(token_usage, dict):
                 self._fold_thread_usage(cast("dict[str, object]", token_usage))
@@ -81,22 +75,19 @@ class CodexFold(AttemptFold):
                 facts.usage = _token_usage(cast("dict[str, object]", usage))
 
     def _fold_thread_usage(self, token_usage: dict[str, object]) -> None:
-        """Codex reports the thread's running ``total``, which a resumed thread carries over.
-
-        On resume it first replays the thread's earlier total while the thread is still
-        idle (before its first active status). That replay is the baseline: this launch's
-        usage is every later total minus it, so a continue never repeats usage that
-        ``prior_usage`` already holds.
+        """Codex reports the thread's running ``total``, earlier launches of a resumed thread
+        included. This launch's usage is that total minus the seed (the previous launch's
+        stored total; empty for a fresh launch); the total is kept for the next launch.
         """
         total = token_usage.get("total")
         if not isinstance(total, dict):
             return
-        total_usage = _token_usage(cast("dict[str, object]", total))
-        if self.thread_idle and not self.thread_active:
-            self.usage_baseline = total_usage
-            return
+        total = cast("dict[str, object]", total)
         self.usage_is_specific = True
-        self.facts.usage = _minus(total_usage, self.usage_baseline)
+        self.facts.usage = _minus(
+            _token_usage(total),
+            _token_usage(dict(self.seed)) if self.seed else TokenUsage(),
+        ).model_copy(update={"harness_cumulative": cast("dict[str, JsonValue]", total)})
 
 
 def _minus(usage: TokenUsage, before: TokenUsage) -> TokenUsage:
