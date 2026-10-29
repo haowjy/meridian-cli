@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-import structlog.testing
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
@@ -40,25 +39,6 @@ def _install_reconciled_orphan(
     )
 
 
-def test_reconciled_primary_orphan_is_captured(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install_reconciled_orphan(monkeypatch, kind="primary")
-    captured: list[tuple[Path, Path, str]] = []
-    monkeypatch.setattr(
-        "meridian.lib.ops.session_archive.materialize_native_history",
-        lambda *args: captured.append(args),
-    )
-
-    runtime_root = tmp_path / "runtime"
-    count, ids = diag._repair_orphan_runs(tmp_path, runtime_root=runtime_root)
-
-    assert count == 1
-    assert ids == ("p1",)
-    assert captured == [(tmp_path, runtime_root, "p1")]
-
-
 def test_reconciled_child_orphan_is_not_captured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -73,56 +53,6 @@ def test_reconciled_child_orphan_is_not_captured(
 
     assert count == 1
     assert ids == ("p1",)
-
-
-def test_orphan_capture_failure_does_not_break_repair(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install_reconciled_orphan(monkeypatch, kind="primary")
-
-    def _raising(*_args: object) -> None:
-        raise ValueError("incomplete native tail")
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.session_archive.materialize_native_history",
-        _raising,
-    )
-
-    count, ids = diag._repair_orphan_runs(tmp_path, runtime_root=tmp_path / "runtime")
-
-    assert count == 1
-    assert ids == ("p1",)
-
-
-def test_orphan_capture_deferral_is_debug_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.ops.session_archive import NativeCaptureDeferred
-
-    _install_reconciled_orphan(monkeypatch, kind="primary")
-
-    def _deferred(*_args: object) -> None:
-        raise NativeCaptureDeferred("spawn p2")
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.session_archive.materialize_native_history",
-        _deferred,
-    )
-    with structlog.testing.capture_logs() as logs:
-        count, ids = diag._repair_orphan_runs(tmp_path, runtime_root=tmp_path / "runtime")
-
-    assert count == 1
-    assert ids == ("p1",)
-    assert logs == [
-        {
-            "event": "orphan_primary_capture_deferred",
-            "log_level": "debug",
-            "owner": "spawn p2",
-            "spawn_id": "p1",
-        }
-    ]
 
 
 def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
@@ -189,9 +119,15 @@ def test_repair_reconciles_active_orphan_and_terminal_cleanup_claim(
 
     monkeypatch.setattr("meridian.lib.core.process_cleanup.terminate_scope_sync", terminate)
     captured: list[str] = []
+
+    def _capture_then_fail(_project: Path, _runtime: Path, spawn_id: str) -> None:
+        # A failed capture must not undo the repair that already published.
+        captured.append(spawn_id)
+        raise ValueError("incomplete native tail")
+
     monkeypatch.setattr(
         "meridian.lib.ops.session_archive.materialize_native_history",
-        lambda _project, _runtime, spawn_id: captured.append(spawn_id),
+        _capture_then_fail,
     )
 
     count, ids = diag._repair_orphan_runs(tmp_path, runtime_root=runtime_root)

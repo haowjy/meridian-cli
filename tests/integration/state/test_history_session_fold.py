@@ -232,9 +232,9 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
     from sqlalchemy import create_engine
 
     from meridian.lib.state.history_index import INDEX_SCHEMA
-    from tests.integration.state import test_generated_session_fold as golden
+    from tests.support import session_corpus
 
-    original = golden.s.list_session_generations
+    original = session_corpus.s.list_session_generations
     projected_root = tmp_path / "projection"
     projected_root.mkdir()
     engine = create_engine("sqlite://")
@@ -268,14 +268,14 @@ def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monk
         assert Counter(tuple(row.get(f) for f in fields) for row in projected) == (
             Counter(tuple(row.model_dump().get(f) for f in fields) for row in expected)
         )
-        accepted = golden.s.list_all_session_records(root)
+        accepted = session_corpus.s.list_all_session_records(root)
         assert {r["chat_id"]: tuple(r.get(f) for f in fields[2:]) for r in chats} == {
             r.chat_id: tuple(r.model_dump().get(f) for f in fields[2:]) for r in accepted
         }
         return expected
 
-    monkeypatch.setattr(golden.s, "list_session_generations", check_projection)
-    golden.test_generated_histories_match_pre_restructure_fold(tmp_path, monkeypatch)
+    monkeypatch.setattr(session_corpus.s, "list_session_generations", check_projection)
+    session_corpus.assert_pre_restructure_fold_golden(tmp_path, monkeypatch)
 
 
 def test_metadata_is_history_blind(tmp_path: Path):

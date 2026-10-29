@@ -1,7 +1,8 @@
 """Session log output routing for child (non-primary) spawns and primary sessions.
 
-Tests that session_log_sync picks the right output file (live vs artifact)
-for child spawns and that missing session IDs route correctly.
+Tests that session_log_sync picks the exact recorded native transcript for a
+child, a chat or a primary spawn, and that a reference without one refuses
+instead of reading runner history.
 
 # qa-validated: test-suite-redesign
 """
@@ -70,36 +71,80 @@ def _write_codex_rollout(
     )
 
 
-def test_unbound_spawn_does_not_read_runner_history(
+@pytest.mark.parametrize(
+    ("kind", "harness_session_id", "status", "ref_kind", "expected_message"),
+    [
+        pytest.param("child", "", None, "spawn", "unbound", id="child-unbound"),
+        pytest.param(
+            "child",
+            "missing-native-session",
+            "running",
+            "spawn",
+            "unbound",
+            id="active-child-unverified-id",
+        ),
+        pytest.param("primary", "", None, "spawn", "unbound", id="primary-unbound"),
+        pytest.param(
+            "primary",
+            "",
+            None,
+            "chat",
+            "no verified native session for c42",
+            id="chat-without-native-session",
+        ),
+    ],
+)
+def test_unbound_reference_does_not_read_runner_history(
     tmp_path: Path,
+    kind: str,
+    harness_session_id: str,
+    status: str | None,
+    ref_kind: str,
+    expected_message: str,
 ) -> None:
+    """A spawn or chat without a verified native session refuses, whatever the runner wrote."""
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    spawn_store.start_spawn(
+    chat_id = session_store.start_session(
         runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="coder",
         harness="codex",
-        prompt="do thing",
         harness_session_id="",
-    )
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "live progress"}},
-        },
-    )
+        model="gpt-5.4",
+        chat_id="c42",
+    ).chat_id
+    try:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p42",
+            chat_id=chat_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            kind=kind,
+            prompt="do thing",
+            harness_session_id=harness_session_id,
+            **({"status": status} if status is not None else {}),
+        )
+        for artifact in (False, True):
+            _write_spawn_output(
+                runtime_root,
+                "p42",
+                {
+                    "event_type": "item/completed",
+                    "harness_id": "codex",
+                    "payload": {"item": {"type": "agentMessage", "text": "progress"}},
+                },
+                artifact=artifact,
+            )
 
-    with pytest.raises(NativeSessionUnavailable, match="unbound"):
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))
+        ref = "p42" if ref_kind == "spawn" else chat_id
+        with pytest.raises(NativeSessionUnavailable, match=expected_message):
+            session_log_sync(SessionLogInput(ref=ref, project_root=project_root.as_posix()))
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
@@ -200,47 +245,6 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         session_store.stop_session(runtime_root, child_chat_id)
 
 
-def test_unbound_active_child_ignores_live_runner_history(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="do thing",
-        harness_session_id="missing-native-session",
-        status="running",
-    )
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "live child progress"}},
-        },
-    )
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "artifact child progress"}},
-        },
-        artifact=True,
-    )
-
-    with pytest.raises(NativeSessionUnavailable, match="unbound"):
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))
-
-
 def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -302,51 +306,6 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
     assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
-
-
-def test_session_log_chat_reads_file_authority_without_harness_session_id(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="",
-        model="gpt-5.4",
-        chat_id="c42",
-    ).chat_id
-    try:
-        spawn_store.start_spawn(
-            runtime_root,
-            spawn_id="p42",
-            chat_id=chat_id,
-            model="gpt-5.4",
-            agent="dev-orchestrator",
-            harness="codex",
-            kind="primary",
-            prompt="do thing",
-            harness_session_id="",
-        )
-        _write_spawn_output(
-            runtime_root,
-            "p42",
-            {
-                "event_type": "item/completed",
-                "harness_id": "codex",
-                "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}},
-            },
-        )
-
-        with pytest.raises(ValueError, match="no verified native session for c42"):
-            session_log_sync(
-                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-            )
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_session_export_spawn_duration_uses_last_attempt_exited_at(

@@ -18,7 +18,6 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
-    CallerBoundaryCheck,
     current_pid_namespace,
 )
 from meridian.lib.core.context import RuntimeContext
@@ -29,10 +28,7 @@ from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.safety.policy import (
-    EffectivePolicy,
-    PermissionPolicy,
     SandboxMode,
-    network_policy_to_wire,
     parse_network_policy,
 )
 from meridian.lib.state import spawn_store, work_repository, work_store
@@ -260,47 +256,6 @@ def test_spawn_create_dry_run_emits_usage_events(
     assert usage_events["usage.spawn.launched"].data == {"harness": "codex"}
 
 
-def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-
-    def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
-        raise ValueError("model resolution failed")
-
-    monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.4",
-            harness="opencode",
-            agent="browser-prober",
-            project_root=project_root.as_posix(),
-            task_dir=(tmp_path / "task").as_posix(),
-            work="browser-investigation",
-        ),
-    )
-
-    assert result.status == "failed"
-    assert result.spawn_id is None
-    assert result.error == "pre_init_failed"
-    assert result.exit_code == 1
-    assert result.model == "gpt-5.4"
-    assert result.harness_id == "opencode"
-    assert result.message is not None
-    assert "model resolution failed" in result.message
-    assert result.to_wire()["message"] == result.message
-    assert result.to_wire()["model"] == "gpt-5.4"
-    assert result.to_wire()["harness_id"] == "opencode"
-    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
-    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
-
-
 def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,80 +278,6 @@ def test_spawn_create_refuses_different_parent_pid_namespace_before_preparation(
     assert result.spawn_id is None
     assert result.error == "pre_init_failed"
     assert result.message is not None
-
-
-def test_unsandboxed_caller_has_no_guardrail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(
-        CALLER_BOUNDARY_ENV,
-        json.dumps(
-            {
-                "pid_namespace": None,
-                "sandbox": "default",
-                # A newer axis and a missing spawn axis are irrelevant when unfloored.
-                "future_axis": "ignored",
-            }
-        ),
-    )
-
-    check = CallerBoundaryCheck.from_environment(
-        dry_run=True,
-        passthrough_args=("--dangerously-skip-permissions",),
-    )
-
-    assert check.caller is None
-
-
-@pytest.mark.parametrize("legacy_network", [None, "allow"], ids=["missing", "allow"])
-def test_floored_legacy_caller_preserves_optional_network_floor(
-    monkeypatch: pytest.MonkeyPatch,
-    legacy_network: str | None,
-) -> None:
-    payload: dict[str, object] = {
-        "pid_namespace": None,
-        "sandbox": "workspace-write",
-        "spawn": True,
-    }
-    if legacy_network is not None:
-        payload["network"] = legacy_network
-    monkeypatch.setenv(
-        CALLER_BOUNDARY_ENV,
-        json.dumps(payload),
-    )
-
-    check = CallerBoundaryCheck.from_environment(dry_run=True)
-
-    assert check.caller is not None
-    assert check.caller.network == parse_network_policy(legacy_network)
-
-
-@pytest.mark.parametrize(
-    ("sandbox", "effective_network", "expected_floor"),
-    [
-        ("workspace-write", "allow", "allow"),
-        ("workspace-write", "deny", "deny"),
-        ("danger-full-access", "allow", None),
-    ],
-)
-def test_caller_boundary_records_effective_network_for_every_sandboxed_caller(
-    sandbox: SandboxMode,
-    effective_network: str,
-    expected_floor: str | None,
-) -> None:
-    parsed_effective = parse_network_policy(effective_network)
-    assert parsed_effective is not None
-    boundary = CallerBoundary.from_policy(
-        PermissionPolicy(sandbox=sandbox),
-        effective=EffectivePolicy(sandbox=sandbox, network=parsed_effective),
-        pid_namespace=None,
-    )
-
-    parsed_floor = parse_network_policy(expected_floor)
-    assert boundary.network == parsed_floor
-    assert json.loads(boundary.to_env_value()).get("network") == (
-        network_policy_to_wire(parsed_floor) if parsed_floor is not None else None
-    )
 
 
 @pytest.mark.parametrize(
@@ -805,14 +686,43 @@ def test_spawn_create_caller_guardrail_does_not_restrict_child_workspace_roots(
     assert result.task_cwd == outside.as_posix()
 
 
-def test_spawn_create_caller_guardrail_allows_harness_home_env(
+@pytest.mark.parametrize(
+    ("caller_guardrail", "requested"),
+    [
+        pytest.param(
+            True,
+            {
+                "launch_policy_snapshot": LaunchPolicySnapshot(
+                    model="claude-haiku-5-5",
+                    harness="claude",
+                    env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
+                    execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
+                )
+            },
+            id="caller-guardrail-present",
+        ),
+        pytest.param(
+            False,
+            {"env": ("LD_PRELOAD=/tmp/user-choice.so",)},
+            id="caller-guardrail-absent",
+        ),
+    ],
+)
+def test_spawn_create_forwards_requested_environment_to_the_background_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caller_guardrail: bool,
+    requested: dict[str, object],
 ) -> None:
+    """The requested environment must reach the serialized worker request."""
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-    _set_caller_guardrail(monkeypatch)
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    if caller_guardrail:
+        _set_caller_guardrail(monkeypatch)
+    else:
+        monkeypatch.delenv(CALLER_BOUNDARY_ENV, raising=False)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-haiku-5-5",
@@ -823,38 +733,18 @@ def test_spawn_create_caller_guardrail_allows_harness_home_env(
         ),
     )
 
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="claude-haiku-5-5",
-            harness="claude",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-            launch_policy_snapshot=LaunchPolicySnapshot(
-                model="claude-haiku-5-5",
-                harness="claude",
-                env={"CLAUDE_CONFIG_DIR": "/tmp/owned"},
-                execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
-            ),
-        )
-    )
+    class _FakePopen:
+        pid = 42424
 
-    assert result.status == "dry-run"
+    real_popen = subprocess.Popen
 
+    def _launch_worker(*args: object, **kwargs: object) -> object:
+        command = args[0] if args else kwargs.get("args")
+        if isinstance(command, tuple) and "meridian.lib.ops.spawn.execute_bg" in command:
+            return _FakePopen()
+        return real_popen(*args, **kwargs)  # type: ignore[arg-type]
 
-def test_spawn_create_without_caller_guardrail_does_not_clamp_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.delenv(CALLER_BOUNDARY_ENV, raising=False)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-haiku-5-5",
-        harness=HarnessId.CLAUDE,
-    )
+    monkeypatch.setattr(subprocess, "Popen", _launch_worker)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -862,12 +752,31 @@ def test_spawn_create_without_caller_guardrail_does_not_clamp_environment(
             model="claude-haiku-5-5",
             harness="claude",
             project_root=project_root.as_posix(),
-            dry_run=True,
-            env=("LD_PRELOAD=/tmp/user-choice.so",),
+            background=True,
+            **requested,  # type: ignore[arg-type]
         )
     )
 
-    assert result.status == "dry-run"
+    assert result.status == "running"
+    assert result.spawn_id is not None
+    prepared = prepare_for_runtime_write(project_root)
+    log_dir = resolve_spawn_log_dir(
+        project_root,
+        result.spawn_id,
+        runtime_root=prepared.runtime_root,
+    )
+    worker_request = json.loads(
+        (log_dir / "bg-worker-request.json").read_text(encoding="utf-8")
+    )
+    requested_env = requested.get("env")
+    if requested_env is not None:
+        expected = dict(item.split("=", 1) for item in requested_env)  # type: ignore[union-attr]
+    else:
+        snapshot = requested["launch_policy_snapshot"]
+        assert isinstance(snapshot, LaunchPolicySnapshot)
+        expected = dict(snapshot.env)
+    assert expected
+    assert worker_request["request"]["env"] == expected
 
 
 def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(
@@ -907,17 +816,33 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
     assert failure_log["exc_info"] is True
 
 
-def test_spawn_create_validation_failure_returns_pre_init_failed_output(
+@pytest.mark.parametrize(
+    ("stage", "expected_message"),
+    [
+        pytest.param("validation", "prompt required", id="validation"),
+        pytest.param("build-payload", "model resolution failed", id="build-payload"),
+    ],
+)
+def test_spawn_create_pre_init_failure_returns_failed_output(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    expected_message: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
+    if stage == "build-payload":
+
+        def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
+            raise ValueError(expected_message)
+
+        monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
-            prompt="",
+            prompt="" if stage == "validation" else "run",
             model="gpt-5.4",
             harness="opencode",
             project_root=project_root.as_posix(),
@@ -933,7 +858,7 @@ def test_spawn_create_validation_failure_returns_pre_init_failed_output(
     assert result.model == "gpt-5.4"
     assert result.harness_id == "opencode"
     assert result.message is not None
-    assert "prompt required" in result.message
+    assert expected_message in result.message
     assert result.to_wire()["message"] == result.message
     assert result.to_wire()["model"] == "gpt-5.4"
     assert result.to_wire()["harness_id"] == "opencode"

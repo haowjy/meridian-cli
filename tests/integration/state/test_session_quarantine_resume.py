@@ -63,17 +63,19 @@ def _resume(runtime_root: Path, chat_id: str) -> None:
     session_store.stop_session(runtime_root, resumed.chat_id)
 
 
-def test_quarantined_row_does_not_block_resume(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    chat_id = _stopped_chat(runtime_root)
-    with LaunchSlot() as launch_lock:
-        _write_v4_row(
-            runtime_root,
-            "p1",
-            current_chat_id="c-other",
-            launch_lock=launch_lock,
-        )
-        _resume(runtime_root, chat_id)
+def _generation_count(runtime_root: Path, chat_id: str) -> int:
+    return sum(
+        1
+        for record in session_store.list_session_generations(runtime_root)
+        if record.chat_id == chat_id
+    )
+
+
+def _resume_expecting_new_generation(runtime_root: Path, chat_id: str) -> None:
+    """An allowed resume must actually publish a generation, not merely not raise."""
+    before = _generation_count(runtime_root, chat_id)
+    _resume(runtime_root, chat_id)
+    assert _generation_count(runtime_root, chat_id) == before + 1
 
 
 def test_unparseable_row_still_blocks_resume(tmp_path: Path) -> None:
@@ -87,36 +89,47 @@ def test_unparseable_row_still_blocks_resume(tmp_path: Path) -> None:
         _resume(runtime_root, chat_id)
 
 
-def test_quarantined_row_for_same_chat_with_held_lock_blocks_resume(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("row_chat", "resume_under_lock"),    [
+        pytest.param("same", True, id="same-chat-held-lock"),
+        pytest.param("same", False, id="same-chat-free-lock"),
+        pytest.param("other", True, id="other-chat-held-lock"),
+    ],
+)
+def test_quarantined_chat_row_ownership_decides_resume(
+    tmp_path: Path,
+    row_chat: str,
+    resume_under_lock: bool,
+) -> None:
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
+    blocked = row_chat == "same" and resume_under_lock
     with LaunchSlot() as launch_lock:
         _write_v4_row(
             runtime_root,
             "p1",
-            current_chat_id=chat_id,
+            current_chat_id=chat_id if row_chat == "same" else "c-other",
             launch_lock=launch_lock,
         )
-
-        with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
-            _resume(runtime_root, chat_id)
-
-
-def test_quarantined_row_for_same_chat_with_free_lock_allows_resume(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    chat_id = _stopped_chat(runtime_root)
-    with LaunchSlot() as launch_lock:
-        _write_v4_row(
-            runtime_root,
-            "p1",
-            current_chat_id=chat_id,
-            launch_lock=launch_lock,
-        )
-
-    _resume(runtime_root, chat_id)
+        if resume_under_lock:
+            if blocked:
+                with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
+                    _resume(runtime_root, chat_id)
+            else:
+                _resume_expecting_new_generation(runtime_root, chat_id)
+    if not resume_under_lock:
+        _resume_expecting_new_generation(runtime_root, chat_id)
 
 
-def test_quarantined_chatless_row_with_free_lock_allows_resume(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "resume_under_lock",
+    [True, False],
+    ids=["held-lock", "free-lock"],
+)
+def test_quarantined_chatless_row_ownership_decides_resume(
+    tmp_path: Path,
+    resume_under_lock: bool,
+) -> None:
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
@@ -126,20 +139,8 @@ def test_quarantined_chatless_row_with_free_lock_allows_resume(tmp_path: Path) -
             current_chat_id=None,
             launch_lock=launch_lock,
         )
-
-    _resume(runtime_root, chat_id)
-
-
-def test_quarantined_chatless_row_with_held_lock_blocks_resume(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    chat_id = _stopped_chat(runtime_root)
-    with LaunchSlot() as launch_lock:
-        _write_v4_row(
-            runtime_root,
-            "p1",
-            current_chat_id=None,
-            launch_lock=launch_lock,
-        )
-
-        with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
-            _resume(runtime_root, chat_id)
+        if resume_under_lock:
+            with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
+                _resume(runtime_root, chat_id)
+    if not resume_under_lock:
+        _resume_expecting_new_generation(runtime_root, chat_id)

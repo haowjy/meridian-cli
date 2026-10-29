@@ -1,63 +1,19 @@
-"""Generated replay golden, recorded from ae9a7c2a before the binding rewrite.
+"""Generated fold contracts: generation closure and selected-chat replay.
 
-The digest covers the baseline serialized generation and chat fields. New
-metadata absent from that baseline is excluded; its reference digest stays fixed.
-No real journal data is retained. Regenerate the reference only from
-the baseline, never from the implementation under test.
+The pre-restructure golden digest lives in ``tests/support/session_corpus.py``;
+its only collected caller is
+``tests/integration/state/test_history_session_fold.py::test_generated_histories_index_bindings_match_authority``.
 """
 
-import hashlib
 import json
 import random
 from pathlib import Path
 
 import pytest
-from structlog.testing import capture_logs
 
 from meridian.lib.state import session_fold
 from meridian.lib.state import session_store as s
 from tests.support.session_corpus import generated_session_events
-
-
-def _dump(records: tuple[s.SessionRecord, ...]) -> list[dict[str, object]]:
-    return [
-        record.model_dump(
-            mode="json",
-            exclude={
-                "launch_policy_snapshot",
-                "created_at",
-                "tmux_target",
-                "context_from_chat_id",
-                "context_from_history_id",
-            },
-        )
-        for record in records
-    ]
-
-
-def test_generated_histories_match_pre_restructure_fold(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    results = []
-    for seed in range(1000):
-        events = generated_session_events(seed)
-        (tmp_path / "sessions.jsonl").write_text(
-            "".join(json.dumps(event) + "\n" for event in events)
-        )
-        with capture_logs() as logs, monkeypatch.context() as baseline_patch:
-            baseline_patch.setattr(
-                session_fold,
-                "_close_abandoned_generations",
-                lambda *_args: (),
-            )
-            baseline_generations = s.list_session_generations(tmp_path)
-            baseline_chats = s.list_all_session_records(tmp_path)
-        assert not logs
-        results.append([_dump(baseline_generations), _dump(baseline_chats)])
-    serialized = json.dumps(results, sort_keys=True, separators=(",", ":")).encode()
-    assert hashlib.sha256(serialized).hexdigest() == (
-        "f5c5954b1f3a2ecf2754d99cfe1e6733984c7e4128fc9c8c6fef017f79f9cc32"
-    )
 
 
 def test_later_start_only_closes_prior_generation(

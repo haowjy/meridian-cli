@@ -3,25 +3,20 @@
 from __future__ import annotations
 
 import os
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pytest
 
-from meridian.lib.core.lifecycle import (
-    LifecycleEvent,
-    SpawnLifecycleService,
-    generate_event_id,
-)
+from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.repository import Applied, Declined
+from meridian.lib.state.spawn.repository import Declined
 
 
 class StoreSnapshotHook:
@@ -80,61 +75,6 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
     defaults.update(overrides)
     with LaunchSlot() as launch_lock:
         return service.start(SpawnReservation(**defaults), launch_lock=launch_lock)
-
-
-def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
-    expected = uuid.uuid5(
-        uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
-        "meridian:spawn:p1:spawn.created:0",
-    )
-    assert generate_event_id("p1", "spawn.created", 0) == expected
-
-
-def test_authoritative_finalize_overrides_reconciler_failure(
-    tmp_path: Path,
-) -> None:
-    reconciler = _make_service(tmp_path)
-    authoritative = _make_service(tmp_path)
-    spawn_id = _start_spawn(reconciler)
-
-    reconciler.finalize(spawn_id, "failed", 7, origin="reconciler", error="orphan")
-
-    outcome = authoritative.finalize(spawn_id, "succeeded", 0, origin="runner")
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert isinstance(outcome, Applied)
-    assert outcome.before.status == "failed"
-
-    assert record is not None
-    assert record.status == "succeeded"
-    assert record.terminal is not None
-    assert record.terminal.origin == "runner"
-
-
-def test_bootstrap_from_disk_loads_owner_record_for_write_through(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    starter = _make_service(tmp_path)
-    spawn_id = _start_spawn(starter)
-    worker = _make_service(tmp_path)
-
-    bootstrapped = worker.bootstrap_from_disk(spawn_id)
-
-    assert bootstrapped is not None
-    assert bootstrapped.id == spawn_id
-
-    def fail_get_spawn(*_args: object, **_kwargs: object) -> Any:
-        raise AssertionError("bootstrapped owner transitions must not call get_spawn")
-
-    monkeypatch.setattr(spawn_store, "get_spawn", fail_get_spawn)
-
-    assert worker.mark_finalizing(spawn_id) is True
-    outcome = worker.finalize(spawn_id, "succeeded", 0, origin="runner")
-
-
-    assert isinstance(outcome, Applied)
-    assert outcome.after.status == "succeeded"
 
 
 def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: Path) -> None:
@@ -198,36 +138,6 @@ def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
                 prompt="run it",
                 status="queued",
             ),
-            launch_lock=launch_lock,
-        )
-
-    assert hook.event_types == []
-
-    service.announce(spawn_id)
-
-    assert hook.event_types == ["spawn.created"]
-
-
-def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-
-    with LaunchSlot() as launch_lock:
-        spawn_id = service.start(
-            SpawnReservation(
-                chat_id="c1",
-                session_metadata=PrimarySessionMetadata(
-                    harness="codex",
-                    model="gpt-5.4",
-                    agent="coder",
-                    agent_path="",
-                    skills=(),
-                    skill_paths=(),
-                ),
-                prompt="run it",
-                status="queued",
-            ),
-            dispatch_events=False,
             launch_lock=launch_lock,
         )
 

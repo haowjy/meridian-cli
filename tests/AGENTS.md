@@ -36,8 +36,9 @@ uv run pytest tests/    # full suite: run before marking a PR ready
 uv run meridian         # smoke test the CLI directly
 ```
 
-Focused paths override `testpaths` (including `tests/extended/`). `tests/smoke/` and
-`tests/e2e/` are opt-in scripts and guides, not pytest-collected
+Focused paths override `testpaths` (including `tests/extended/`). `tests/smoke/` holds opt-in
+pytest modules (outside `testpaths`, e.g. the installed-binary `mars` argv check) and
+markdown guides; `tests/e2e/` holds opt-in guides
 ([smoke index](smoke/README.md)). Default seams, Pi/Claude runtime-adapter gates, the
 runner-history trap: [.context/CONTEXT.md](.context/CONTEXT.md). Changes under
 `src/meridian/claude_runtime/` require the local `claude plugin validate`/`test` gates

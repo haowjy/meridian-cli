@@ -16,9 +16,10 @@ Those seams are `integration/config`, `catalog`, `safety`, `harness`, `hooks`,
 `idle`, `prompt`, `telemetry`, and `state`.
 The default is intentionally not the complete suite. Use an explicit `tests/`
 path for release, nightly, or full regression checks; focused paths continue to
-override `testpaths`, including files under `tests/extended/`. Tests in
-`tests/smoke/` and `tests/e2e/` are not pytest-collected: they contain opt-in
-scripts and manual/runtime guides. The [smoke index](../smoke/README.md) distinguishes
+override `testpaths`, including files under `tests/extended/`. `tests/smoke/` and
+`tests/e2e/` are outside `testpaths`: they hold opt-in pytest modules (e.g. the
+installed-`mars` argv check), scripts and manual/runtime guides. The
+[smoke index](../smoke/README.md) distinguishes
 cheap executable checks from live/network probes.
 
 PR CI runs the full gate, but agents should still run `uv run pytest tests/`

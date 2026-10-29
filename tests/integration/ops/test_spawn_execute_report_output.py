@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
+
+import pytest
 
 import meridian.lib.ops.spawn.execute as execute_module
 import meridian.lib.ops.spawn.execute_init as execute_init_module
@@ -28,9 +30,6 @@ from meridian.lib.state.paths import resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
-
-if TYPE_CHECKING:
-    import pytest
 
 # qa-validated: spawn-return-report
 
@@ -319,19 +318,44 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert bound_work_dir not in (params["appended_system_prompt"] or "")
 
 
-def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
+@pytest.mark.parametrize(
+    ("mode", "stage_error", "expected_message"),
+    [
+        pytest.param(
+            "blocking",
+            ValueError("harness binary not found"),
+            "harness binary not found",
+            id="blocking",
+        ),
+        pytest.param(
+            "background",
+            PermissionError("permission denied resolving project"),
+            "permission denied resolving project",
+            id="background",
+        ),
+    ],
+)
+def test_execute_spawn_pre_init_failure_returns_failed_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    stage_error: Exception,
+    expected_message: str,
 ) -> None:
     runtime = _build_test_runtime(tmp_path, monkeypatch)
 
     def _raise_project_paths(**kwargs: object) -> object:
-        raise ValueError("harness binary not found")
+        raise stage_error
 
     monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
+    execute = (
+        execute_module.execute_spawn_blocking
+        if mode == "blocking"
+        else execute_module.execute_spawn_background
+    )
 
-    result = execute_module.execute_spawn_blocking(
-        payload=SpawnCreateInput(prompt="run"),
+    result = execute(
+        payload=SpawnCreateInput(prompt="run", background=mode == "background"),
         request=SpawnRequest(
             prompt="run",
             model="gpt-5.4",
@@ -351,7 +375,7 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     assert result.model == "gpt-5.4"
     assert result.harness_id == "opencode"
     assert result.message is not None
-    assert "harness binary not found" in result.message
+    assert expected_message in result.message
     assert result.to_wire()["message"] == result.message
     assert result.to_wire()["model"] == "gpt-5.4"
     assert result.to_wire()["harness_id"] == "opencode"
@@ -403,9 +427,11 @@ def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
     assert [event.get("t") for event in sink.events] == []
 
 
+@pytest.mark.parametrize("mode", ["blocking", "background"])
 def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mode: str,
 ) -> None:
     hook = LifecycleEventHook()
     sink = RecordingOutputSink()
@@ -417,81 +443,57 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
 
     _patch_lifecycle_service_with_hook(monkeypatch, hook)
 
-    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
-        spawn = cast("Any", kwargs["spawn"])
-        spawn_store.finalize_spawn(
-            authority.runtime_root,
-            str(spawn.spawn_id),
-            "succeeded",
-            0,
-            origin="runner",
+    if mode == "blocking":
+
+        async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+            spawn = cast("Any", kwargs["spawn"])
+            spawn_store.finalize_spawn(
+                authority.runtime_root,
+                str(spawn.spawn_id),
+                "succeeded",
+                0,
+                origin="runner",
+            )
+            return 0
+
+        monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+        result = execute_module.execute_spawn_blocking(
+            payload=SpawnCreateInput(prompt="run", work="new-work-item"),
+            request=SpawnRequest(
+                prompt="run",
+                model="gpt-5.4",
+                harness="codex",
+                agent="coder",
+            ),
+            runtime=runtime,
+            ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
         )
-        return 0
+        expected_row_status = "succeeded"
+    else:
 
-    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+        class _FakePopen:
+            pid = 42424
 
-    result = execute_module.execute_spawn_blocking(
-        payload=SpawnCreateInput(prompt="run", work="new-work-item"),
-        request=SpawnRequest(
-            prompt="run",
-            model="gpt-5.4",
-            harness="codex",
-            agent="coder",
-        ),
-        runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
-    )
+        monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: _FakePopen())
+        result = execute_module.execute_spawn_background(
+            payload=SpawnCreateInput(prompt="run", work="new-work-item", background=True),
+            request=SpawnRequest(
+                prompt="run",
+                model="gpt-5.4",
+                harness="codex",
+                agent="coder",
+            ),
+            runtime=runtime,
+            ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        )
+        expected_row_status = "running"
 
-    assert result.status == "succeeded"
+    assert result.background is (mode == "background")
     assert result.spawn_id is not None
     row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
     assert row is not None
     assert row.work_id == "new-work-item"
-    assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
-    assert hook.event_types == ["spawn.created"]
-    start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
-    assert len(start_events) == 1
-    assert start_events[0]["id"] == result.spawn_id
-
-
-def test_reserve_then_prepare_background_happy_path_announces_once_with_normalized_work_id(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    hook = LifecycleEventHook()
-    sink = RecordingOutputSink()
-    runtime = _build_test_runtime(tmp_path, monkeypatch, sink=sink)
-    project_root = tmp_path / "repo"
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    authority = resolve_runtime_authority_for_write(project_root)
-    assert authority.runtime_root is not None
-
-    _patch_lifecycle_service_with_hook(monkeypatch, hook)
-
-    class _FakePopen:
-        pid = 42424
-
-    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: _FakePopen())
-
-    result = execute_module.execute_spawn_background(
-        payload=SpawnCreateInput(prompt="run", work="new-work-item", background=True),
-        request=SpawnRequest(
-            prompt="run",
-            model="gpt-5.4",
-            harness="codex",
-            agent="coder",
-        ),
-        runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
-    )
-
-    assert result.status == "running"
-    assert result.background is True
-    assert result.spawn_id is not None
-    row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
-    assert row is not None
-    assert row.work_id == "new-work-item"
-    assert row.status == "running"
+    assert row.status == expected_row_status
     assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
     assert hook.event_types == ["spawn.created"]
     start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
@@ -591,49 +593,6 @@ def test_reserve_then_prepare_materializes_context_from_work(
     assert row is not None
     assert row.work_id == "source-work"
     assert work_store.get_work_item(project_state_dir, "source-work") is not None
-
-
-def test_execute_spawn_background_pre_init_failure_returns_failed_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = _build_test_runtime(tmp_path, monkeypatch)
-
-    def _raise_project_paths(**kwargs: object) -> object:
-        raise PermissionError("permission denied resolving project")
-
-    monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
-
-    result = execute_module.execute_spawn_background(
-        payload=SpawnCreateInput(prompt="run", background=True),
-        request=SpawnRequest(
-            prompt="run",
-            model="gpt-5.4",
-            harness="opencode",
-            agent="browser-prober",
-            task_cwd="/tmp/browser-work",
-            task_cwd_source="explicit-task-dir",
-            task_cwd_work_item="browser-investigation",
-        ),
-        runtime=runtime,
-    )
-
-    assert result.status == "failed"
-    assert result.spawn_id is None
-    assert result.error == "pre_init_failed"
-    assert result.exit_code == 1
-    assert result.model == "gpt-5.4"
-    assert result.harness_id == "opencode"
-    assert result.message is not None
-    assert "permission denied resolving project" in result.message
-    assert result.to_wire()["message"] == result.message
-    assert result.to_wire()["model"] == "gpt-5.4"
-    assert result.to_wire()["harness_id"] == "opencode"
-    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
-    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
-    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
-    assert authority.runtime_root is not None
-    assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
 
 
 def test_deleted_tracked_native_file_preserves_launch_failure_reason(
