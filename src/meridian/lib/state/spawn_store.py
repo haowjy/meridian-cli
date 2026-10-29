@@ -713,9 +713,23 @@ class SpawnScan:
         return cls(tuple(sorted(records, key=_spawn_sort_key)), tuple(quarantines))
 
 
-def quarantine_hint(spawn_ids: Sequence[str]) -> str:
-    """Quarantined IDs behind the repair pointer, for commands that skip or refuse them."""
-    return f"{len(spawn_ids)} spawns; run `meridian doctor`: {', '.join(spawn_ids)}"
+def quarantine_hint(reports: Sequence[SpawnStateQuarantineReport]) -> str:
+    """Quarantined IDs with the remedy for their cause, for commands that skip or refuse them."""
+    newer: dict[int, list[str]] = {}
+    broken: list[str] = []
+    for report in reports:
+        if report.newer_version is None:
+            broken.append(report.spawn_id)
+        else:
+            newer.setdefault(report.newer_version, []).append(report.spawn_id)
+    parts = [
+        f"{len(ids)} spawns written by a newer Meridian (state v{version}); "
+        f"use that build to inspect or continue them: {', '.join(ids)}"
+        for version, ids in sorted(newer.items())
+    ]
+    if broken:
+        parts.append(f"{len(broken)} spawns; run `meridian doctor`: {', '.join(broken)}")
+    return "; ".join(parts)
 
 
 def list_spawns(
