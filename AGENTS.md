@@ -34,6 +34,7 @@ another branch? Make a worktree (`git worktree add ../meridian-cli.worktrees/<na
 ```bash
 uv sync --extra dev                            # Install
 uv run ruff check .                            # Lint
+uv run python -m meridian.dev.lints             # Source-tree rules (also a preflight step)
 uv run pytest-llm                              # Test (token-efficient; default paths, stops at first failure)
 uv run pytest tests/                           # Full suite: run before calling a branch green
 uv run --extra dev python -m pyright --warnings # Type check (0 errors, 0 warnings)

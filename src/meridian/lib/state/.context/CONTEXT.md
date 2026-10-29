@@ -344,7 +344,7 @@ new OS-specific home-directory branches.
 
 ### Atomic writes
 
-`atomic_write_text()` writes a same-directory temp file at runtime-state mode `0600`, fsync, then `os.replace()`; user-owned project files and work-item metadata use the preserve-mode writer in `lib/platform/atomic.py`. `atomic_publish_dir()` renames a complete same-volume stage to a nonexistent destination and fsyncs the parent. `append_text_line()` is binary so JSONL offsets stay stable. Enforced by `tests/contract/test_state_write_conformance.py`.
+`atomic_write_text()` writes a same-directory temp file at runtime-state mode `0600`, fsync, then `os.replace()`; user-owned project files and work-item metadata use the preserve-mode writer in `lib/platform/atomic.py`. `atomic_publish_dir()` renames a complete same-volume stage to a nonexistent destination and fsyncs the parent. `append_text_line()` is binary so JSONL offsets stay stable. Enforced by the `raw-write` rule in `src/meridian/dev/lints.py`, which the preflight `lints` step runs.
 
 ## Related KB
 

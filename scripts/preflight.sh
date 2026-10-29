@@ -30,6 +30,7 @@ case "$MODE" in
     unset PYTEST_ADDOPTS PYTESTS_LAST_FAILED
     run_step uv run --extra dev ruff check .
     run_step uv run --extra dev python -m pyright --warnings
+    run_step uv run --extra dev python -m meridian.dev.lints
     (
       cd "$ROOT_DIR/src/meridian/pi_runtime"
       # Git hooks have no TTY; allow dependency-tree recreation without prompting.
