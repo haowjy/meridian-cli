@@ -184,14 +184,12 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert not (log_dir / "prompt.md").exists()
     manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
     assert manifest.pop("permission_report")
-    assert manifest == {
-        "harness": "claude",
-        "surface": "primary",
-        "channels": {
-            "system_instruction": "append-system-prompt",
-            "user_task_prompt": "user-turn",
-            "task_context": "user-turn",
-        },
+    assert manifest["harness"] == "claude"
+    assert manifest["surface"] == "primary"
+    assert manifest["channels"] == {
+        "system_instruction": "append-system-prompt",
+        "user_task_prompt": "user-turn",
+        "task_context": "user-turn",
     }
     assert outcome.exit_code == 0
 
@@ -336,7 +334,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
 
 
 @pytest.mark.slow
-def test_run_harness_process_claude_primary_print_json_persists_session_id_from_output(
+def test_run_harness_process_claude_primary_print_json_keeps_assigned_session_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

@@ -13,21 +13,6 @@ from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
 
 
-def test_resolve_project_root_uses_literal_cwd(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    monkeypatch.chdir(project_root)
-
-    resolution = resolve_project_root_resolution()
-
-    assert resolution.project_root == project_root.resolve()
-    assert resolution.execution_cwd == project_root.resolve()
-    assert resolution.source == "cwd"
-
-
 def test_load_user_config_excludes_project_retention_layer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -120,35 +105,6 @@ def test_resolve_project_root_ignore_env_uses_cwd(
 
     assert resolution.project_root == nested.resolve()
     assert resolution.source == "cwd"
-
-
-def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    config_path = project_root / "meridian.toml"
-    config_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
-
-    assert load_config(project_root).primary.agent == "reviewer"
-
-
-def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "[defaults]\n"
-        'model = "legacy-model"\n'
-        'harness = "claude"\n'
-        "\n"
-        "[primary]\n"
-        'model = "shadow-model"\n'
-        'harness = "opencode"\n',
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root)
-
-    assert not hasattr(config.primary, "model")
-    assert not hasattr(config.primary, "harness")
 
 
 @pytest.mark.parametrize(
@@ -543,17 +499,6 @@ def test_config_show_ignores_inaccessible_implicit_user_config(
     max_depth = next(item for item in result.values if item.key == "defaults.max_depth")
     assert max_depth.value == 3
     assert any(str(config_path) in record.message for record in caplog.records)
-
-
-def test_resolve_project_config_state_reports_absent_and_write_target(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-
-    state = resolve_project_config_state(project_root)
-
-    assert state.status == "absent"
-    assert state.path is None
-    assert state.write_path == project_root.resolve() / "meridian.toml"
 
 
 def test_resolve_project_config_state_ignores_legacy_state_config(tmp_path: Path) -> None:

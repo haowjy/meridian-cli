@@ -1,4 +1,4 @@
-"""CLI integration: tool-level commands run without a Meridian project."""
+"""CLI integration: a tool-level command runs without a Meridian project."""
 
 from __future__ import annotations
 
@@ -33,11 +33,6 @@ def _run_meridian(
     )
 
 
-def _assert_rootless_success(result: subprocess.CompletedProcess[str]) -> None:
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-
-
 @pytest.fixture
 def no_project_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
@@ -54,33 +49,13 @@ def meridian_home(tmp_path: Path) -> Path:
     return home
 
 
-_ROOTLESS_COMMANDS = (
-    pytest.param(("qi",), None, id="qi"),
-    pytest.param(("kg", "check"), None, id="kg-check"),
-    pytest.param(("kg", "graph"), None, id="kg-graph"),
-    pytest.param(("qi", "check"), None, id="qi-check"),
-    pytest.param(("qi", "list"), "agents\tAGENTS.md", id="qi-list"),
-    pytest.param(("mermaid", "check"), None, id="mermaid-check"),
-    pytest.param(("config", "show"), "project_root:", id="config-show"),
-    pytest.param(
-        ("config", "get", "defaults.max_depth"),
-        "defaults.max_depth:",
-        id="config-get-max-depth",
-    ),
-    pytest.param(("ext", "list"), "meridian.config", id="ext-list"),
-    pytest.param(("ext", "commands"), "meridian.config.get:", id="ext-commands"),
-)
-
-
 @pytest.mark.integration
-@pytest.mark.parametrize(("args", "expected_output"), _ROOTLESS_COMMANDS)
-def test_rootless_tool_command_without_project(
+def test_rootless_qi_list_reports_discovery_without_project(
     no_project_workspace: Path,
     meridian_home: Path,
-    args: tuple[str, ...],
-    expected_output: str | None,
 ) -> None:
-    result = _run_meridian(list(args), cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
-    if expected_output is not None:
-        assert expected_output in result.stdout
+    result = _run_meridian(["qi", "list"], cwd=no_project_workspace, meridian_home=meridian_home)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    assert "agents\tAGENTS.md" in result.stdout

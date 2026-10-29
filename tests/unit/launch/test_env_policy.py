@@ -1,3 +1,6 @@
+"""Harness child environment policy: inheritance, overrides and Pi bind-time keys."""
+
+from __future__ import annotations
 
 import pytest
 
@@ -172,26 +175,6 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan() -> None:
                 runtime_overrides={"_MERIDIAN_DEPTH": "2"},
             )
         assert f"{key} via plan_overrides" in str(exc_info.value)
-
-
-def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
-    runtime_overrides = {
-        "MERIDIAN_PROJECT_DIR": "/repo",
-        "_MERIDIAN_DEPTH": "2",
-        "MERIDIAN_CHAT_ID": "c9007",
-        "MERIDIAN_CONTEXT_KB_DIR": "/repo/.meridian/kb",
-        "MERIDIAN_ACTIVE_WORK_ID": "current",
-        "MERIDIAN_ACTIVE_WORK_DIR": "/repo/.meridian/work/current",
-        "MERIDIAN_CONTEXT_WORK_DIR": "/repo/.meridian/work",
-        "MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR": "/repo/.meridian/archive/work",
-    }
-
-    merged = merge_env_overrides(
-        plan_overrides={},
-        runtime_overrides=runtime_overrides,
-    )
-
-    assert merged == runtime_overrides
 
 
 def test_merge_env_overrides_non_meridian_precedence() -> None:

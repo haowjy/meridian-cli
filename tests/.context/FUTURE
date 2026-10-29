@@ -9,3 +9,12 @@
   Both passed unchanged serially. Make setup/deadline assumptions deterministic
   without dropping real CLI/lock coverage or merely enlarging timeouts. Evidence:
   work/exit-identity-reporting/test-trim-{preflight,full-retry,timeouts-final-recheck}.log.
+- Launch/CLI fixture sprawl: `test_launch_process_{claude_prompt,claude_session,codex_launch,codex_fork}.py`
+  and `test_launch_process_opencode.py` each repeat minimal Mars config writers, runtime/context
+  setup and capture launchers around `tests/support/launch.py`; `cli/test_cwd_project_resolution.py`
+  and `test_rootless_tool_commands.py` repeat subprocess/env plumbing. Build one
+  filesystem-observing launch fixture in support and delete the copies. Keep the
+  scenario-specific race gates local so their ordering stays visible.
+- `integration/launch/test_signal_canceller.py::test_signal_canceller_runnerless_cancel_preserves_running_row`
+  spends ~5 s per gate on a production-length poll budget. It has an injectable grace interval;
+  use it so the refusal-to-fabricate-terminal-state assertion stays cheap.

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import meridian.lib.launch.context as launch_context
 import meridian.lib.launch.continue_replay as continue_replay_module
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -16,6 +17,7 @@ from meridian.lib.launch.continue_replay import (
     continue_replay_source_from_reference,
     launch_model_on_harness,
 )
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
 
@@ -372,3 +374,21 @@ def test_fork_ignores_observed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert live_calls == []
     assert contract.model == "claude-sonnet-4-6"
     assert contract.session.conversation_intent.selection_source == "initial_launch"
+
+
+def test_continue_fails_when_adapter_cannot_resume() -> None:
+    request = launch_context.SpawnRequest(
+        prompt="continue prompt",
+        session=SessionRequest(requested_harness_session_id="native-session"),
+    )
+    harness = type(
+        "Harness",
+        (),
+        {
+            "id": "test-harness",
+            "capabilities": type("Capabilities", (), {"supports_session_resume": False})(),
+        },
+    )()
+
+    with pytest.raises(ValueError, match="test-harness cannot resume sessions"):
+        launch_context._resolve_session_continuation(request=request, harness=harness)
