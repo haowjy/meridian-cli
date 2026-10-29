@@ -1330,35 +1330,38 @@ async def execute_with_streaming(
             runtime_root,
             lifecycle=lifecycle_service,
         )
-        execution_outcome = await spawn_service.complete_execution(
-            run.spawn_id,
-            terminal_facts,
-            origin="runner",
-            duration_secs=duration_seconds,
-            usage=finalized_usage,
-        )
-        conclusion.exit_code = execution_outcome.resolved.exit_code
-        conclusion.failure_reason = execution_outcome.resolved.error
-        outcome = execution_outcome.completion
-        if not outcome.wrote:
-            logger.info(
-                "Runner finalize skipped; spawn already terminal or missing.",
-                spawn_id=str(run.spawn_id),
-                harness_id=str(launch_context.harness.id),
+        # Defer a SIGTERM racing the finish until runner_completed, the scope-release marks and
+        # the atexit unregister are done; it is re-delivered when the mask exits.
+        with signal_coordinator().mask_termination():
+            execution_outcome = await spawn_service.complete_execution(
+                run.spawn_id,
+                terminal_facts,
+                origin="runner",
+                duration_secs=duration_seconds,
+                usage=finalized_usage,
             )
+            conclusion.exit_code = execution_outcome.resolved.exit_code
+            conclusion.failure_reason = execution_outcome.resolved.error
+            outcome = execution_outcome.completion
+            if not outcome.wrote:
+                logger.info(
+                    "Runner finalize skipped; spawn already terminal or missing.",
+                    spawn_id=str(run.spawn_id),
+                    harness_id=str(launch_context.harness.id),
+                )
 
-        runner_phase[0] = "completed"
-        lifecycle_active[0] = False
-        if lifecycle is not None:
-            _append_runner_lifecycle_event(
-                launch,
-                clock=resolved_clock,
-                event="runner_completed",
-                phase=runner_phase[0],
-                exit_code=conclusion.exit_code,
-            )
-        if atexit_callback is not None:
-            atexit.unregister(atexit_callback)
+            runner_phase[0] = "completed"
+            lifecycle_active[0] = False
+            if lifecycle is not None:
+                _append_runner_lifecycle_event(
+                    launch,
+                    clock=resolved_clock,
+                    event="runner_completed",
+                    phase=runner_phase[0],
+                    exit_code=conclusion.exit_code,
+                )
+            if atexit_callback is not None:
+                atexit.unregister(atexit_callback)
 
     return conclusion.exit_code
 
