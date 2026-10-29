@@ -15,6 +15,7 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 from meridian.env_registry import is_registered_env_name
@@ -47,8 +48,18 @@ class PythonSource:
     path: str
     text: str
 
-    def parse(self) -> ast.Module:
+    @cached_property
+    def tree(self) -> ast.Module:
         return ast.parse(self.text, filename=self.path)
+
+    @cached_property
+    def string_constants(self) -> tuple[tuple[ast.Constant, str], ...]:
+        """Every string constant and its value: what the value rules read, in one walk."""
+        return tuple(
+            (node, node.value)
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        )
 
     def mentions(self, *markers: str) -> bool:
         return any(marker in self.text for marker in markers)
@@ -102,12 +113,14 @@ RAW_WRITE_ALLOWLIST: dict[tuple[str, str, str], str] = {
     ): "Best-effort cooldown marker: only its mtime matters; it is not authoritative state.",
 }
 
-# A rule only parses the modules that spell its construct: the text of a module
-# cannot miss a node its AST contains. This keeps the scan proportional to the
-# files that can break the rule, rather than to the whole package.
-_RAW_WRITE_MARKERS = ("write_text", "write_bytes", "json.dump")
+# A text pre-filter is sound only for an identifier token (a name, attribute, or
+# module-path segment), which the source must spell as-is. It cannot stand in for a
+# string constant's value or a dotted name: implicit concatenation, escapes, spaces,
+# and line continuations all change the text without changing the AST. Rules over
+# values read the cached tree of every module; the markers below are identifiers.
+# `dump` covers `json .dump(...)`; the visitor then requires `json.dump`.
+_RAW_WRITE_MARKERS = ("write_text", "write_bytes", "dump")
 _IDLE_IMPORT_MARKER = "idle"
-_ENV_LITERAL_MARKER = "MERIDIAN_"
 _EXPORT_LIST_MARKER = "__all__"
 
 
@@ -160,7 +173,7 @@ def _raw_write_name(function: ast.expr) -> str | None:
 
 def _raw_writes(module: PythonSource) -> list[RawWrite]:
     visitor = _RawWriteVisitor(module.path)
-    visitor.visit(module.parse())
+    visitor.visit(module.tree)
     return visitor.writes
 
 
@@ -220,7 +233,7 @@ def _is_all_assignment(node: ast.AST) -> bool:
 
 
 def _python_env_literals(module: PythonSource) -> list[tuple[str, int]]:
-    tree = module.parse()
+    tree = module.tree
     # `__all__` re-exports a name the defining module already registers.
     exported: set[int] = (
         {
@@ -234,12 +247,9 @@ def _python_env_literals(module: PythonSource) -> list[tuple[str, int]]:
         else set()
     )
     return [
-        (node.value, node.lineno)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and id(node) not in exported
-        and _ENV_NAME.fullmatch(node.value)
+        (value, node.lineno)
+        for node, value in module.string_constants
+        if id(node) not in exported and _ENV_NAME.fullmatch(value)
     ]
 
 
@@ -254,7 +264,6 @@ def unregistered_env_violations(sources: Sources) -> list[Violation]:
     literals = [
         (module.path, name, line)
         for module in sources.python_modules
-        if module.mentions(_ENV_LITERAL_MARKER)
         for name, line in _python_env_literals(module)
     ] + [
         (script.path, name, line)
@@ -300,7 +309,7 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
             continue
         if not module.mentions(_IDLE_IMPORT_MARKER):
             continue
-        for node in ast.walk(module.parse()):
+        for node in ast.walk(module.tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)) and _imports_idle_policy(node):
                 violations.append(
                     Violation(
@@ -333,7 +342,8 @@ _PREVIEW_CALLERS = frozenset(
 _LAUNCH_RULES_SELF = "meridian/dev/lints.py"
 _PATHS_MODULE = "meridian.lib.state.paths"
 _RETIRED_IDENTIFIER = "resolve_spawn_log_dir"
-_LAUNCH_STRUCTURE_MARKERS = ("LaunchPaths", "replace", _PATHS_MODULE)
+# `paths` is the last segment of `_PATHS_MODULE`, however the import is spelled.
+_LAUNCH_STRUCTURE_MARKERS = ("LaunchPaths", "replace", "paths")
 _SCRIPT_QUOTED = re.compile(r"""(["'`])([^"'`\n]*)\1""")
 
 
@@ -376,7 +386,7 @@ def _is_launch_name(node: ast.expr) -> bool:
 def _launch_structure(module: PythonSource) -> list[tuple[int, str]]:
     """Constructions, aliases, copies, restricted calls, and private-name imports."""
     found: list[tuple[int, str]] = []
-    for node in ast.walk(module.parse()):
+    for node in ast.walk(module.tree):
         if isinstance(node, ast.Call):
             target = node.func
             if _is_launch_paths(target):
@@ -411,11 +421,7 @@ def _launch_structure(module: PythonSource) -> list[tuple[int, str]]:
 
 
 def _python_string_literals(module: PythonSource) -> list[tuple[int, str]]:
-    return [
-        (node.lineno, node.value)
-        for node in ast.walk(module.parse())
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    ]
+    return [(node.lineno, value) for node, value in module.string_constants]
 
 
 def _script_string_literals(script: ScriptSource) -> list[tuple[int, str]]:
@@ -430,7 +436,6 @@ def launch_path_violations(sources: Sources) -> list[Violation]:
     """Reject per-launch file names and `LaunchPaths` construction outside their owner."""
 
     names = per_launch_names()
-    literal_markers = (".signal", *names)
     found: list[Violation] = []
 
     def literal(path: str, line: int, value: str) -> Violation:
@@ -445,12 +450,11 @@ def launch_path_violations(sources: Sources) -> list[Violation]:
             found.append(
                 Violation(module.path, 0, f"{_RETIRED_IDENTIFIER} is gone; use LaunchPaths")
             )
-        if module.mentions(*literal_markers):
-            found.extend(
-                literal(module.path, line, value)
-                for line, value in _python_string_literals(module)
-                if _is_per_launch_literal(value, names)
-            )
+        found.extend(
+            literal(module.path, line, value)
+            for line, value in _python_string_literals(module)
+            if _is_per_launch_literal(value, names)
+        )
         if module.mentions(*_LAUNCH_STRUCTURE_MARKERS):
             found.extend(
                 Violation(module.path, line, message) for line, message in _launch_structure(module)

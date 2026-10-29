@@ -37,6 +37,15 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         "d = LaunchPaths.reserved(1)\n"
         "e = LaunchPaths.preview(1)\n",
     )
+    # Each spells a value or dotted name differently from what Python reads.
+    plant("meridian/core/spelled_a.py", 'X = "rep" "ort.md"\n')
+    plant("meridian/core/spelled_b.py", 'X = ("spawns/p1/report"\n     ".md")\n')
+    plant("meridian/core/spelled_c.py", 'X = "report\\x2emd"\n')
+    plant("meridian/core/spelled_d.py", 'X = "done.sig" "nal"\n')
+    plant("meridian/core/spelled_e.py", "from meridian.lib.state .paths import _X\n")
+    plant("meridian/core/spelled_f.py", "from meridian.lib.state.\\\npaths import _X\n")
+    plant("meridian/core/spelled_g.py", 'X = "MERIDIAN" "_PLANTED_SPELLED"\n')
+    plant("meridian/core/spelled_h.py", "def save(f):\n    json .dump({}, f)\n")
     plant(
         "meridian/core/env.py",
         "NAME = 'MERIDIAN_PLANTED_UNREGISTERED'\n"
@@ -52,10 +61,12 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         "meridian/core/raw.py",
         "meridian/core/dump.py",
         "meridian/core/bytes.py",
+        "meridian/core/spelled_h.py",
     }
     # `__all__` re-exports are checked by the module that defines them.
     assert {v.path for v in unregistered_env_violations(sources)} == {
         "meridian/core/env.py",
+        "meridian/core/spelled_g.py",
         "meridian/pi_runtime/extensions/env.ts",
     }
     launch = launch_path_violations(sources)
@@ -64,6 +75,9 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         ("meridian/core/literal.py", 2),
     }
     assert sorted(v.line for v in launch if v.path.endswith("literal.ts")) == [0, 1]
+    assert {v.path for v in launch if "spelled_" in v.path} == {
+        f"meridian/core/spelled_{c}.py" for c in "abcdef"
+    }
     assert [v.path for v in launch if v.path.endswith("retired.py")] == ["meridian/core/retired.py"]
     assert sorted(v.line for v in launch if v.path.endswith("structure.py")) == [1, 2, 3, 4, 5, 6]
     assert [(v.path, v.line) for v in harness_idle_import_violations(sources)] == [
