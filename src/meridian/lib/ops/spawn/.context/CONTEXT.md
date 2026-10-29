@@ -199,7 +199,7 @@ chat_id.
 Encapsulates the three-branch cancel scope logic:
 - `include_others=True` → always in scope
 - `descendant_ids` set (nested spawn caller) → only if row.id is in the subtree
-- `descendant_ids=None` (root/primary caller) → only if row.chat_id matches caller_chat_id
+- `descendant_ids=None` (root/primary caller) → only if the row's owner chat matches caller_chat_id
 
 ## session_config_dir Wire Rename
 

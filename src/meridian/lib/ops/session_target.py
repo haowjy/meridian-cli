@@ -310,8 +310,8 @@ def resolve_run_sources(
 ) -> tuple[TranscriptSource, ...]:
     """Every exact native source holding a run's turns: its log chat and its entry chat."""
     sources = [_spawn_target(row=row, record_for=sessions.get).source]
-    if row.chat_id is not None and row.chat_id != row.continue_chat_id:
-        entry = sessions.get(row.chat_id)
+    if row.entry_chat_id is not None and row.entry_chat_id != row.continue_chat_id:
+        entry = sessions.get(row.entry_chat_id)
         if entry is None:
             raise NativeSessionUnavailable(row.id, "unbound")
         sources.append(_target_from_record(entry).source)

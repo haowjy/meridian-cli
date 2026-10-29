@@ -180,13 +180,38 @@ class SpawnRecord(SpawnStateFields):
     prompt: str | None = None
 
     @property
+    def has_no_session_of_its_own(self) -> bool:
+        """A child that never started a session, so its ``chat_id`` is not evidence of one.
+
+        This build reserves a fresh child with no chat (``owner_chat_id`` still names
+        the caller). Earlier builds reserved it with the caller's chat as a
+        placeholder. v0.3.2 through v0.4.5 rebound ``chat_id`` after the session
+        started and v0.5.0 and later bind it atomically with ``session_instance_id``,
+        so either way a child with no ``session_instance_id`` and a chat that is its
+        owner's (or none, with an owner) never started. A crash between the start
+        event and the rebind in v0.3.2 through v0.4.5 leaves the same shape and
+        reads as unbound, like rows from before v0.3.2. Older chat-less rows
+        (app spawns, pre-v3) have no owner and are not matched.
+        """
+        if self.kind != "child" or self.session_instance_id:
+            return False
+        if self.chat_id is None:
+            return self.owner_chat_id is not None
+        return self.chat_id == (self.owner_chat_id or self.chat_id)
+
+    @property
+    def entry_chat_id(self) -> str | None:
+        """The chat this launch runs or will resume; None if it has no session yet."""
+        return None if self.has_no_session_of_its_own else self.chat_id
+
+    @property
     def continue_chat_id(self) -> str | None:
         """Last published current chat, otherwise the immutable entry chat."""
         if self.record_mode == "historical":
             return None
         if self.run_boundary is not None and self.run_boundary.status == "mismatch":
-            return self.chat_id
-        return self.current_chat_id or self.chat_id
+            return self.entry_chat_id
+        return self.current_chat_id or self.entry_chat_id
 
 
 __all__ = [

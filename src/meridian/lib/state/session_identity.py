@@ -19,9 +19,9 @@ from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
-    """Return the exact session chat id recorded on a spawn row."""
+    """Return the exact session chat id recorded on a spawn row, or None if it has none."""
 
-    return row.chat_id
+    return row.entry_chat_id
 
 
 def spawn_owner_chat_id(row: SpawnRecord) -> str | None:
@@ -91,7 +91,11 @@ def session_records_for_spawns(
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
-    records = tuple(records)
+    # A row with no session of its own (chat-less by design, or a legacy placeholder
+    # chat) has none to find; only older chat-less rows still need the full scan.
+    records = tuple(row for row in records if not row.has_no_session_of_its_own)
+    if not records:
+        return {}
     chats = {row.chat_id for row in records if row.chat_id}
     generations = session_store.fold_session_generations(
         session_store.chats_rows(
@@ -212,11 +216,14 @@ def get_session_record_for_spawn(
         return None
 
     row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-    if row is None:
+    if row is None or row.has_no_session_of_its_own:
         return None
+    entry_chat_id = spawn_exact_chat_id(row)
+    # An older chat-less row (app spawn, pre-v3) names no session itself: only a
+    # generation whose start event names this spawn can be its own.
     generations = (
-        session_store.chat_generations(runtime_root, row.chat_id)
-        if row.chat_id
+        session_store.chat_generations(runtime_root, entry_chat_id)
+        if entry_chat_id
         else session_store.fold_session_generations(
             session_store.chats_rows(runtime_root, None).ordered,
         )
@@ -243,11 +250,10 @@ def get_session_record_for_spawn(
             continue
         return record
 
-    exact_chat_id = spawn_exact_chat_id(row)
-    if exact_chat_id is None:
+    if entry_chat_id is None:
         return None
 
-    record = session_store.chat_record(runtime_root, exact_chat_id)
+    record = session_store.chat_record(runtime_root, entry_chat_id)
     if record is None:
         return None
     linked_spawn_id = normalize_optional_identity(record.spawn_id)

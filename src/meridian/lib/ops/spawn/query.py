@@ -302,7 +302,7 @@ def detail_from_row(
     terminal = row.terminal
     return SpawnDetailOutput(
         boundary_summary=run_boundary_summary(row),
-        chat_id=row.chat_id,
+        chat_id=row.entry_chat_id,
         continue_chat_id=row.continue_chat_id,
         run_boundary=row.run_boundary,
         spawn_id=row.id,

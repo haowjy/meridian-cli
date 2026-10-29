@@ -301,7 +301,7 @@ def test_observed_chat_is_protected_by_its_live_run_not_a_copied_lease(tmp_path:
 
 def test_spawn_current_chat_precedes_boundary_but_not_mismatch():
     row = SpawnRecord(
-        id="p1", status="running", chat_id="c-old", current_chat_id="c-new"
+        id="p1", status="running", chat_id="c-old", owner_chat_id="c0", current_chat_id="c-new"
     )
     assert row.continue_chat_id == "c-new"
     terminal = row.model_copy(update={"status": "succeeded"})

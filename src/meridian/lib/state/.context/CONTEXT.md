@@ -538,14 +538,24 @@ spawn"); resume, read and `--from` still work on the chat.
   `message` by chat ID name the previous run (a short window; once the row exists but its
   session has not started they can act on a finished run), and a racing continue is
   refused by the chat lock (`ChatBusyError`) in its worker.
-- A spawn row's `chat_id` is its own chat: an exact continue reserves it with the
-  continue target, so a continue refused before its session starts still resumes that
-  chat. A fresh child has no chat until it starts and carries its caller's chat as a
-  placeholder (`owner_chat_id` is the caller's chat); a child that fails before its
-  session starts therefore resumes or reads the caller's conversation. Reserving it
-  chat-less would need every reader that groups children by `chat_id` (`spawn list
-  --chat`, work dashboard and sessions, `session_records_for_spawns` full scans) to
-  switch to `owner_chat_id`; not done.
+- A spawn row's `chat_id` is the chat its launch runs or will resume, never the caller's.
+  An exact continue reserves it with the continue target, so a continue refused before
+  its session starts still resumes that chat. A fresh child is reserved with
+  `chat_id = None` (`owner_chat_id` is the caller's chat) and `start_session` binds the
+  chat and `session_instance_id` together; a child that fails first has no session, so
+  `continue_chat_id` is None: `--continue` refuses, `--from` passes the report alone.
+  Readers that mean "whose spawn" read `spawn_owner_chat_id`; readers that mean "which
+  session" read `entry_chat_id`/`continue_chat_id` and treat None as no session.
+- Legacy placeholder rows: releases before v0.18.0 reserved a fresh child with the
+  caller's chat. v0.3.2 through v0.4.5 rebound `chat_id` after the session started;
+  v0.5.0 and later bind `chat_id` and `session_instance_id` together.
+  `SpawnRecord.has_no_session_of_its_own` (child, no `session_instance_id`, and either no
+  `chat_id` with an owner set or `chat_id` equal to the owner chat) marks a child that
+  never started: batch session lookup skips it, `get_session_record_for_spawn` returns
+  None, and `--continue` refuses. No scan recovers its session. A row from a crash
+  between the start event and the v0.3.2–v0.4.5 rebind has the same shape and reads as
+  unbound, like rows from before v0.3.2. Older chat-less rows (app spawns, pre-v3) have
+  no owner and keep the full scan.
 
 A crash between reservation and row write leaves a link to no row; readers skip it.
 `history_id` is the relocation-stable ID of a spawn's history. Only the generation a

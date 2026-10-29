@@ -190,13 +190,12 @@ def build_spawn_reservation(
         skills=request.skills,
         skill_paths=request.skill_paths,
     )
-    # chat_id is the spawn's own chat. An exact continue already knows it; a fresh
-    # child has none until its session starts, so it carries the caller's chat as a
-    # placeholder that start_session's bind replaces (owner_chat_id keeps the caller).
+    # chat_id is the chat this spawn runs or will resume. An exact continue knows it;
+    # a fresh child has none until start_session binds one (owner_chat_id is the caller).
     own_chat_id = (
         request.session.continue_chat_id
         if is_exact_continue_session(request.session) and request.session.continue_chat_id
-        else owner_chat_id
+        else None
     )
     return SpawnReservation(
         chat_id=own_chat_id,
