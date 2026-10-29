@@ -18,6 +18,7 @@ class _FakeSMTP:
     def __init__(self) -> None:
         self.login_args: tuple[str, str] | None = None
         self.messages: list[EmailMessage] = []
+        self.tls_started = False
 
     def __enter__(self) -> _FakeSMTP:
         return self
@@ -32,11 +33,14 @@ class _FakeSMTP:
 
     def starttls(self, *, context: ssl.SSLContext) -> None:
         assert isinstance(context, ssl.SSLContext)
+        self.tls_started = True
 
     def login(self, user: str, password: str) -> None:
+        assert self.tls_started, "SMTP login before STARTTLS"
         self.login_args = (user, password)
 
     def send_message(self, message: EmailMessage) -> None:
+        assert self.tls_started, "SMTP send before STARTTLS"
         self.messages.append(message)
 
 
@@ -82,6 +86,7 @@ def test_smtp_password_file_wins_over_environment(
     )
 
     assert result.ok is True
+    assert transport.client.tls_started is True
     assert transport.client.login_args == ("sender@example.com", "from-file")
 
 
@@ -94,6 +99,7 @@ def test_smtp_uses_environment_when_password_file_is_unset(
     result = SMTPChannel(transport=transport).send(_NOTICE, _smtp_config(), event="notify.manual")
 
     assert result.ok is True
+    assert transport.client.tls_started is True
     assert transport.client.login_args == ("sender@example.com", "from-env")
 
 
@@ -138,6 +144,7 @@ def test_smtp_attaches_every_file_with_a_guessed_type(
         for part in transport.client.messages[0].iter_attachments()
     ]
     assert result.ok is True
+    assert transport.client.tls_started is True
     assert attached == [
         ("decisions.md", "text/markdown", "# Options\n"),
         ("trace.bin", "application/octet-stream", b"\x00\x01"),

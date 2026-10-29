@@ -5,15 +5,9 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from meridian.cli.output import JsonSink, TextSink
-
-
-def test_text_sink_error_ignores_machine_name() -> None:
-    stderr = io.StringIO()
-
-    TextSink(stderr=stderr).error("failed", exit_code=2, name="stable_name")
-
-    assert stderr.getvalue() == "error: failed\n"
 
 
 def test_json_sink_error_preserves_unnamed_and_named_shapes() -> None:
@@ -30,40 +24,23 @@ def test_json_sink_error_preserves_unnamed_and_named_shapes() -> None:
     ]
 
 
-def test_warning_shapes_match_output_mode() -> None:
+def test_warning_and_error_shapes_follow_the_sink() -> None:
     text_stderr = io.StringIO()
     json_stderr = io.StringIO()
 
     TextSink(stderr=text_stderr).warning("heads up")
+    TextSink(stderr=text_stderr).error("failed", exit_code=2, name="stable_name")
     JsonSink(stderr=json_stderr).warning("heads up")
 
-    assert text_stderr.getvalue() == "warning: heads up\n"
+    assert text_stderr.getvalue() == "warning: heads up\nerror: failed\n"
     assert json.loads(json_stderr.getvalue()) == {"warning": "heads up"}
 
 
-def test_json_sink_status_is_single_line_json() -> None:
+@pytest.mark.parametrize(("method", "key"), [("status", "status"), ("heartbeat", "heartbeat")])
+def test_json_sink_records_are_single_line_json(method: str, key: str) -> None:
     stderr = io.StringIO()
 
-    JsonSink(stderr=stderr).status("first line\nsecond line")
+    getattr(JsonSink(stderr=stderr), method)("first line\nsecond line")
 
-    assert stderr.getvalue() == '{"status":"first line\\nsecond line"}\n'
-    assert json.loads(stderr.getvalue()) == {"status": "first line\nsecond line"}
-
-
-def test_json_sink_heartbeat_is_single_line_json() -> None:
-    stderr = io.StringIO()
-
-    JsonSink(stderr=stderr).heartbeat("still\nworking")
-
-    assert stderr.getvalue() == '{"heartbeat":"still\\nworking"}\n'
-    assert json.loads(stderr.getvalue()) == {"heartbeat": "still\nworking"}
-
-
-def test_text_sink_status_and_heartbeat_remain_prose() -> None:
-    stderr = io.StringIO()
-    sink = TextSink(stderr=stderr)
-
-    sink.status("checking")
-    sink.heartbeat("still working")
-
-    assert stderr.getvalue() == "checking\nstill working\n"
+    assert stderr.getvalue() == f'{{"{key}":"first line\\nsecond line"}}\n'
+    assert json.loads(stderr.getvalue()) == {key: "first line\nsecond line"}

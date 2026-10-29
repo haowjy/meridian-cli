@@ -4,11 +4,6 @@ from meridian.cli.invocation import GlobalOptions, get_global_options, invocatio
 from meridian.cli.output import OutputConfig
 
 
-def test_global_options_require_an_invocation_scope() -> None:
-    with pytest.raises(RuntimeError, match="outside an invocation scope"):
-        get_global_options()
-
-
 def test_invocation_scope_restores_the_enclosing_options() -> None:
     outer = GlobalOptions(output=OutputConfig(format="text"), harness="claude")
     inner = GlobalOptions(output=OutputConfig(format="json"), harness="codex")

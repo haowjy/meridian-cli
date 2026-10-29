@@ -23,51 +23,58 @@ class _ResultChannel:
 _NOTICE = Notification(title="Meridian", body="done")
 
 
-def test_send_succeeds_when_one_channel_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        REGISTRY,
-        "ok",
-        _ResultChannel("ok", SendResult(channel="ok", status="sent")),
-    )
-    monkeypatch.setitem(
-        REGISTRY,
-        "broken",
-        _ResultChannel("broken", SendResult(channel="broken", status="failed", error="down")),
-    )
+@pytest.mark.parametrize(
+    ("channels", "push", "email", "ok", "exit_code", "statuses"),
+    [
+        (
+            {"ok": "sent", "broken": "failed"},
+            "ok",
+            "broken",
+            True,
+            0,
+            ["sent", "failed"],
+        ),
+        (
+            {"broken-a": "failed", "broken-b": "failed"},
+            "broken-a",
+            "broken-b",
+            False,
+            1,
+            ["failed", "failed"],
+        ),
+    ],
+    ids=["one-succeeds", "all-fail"],
+)
+def test_send_aggregates_channel_results(
+    monkeypatch: pytest.MonkeyPatch,
+    channels: dict[str, str],
+    push: str,
+    email: str,
+    ok: bool,
+    exit_code: int,
+    statuses: list[str],
+) -> None:
+    for name, status in channels.items():
+        monkeypatch.setitem(
+            REGISTRY,
+            name,
+            _ResultChannel(
+                name,
+                SendResult(
+                    channel=name,
+                    status=status,  # type: ignore[arg-type]
+                    error=None if status == "sent" else "down",
+                ),
+            ),
+        )
 
     report = send(
-        _NOTICE, NotifyConfig(push_backend="ok", email_backend="broken"), event="notify.manual"
+        _NOTICE, NotifyConfig(push_backend=push, email_backend=email), event="notify.manual"
     )
 
-    assert report.ok is True
-    assert report.exit_code == 0
-    assert [result.status for result in report.results] == ["sent", "failed"]
-
-
-def test_send_fails_when_all_channels_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        REGISTRY,
-        "broken-a",
-        _ResultChannel(
-            "broken-a", SendResult(channel="broken-a", status="failed", error="down")
-        ),
-    )
-    monkeypatch.setitem(
-        REGISTRY,
-        "broken-b",
-        _ResultChannel(
-            "broken-b", SendResult(channel="broken-b", status="failed", error="down")
-        ),
-    )
-
-    report = send(
-        _NOTICE,
-        NotifyConfig(push_backend="broken-a", email_backend="broken-b"),
-        event="notify.manual",
-    )
-
-    assert report.ok is False
-    assert report.exit_code == 1
+    assert report.ok is ok
+    assert report.exit_code == exit_code
+    assert [result.status for result in report.results] == statuses
 
 
 def test_send_treats_all_none_as_quiet_success() -> None:
