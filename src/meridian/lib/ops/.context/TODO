@@ -1,0 +1,3 @@
+- `SpawnListInput.status` still accepts `queued` and `finalizing` on the extension and MCP
+  surfaces, while `spawn list` rejects them as filters (v0.20.0). Those surfaces never
+  warned about the values, so deprecate them there for one release before rejecting them.

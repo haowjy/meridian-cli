@@ -617,6 +617,7 @@ directory actually read, so a Mars-provided skill points at
 | `succeeded` | Completed successfully |
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
+| `timed_out` | Exceeded its runtime budget |
 
 `running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are not listable filters: spawns written by older builds can still show them, but `--status queued`, `--status finalizing` and `--view queued` fail as unsupported. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
