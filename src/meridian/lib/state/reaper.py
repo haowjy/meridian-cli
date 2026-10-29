@@ -239,6 +239,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
 
         async def run() -> tuple[SpawnRecord, ...]:
             recovered: list[SpawnRecord] = []
+            failed: list[str] = []
             last: str | None = None
             try:
                 for row in ordered[:_MAX_LOCK_ATTEMPTS_PER_PASS]:
@@ -248,15 +249,19 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                             SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
                         )
                         if isinstance(result, SpawnRecord) and result.id in claimed_ids:
-                            recovered.append(_cleanup_after_finalize(runtime_root, result))
+                            recovered.append(result)
+                            _cleanup_after_finalize(runtime_root, result)
                     except Exception:
-                        logger.exception("repair_row_failed", spawn_id=row.id)
-                        continue
+                        failed.append(row.id)
                     if len(recovered) >= _MAX_RECOVERIES_PER_PASS:
                         break
             finally:
                 if last is not None:
                     atomic_write_text(cursor_path, last)
+                if failed:
+                    logger.warning(
+                        "repair_rows_failed", count=len(failed), spawn_ids=failed[:10]
+                    )
             return tuple(recovered)
 
         return asyncio.run(run())
