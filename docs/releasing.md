@@ -73,12 +73,13 @@ older build cannot read:
 
 ## Compatibility and versioning
 
-Use these rules when changing a stored format, config key, hook name, or CLI flag.
+Use these rules when changing a stored format, config key, hook name, CLI flag, or
+JSON output field.
 
-- **Deprecation window.** A removed or renamed config key, hook name, or CLI flag
-  keeps working for one minor release and warns with its replacement. It becomes
-  an error in the following minor release. Track the removal in the owning
-  directory's `.context/TODO`.
+- **Deprecation window.** A removed or renamed config key, hook name, CLI flag, or
+  JSON output field keeps working for one minor release and warns with its replacement.
+  It becomes an error in the following minor release (a JSON output field is dropped).
+  Track the removal in the owning directory's `.context/TODO`.
 - **State.** A new build reads anything an older build wrote: migrate on read and
   persist the migrated form on the next write. An older build that finds newer
   data refuses it loudly with a remedy (for example, quarantine a row or refuse
