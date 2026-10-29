@@ -203,6 +203,9 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
         spawn_id=SpawnId("r-resident-deadline-child"),
         launch_mode="background",
         status="running",
+        # A lockless row with no runner PID counts as starting for 15 s; this child's runner
+        # is long gone, so the deadline cleanup must not wait that out.
+        started_at="2026-01-01T00:00:00Z",
     )
     request = _build_request()
     exit_code = await asyncio.wait_for(
