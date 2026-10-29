@@ -75,9 +75,13 @@ from meridian.lib.ops.spawn.owed import (
 )
 
 logger = structlog.get_logger(__name__)
-_SPAWN_STATUS_VALUES = tuple(ALL_SPAWN_STATUSES)
+_LISTABLE_SPAWN_STATUS_VALUES = tuple(
+    status
+    for status in ALL_SPAWN_STATUSES
+    if status not in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}
+)
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
-    status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
+    status for status in ALL_SPAWN_STATUSES if status in ACTIVE_SPAWN_STATUSES
 )
 _SPAWN_USAGE_EPILOGUE = (
     "Launch detached, then track:\n\n"
@@ -829,14 +833,6 @@ def _spawn_create(
         raise SystemExit(exit_code)
 
 
-def _warn_deprecated_list_filter(flag: str) -> None:
-    print(
-        f"warning: `{flag}` is deprecated and will be removed in the next minor release; "
-        "new spawns go straight to running.",
-        file=sys.stderr,
-    )
-
-
 def _spawn_list(
     emit: Emitter,
     status: Annotated[
@@ -844,8 +840,7 @@ def _spawn_list(
         Parameter(
             name="--status",
             help=(
-                "Filter by status: running, succeeded, failed, cancelled, timed_out "
-                "(queued and finalizing are deprecated)."
+                "Filter by status: running, succeeded, failed, cancelled, timed_out."
             ),
         ),
     ] = None,
@@ -855,8 +850,7 @@ def _spawn_list(
             name="--view",
             help=(
                 "Preset list view: active, recent (recent active spawns), "
-                "all, running, completed, failed, cancelled, timed_out "
-                "(queued is deprecated). Default: active."
+                "all, running, completed, failed, cancelled, timed_out. Default: active."
             ),
         ),
     ] = "active",
@@ -896,7 +890,6 @@ def _spawn_list(
         "recent": _ACTIVE_VIEW_STATUSES,
         "all": (),
         "running": (SpawnStatus.RUNNING,),
-        "queued": (SpawnStatus.QUEUED,),
         "completed": (SpawnStatus.SUCCEEDED,),
         "failed": (SpawnStatus.FAILED,),
         "cancelled": (SpawnStatus.CANCELLED,),
@@ -908,16 +901,12 @@ def _spawn_list(
 
     if status is not None and status.strip():
         candidate = status.strip()
-        if candidate not in _SPAWN_STATUS_VALUES:
+        if candidate not in _LISTABLE_SPAWN_STATUS_VALUES:
             raise ValueError(f"Unsupported spawn status '{status}'")
         normalized_status = SpawnStatus(candidate)
-        if normalized_status in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}:
-            _warn_deprecated_list_filter(f"--status {candidate}")
     elif failed:
         normalized_statuses = (SpawnStatus.FAILED,)
     else:
-        if normalized_view == "queued":
-            _warn_deprecated_list_filter("--view queued")
         normalized_statuses = view_map[normalized_view]
 
     result = spawn_list_sync(
@@ -1410,18 +1399,7 @@ def _spawn_message(
         str,
         Parameter(help="Message text. Put long content in a file and send its path."),
     ] = "",
-    spawn_id: Annotated[
-        str | None,
-        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
-    ] = None,
 ) -> None:
-    if spawn_id is not None:
-        print(
-            "warning: `--spawn-id` is deprecated and will be removed in the next minor "
-            "release; pass the ref positionally.",
-            file=sys.stderr,
-        )
-        ref = ref or spawn_id
     if not ref:
         raise ValueError("spawn message needs a spawn ID or chat ID")
     caller = get_global_options().caller
@@ -1433,28 +1411,6 @@ def _spawn_message(
             sender_project_root=caller.project_root if caller is not None else None,
         )
     )
-
-
-def _spawn_inject_deprecated(
-    ref: Annotated[
-        str,
-        Parameter(show_default=False, help=f"Required. Session to message: {_MESSAGE_REF_FORMS}."),
-    ] = "",
-    message: Annotated[
-        str,
-        Parameter(help="Message text."),
-    ] = "",
-    spawn_id: Annotated[
-        str | None,
-        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
-    ] = None,
-) -> None:
-    print(
-        "warning: `meridian spawn inject` is deprecated and will be removed in the "
-        "next minor release; use `meridian spawn message`.",
-        file=sys.stderr,
-    )
-    _spawn_message(ref, message, spawn_id)
 
 
 def _spawn_log_removed(
@@ -1544,13 +1500,6 @@ def register_spawn_commands(app: App) -> None:
         ),
     )
     registered.add("spawn.message")
-    app.command(
-        _spawn_inject_deprecated,
-        name="inject",
-        help="Deprecated: use `meridian spawn message`.",
-        show=False,
-    )
-    registered.add("spawn.inject")
     app.command(
         _spawn_log_removed,
         name="log",

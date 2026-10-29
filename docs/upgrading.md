@@ -85,9 +85,9 @@ drop the key, not build the path.
 ## New spawns start running
 
 A new spawn is `running` from the moment it exists. It no longer shows `queued` before its
-runner starts or `finalizing` while it writes its outcome. `--status queued` and
-`--status finalizing` (and `--view queued`) still parse, with a deprecation warning, and are
-removed in the next minor release. Rows written by older builds keep those statuses.
+runner starts or `finalizing` while it writes its outcome. v0.20.0 removes the
+`--status queued`, `--status finalizing` and `--view queued` filters: they now fail as
+unsupported. Rows written by older builds keep those statuses.
 
 ## Removed hook names and keys
 
@@ -211,8 +211,7 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
 running in that chat now; `-C` addresses a session in another project. Chat and spawn
 IDs count per project.
 
-`--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
-and works until the next minor release. Pass the ref positionally instead.
+`--spawn-id` on `spawn message` was removed in v0.20.0; pass the ref positionally instead.
 
 ## Mars 0.26.1
 
@@ -1706,10 +1705,9 @@ is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 
 ## Spawn message rename
 
-`meridian spawn inject` is now `meridian spawn message`. Scripts using the old
-spelling keep working: it warns on stderr and runs the same command until the
-next minor release. Each message also opens with a `[Meridian]` line naming the
-sending spawn and chat and, when the sender can receive one, the
+`meridian spawn inject` is now `meridian spawn message`. v0.20.0 removed the old
+spelling; scripts must use `spawn message`. Each message also opens with a `[Meridian]`
+line naming the sending spawn and chat and, when the sender can receive one, the
 `meridian spawn message <sender chat ID>` command that answers it, with
 `-C <sender project root>` when the sender is in another project. Anything that parses the
 delivered text sees that line first; the text you sent follows a blank line.
