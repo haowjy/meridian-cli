@@ -1,7 +1,8 @@
 """Session log output routing for child (non-primary) spawns and primary sessions.
 
-Tests that session_log_sync picks the right output file (live vs artifact)
-for child spawns and that missing session IDs route correctly.
+Tests that session_log_sync picks the exact recorded native transcript for a
+child, a chat or a primary spawn, and that a reference without one refuses
+instead of reading runner history.
 
 # qa-validated: test-suite-redesign
 """

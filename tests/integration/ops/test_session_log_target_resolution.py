@@ -1,8 +1,8 @@
-"""Session log target resolution — detection preference, non-mutation, read-only contracts.
+"""Session log target resolution — read-only resolution, no reconciliation.
 
-Tests that resolve_transcript_source reads state without reconciliation side-effects,
-that detected transcripts take precedence without persisting the detected ID, and
-that missing-transcript detection failures are not persisted.
+Tests that resolve_transcript_source reads recorded state without reconciliation
+side-effects, that raw harness references resolve without a runtime, and that a
+tracked read never substitutes an ambient or replacement native store.
 
 # qa-validated: test-suite-redesign
 """
