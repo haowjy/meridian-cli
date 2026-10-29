@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-29
+
+### Upgrade notes
+- Meridian now pins Mars 0.26.0, up from 0.24.1. Package hooks are portable (`[[hooks.<Event>]]`, with `native-hook` naming the per-target file), state written by Mars 0.23 and earlier is no longer migrated, and hook diagnostic codes are renamed. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0260).
+
 ## [0.18.0] - 2026-10-29
 
 ### Upgrade notes
