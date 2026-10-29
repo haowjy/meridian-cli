@@ -238,6 +238,38 @@ def _repair_stale_session_locks(
     return len(cleanup.cleaned_ids)
 
 
+def _capture_orphan_primaries(
+    project_root: Path, runtime_root: Path, orphan_primaries: list[str]
+) -> None:
+    """Capture native history for recovered primaries, after every orphan is terminal.
+
+    The capture guard defers while any row bound to the same native session is
+    still active, and crashed --continue generations share one native session.
+    """
+    if not orphan_primaries:
+        return
+    from meridian.lib.ops.session_archive import (
+        NativeCaptureDeferred,
+        materialize_native_history,
+    )
+
+    for spawn_id in sorted(orphan_primaries):
+        try:
+            materialize_native_history(project_root, runtime_root, spawn_id)
+        except NativeCaptureDeferred as exc:
+            logger.debug(
+                "orphan_primary_capture_deferred",
+                spawn_id=spawn_id,
+                owner=exc.owner,
+            )
+        except Exception:
+            logger.warning(
+                "orphan_primary_capture_failed",
+                spawn_id=spawn_id,
+                exc_info=True,
+            )
+
+
 def _repair_orphan_runs(
     project_root: Path,
     *,
@@ -263,30 +295,7 @@ def _repair_orphan_runs(
         if reconciled.kind == "primary":
             orphan_primaries.append(reconciled.id)
     reconciled_orphans.sort()
-    # Capture only after every orphan is terminal: the capture guard defers
-    # while any row bound to the same native session is still active, and
-    # crashed --continue generations share one native session.
-    if orphan_primaries:
-        from meridian.lib.ops.session_archive import (
-            NativeCaptureDeferred,
-            materialize_native_history,
-        )
-
-        for spawn_id in sorted(orphan_primaries):
-            try:
-                materialize_native_history(project_root, resolved_runtime_root, spawn_id)
-            except NativeCaptureDeferred as exc:
-                logger.debug(
-                    "orphan_primary_capture_deferred",
-                    spawn_id=spawn_id,
-                    owner=exc.owner,
-                )
-            except Exception:
-                logger.warning(
-                    "orphan_primary_capture_failed",
-                    spawn_id=spawn_id,
-                    exc_info=True,
-                )
+    _capture_orphan_primaries(project_root, resolved_runtime_root, orphan_primaries)
     return len(reconciled_orphans), tuple(reconciled_orphans)
 
 
@@ -346,7 +355,14 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
             if repair_orphans:
-                _repair_orphan_runs(project_root, runtime_root=runtime_root)
+                from meridian.lib.state.reaper import recover_crashed_launches
+
+                recovered = recover_crashed_launches(project_root, runtime_root)
+                _capture_orphan_primaries(
+                    project_root,
+                    runtime_root,
+                    [row.id for row in recovered if row.kind == "primary"],
+                )
 
     threading.Thread(
         target=_run_repairs,

@@ -7,16 +7,21 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
+import structlog
+
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
@@ -131,7 +136,7 @@ def _claim_reaper_cleanup(
 
 
 def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
-    """Resolve a durable claim once, retaining failed targets for a later pass."""
+    """Resolve a durable claim once, retaining failed targets for doctor to retry."""
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
@@ -175,6 +180,91 @@ def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
             or cleanup_claim_path(runtime_root, spawn_id).is_file()
         ):
             yield record
+
+
+logger = structlog.get_logger(__name__)
+
+_MAX_LOCK_ATTEMPTS_PER_PASS = 64
+_MAX_RECOVERIES_PER_PASS = 32
+
+
+def _spawn_number(spawn_id: str) -> int:
+    digits = spawn_id.lstrip("p")
+    return int(digits) if digits.isdigit() else -1
+
+
+def _read_cursor(path: Path) -> int:
+    try:
+        return _spawn_number(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return -1
+
+
+def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[SpawnRecord, ...]:
+    """Run one bounded background pass; return the rows it finalized.
+
+    Candidates are the index's active rows in spawn-ID order, resuming after
+    ``repair-cursor`` and wrapping. Each costs one non-blocking launch-lock
+    attempt, so a pass touches at most 64 rows however many exist. Lockless
+    rows (older builds) are never touched; doctor handles those.
+    """
+    if not is_root_side_effect_process():
+        return ()
+    with try_lock_file(runtime_root / "locks" / "repair.lock", reentrant=False) as held:
+        if held is None:
+            return ()
+        try:
+            rows = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
+        except HistoryIndexIncomplete:
+            logger.debug("repair_pass_skipped", reason="history_index_unavailable")
+            return ()
+        candidates = sorted(
+            (row for row in rows if row.record_mode != "historical"),
+            key=lambda row: _spawn_number(row.id),
+        )
+        cursor_path = runtime_root / "repair-cursor"
+        cursor = _read_cursor(cursor_path)
+        ordered = [row for row in candidates if _spawn_number(row.id) > cursor] + [
+            row for row in candidates if _spawn_number(row.id) <= cursor
+        ]
+        service = build_spawn_application_service_from_roots(project_root, runtime_root)
+        claimed_ids: set[str] = set()
+
+        def claim_cleanup(stored: SpawnRecord) -> None:
+            # Runs only after this pass won the dead-launch claim.
+            _claim_reaper_cleanup(
+                runtime_root, stored, read_primary_metadata(runtime_root, stored.id)
+            )
+            claimed_ids.add(stored.id)
+
+        async def run() -> tuple[SpawnRecord, ...]:
+            recovered: list[SpawnRecord] = []
+            failed: list[str] = []
+            last: str | None = None
+            try:
+                for row in ordered[:_MAX_LOCK_ATTEMPTS_PER_PASS]:
+                    last = row.id
+                    try:
+                        result = await service.finalize_dead_launch(
+                            SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                        )
+                        if isinstance(result, SpawnRecord) and result.id in claimed_ids:
+                            recovered.append(result)
+                            _cleanup_after_finalize(runtime_root, result)
+                    except Exception:
+                        failed.append(row.id)
+                    if len(recovered) >= _MAX_RECOVERIES_PER_PASS:
+                        break
+            finally:
+                if last is not None:
+                    atomic_write_text(cursor_path, last)
+                if failed:
+                    logger.warning(
+                        "repair_rows_failed", count=len(failed), spawn_ids=failed[:10]
+                    )
+            return tuple(recovered)
+
+        return asyncio.run(run())
 
 
 def reconcile_active_spawn(
