@@ -28,9 +28,18 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
 **What changed**
 
 - Each run writes its files into its own directory under `spawns/pN/`. Use
-  `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths;
-  `spawn show --format json` and the human output no longer print `report_path` or
-  `log_path`. A run that wrote no report shows none; it never shows an earlier run's.
+  `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths.
+  The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search`
+  and `spawn wait` no longer prints a report path (the `spawn wait` table drops its `report`
+  column). `report_path` stays in the JSON of `spawn show`, `spawn status`,
+  `spawn report show` and `spawn report search` (the current run's report; a search hit's own
+  file) but is deprecated and goes in the next minor release. `log_path` was never in the JSON.
+  A run that wrote no report shows none; it never shows an earlier run's.
+- An earlier run's report is still reachable: `spawn report search` looks in every run's
+  report and names the spawn by ID, and `meridian session log pN` reads the conversation.
+- Hooks: a continue fires `spawn.started` and later `spawn.finished` for the same spawn ID,
+  not `spawn.created` for a new one. `spawn.finished` fires once per run, with a different
+  `event_id` each time.
 - Cost, tokens and duration are totals across every run of the spawn. A continue no longer
   restarts them. A spawn created before v0.18.0 counts the conversation's earlier usage again on
   its first continue: the harness reports the whole conversation's usage, and the older
