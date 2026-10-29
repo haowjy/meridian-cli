@@ -26,7 +26,11 @@ from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
 )
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
+from meridian.lib.core.spawn_lifecycle import (
+    SIGNAL_STOP_BUDGET_SECS,
+    ExecutionTerminalFacts,
+    parse_terminal_status,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -744,6 +748,9 @@ async def _run_streaming_attempt(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
             drain_exit_code = stop_exit_code
             drain_error = decision.synthetic_error

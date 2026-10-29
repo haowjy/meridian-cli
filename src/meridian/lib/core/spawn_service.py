@@ -19,6 +19,7 @@ from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
+    CANCEL_GRACE_SECS,
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
     SpawnReservation,
@@ -94,7 +95,7 @@ if TYPE_CHECKING:
     from meridian.lib.state.primary_meta import PrimaryMetadata
 
 
-_CANCEL_GRACE_SECS = 5.0
+_CANCEL_GRACE_SECS = CANCEL_GRACE_SECS
 _CANCEL_KILL_SECS = 1.0
 
 
@@ -443,30 +444,28 @@ class SpawnApplicationService:
             skills=resolved_request.skills,
             skill_paths=resolved_request.skill_paths,
         )
-        published_launch = (
-            await asyncio.to_thread(
-                self._lifecycle.start,
-                SpawnReservation(
-                    chat_id=payload.chat_id or "",
-                    owner_chat_id=payload.chat_id or "",
-                    parent_id=payload.parent_id,
-                    session_metadata=prepare_session_metadata,
-                    kind=payload.kind,
-                    prompt=resolved_request.prompt,
-                    metadata=start_metadata,
-                    spawn_id=str(final_spawn_id),
-                    harness_session_id=resolved_request.session.requested_harness_session_id,
-                    control_root=launch_ctx.control_root.as_posix(),
-                    task_cwd=(
-                        launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
-                    ),
-                    execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
-                    launch_mode=payload.launch_mode,
-                    runner_pid=payload.runner_pid,
-                    launch_policy_snapshot=resolved_request.launch_policy_snapshot,
+        published_launch = await asyncio.to_thread(
+            self._lifecycle.start,
+            SpawnReservation(
+                chat_id=payload.chat_id or "",
+                owner_chat_id=payload.chat_id or "",
+                parent_id=payload.parent_id,
+                session_metadata=prepare_session_metadata,
+                kind=payload.kind,
+                prompt=resolved_request.prompt,
+                metadata=start_metadata,
+                spawn_id=str(final_spawn_id),
+                harness_session_id=resolved_request.session.requested_harness_session_id,
+                control_root=launch_ctx.control_root.as_posix(),
+                task_cwd=(
+                    launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
                 ),
-                launch_lock=launch_lock,
-            )
+                execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
+                launch_mode=payload.launch_mode,
+                runner_pid=payload.runner_pid,
+                launch_policy_snapshot=resolved_request.launch_policy_snapshot,
+            ),
+            launch_lock=launch_lock,
         )
         if published_launch != reserved_launch:
             raise RuntimeError(
