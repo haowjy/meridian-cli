@@ -19,6 +19,7 @@ from meridian.lib.core.depth import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.spawn.repository import SpawnStateNewer, read_quarantined_chat_id
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 from meridian.lib.state.work_state import warn_missing_work_item
 
@@ -44,7 +45,12 @@ class LocalFilesystemBackend:
         return session_store.get_session_active_work_id(runtime_root, chat_id)
 
     def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
-        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        try:
+            row = spawn_store.get_spawn(runtime_root, spawn_id)
+        except SpawnStateNewer as exc:
+            # A child under a newer build's parent still resolves its chat.
+            chat = read_quarantined_chat_id(exc.report)
+            return chat.strip() or None if isinstance(chat, str) else None
         return ((row.continue_chat_id or "") if row is not None else "").strip() or None
 
 

@@ -90,6 +90,10 @@ class SpawnStateQuarantined(ValueError):
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
 
 
+MAX_STATE_VERSION = 3
+"""Newest spawn state version this build reads; a higher `v` is quarantined as newer."""
+
+
 class SpawnStateNewer(SpawnStateQuarantined):
     """A row a later build wrote: this build can neither read nor rewrite it."""
 
@@ -223,7 +227,11 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                 )
             raw = cast("dict[str, Any]", parsed)
             version = raw.get("v")
-            if isinstance(version, int) and not isinstance(version, bool) and version > 3:
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version > MAX_STATE_VERSION
+            ):
                 raise SpawnStateNewer(
                     SpawnStateQuarantineReport(
                         spawn_id=spawn_id,
