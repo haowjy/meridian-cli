@@ -6,6 +6,42 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-29
+
+### Upgrade notes
+- `--continue pN`, `--continue cN` and the session browser keep the spawn's ID; `meridian --continue <child's chat>` is refused (use the child's ID); children started after a continue record `pN` as parent; continuing a spawn from another spawn moves it under the caller. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-continue-keeps-the-spawn-id).
+- Spawn files now live in a per-run directory under `spawns/pN/launches/<n>/`. The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search` and `spawn wait` no longer prints report paths; use `meridian spawn report show pN` instead of building paths. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-continue-keeps-the-spawn-id).
+- Before running v0.18.0, update every install that shares the runtime to v0.17.5 or later; older builds stop listing spawns once v0.18.0 has written one. See [mixed versions](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-continue-keeps-the-spawn-id).
+
+### Changed
+- On a primary continue, approval (`--yolo`), effort, sandbox, network and autocompact flags now apply and become the spawn's policy for later continues; earlier builds accepted and ignored them. `--work` is accepted on both continue paths. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-continue-keeps-the-spawn-id).
+- Continuing a chat whose spawn chain began before the upgrade reopens the chat's newest spawn and uses that spawn's model, goal and policy (#839).
+- New spawns go straight to `running`; they no longer pass through `queued` or `finalizing`, and `spawn.started` hooks fire when the spawn is created. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#new-spawns-start-running).
+- Hooks: a continue fires `spawn.started` and later `spawn.finished` again for the same spawn ID, with a new `event_id`, instead of `spawn.created` for a new spawn. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-continue-keeps-the-spawn-id).
+- `spawn show`, `list`, `stats` and JSON report cost, duration and token usage as totals across a spawn's runs.
+- `spawn report search` searches every run's report, so an earlier run's report is still found after a continue.
+- No-arg `spawn wait` without `MERIDIAN_SPAWN_ID` now exits 1 with an error instead of reporting no pending spawns.
+- Leftover processes from a failed kill during crash recovery are no longer retried by the background repair pass; run `meridian doctor` (or the next cancel or continue) to clean them up.
+
+### Deprecated
+- `spawn list --status queued`, `--status finalizing` and `--view queued` still work but print a warning and are removed in the next minor release. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#new-spawns-start-running).
+- `report_path` in the JSON of `spawn show`, `spawn status`, `spawn report show` and `spawn report search` is deprecated and removed in the next minor release; use `meridian spawn report show pN`.
+
+### Fixed
+- No-arg `spawn wait` in a continued primary now waits for background spawns that started before the continue, including their children. Before, it printed "No pending spawns" while they were still running (#807).
+- A child spawn that fails before its session starts no longer continues or shows its caller's conversation: `--continue` refuses it, `--from` passes no transcript, and `session log` reports it unbound (#810).
+- Primary launches no longer read every spawn's `state.json` to find crashed spawns. The background repair reads active rows from the history index and does at most 64 lock attempts and 32 recoveries per pass, resuming where the last pass stopped. A row that fails to recover no longer stalls the pass.
+- Cancelling a spawn whose runner already died returns at once when nothing it started is still running, and any cancel takes at most about 6 seconds instead of up to about 21. A normal cancel of a running child takes about 1.5 seconds instead of about 11.
+- A cancel or other signal arriving while a spawn stops its harness no longer overruns the stop budget, including under `meridian streaming serve` (#842).
+- A terminal hangup (closing the terminal) during a spawn's final status write, for a primary session as well as a background spawn, no longer marks a finished spawn `crashed`.
+- A spawn whose runner died after writing its final report now shows `succeeded`, whether or not it was cancelled.
+- A `spawn.finished` hook is no longer skipped when a cancel's signal arrives while a child spawn is finishing; the signal is delivered after the hooks run.
+- A resumed Claude or Codex session reports only the new run's tokens and cost, not the whole session's, and a multi-turn Claude run no longer counts its first turn twice. `--fork` no longer counts the source conversation's tokens and cost again (#832).
+- A spawn continued before its earlier background result was read still delivers that result once.
+- A wait that started on one run of a spawn returns that run's result even after the spawn is continued.
+- A child that crashes mid-turn records a finish time near its last activity, not about one second after it started (#841).
+- The first history-index build on a large runtime (about 12,000 spawns) no longer fails with a timeout that every later command repeats until a manual `meridian session index rebuild`. The build is about 15% faster and has up to 60 seconds.
+
 ## [0.17.5] - 2026-10-29
 
 ### Fixed
