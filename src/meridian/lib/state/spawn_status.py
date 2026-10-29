@@ -45,11 +45,7 @@ def legacy_runner_alive(row: SpawnRecord) -> bool:
     ):
         return True
     started_at = iso_timestamp_to_epoch(row.started_at)
-    return bool(
-        not row.runner_pid
-        and started_at is not None
-        and time.time() - started_at < 15.0
-    )
+    return bool(not row.runner_pid and started_at is not None and time.time() - started_at < 15.0)
 
 
 def read_cancel_intent(launch: LaunchPaths, row: SpawnRecord) -> CancelIntent | None:
@@ -77,19 +73,20 @@ def _observed_end(launch: LaunchPaths, row: SpawnRecord) -> str:
 def derive(runtime_root: Path, row: SpawnRecord) -> SpawnRecord:
     """Overlay status on a row read while its launch lock was free (no runner).
 
-    A cancel request makes the outcome ``cancelled`` unless the launch left a durable
-    report: the report is a completion the cancel arrived too late to undo. Everything
-    that ends a dead launch (cancel, doctor, the repair pass) inherits this one rule.
+    A durable report is a completion, so it wins: the launch is ``succeeded`` with or without
+    a cancel request, and a cancel never turns a crash into a success or the reverse. Without
+    a report, a cancel request makes it ``cancelled`` and otherwise it is ``failed``/``crashed``.
+    Everything that ends a dead launch (cancel, doctor, the repair pass) inherits this rule.
     """
     if not is_active_spawn_status(row.status):
         return row
     launch = LaunchPaths.for_row(runtime_root, row)
     intent = read_cancel_intent(launch, row)
     observed_at = _observed_end(launch, row)
-    if intent is None:
-        status, exit_code, error, origin = SpawnStatus.FAILED, 1, CRASHED, "reconciler"
-    elif spawn_report_has_durable_completion(launch):
+    if spawn_report_has_durable_completion(launch):
         status, exit_code, error, origin = SpawnStatus.SUCCEEDED, 0, None, "reconciler"
+    elif intent is None:
+        status, exit_code, error, origin = SpawnStatus.FAILED, 1, CRASHED, "reconciler"
     else:
         status, exit_code, error, origin = (
             SpawnStatus.CANCELLED,

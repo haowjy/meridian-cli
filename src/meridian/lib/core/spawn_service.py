@@ -52,7 +52,6 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
 )
-from meridian.lib.launch.signals import signal_coordinator
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.json_doc import write_model_once
@@ -704,7 +703,9 @@ class SpawnApplicationService:
 
         lock = await self._locks.acquire(row.id)
         async with lock:
-            ended = await self._finalize_dead_launch_unlocked(spawn_id, before_finalize=sweep)
+            ended = await self._finalize_dead_launch_unlocked(
+                spawn_id, before_finalize=sweep, scopes_torn_down=True
+            )
             if isinstance(ended, SpawnRecord):
                 return ended
             if isinstance(ended, Lockless) and not legacy_runner_alive(row):
@@ -789,6 +790,7 @@ class SpawnApplicationService:
         spawn_id: SpawnId,
         *,
         before_finalize: Callable[[SpawnRecord], None] | None = None,
+        scopes_torn_down: bool = False,
     ) -> SpawnRecord | Live | Lockless:
         claimed = await asyncio.to_thread(
             claim_dead_launch,
@@ -813,7 +815,9 @@ class SpawnApplicationService:
                 claimed.terminal.exit_code,
                 origin=claimed.terminal.origin,
                 error=claimed.terminal.error,
-                managed_scopes_pending=is_managed_primary_candidate(claimed.stored),
+                managed_scopes_pending=(
+                    not scopes_torn_down and is_managed_primary_candidate(claimed.stored)
+                ),
             )
             snapshot = outcome.snapshot or claimed.stored
             if outcome.wrote:
@@ -927,20 +931,16 @@ class SpawnApplicationService:
             )
         was_terminal = self.is_terminal(record.status)
 
-        # The one terminal write. A SIGTERM or SIGHUP (a closing terminal) mid-write would
-        # leave the launch to read as crashed where it had finished; the runner exits right
-        # after, so the signal is ignored only for the length of the write.
-        with signal_coordinator().mask_termination():
-            outcome = self._lifecycle.finalize(
-                str(spawn_id),
-                status,
-                exit_code,
-                origin=origin,
-                duration_secs=duration_secs,
-                usage=usage,
-                error=error,
-                managed_scopes_pending=managed_scopes_pending,
-            )
+        outcome = self._lifecycle.finalize(
+            str(spawn_id),
+            status,
+            exit_code,
+            origin=origin,
+            duration_secs=duration_secs,
+            usage=usage,
+            error=error,
+            managed_scopes_pending=managed_scopes_pending,
+        )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
                 mark_scope_released,

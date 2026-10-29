@@ -49,6 +49,7 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
+from meridian.lib.launch.signals import signal_coordinator
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_identity import spawn_owner_chat_id
@@ -371,19 +372,22 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            outcome = _spawn_store().finalize_spawn(
-                self._runtime_root,
-                spawn_id,
-                status,
-                exit_code,
-                origin=origin,
-                duration_secs=duration_secs,
-                usage=usage,
-                finished_at=finished_at,
-                error=error,
-                managed_scopes_pending=managed_scopes_pending,
-                clock=clock,
-            )
+            # Only the store write is masked: a SIGTERM or SIGHUP (a closing terminal) mid-write
+            # would leave the launch reading as crashed where it had finished. Hooks run unmasked.
+            with signal_coordinator().mask_termination():
+                outcome = _spawn_store().finalize_spawn(
+                    self._runtime_root,
+                    spawn_id,
+                    status,
+                    exit_code,
+                    origin=origin,
+                    duration_secs=duration_secs,
+                    usage=usage,
+                    finished_at=finished_at,
+                    error=error,
+                    managed_scopes_pending=managed_scopes_pending,
+                    clock=clock,
+                )
             from meridian.lib.state.spawn.repository import Applied
 
             if isinstance(outcome, Applied):

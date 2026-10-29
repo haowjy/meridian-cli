@@ -147,9 +147,9 @@ with a mutator. Without the lock, external writes race with the runner's hot pat
 legacy pre-finalization bookkeeping from older builds and can disagree with the final
 outcome. The outcome lives in `terminal` and the top-level `status`.
 
-**Don't use `durable_report` or `runner_exit` to classify a dead lock-backed
-launch.** `read_derived()` and dead-launch finalization ignore both: cancel intent
-yields `cancelled`; otherwise the free launch lock yields `failed`/`crashed`. Do not
+**Don't use `runner_exit` to classify a dead lock-backed launch.** `read_derived()` and
+dead-launch finalization ignore it. A durable report yields `succeeded`; otherwise cancel
+intent yields `cancelled`; otherwise the free launch lock yields `failed`/`crashed`. Do not
 invent a separate orphan branch from a missing `runner_exit`.
 
 **Don't set flat lifecycle fact fields on the model.** Fields like `exit_code`,

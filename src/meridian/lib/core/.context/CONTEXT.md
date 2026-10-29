@@ -209,9 +209,9 @@ Two places decide it, each once:
   `ExecutionTerminalFacts` and calls `resolve_execution_terminal_state`: recorded execution
   facts outrank report text, and a durable report outranks a bare cancel.
 - **A launch with no runner** (`state.spawn_status.derive`) decides for cancel, doctor and the
-  repair pass alike: a cancel request makes it `cancelled` unless the launch left a durable
-  report, which makes it `succeeded` (origin `reconciler`). With no cancel request, loss
-  without an outcome is `failed`/`crashed`, whatever the report says.
+  repair pass alike: a durable report makes it `succeeded` (origin `reconciler`), with or
+  without a cancel request, so `spawn cancel` never turns a crash into a success or the reverse.
+  Without a report, a cancel request makes it `cancelled` and otherwise it is `failed`/`crashed`.
 
 ### Execution Terminal State Resolution
 
@@ -240,7 +240,7 @@ compatibility ([cancel](cancel.md)), but does not apply to dead lock-backed laun
 runner path.
 
 Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`; it
-consults the report only to let it outrank a cancel request.
+consults the report first: it decides `succeeded` whatever else the row says.
 
 ## Related KB
 

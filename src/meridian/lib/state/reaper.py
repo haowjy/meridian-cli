@@ -143,10 +143,6 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        if record.terminal is None or record.terminal.origin != "reconciler":
-            replace_cleanup_claim(runtime_root, spawn_id, [])
-            return
-
         from meridian.lib.core.process_cleanup import terminate_scope_sync
 
         unresolved: list[ProcessScopeSnapshot] = []
@@ -262,9 +258,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                 if last is not None:
                     atomic_write_text(cursor_path, last)
                 if failed:
-                    logger.warning(
-                        "repair_rows_failed", count=len(failed), spawn_ids=failed[:10]
-                    )
+                    logger.warning("repair_rows_failed", count=len(failed), spawn_ids=failed[:10])
             return tuple(recovered)
 
         return asyncio.run(run())

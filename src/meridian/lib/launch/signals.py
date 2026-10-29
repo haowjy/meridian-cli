@@ -20,8 +20,8 @@ from typing import Final, Protocol, cast
 # ---------------------------------------------------------------------------
 
 TARGET_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGINT, signal.SIGTERM)
-# Ignored for the length of a ``mask_termination`` section. A closing terminal sends SIGHUP,
-# which would otherwise kill a runner halfway through its terminal write.
+# Deferred for the length of a ``mask_termination`` section, then re-delivered. A closing
+# terminal sends SIGHUP, which would otherwise kill a runner halfway through its terminal write.
 TERMINATION_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGTERM, signal.SIGHUP)
 
 
@@ -101,6 +101,7 @@ class SignalCoordinator:
         self._previous_handlers: dict[signal.Signals, signal.Handlers] = {}
         self._installed_signals: set[signal.Signals] = set()
         self._termination_mask_depth = 0
+        self._deferred_termination: list[signal.Signals] = []
 
     def register_receiver(self, receiver: SignalReceiver) -> None:
         with self._lock:
@@ -114,8 +115,16 @@ class SignalCoordinator:
 
     @contextmanager
     def mask_termination(self) -> Generator[None, None, None]:
-        """Ignore SIGTERM and SIGHUP while executing a critical section."""
+        """Defer SIGTERM and SIGHUP while executing a critical section.
 
+        A signal that arrives inside is re-delivered on exit, so it is delayed, not lost.
+        Handlers can only be changed from the main thread, so elsewhere this does nothing
+        and cannot swallow a signal meant for the main thread.
+        """
+
+        if current_thread() is not main_thread():
+            yield
+            return
         with self._lock:
             self._termination_mask_depth += 1
             self._reconcile_handlers_locked()
@@ -125,6 +134,11 @@ class SignalCoordinator:
             with self._lock:
                 self._termination_mask_depth -= 1
                 self._reconcile_handlers_locked()
+                deferred = self._deferred_termination if self._termination_mask_depth == 0 else []
+                if deferred:
+                    self._deferred_termination = []
+            for signum in deferred:
+                os.kill(os.getpid(), signum)
 
     def _desired_signals_locked(self) -> set[signal.Signals]:
         desired: set[signal.Signals] = set()
@@ -178,6 +192,7 @@ class SignalCoordinator:
         signum = signal.Signals(raw_signum)
         with self._lock:
             if signum in TERMINATION_SIGNALS and self._termination_mask_depth > 0:
+                self._deferred_termination.append(signum)
                 return
             receivers = tuple(
                 receiver for receiver in self._receivers if signum in receiver.target_signals
