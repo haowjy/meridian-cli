@@ -194,8 +194,8 @@ exists on disk and its content is recognized completion evidence:
   evidence — completion requires a positive signal, not merely "non-empty and not JSON".
 
 File-backed report reads live in `state/spawn_report.py`;
-`spawn_report_has_durable_completion(runtime_root, spawn_id)` reads
-`spawns/<id>/report.md` and applies the pure lifecycle classifier.
+`spawn_report_has_durable_completion(launch)` takes a `LaunchPaths` and reads
+that launch's `report.md` and applies the pure lifecycle classifier.
 
 Persisted timestamp parsing lives in `state/timestamps.py`;
 `iso_timestamp_to_epoch(timestamp)` normalizes trailing `Z` to UTC, treats naive

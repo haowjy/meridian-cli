@@ -700,7 +700,7 @@ guards make omissions loud.
 ### Anti-Patterns
 
 **Don't invent a second per-spawn file store.** Harnesses expose native evidence and
-attempt facts; launch finalization owns `report.md` and `stderr.log` in the spawn directory.
+attempt facts; launch finalization owns `report.md` and `stderr.log` in the launch directory (`LaunchPaths`).
 
 **Don't assume `event_type` is globally unique** — always check `event.harness_id`
 first. `turn/completed` is a Codex event; OpenCode V1 uses `session.idle` and V2

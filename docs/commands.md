@@ -150,7 +150,7 @@ Progressive disclosure:
 
 ```bash
 meridian spawn -a reviewer -p "task"              # compact: status + report
-meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
+meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens inline
 meridian spawn show p123                           # moderate summary + report body
 meridian spawn status p123                         # moderate summary without report body
 meridian spawn show p123 --verbose                 # internal diagnostics view
