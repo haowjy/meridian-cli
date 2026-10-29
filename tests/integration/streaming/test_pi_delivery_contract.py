@@ -92,7 +92,7 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
         write_private(tmp_path, "bash-records.json", bash_file())
     started = await scenario(tmp_path, monkeypatch)
     started.row("p1", parent_id=None)
-    work_id = "p2" if work_kind == "child" else "b1"
+    work_id = "p2:1" if work_kind == "child" else "b1"
     if work_kind == "child":
         started.row("p2", parent_id="p1", launch_mode="background")
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
@@ -108,7 +108,7 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
         assert await settle(started) is None
         await started.idle()
         assert await settle(started) is None  # idle done still cannot waive the result
-        write_private(tmp_path, "delivery-receipts.json", {
+        write_private(tmp_path, "launch-receipts.json", {
             "v": 1, "spawn_id": "p1", "messages": {"notice": [work_id]},
         })
         assert await settle(started) is None
@@ -146,7 +146,7 @@ async def test_terminal_result_remains_owed_until_specific_message_observed(
         # Queue admission alone cannot beat the public active/message events.
         write_private(
             tmp_path,
-            "delivery-receipts.json",
+            "launch-receipts.json",
             {
                 "v": 1,
                 "spawn_id": "p1",
@@ -231,12 +231,11 @@ async def test_child_result_is_owed_without_origin_log_or_bash_record(
         await started.terminal()
         assert await settle(started) is None
         write_json(
-            tmp_path / "spawns" / "p1" / "observed-spawns.json",
+            tmp_path / "spawns" / "p1" / "observed-launches.json",
             {
                 "v": 1,
                 "spawn_id": "p1",
-                "observed_spawn_ids": ["p2"],
-                "waiting_spawn_ids": [],
+                "observed_launches": ["p2:1"],
                 "wait_reservations": {},
             },
         )
@@ -338,7 +337,7 @@ async def test_receipt_without_public_observation_fails_bounded_with_original_re
 ) -> None:
     write_private(
         tmp_path,
-        "delivery-receipts.json",
+        "launch-receipts.json",
         {
             "v": 1,
             "spawn_id": "p1",
@@ -365,7 +364,7 @@ async def test_consumed_admission_survives_cold_coordinator_restart(
     write_private(tmp_path, "bash-records.json", bash_file())
     write_private(
         tmp_path,
-        "delivery-receipts.json",
+        "launch-receipts.json",
         {
             "v": 1,
             "spawn_id": "p1",

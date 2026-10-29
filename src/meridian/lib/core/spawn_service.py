@@ -4,25 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
+    CANCEL_GRACE_SECS,
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
     SpawnReservation,
     coerce_spawn_status,
     is_active_spawn_status,
     is_terminal_spawn_status,
-    resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
@@ -44,6 +47,7 @@ from meridian.lib.launch.context import (
     materialize_launch_context,
 )
 from meridian.lib.launch.env import apply_pi_bind_time_env, resolve_pi_session_role
+from meridian.lib.launch.fork import fork_usage_seed
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
@@ -53,44 +57,52 @@ from meridian.lib.launch.resolve import (
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
+from meridian.lib.state.json_doc import write_model_once
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.liveness import is_process_alive_with_birth, signal_with_birth
+from meridian.lib.state.managed_primary import tear_down_dead_launch
+from meridian.lib.state.paths import LaunchPaths, RuntimePaths
+from meridian.lib.state.primary_meta import read_primary_metadata
 from meridian.lib.state.spawn.model import (
-    APP_LAUNCH_MODE,
+    CancelIntent,
     LaunchMode,
     SpawnOrigin,
     SpawnRecord,
+    TerminalFacts,
 )
-from meridian.lib.state.spawn.repository import Applied, Declined
-from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.spawn.repository import Applied, Decline, Declined, write_state_locked
 from meridian.lib.state.spawn_status import (
+    POLL_INTERVAL_SECS,
     Claimed,
+    Finished,
     Live,
     Lockless,
+    Running,
     Settled,
     claim_dead_launch,
+    derive,
+    legacy_runner_alive,
     overlay_derived,
+    poll_launch,
+    read_cancel_intent,
+    wait_until,
 )
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
-from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 from meridian.plugin_api.types import SpawnKind
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
-    from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
-_WAIT_POLL_INTERVAL_SECS = 0.1
-_MANAGED_CANCEL_GRACE_SECS = 5.0
-_MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+_CANCEL_GRACE_SECS = CANCEL_GRACE_SECS
+_CANCEL_KILL_SECS = 1.0
 
 
 def _fold_cancel_intent_into_facts(
     facts: ExecutionTerminalFacts,
-    record: SpawnRecord | None,
+    intent: CancelIntent | None,
 ) -> ExecutionTerminalFacts:
     """Treat a durable cancel request as observed cancellation evidence.
 
@@ -100,7 +112,6 @@ def _fold_cancel_intent_into_facts(
     second rule overriding its result.
     """
 
-    intent = None if record is None else record.cancel_intent
     if intent is None:
         return facts
     return replace(
@@ -110,17 +121,15 @@ def _fold_cancel_intent_into_facts(
     )
 
 
-def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
+def _is_live_managed_primary(
+    runtime_root: Path, record: SpawnRecord, metadata: PrimaryMetadata | None
+) -> bool:
     if record.kind != "primary" or record.chat_id is None:
         return False
     from meridian.lib.state.session_store import is_session_lease_owner_alive
 
     if is_session_lease_owner_alive(runtime_root, str(record.chat_id)):
         return True
-
-    from meridian.lib.state.primary_meta import read_primary_metadata
-
-    metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, record))
     return bool(
         metadata is not None
         and metadata.managed_backend
@@ -191,8 +200,9 @@ class CancelOutcome:
     status: SpawnStatus
     origin: SpawnOrigin
     exit_code: int
+    # The launch this outcome is for: the one the cancel observed, not necessarily the current.
+    launch_number: int
     already_terminal: bool = False
-    finalizing: bool = False
     model: str | None = None
     harness: str | None = None
 
@@ -203,7 +213,6 @@ class CompleteSpawnOutcome:
 
     wrote: bool
     transitioned: bool
-    entered_finalizing: bool
     already_terminal: bool
     snapshot: SpawnRecord | None
     spawn_id: SpawnId
@@ -259,7 +268,6 @@ class PrepareSpawnRequest:
     work_id: str | None = None
     launch_mode: LaunchMode | None = None
     runner_pid: int | None = None
-    initial_status: SpawnStatus = SpawnStatus.QUEUED
     debug_tracer: DebugTracer | None = None
 
 
@@ -307,12 +315,9 @@ class SpawnApplicationService:
         self,
         runtime_root: Path,
         lifecycle_service: SpawnLifecycleService,
-        *,
-        spawn_manager: SpawnManager | None = None,
     ) -> None:
         self._runtime_root = runtime_root
         self._lifecycle = lifecycle_service
-        self._spawn_manager = spawn_manager
         self._locks = KeyedLockRegistry()
 
     @property
@@ -423,6 +428,7 @@ class SpawnApplicationService:
         effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
         start_metadata = SpawnStartMetadata(
             forked_from_history_id=resolved_request.session.forked_from_history_id,
+            usage_seed=fork_usage_seed(self._runtime_root, resolved_request.session),
             desc=payload.desc,
             work_id=effective_work_id,
             goal=getattr(resolved_request, "goal", None),
@@ -440,31 +446,28 @@ class SpawnApplicationService:
             skills=resolved_request.skills,
             skill_paths=resolved_request.skill_paths,
         )
-        published_launch = (
-            await asyncio.to_thread(
-                self._lifecycle.start,
-                SpawnReservation(
-                    chat_id=payload.chat_id or "",
-                    owner_chat_id=payload.chat_id or "",
-                    parent_id=payload.parent_id,
-                    session_metadata=prepare_session_metadata,
-                    kind=payload.kind,
-                    prompt=resolved_request.prompt,
-                    metadata=start_metadata,
-                    spawn_id=str(final_spawn_id),
-                    harness_session_id=resolved_request.session.requested_harness_session_id,
-                    control_root=launch_ctx.control_root.as_posix(),
-                    task_cwd=(
-                        launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
-                    ),
-                    execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
-                    launch_mode=payload.launch_mode,
-                    runner_pid=payload.runner_pid,
-                    launch_policy_snapshot=resolved_request.launch_policy_snapshot,
-                    status=payload.initial_status,
+        published_launch = await asyncio.to_thread(
+            self._lifecycle.start,
+            SpawnReservation(
+                chat_id=payload.chat_id or "",
+                owner_chat_id=payload.chat_id or "",
+                parent_id=payload.parent_id,
+                session_metadata=prepare_session_metadata,
+                kind=payload.kind,
+                prompt=resolved_request.prompt,
+                metadata=start_metadata,
+                spawn_id=str(final_spawn_id),
+                harness_session_id=resolved_request.session.requested_harness_session_id,
+                control_root=launch_ctx.control_root.as_posix(),
+                task_cwd=(
+                    launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
                 ),
-                launch_lock=launch_lock,
-            )
+                execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
+                launch_mode=payload.launch_mode,
+                runner_pid=payload.runner_pid,
+                launch_policy_snapshot=resolved_request.launch_policy_snapshot,
+            ),
+            launch_lock=launch_lock,
         )
         if published_launch != reserved_launch:
             raise RuntimeError(
@@ -558,7 +561,6 @@ class SpawnApplicationService:
         work_id: str | None = None,
         launch_mode: LaunchMode | None = None,
         runner_pid: int | None = None,
-        initial_status: SpawnStatus = SpawnStatus.QUEUED,
         debug_tracer: DebugTracer | None = None,
         launch_lock: LaunchSlot,
     ) -> PreparedSpawn:
@@ -576,7 +578,6 @@ class SpawnApplicationService:
                 work_id=work_id,
                 launch_mode=launch_mode,
                 runner_pid=runner_pid,
-                initial_status=initial_status,
                 debug_tracer=debug_tracer,
             ),
             launch_lock=launch_lock,
@@ -591,89 +592,170 @@ class SpawnApplicationService:
         requested_by: Literal["user", "system"] = "user",
         force: bool = False,
     ) -> CancelOutcome:
-        """Cancel a spawn through the shared surface-neutral pipeline."""
-        lock = await self._locks.acquire(str(spawn_id))
-        async with lock:
-            record = self.require_spawn(spawn_id)
-            if self.is_terminal(record.status):
-                self._cleanup_orphan_managed_primary(spawn_id, record)
-                return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
-            if not force and _is_live_managed_primary(self._runtime_root, record):
-                raise RuntimeError(_live_primary_cancel_refusal(record))
+        """Cancel a spawn: observe once, record the intent, claim a dead launch, else signal.
 
-            record = (
-                await asyncio.to_thread(
-                    self._lifecycle.request_cancel,
-                    str(spawn_id),
-                    exit_code=130,
-                    error="cancelled",
-                    requested_by=requested_by,
-                )
-                or self.get_spawn(spawn_id)
-                or record
+        One deadline covers every wait: ``_CANCEL_GRACE_SECS`` for the runner to stop on
+        SIGTERM, then ``_CANCEL_KILL_SECS`` after SIGKILL.
+        """
+        grace_end = time.monotonic() + _CANCEL_GRACE_SECS
+        deadline = grace_end + _CANCEL_KILL_SECS
+
+        # Observe once. The stored row is read, not the derived one: a dead launch with no
+        # terminal yet reads as terminal when derived, and the claim below must write it.
+        # Nothing after this re-reads the row by ID.
+        row = self.require_spawn(spawn_id)
+        if self.is_terminal(row.status):
+            self._cleanup_orphan_managed_primary(spawn_id, row)
+            return _cancel_outcome_from_record(str(spawn_id), row, already_terminal=True)
+        launch = LaunchPaths.for_row(self._runtime_root, row)
+        primary_metadata = read_primary_metadata(launch)
+        if not force and _is_live_managed_primary(self._runtime_root, row, primary_metadata):
+            raise RuntimeError(_live_primary_cancel_refusal(row))
+
+        await asyncio.to_thread(
+            self._record_cancel_intent,
+            row,
+            launch,
+            CancelIntent(
+                requested_at=RealClock().utc_now_iso(),
+                exit_code=130,
+                error="cancelled",
+                requested_by=requested_by,
+            ),
+        )
+
+        # A launch whose runner is already dead ends here, with no signal and no grace.
+        ended = await self._end_dead_launch(row, primary_metadata, deadline)
+        if ended is None:
+            signal_with_birth(row.runner_pid, row.runner_created_at_epoch, signal.SIGTERM)
+            ended = await self._await_end(row, primary_metadata, until=grace_end, deadline=deadline)
+        if ended is None:
+            signal_with_birth(
+                row.runner_pid, row.runner_created_at_epoch, signal.SIGKILL, tree=True
             )
+            if primary_metadata is not None and primary_metadata.managed_backend:
+                for pid, birth in (
+                    (primary_metadata.backend_pid, primary_metadata.backend_birth_epoch),
+                    (primary_metadata.tui_pid, primary_metadata.tui_birth_epoch),
+                ):
+                    signal_with_birth(pid, birth, signal.SIGKILL)
+            ended = await self._await_end(row, primary_metadata, until=deadline, deadline=deadline)
+        if ended is not None:
+            return _cancel_outcome_from_record(str(spawn_id), ended)
+        # Still held at the deadline (a process stuck in the kernel, or a brief holder).
+        # The intent stays in the launch's directory for whoever ends the launch.
+        return replace(
+            _cancel_outcome_from_record(str(spawn_id), row),
+            status=SpawnStatus.FINALIZING,
+            exit_code=1,
+        )
 
-        from meridian.lib.state.primary_meta import read_primary_metadata
+    def _record_cancel_intent(
+        self, observed: SpawnRecord, launch: LaunchPaths, intent: CancelIntent
+    ) -> None:
+        """First request wins: ``cancel.json`` in the observed launch's directory.
 
-        primary_metadata = read_primary_metadata(LaunchPaths.for_row(self._runtime_root, record))
-        signal_outcome: SignalCancelOutcome | None = None
-        delivery_finalizing = False
-        if primary_metadata is not None and primary_metadata.managed_backend:
-            managed_outcome = await self._cancel_managed_primary(spawn_id, record, primary_metadata)
-            delivery_finalizing = managed_outcome.finalizing
-        else:
-            from meridian.lib.streaming.signal_canceller import SignalCanceller
+        A v3 row (``launch`` absent) may be run by an older build, which decides ``cancelled``
+        only from the row's ``cancel_intent``, so that row gets the field too. The mutator
+        re-checks ``launch`` inside the write: a reopen sets it under the launch lock, so the
+        field can only land on the v3 launch it was meant for. A v4 row never gets it.
+        """
+        write_model_once(launch.cancel, intent)
+        if observed.launch is not None:
+            return
 
-            signal_outcome = await SignalCanceller(
-                runtime_root=self._runtime_root,
-                manager=self._spawn_manager,
-            ).cancel(spawn_id)
+        def mutate(current: SpawnRecord) -> SpawnRecord | Decline:
+            if (
+                current.launch is not None
+                or not is_active_spawn_status(current.status)
+                or current.cancel_intent is not None
+            ):
+                return Decline("no cancel intent to record")
+            return current.model_copy(update={"cancel_intent": intent})
 
-        latest_after_delivery = self.get_spawn(spawn_id) or record
-        if not _has_live_execution_owner(latest_after_delivery, primary_metadata):
-            lock = await self._locks.acquire(str(spawn_id))
-            async with lock:
-                latest_after_delivery = self.get_spawn(spawn_id) or latest_after_delivery
-                converged = await self._force_cancel_convergence(
-                    spawn_id,
-                    latest_after_delivery,
-                )
-                if converged is not None:
-                    return _cancel_outcome_from_record(str(spawn_id), converged)
+        write_state_locked(
+            RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, launch.spawn_id, mutate
+        )
 
-        terminal = await self._wait_for_terminal(spawn_id, timeout=1.0)
-        if terminal is not None:
-            return _cancel_outcome_from_record(str(spawn_id), terminal, already_terminal=True)
+    async def _await_end(
+        self,
+        row: SpawnRecord,
+        primary_metadata: PrimaryMetadata | None,
+        *,
+        until: float,
+        deadline: float,
+    ) -> SpawnRecord | None:
+        """Wait for the launch's outcome, claiming it when its runner is gone."""
+        while True:
+            poll = await wait_until(self._runtime_root, row.id, row.launch_number, until=until)
+            if isinstance(poll, Finished):
+                return poll.row
+            if isinstance(poll, Running):
+                return None
+            ended = await self._end_dead_launch(row, primary_metadata, deadline)
+            if ended is not None:
+                return ended
+            # Someone else took the lock between the poll and the claim.
+            if time.monotonic() >= until:
+                return None
+            await asyncio.sleep(POLL_INTERVAL_SECS)
 
-        lock = await self._locks.acquire(str(spawn_id))
+    async def _end_dead_launch(
+        self,
+        row: SpawnRecord,
+        primary_metadata: PrimaryMetadata | None,
+        deadline: float,
+    ) -> SpawnRecord | None:
+        """Claim a launch without a runner, tear down what it left and write its outcome.
+
+        Returns the launch's terminal row, or ``None`` while a runner (or a brief holder)
+        still holds the launch lock. ``deadline`` (monotonic) bounds the teardown.
+        """
+        spawn_id = SpawnId(row.id)
+
+        def sweep(stored: SpawnRecord) -> None:
+            tear_down_dead_launch(self._runtime_root, stored, primary_metadata, until=deadline)
+
+        lock = await self._locks.acquire(row.id)
         async with lock:
-            latest = self.get_spawn(spawn_id) or record
-            if self.is_terminal(latest.status):
-                return _cancel_outcome_from_record(str(spawn_id), latest, already_terminal=True)
-            if not _has_live_execution_owner(latest, primary_metadata):
-                converged = await self._force_cancel_convergence(spawn_id, latest)
-                if converged is not None:
-                    return _cancel_outcome_from_record(
-                        str(spawn_id),
-                        converged,
-                        finalizing=not self.is_terminal(converged.status),
-                    )
-            latest = self.get_spawn(spawn_id) or latest
-            if delivery_finalizing or (signal_outcome is not None and signal_outcome.finalizing):
-                return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
-            if signal_outcome is None:
-                return _cancel_outcome_from_record(str(spawn_id), latest)
-            return _cancel_outcome_from_signal(str(spawn_id), signal_outcome, latest)
+            ended = await self._finalize_dead_launch_unlocked(
+                spawn_id,
+                before_finalize=sweep,
+                scopes_torn_down=True,
+                expected_n=row.launch_number,
+            )
+            if isinstance(ended, SpawnRecord):
+                return ended
+            if isinstance(ended, Lockless) and not legacy_runner_alive(row):
+                # A row from before launch locks: its runner is gone when its PID is.
+                await asyncio.to_thread(sweep, row)
+                derived = derive(self._runtime_root, row)
+                terminal = cast("TerminalFacts", derived.terminal)
+                outcome = await self._complete_spawn_unlocked(
+                    spawn_id,
+                    cast("TerminalSpawnStatus", derived.status),
+                    terminal.exit_code,
+                    origin=terminal.origin,
+                    error=terminal.error,
+                    expected_n=row.launch_number,
+                    finished_at=terminal.finished_at,
+                )
+                snapshot = outcome.snapshot
+                if snapshot is None or snapshot.launch_number == row.launch_number:
+                    return snapshot
+                # A continue converted the row and started the next launch during the sweep:
+                # the finish was declined, and this launch's outcome is in its archive.
+                return poll_launch(self._runtime_root, row.id, row.launch_number).row
+            return None
 
     async def cancel_descendants(self, root_id: SpawnId | str) -> set[str]:
         """Cancel the active descendant subtree of a spawn, to a fixed point.
 
-        Each descendant goes through the full cancel pipeline (intent + delivery
-        + forced convergence), so a child whose runner dies without
-        self-finalizing is still driven to a terminal status rather than left
-        as an orphan row. Rescans after each pass to catch descendants spawned
-        during the reap; bounded by ``_MAX_REAP_PASSES`` so a wedged descendant
-        cannot loop forever.
+        Each descendant goes through the full cancel sequence (intent, claim, signal,
+        wait), so a child whose runner dies without self-finalizing is still driven to
+        a terminal status rather than left as an orphan row. Rescans after each pass to
+        catch descendants spawned during the reap; bounded by ``_MAX_REAP_PASSES`` so a
+        wedged descendant cannot loop forever.
         """
         from meridian.lib.state.spawn_tree import active_descendants
 
@@ -714,51 +796,10 @@ class SpawnApplicationService:
             )
         return reaped_ids
 
-    async def _force_cancel_convergence(
-        self,
-        spawn_id: SpawnId,
-        record: SpawnRecord,
-    ) -> SpawnRecord | None:
-        if self.is_terminal(record.status):
-            return record
-
-        finalized = await self._finalize_dead_launch_unlocked(spawn_id, origin="cancel")
-        if isinstance(finalized, SpawnRecord):
-            return finalized
-        if isinstance(finalized, Live):
-            latest = self.get_spawn(spawn_id)
-            return latest if latest is not None and self.is_terminal(latest.status) else None
-
-        intent = record.cancel_intent
-        runner_exit = record.runner_exit
-        resolved = resolve_completion_cancel_precedence(
-            durable_report_completion=spawn_report_has_durable_completion(
-                LaunchPaths.for_row(self._runtime_root, record)
-            ),
-            cancel_requested=True,
-            cancel_exit_code=intent.exit_code if intent is not None else 130,
-            cancel_error=intent.error if intent is not None else "cancelled",
-            execution_exit_code=(
-                runner_exit.exit_code if runner_exit is not None else record.last_attempt_exit_code
-            ),
-            execution_terminal_status=runner_exit.status if runner_exit is not None else None,
-        )
-        if resolved is None:
-            return None
-        outcome = await self._complete_spawn_unlocked(
-            spawn_id,
-            resolved.status,
-            resolved.exit_code,
-            origin="reconciler" if resolved.status == "succeeded" else "cancel",
-            error=resolved.error,
-        )
-        return outcome.snapshot
-
     async def finalize_dead_launch(
         self,
         spawn_id: SpawnId,
         *,
-        origin: SpawnOrigin,
         before_finalize: Callable[[SpawnRecord], None] | None = None,
     ) -> SpawnRecord | Live | Lockless:
         """Claim and persist one dead lock-backed launch under both service locks."""
@@ -766,22 +807,19 @@ class SpawnApplicationService:
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
             return await self._finalize_dead_launch_unlocked(
-                spawn_id,
-                origin=origin,
-                before_finalize=before_finalize,
+                spawn_id, before_finalize=before_finalize
             )
 
     async def _finalize_dead_launch_unlocked(
         self,
         spawn_id: SpawnId,
         *,
-        origin: SpawnOrigin,
         before_finalize: Callable[[SpawnRecord], None] | None = None,
+        scopes_torn_down: bool = False,
+        expected_n: int | None = None,
     ) -> SpawnRecord | Live | Lockless:
         claimed = await asyncio.to_thread(
-            claim_dead_launch,
-            self._runtime_root,
-            str(spawn_id),
+            partial(claim_dead_launch, self._runtime_root, str(spawn_id), expected_n=expected_n)
         )
         if isinstance(claimed, Settled):
             claimed.handle.close()
@@ -799,9 +837,12 @@ class SpawnApplicationService:
                 spawn_id,
                 claimed.status,
                 claimed.terminal.exit_code,
-                origin=origin,
+                origin=claimed.terminal.origin,
                 error=claimed.terminal.error,
-                managed_scopes_pending=is_managed_primary_candidate(claimed.stored),
+                managed_scopes_pending=(
+                    not scopes_torn_down and is_managed_primary_candidate(claimed.stored)
+                ),
+                finished_at=claimed.terminal.finished_at,
             )
             snapshot = outcome.snapshot or claimed.stored
             if outcome.wrote:
@@ -810,7 +851,7 @@ class SpawnApplicationService:
                     spawn_id=str(spawn_id),
                     status=claimed.status,
                     error=claimed.terminal.error,
-                    origin=origin,
+                    origin=claimed.terminal.origin,
                 )
             return snapshot
 
@@ -825,148 +866,6 @@ class SpawnApplicationService:
         from meridian.lib.state.managed_primary import release_managed_primary_scopes
 
         release_managed_primary_scopes(self._runtime_root, spawn_id, record)
-
-    async def _wait_for_terminal(
-        self,
-        spawn_id: SpawnId,
-        *,
-        timeout: float,
-    ) -> SpawnRecord | None:
-        deadline = time.monotonic() + max(0.0, timeout)
-        while True:
-            current = self.get_spawn(spawn_id)
-            if current is not None and self.is_terminal(current.status):
-                return current
-            now = time.monotonic()
-            if now >= deadline:
-                return None
-            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_SECS, deadline - now))
-
-    async def _cancel_managed_primary(
-        self,
-        spawn_id: SpawnId,
-        record: SpawnRecord,
-        primary_metadata: PrimaryMetadata,
-    ) -> CancelOutcome:
-        from meridian.lib.state.managed_primary import terminate_managed_primary_processes
-
-        if self.is_terminal(record.status):
-            return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
-
-        started_epoch = iso_timestamp_to_epoch(record.started_at)
-        launcher_pid = primary_metadata.launcher_pid
-        launcher_alive = launcher_pid is not None and is_process_alive(
-            launcher_pid, created_after_epoch=started_epoch
-        )
-        if launcher_alive:
-            assert launcher_pid is not None
-            terminate_managed_primary_processes(
-                primary_metadata,
-                include_launcher=True,
-                include_runtime_children=False,
-            )
-            latest = await self._wait_for_terminal_or_process_exit(
-                spawn_id,
-                pid=launcher_pid,
-                created_after_epoch=started_epoch,
-                timeout=_MANAGED_CANCEL_GRACE_SECS,
-            )
-        else:
-            latest = None
-
-        if latest is None:
-            terminate_managed_primary_processes(
-                primary_metadata,
-                include_launcher=False,
-            )
-            latest = await self._wait_for_terminal_or_execution_exit(
-                spawn_id,
-                record=record,
-                primary_metadata=primary_metadata,
-                timeout=_MANAGED_CANCEL_FALLBACK_WAIT_SECS,
-            )
-
-        if latest is None:
-            latest = self.get_spawn(spawn_id) or record
-            if latest.status == "finalizing":
-                return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
-            if self.is_terminal(latest.status):
-                return _cancel_outcome_from_record(
-                    str(spawn_id),
-                    latest,
-                    already_terminal=True,
-                )
-
-            if self._lifecycle.mark_finalizing(str(spawn_id)):
-                latest = self.get_spawn(spawn_id) or latest
-            else:
-                latest = self.get_spawn(spawn_id) or latest
-                if latest.status == "finalizing":
-                    return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
-                if self.is_terminal(latest.status):
-                    return _cancel_outcome_from_record(
-                        str(spawn_id),
-                        latest,
-                        already_terminal=True,
-                    )
-
-        # Best-effort: release any Phase-3 scope records so the reaper does not
-        # re-terminate processes that the metadata path already signalled.
-        latest_for_cleanup = self.get_spawn(spawn_id) or latest
-        from meridian.lib.core.process_cleanup import cancel_managed_primary
-
-        await asyncio.to_thread(
-            cancel_managed_primary,
-            self._runtime_root,
-            latest_for_cleanup,
-            grace_seconds=0.0,
-        )
-
-        return _cancel_outcome_from_record(
-            str(spawn_id),
-            latest,
-            finalizing=latest.status == "finalizing",
-        )
-
-    async def _wait_for_terminal_or_process_exit(
-        self,
-        spawn_id: SpawnId,
-        *,
-        pid: int,
-        created_after_epoch: float | None,
-        timeout: float,
-    ) -> SpawnRecord | None:
-        deadline = time.monotonic() + max(0.0, timeout)
-        while True:
-            current = self.get_spawn(spawn_id)
-            if current is not None and self.is_terminal(current.status):
-                return current
-            if not is_process_alive(pid, created_after_epoch=created_after_epoch):
-                return None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_SECS, remaining))
-
-    async def _wait_for_terminal_or_execution_exit(
-        self,
-        spawn_id: SpawnId,
-        *,
-        record: SpawnRecord,
-        primary_metadata: PrimaryMetadata,
-        timeout: float,
-    ) -> SpawnRecord | None:
-        deadline = time.monotonic() + max(0.0, timeout)
-        while True:
-            current = self.get_spawn(spawn_id)
-            if current is not None and self.is_terminal(current.status):
-                return current
-            if not _has_live_execution_owner(current or record, primary_metadata):
-                return None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_SECS, remaining))
 
     async def complete_spawn(
         self,
@@ -1012,8 +911,13 @@ class SpawnApplicationService:
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
             record = self.get_spawn(spawn_id)
+            intent = (
+                None
+                if record is None
+                else read_cancel_intent(LaunchPaths.for_row(self._runtime_root, record), record)
+            )
             resolved = resolve_execution_terminal_outcome(
-                _fold_cancel_intent_into_facts(facts, record)
+                _fold_cancel_intent_into_facts(facts, intent)
             )
             completion = await self._complete_spawn_unlocked(
                 spawn_id,
@@ -1040,32 +944,19 @@ class SpawnApplicationService:
         usage: TokenUsage | None = None,
         error: str | None = None,
         managed_scopes_pending: bool = False,
+        expected_n: int | None = None,
+        finished_at: str | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
             return CompleteSpawnOutcome(
                 wrote=False,
                 transitioned=False,
-                entered_finalizing=False,
                 already_terminal=False,
                 snapshot=None,
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
-        if not was_terminal:
-            await asyncio.to_thread(
-                self._lifecycle.record_runner_exit,
-                str(spawn_id),
-                status=status,
-                exit_code=exit_code,
-                error=error,
-            )
-            record = self.get_spawn(spawn_id) or record
-            was_terminal = self.is_terminal(record.status)
-
-        entered_finalizing = False
-        if record.status == "running":
-            entered_finalizing = self._lifecycle.mark_finalizing(str(spawn_id))
 
         outcome = self._lifecycle.finalize(
             str(spawn_id),
@@ -1076,6 +967,8 @@ class SpawnApplicationService:
             usage=usage,
             error=error,
             managed_scopes_pending=managed_scopes_pending,
+            expected_n=expected_n,
+            finished_at=finished_at,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
@@ -1094,7 +987,6 @@ class SpawnApplicationService:
                 and not self.is_terminal(outcome.before.status)
                 and self.is_terminal(outcome.after.status)
             ),
-            entered_finalizing=entered_finalizing,
             already_terminal=was_terminal,
             snapshot=(
                 outcome.after
@@ -1107,29 +999,11 @@ class SpawnApplicationService:
         )
 
 
-def _cancel_outcome_from_signal(
-    spawn_id: str,
-    outcome: SignalCancelOutcome,
-    record: SpawnRecord,
-) -> CancelOutcome:
-    return CancelOutcome(
-        spawn_id=spawn_id,
-        status=outcome.status,
-        origin=outcome.origin,
-        exit_code=outcome.exit_code,
-        already_terminal=outcome.already_terminal,
-        finalizing=outcome.finalizing,
-        model=record.model,
-        harness=record.harness,
-    )
-
-
 def _cancel_outcome_from_record(
     spawn_id: str,
     record: SpawnRecord,
     *,
     already_terminal: bool = False,
-    finalizing: bool = False,
 ) -> CancelOutcome:
     terminal = record.terminal
     if terminal is not None:
@@ -1144,44 +1018,14 @@ def _cancel_outcome_from_record(
         origin=origin,
         exit_code=exit_code,
         already_terminal=already_terminal,
-        finalizing=finalizing,
         model=record.model,
         harness=record.harness,
+        launch_number=record.launch_number,
     )
 
 
 def _coerce_cancel_status(status: str) -> SpawnStatus:
     return coerce_spawn_status(status)
-
-
-def _has_live_execution_owner(
-    record: SpawnRecord,
-    primary_metadata: PrimaryMetadata | None,
-) -> bool:
-    if record.launch_mode == APP_LAUNCH_MODE:
-        return True
-    started_epoch = iso_timestamp_to_epoch(record.started_at)
-    runner_created_at_epoch = record.runner_created_at_epoch or started_epoch
-    if record.runner_pid is not None and is_process_alive(
-        record.runner_pid,
-        created_after_epoch=runner_created_at_epoch,
-    ):
-        return True
-    if record.worker_pid is not None and is_process_alive(
-        record.worker_pid,
-        created_after_epoch=started_epoch,
-    ):
-        return True
-    if primary_metadata is None:
-        return False
-    for pid in (
-        primary_metadata.launcher_pid,
-        primary_metadata.backend_pid,
-        primary_metadata.tui_pid,
-    ):
-        if pid is not None and is_process_alive(pid, created_after_epoch=started_epoch):
-            return True
-    return False
 
 
 __all__ = [

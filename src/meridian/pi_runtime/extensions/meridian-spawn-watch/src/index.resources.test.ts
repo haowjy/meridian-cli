@@ -133,9 +133,9 @@ describe("bounded result delivery", () => {
 
     const delivered = fixture.notices.flatMap((notice) => notice.details.work_ids);
     expect(new Set(delivered).size).toBe(35);
-    expect(delivered).toEqual(Array.from({ length: 35 }, (_, index) => `p${String(index).padStart(3, "0")}`));
+    expect(delivered).toEqual(Array.from({ length: 35 }, (_, index) => `p${String(index).padStart(3, "0")}:1`));
     const receipts = JSON.parse(await readFile(
-      path.join(fixture.root, "pi-bash", "p-parent", "delivery-receipts.json"), "utf8",
+      path.join(fixture.root, "pi-bash", "p-parent", "launch-receipts.json"), "utf8",
     ));
     expect(receipts.messages).toEqual(Object.fromEntries(fixture.notices.map((notice) => [
       notice.details.delivery_id, notice.details.work_ids,
@@ -151,11 +151,12 @@ describe("bounded result delivery", () => {
 
     await fixture.runtime!.deliverAtBoundary();
     const first = fixture.notices[0]!;
-    expect(first.details.work_ids).toEqual(ids.slice(0, 32));
+    const workIds = ids.map((id) => `${id}:1`);
+    expect(first.details.work_ids).toEqual(workIds.slice(0, 32));
     expect(Buffer.byteLength(first.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
-    for (const id of first.details.work_ids) {
+    for (const id of ids.slice(0, 32)) {
       expect(first.content).toContain(`${id} succeeded (exit 0`);
-      expect(first.content).toContain(`/spawns/${id}/report.md`);
+      expect(first.content).toContain(`meridian spawn report show ${id}`);
       expect(first.content).toContain(`meridian session log ${id}`);
     }
     expect(first.content.match(/Optional spawn details truncated/g)).toHaveLength(32);
@@ -163,17 +164,17 @@ describe("bounded result delivery", () => {
 
     await fixture.runtime!.deliverAtBoundary();
     const second = fixture.notices[1]!;
-    expect(second.details.work_ids).toEqual([ids[32]]);
+    expect(second.details.work_ids).toEqual([workIds[32]]);
     await fixture.runtime!.admitMessage({ role: "custom", ...second });
 
     const delivered = fixture.notices.flatMap((notice) => notice.details.work_ids);
-    expect(delivered).toEqual(ids);
+    expect(delivered).toEqual(workIds);
     expect(new Set(delivered).size).toBe(33);
     const receipts = JSON.parse(await readFile(
-      path.join(fixture.root, "pi-bash", "p-parent", "delivery-receipts.json"), "utf8",
+      path.join(fixture.root, "pi-bash", "p-parent", "launch-receipts.json"), "utf8",
     ));
     expect(Object.values(receipts.messages)).toEqual([
-      ids.slice(0, 32), [ids[32]],
+      workIds.slice(0, 32), [workIds[32]],
     ]);
   });
 
@@ -211,10 +212,10 @@ describe("bounded result delivery", () => {
 
     await fixture.runtime!.deliverAtBoundary();
     expect(fixture.notices).toHaveLength(1);
-    expect(fixture.notices[0]!.details.work_ids).toEqual(["p001", "p002", "b001"]);
+    expect(fixture.notices[0]!.details.work_ids).toEqual(["p001:1", "p002:1", "b001"]);
     expect(Buffer.byteLength(fixture.notices[0]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
     expect(fixture.notices[0]!.content).toContain("p001 succeeded (exit 0");
-    expect(fixture.notices[0]!.content).toContain(`Full report: ${reportPath}`);
+    expect(fixture.notices[0]!.content).toContain("Full report: meridian spawn report show p001");
     expect(fixture.notices[0]!.content).toContain("p002 succeeded (exit 0");
     expect(fixture.notices[0]!.content).toContain("Background bash b001 exited (exit 7");
     expect(fixture.notices[0]!.content).toContain('bash_manage({action: "output", bash_id: "b001"})');
@@ -269,7 +270,7 @@ describe("bounded result delivery", () => {
     await fixture.bash(bashRecord("命".repeat(30_000)));
 
     await fixture.runtime!.deliverAtBoundary();
-    expect(fixture.notices[1]!.details.work_ids).toEqual(["p001", "b-demo"]);
+    expect(fixture.notices[1]!.details.work_ids).toEqual(["p001:1", "b-demo"]);
     expect(Buffer.byteLength(fixture.notices[1]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
     expect(fixture.notices[1]!.content).toContain("p001 succeeded (exit 0");
     expect(fixture.notices[1]!.content).toContain("Background bash b-demo exited (exit 7");

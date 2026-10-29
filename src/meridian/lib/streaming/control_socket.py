@@ -111,7 +111,7 @@ def _sweep_stale_sockets(own_path: Path) -> None:
                     probe.setblocking(False)
                     if probe.connect_ex(entry.path) != errno.ECONNREFUSED:
                         continue
-                # Preserve external replacements; runners never reuse socket names.
+                # Preserve external replacements; the launch lock serializes runners of one spawn.
                 after = os.lstat(entry.path)
                 if (before.st_dev, before.st_ino, before.st_ctime_ns) == (
                     after.st_dev,

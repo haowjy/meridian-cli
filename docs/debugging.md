@@ -15,7 +15,7 @@ Read this only when something looks wrong: a spawn seems stuck, expected output 
 
 ## Spawn Artifact Layout
 
-Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spawn-id>/`. Use CLI output rather than hardcoding this path.
+Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spawn-id>/`. Spawns created by v0.18 and later keep each run's files (prompt, transcript, report, logs) in `launches/<n>/` inside that directory, and the spawn-level files (`state.json`, `launch.lock`, `scope.json`) at the top; older spawns keep a run's files at the top too. Use CLI output (`meridian spawn show`, `meridian spawn report show`) rather than hardcoding paths.
 
 | File | Contents |
 |---|---|
@@ -23,8 +23,6 @@ Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spa
 | `report.md` | Final report when the spawn reached report emission |
 | `output.jsonl` | Raw harness stdout (prefer `meridian spawn log`) |
 | `stderr.log` | Harness stderr, warnings, and errors |
-| `prompt.md` | Prompt materialized for the harness |
-| `harness.pid` | Foreground harness PID file |
 
 ## First Checks
 
@@ -40,24 +38,22 @@ Use `show` first to inspect the persisted state for one spawn. Use `wait` if the
 
 ## Logs
 
-Each spawn records a stderr log under the Meridian state root. Prefer getting the path from `spawn show` output instead of constructing it manually.
+Each run of a spawn keeps its own stderr log in `launches/<n>/stderr.log` inside the spawn's directory (older spawns keep it at the top of that directory). Find the runtime root with `meridian doctor` (`runtime_root:`), then list the latest run's files:
 
 ```bash
-meridian spawn show SPAWN_ID
-# Look for "log_path" in the JSON output.
-```
-
-If you already know the resolved state root, the log is typically at:
-
-```text
-$MERIDIAN_STATE_ROOT/spawns/SPAWN_ID/stderr.log
+meridian doctor
+ls <runtime_root>/spawns/SPAWN_ID/launches/
 ```
 
 Tail a running log only when you need detailed harness traces:
 
 ```bash
-tail -f "$MERIDIAN_STATE_ROOT/spawns/SPAWN_ID/stderr.log"
+tail -f <runtime_root>/spawns/SPAWN_ID/launches/N/stderr.log
 ```
+
+To read what a run reported rather than how it ran, use `meridian spawn report show SPAWN_ID`.
+After a continue, that shows the latest run. An earlier run's report is found by
+`meridian spawn report search QUERY`, and its conversation by `meridian session log SPAWN_ID`.
 
 ## Shared Files
 
@@ -71,7 +67,7 @@ ls -la "$(meridian context kb)"
 
 Meridian derives running-spawn status on read. If a runner dies without writing an outcome, `spawn list`, `spawn show`, and `spawn wait` immediately report `failed`/`crashed`; a pending cancel request reports `cancelled`. Plain `meridian doctor` lists such spawns under `dead_spawns_unfinalized`; `meridian doctor --kill-orphans` persists the outcome and cleans up recorded process scopes.
 
-A spawn in `finalizing` status is **not stuck** — it is in the drain/report/final-status window. Give it a few seconds before treating it as stuck. If the runner's lifetime lock is freed before an outcome is written, the spawn reads as `failed`/`crashed` (or `cancelled` when cancellation was requested). Check `report.md`; it may still contain useful work, but it does not determine the outcome.
+A `running` spawn whose runner is alive is not stuck while it drains and writes its report. If the runner's lifetime lock is freed before an outcome is written, the spawn reads as `failed`/`crashed` (or `cancelled` when cancellation was requested). Check `report.md`; it may still contain useful work, but it does not determine the outcome.
 
 If a spawn seems stuck, run:
 

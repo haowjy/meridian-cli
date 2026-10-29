@@ -178,9 +178,7 @@ session ID. `@latest`, `@last-failed` and `@last-completed` also work with `--co
 
 ## Spawn shows as `finalizing`
 
-`finalizing` is a normal, short-lived active status. It means the runner has finished its post-exit work (output drain, report extraction) and is committing the terminal state. You may briefly see it in `spawn list` or the `work` dashboard between harness exit and terminal persistence. No action needed — the spawn will move to `succeeded` or `failed` momentarily.
-
-If a spawn stays in `finalizing` for more than a minute or two, the runner may have crashed in the finalization window. If so, status reads already show it as crashed (see below).
+New spawns never show `finalizing`; they go from `running` straight to their outcome. You can still see it on a spawn an older build wrote, or in the output of `spawn cancel` when a cancellation did not finish within about 6 seconds because the runner's process is stuck. In both cases, if the runner has died the status reads as crashed or cancelled (see below); otherwise run `meridian doctor`.
 
 ## Spawn shows as crashed
 
@@ -206,6 +204,15 @@ If `report.md` exists and looks complete, the work product is likely usable even
 ## Spawn exited with code 143 or 137
 
 The process was killed externally (SIGTERM/SIGKILL). Check `meridian spawn show ID` — if status is `succeeded`, the signal hit during cleanup and no retry is needed. Otherwise check for OOM or external kill, then retry.
+
+## A package's hook doesn't run
+
+Check these first:
+
+- **Codex:** it runs a project's hooks only in a trusted project, and asks you to review new or moved handlers with `/hooks`.
+- **Invalid hook in a dependency:** Mars keeps the last good install and warns `hook-invalid-kept`. Run `meridian mars sync` and read the warning.
+
+Mars documents the hook format and per-harness behavior in its [reference](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
 
 ## Config not taking effect
 
@@ -251,8 +258,10 @@ If multi-repo filesystem access is required, use a harness that supports workspa
 ## Spawn artifacts
 
 Each spawn writes artifacts under
-`~/.meridian/projects/<uuid>/spawns/<spawn_id>/`. Use `meridian spawn show ID`
-to read them without navigating the path directly.
+`~/.meridian/projects/<uuid>/spawns/<spawn_id>/`. Spawns created by v0.18 and later
+keep every file below except `state.json` in `launches/<n>/` inside that directory.
+Use `meridian spawn show ID` and `meridian spawn report show ID` to read them
+without navigating the path directly.
 
 | File | Contents |
 | ---- | -------- |

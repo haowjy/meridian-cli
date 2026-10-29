@@ -107,7 +107,7 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     bound = bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
-            launch=LaunchPaths.preview(runtime_root, "p-child"),
+            launch=LaunchPaths.preview(runtime_root),
             dry_run=True,
         ),
         runtime=launch_runtime,

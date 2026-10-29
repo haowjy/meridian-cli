@@ -136,17 +136,13 @@ def _claim_reaper_cleanup(
     )
 
 
-def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
+def resolve_cleanup_claim(runtime_root: Path, record: SpawnRecord) -> None:
     """Resolve a durable claim once, retaining failed targets for doctor to retry."""
     spawn_id = SpawnId(record.id)
     with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        if record.terminal is None or record.terminal.origin != "reconciler":
-            replace_cleanup_claim(runtime_root, spawn_id, [])
-            return
-
         from meridian.lib.core.process_cleanup import terminate_scope_sync
 
         unresolved: list[ProcessScopeSnapshot] = []
@@ -161,7 +157,7 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
 
 def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
     if is_terminal_spawn_status(record.status):
-        _cleanup_claimed_scopes(runtime_root, record)
+        resolve_cleanup_claim(runtime_root, record)
     return record
 
 
@@ -249,7 +245,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                     last = row.id
                     try:
                         result = await service.finalize_dead_launch(
-                            SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                            SpawnId(row.id), before_finalize=claim_cleanup
                         )
                         if isinstance(result, SpawnRecord) and result.id in claimed_ids:
                             recovered.append(result)
@@ -308,7 +304,6 @@ def reconcile_active_spawn(
             runtime_root,
         ).finalize_dead_launch(
             SpawnId(record.id),
-            origin="reconciler",
             before_finalize=claim_cleanup,
         )
     )

@@ -24,7 +24,7 @@ from meridian.lib.state.process_scope_projection import (
 )
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_store import delete_published_spawn
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from tests.support.launch_paths import launch_paths
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
@@ -108,7 +108,7 @@ def test_missing_scope_sidecar_read_waits_for_first_writer_publish(tmp_path: Pat
         root_pid=501,
     )
     lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
-    sidecar_path = runtime_root / "spawns" / spawn_id / "process_scopes.json"
+    sidecar_path = launch_paths(runtime_root, spawn_id).process_scopes
     result: list[list[ProcessScopeSnapshot]] = []
 
     with lock_file(lock_path, reentrant=False):
@@ -163,7 +163,7 @@ def test_timed_out_scope_read_uses_atomically_published_sidecar(tmp_path: Path) 
         root_pid=502,
     )
     lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
-    sidecar_path = runtime_root / "spawns" / spawn_id / "process_scopes.json"
+    sidecar_path = launch_paths(runtime_root, spawn_id).process_scopes
     result: list[list[ProcessScopeSnapshot]] = []
 
     with lock_file(lock_path, reentrant=False):
@@ -232,7 +232,7 @@ def test_concurrent_scope_releases_preserve_every_marker(
         assert not thread.is_alive()
 
     payload = json.loads(
-        (runtime_root / "spawns" / spawn_id / "process_scopes.json").read_text(encoding="utf-8")
+        launch_paths(runtime_root, spawn_id).process_scopes.read_text(encoding="utf-8")
     )
     assert set(payload["released"]) == {scope_a.release_id, scope_b.release_id}
 

@@ -11,7 +11,11 @@ from contextlib import suppress
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
+from meridian.lib.platform.process_scope.base import (
+    POST_KILL_WAIT_SECS,
+    CleanupResult,
+    birth_time_unverified,
+)
 
 
 def is_pgid_reachable(pgid: int) -> bool:
@@ -137,6 +141,14 @@ def terminate_pgid(
     except (PermissionError, OSError):
         pass
 
+    # Descendants that started their own process group (a harness's background
+    # task) do not receive the group signal; without their own SIGTERM they
+    # survive until the escalation below.
+    for child in children:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            if os.getpgid(child.pid) != pgid:
+                child.terminate()
+
     # --- Build the process tree to wait on ---
     tree: list[psutil.Process] = (
         orphans if root_is_dead else ([root_proc] if root_proc is not None else []) + children
@@ -158,7 +170,7 @@ def terminate_pgid(
             for proc in alive:
                 with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                     proc.kill()
-            psutil.wait_procs(alive, timeout=1.0)
+            psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
 
     return CleanupResult(
         scope_id=scope_id,

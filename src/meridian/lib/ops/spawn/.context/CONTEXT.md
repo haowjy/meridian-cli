@@ -55,10 +55,21 @@ in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: eac
 the latest row of every waited spawn, and every exit builds its result and pending set from that
 one pass, so each spawn appears in exactly one category.
 
-With `observe` (the default), the wait leases its pending IDs in the caller's
-`spawns/<caller>/observed-spawns.json` while it polls. A caller whose spawn row is gone writes
+With `observe` (the default), the wait leases its pending launches in the caller's
+`spawns/<caller>/observed-launches.json` while it polls. A caller whose spawn row is gone writes
 nothing. Every exit, including errors and the hard timeout, makes one write in `finally` that
-releases the lease and records the terminal spawns it returned as consumed.
+releases the lease and records the terminal launches it returned as consumed.
+
+**A wait is on a launch.** Each explicit target is waited on as launch `n`, pinned when the
+wait resolves it and checked every poll through `poll_launch(runtime_root, id, n)`: once the
+spawn has moved past `n` (a continue), the answer is `launches/<n>/launch.json`, so the wait
+returns the launch it started on. A re-run after `--yield-after-secs` is a new process, so
+an explicit wait by a caller with a spawn ID stores its pin in that caller's
+`observed-launches.json` (`wait_pins`) and the re-run honours it while the pin is unexpired
+(refreshed each poll to now plus the yield interval), its launch is unconsumed (union reader,
+any path), and the caller has not continued the target (`clear_wait_pin`, for the continue's
+commit). Otherwise the wait pins the current launch. A caller with no spawn ID, and no-arg
+waits, pin in-process only.
 
 The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
 awareness) unless `yield_after_secs` is explicitly passed.
@@ -121,11 +132,20 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
 protocol:
 
 - `spawn collect --exclude p1,p2` returns exactly one JSON object with
-  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never
-  consumes. Index discovery is parent-scoped; polling re-reads only still-owed
-  authority rows with derived status.
-- Owed membership is background direct children of all primary generations for
-  `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
+  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. `ids` are bare,
+  de-duplicated spawn IDs (launches are internal), which `--exclude` and `spawn ack` take
+  back; `--exclude pN` excludes every launch of `pN`. It never consumes, but a delivery
+  records the launches it delivered (`delivered: {pN: [K, ...]}`) in the caller's
+  `observed-launches.json`, one write per delivery, so `ack` can consume exactly those. The
+  write is a precondition: if it fails (any `OSError`, including a lock timeout), `collect`
+  returns nothing and polls again. Only `ack` drops a record; consumption leaves it, so an
+  absent record means "delivered and acked".
+  Index discovery is parent-scoped; polling re-reads only still-owed authority rows with
+  derived status.
+- Owed membership (`state/spawn_ownership.owed_launches`, shared with the Pi drain) is background direct children of all primary generations for
+  `MERIDIAN_CHAT_ID`, plus the background launches a continue moved past while still owed
+  to one of those parents (`owed_launches`, projected into the index's side table; their
+  rows are `launches/<n>/launch.json`, whoever the spawn belongs to now), minus consumption read across those same generations and
   minus `--exclude`. Consumption includes CLI wait/ack observations, cancelled results,
   and terminal report bodies shown by the CLI, plus Pi's delivery receipts and cleared
   IDs. One Pi-private-state reader unions the current
@@ -138,15 +158,23 @@ protocol:
 - A delivery admits at most 32 results. Each member is header-only: identity and
   outcome, worker, failure and distinct task directory when present, then a
   `meridian spawn show <id>` lookup. The collector does not read report bodies;
-  Claude leads explicitly read one with `spawn show`. Printing a terminal report body
+  Claude leads explicitly read one with `spawn show`. The exception is a launch the spawn
+  has since continued past: `spawn show` and `report show` describe the next launch, so that
+  member carries its own report inline (`delivery_details`). The whole delivery text,
+  headers and reports, fits one 64 KiB budget (the Pi path's bound), the reports sharing what
+  the headers leave; the owed list of a no-argument `spawn wait` uses the same bound. Printing a terminal report body
   through `spawn show` or `spawn report show` consumes it, as do `spawn wait`
   completion, `spawn ack`, and a `spawn cancel` that reports `cancelled`.
-- `spawn ack <ids...>` writes those IDs under the caller's current primary and
-  returns exactly `{acked: [...]}`; it fails when that primary's row is gone. The CLI
+- `spawn ack <ids...>` consumes, under the caller's current primary, exactly the launches
+  the last delivery recorded for each ID and drops the record. With no record (a person
+  running `ack`) it consumes the ID's finished, owed, unconsumed launches, never one still
+  running; a primary caller without `MERIDIAN_CHAT_ID` fails there. It returns `{acked: [...]}`
+  naming the IDs it consumed, plus `not_consumed: [...]` for named IDs that consumed nothing,
+  and fails when that primary's row is gone. The CLI
   refuses `spawn ack -C` before calling the operation. Reading across the chat is what
   makes an ack written after resume consume a child of an earlier primary.
 
-Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.
+Both commands use `observed-launches.json`, the same state as explicit `spawn wait`.
 The collector retries index contention and malformed owned authority internally,
 and exits cleanly when its parent PID changes.
 

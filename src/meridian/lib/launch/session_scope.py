@@ -22,6 +22,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.platform.tmux import resolve_tmux_target
 from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import utc_now_iso
+from meridian.lib.state.launch_lock import LaunchHandle, LaunchSlot
 from meridian.lib.state.native_binding import BindOutcome, Conflict
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
@@ -183,7 +184,10 @@ def session_scope(
     startup_attempt_id: str | None = None,
     _start_session: Callable[..., StartedSession] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
-    _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
+    launch_slot: LaunchSlot,
+    _reclaim_session_scopes: Callable[
+        [Path, str, LaunchHandle | None], object
+    ] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[SessionAttempt, None, None]:
     warm_close_imports()
     if request.initial_model_selection is not None:
@@ -228,7 +232,11 @@ def session_scope(
         try:
             _stop_session(runtime_root, resolved_chat_id)
         finally:
-            _reclaim_session_scopes(runtime_root, resolved_chat_id)
+            # The runner's own spawn is reclaimed with the lock it holds; its slot may still be
+            # unbound if the launch failed before publishing the row.
+            _reclaim_session_scopes(
+                runtime_root, resolved_chat_id, launch_slot.held
+            )
         if kind == "primary":
             # Browse shows the last-used model; a mid-session switch is only visible in the
             # native history. Runs after reclamation and never waits on a lock: a missed

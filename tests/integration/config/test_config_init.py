@@ -12,6 +12,7 @@ from meridian.lib.ops.config import (
 )
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.project_identity import resolve_project_identity
+from tests.support.launch_paths import launch_paths
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -93,7 +94,7 @@ def test_config_init_after_adhoc_use_starts_clean_and_reports_old_root(
     ensure_runtime_state_bootstrap_sync(project_root)
     adhoc_identity = resolve_project_identity(project_root)
     old_root = user_state_root / "projects" / adhoc_identity.id
-    old_spawn = old_root / "spawns" / "p1" / "report.md"
+    old_spawn = launch_paths(old_root, "p1").report
     old_spawn.parent.mkdir(parents=True)
     old_spawn.write_text("old scratch history\n", encoding="utf-8")
 

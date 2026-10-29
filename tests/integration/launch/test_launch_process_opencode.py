@@ -165,6 +165,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, control_root, task_cwd, env, spec, process_launcher, on_running
         nonlocal managed_calls

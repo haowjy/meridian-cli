@@ -21,7 +21,7 @@ from meridian.lib.state.project_identity import (
 from meridian.lib.state.user_paths import project_lifetime_lock_path
 
 if TYPE_CHECKING:
-    from meridian.lib.state.spawn.model import SpawnRecord
+    from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
     from meridian.lib.state.spawn.repository import StoredSpawnState
 
 
@@ -360,7 +360,7 @@ def resolve_work_scratch_dir_for_project(
 
 def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return the spawn directory. Spawn-level files (``state.json``, ``launch.lock``,
-    ``scope.json``, ``observed-spawns.json``, the reaper claim, the ambient ``work/``
+    ``scope.json``, ``observed-launches.json``, the reaper claim, the ambient ``work/``
     directory) live here for every launch; per-launch files go through ``LaunchPaths``."""
 
     return runtime_root / "spawns" / str(spawn_id)
@@ -409,14 +409,54 @@ class LaunchFileNames:
 LAUNCH_FILE_NAMES = LaunchFileNames()
 
 
+def launch_subdir(n: int | None) -> Path:
+    """A launch directory relative to its spawn directory (empty for a v3 row's launch 1)."""
+
+    return Path() if n is None else Path("launches") / str(n)
+
+
+def spawn_report_files(runtime_root: Path, spawn_id: SpawnId | str) -> tuple[Path, ...]:
+    """Every launch's report that exists, newest first.
+
+    ``launches/<n>/report.md`` by descending ``n``, then the spawn directory's own report:
+    a v3 row's launch 1, which a continue leaves in place.
+    """
+
+    spawn_dir = resolve_spawn_dir(runtime_root, spawn_id)
+    numbers = sorted(
+        (int(entry.name) for entry in (spawn_dir / "launches").glob("*") if entry.name.isdigit()),
+        reverse=True,
+    )
+    candidates = [spawn_dir / launch_subdir(n) / _REPORT_FILENAME for n in numbers]
+    candidates.append(spawn_dir / _REPORT_FILENAME)
+    return tuple(path for path in candidates if path.is_file())
+
+
+def row_launch_subdir(launch: "LaunchRef | None") -> Path:
+    """``launch_subdir`` for a row's ``launch`` field (None on a v3 row)."""
+
+    return launch_subdir(launch.n if launch else None)
+
+
+def launch_archive(runtime_root: Path, spawn_id: SpawnId | str, n: int) -> Path:
+    """Launch ``n``'s finished row, copied by the holder that starts launch ``n+1``.
+
+    Spawn-level because it sits under ``launches/<n>/`` whatever version the row was
+    when launch ``n`` ran (a v3 row's launch 1 keeps its own files at the top level).
+    """
+
+    return resolve_spawn_dir(runtime_root, spawn_id) / launch_subdir(n) / "launch.json"
+
+
 @dataclass(frozen=True)
 class LaunchPaths:
     """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
 
     This module is the only place that constructs it (``for_row``); the code that
     publishes a row returns the launch it wrote, and everyone else is handed that one.
-    Today a launch directory is the spawn directory, so ``n`` is unused. Spawn-level
-    files stay on ``resolve_spawn_dir``.
+    A launch's directory is ``spawns/<id>/launches/<n>/``; ``n`` is ``None`` only for a
+    v3 row (``launch`` absent), whose launch 1 stays in the spawn directory, and for the
+    dry-run preview. Spawn-level files stay on ``resolve_spawn_dir``.
     """
 
     runtime_root: Path
@@ -427,10 +467,10 @@ class LaunchPaths:
     def for_row(cls, runtime_root: Path, row: "SpawnRecord | StoredSpawnState") -> Self:
         """The launch a published row names. The only way to reach an existing launch."""
 
-        return cls(runtime_root, SpawnId(row.id), None)
+        return cls(runtime_root, SpawnId(row.id), row.launch.n if row.launch else None)
 
     @classmethod
-    def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int | None) -> Self:
+    def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int) -> Self:
         """The launch ``spawn_store`` is about to publish as launch ``n`` of ``spawn_id``.
 
         Only ``spawn_store`` calls this (the gate enforces it): the code that assigns
@@ -441,14 +481,18 @@ class LaunchPaths:
         return cls(runtime_root, spawn_id, n)
 
     @classmethod
-    def preview(cls, runtime_root: Path, label: str) -> Self:
-        """A placeholder launch for a dry-run bind. It is never published or written."""
+    def preview(cls, runtime_root: Path) -> Self:
+        """A placeholder launch for a dry-run bind. It is never published or written.
 
-        return cls(runtime_root, SpawnId(label), None)
+        The fixed ID keeps it from naming a real spawn; the gate limits callers to the two
+        dry-run entry points.
+        """
+
+        return cls(runtime_root, SpawnId("dry-run"), None)
 
     @property
     def dir(self) -> Path:
-        return resolve_spawn_dir(self.runtime_root, self.spawn_id)
+        return resolve_spawn_dir(self.runtime_root, self.spawn_id) / launch_subdir(self.n)
 
     @property
     def starting_prompt(self) -> Path:
@@ -523,6 +567,15 @@ class LaunchPaths:
         return self.dir / _PROCESS_SCOPES_FILENAME
 
     @property
+    def cancel(self) -> Path:
+        return self.dir / "cancel.json"
+
+    @property
+    def runner_activity(self) -> tuple[Path, ...]:
+        """Files only the runner appends to; their newest mtime is its last sign of life."""
+        return (self.output, self.stderr_log, self.debug, self.runner_lifecycle, self.report)
+
+    @property
     def accepted_signals(self) -> Path:
         return self.dir / "accepted-signals.json"
 
@@ -567,11 +620,11 @@ class LaunchPaths:
         return self.dir / "permission_requests.jsonl"
 
 
-def staged_starting_prompt(stage_dir: Path) -> Path:
-    """Where ``start_spawn`` writes the prompt inside its staging directory, before the
-    directory is renamed into place as the spawn directory."""
+def staged_starting_prompt(stage_dir: Path, n: int) -> Path:
+    """Where ``start_spawn`` writes launch ``n``'s prompt inside its staging directory,
+    before the directory is renamed into place as the spawn directory."""
 
-    return stage_dir / _STARTING_PROMPT_FILENAME
+    return stage_dir / launch_subdir(n) / _STARTING_PROMPT_FILENAME
 
 
 def resolve_ambient_work_dir(
@@ -586,7 +639,13 @@ def resolve_ambient_work_dir(
     return resolve_spawn_dir(resolved_root, spawn_id) / "work"
 
 
+def observed_launches_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Consumed-launch, wait-lease and wait-pin record owned by one parent spawn."""
+
+    return resolve_spawn_dir(runtime_root, spawn_id) / "observed-launches.json"
+
+
 def observed_spawns_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Consumed-result and wait-lease record owned by one parent spawn."""
+    """The file older builds kept at ``observed_launches_path``'s place. Read-only."""
 
     return resolve_spawn_dir(runtime_root, spawn_id) / "observed-spawns.json"

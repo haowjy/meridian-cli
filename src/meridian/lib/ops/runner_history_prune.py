@@ -34,6 +34,7 @@ from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import SpawnStateQuarantineReport
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_status import overlay_derived, read_derived
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
@@ -57,7 +58,7 @@ class RunnerHistoryPrune(BaseModel):
     pruned: tuple[PrunedSpawn, ...] = ()
     skipped: dict[str, tuple[str, ...]] = {}
     skipped_bytes: dict[str, int] = {}
-    quarantined: tuple[str, ...] = ()
+    quarantined: tuple[SpawnStateQuarantineReport, ...] = ()
     errors: tuple[str, ...] = ()
 
     def format_text(self) -> str:
@@ -203,7 +204,7 @@ def _prune(root: Path, *, apply: bool, after_days: int) -> RunnerHistoryPrune:
         pruned=tuple(pruned),
         skipped={reason: tuple(keys) for reason, keys in skipped.items()},
         skipped_bytes=skipped_bytes,
-        quarantined=tuple(report.spawn_id for report in scan.quarantines),
+        quarantined=scan.quarantines,
         errors=tuple(errors),
     )
 

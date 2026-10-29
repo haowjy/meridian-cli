@@ -19,6 +19,7 @@ from meridian.lib.platform.locking import (
 )
 from meridian.lib.state import lock_gc, spawn_store
 from meridian.lib.state.spawn.repository import write_state_locked
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from tests.conftest import posix_only
 
 
@@ -220,7 +221,7 @@ def test_sweeper_vs_republication(
         prompt="original",
     )
     spawn_store.update_spawn(runtime_root, spawn_id, desc="create spawn lock")
-    assert spawn_store.delete_published_spawn(
+    assert delete_published_spawn(
         runtime_root,
         spawn_id,
         can_delete=lambda _record: True,

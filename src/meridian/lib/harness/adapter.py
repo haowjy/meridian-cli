@@ -18,7 +18,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.core.native_identity import (
@@ -252,7 +252,7 @@ RecordConfigDirFn = Callable[[str], None]
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
 
-    def create_fold(self) -> AttemptFold: ...
+    def create_fold(self, seed: Mapping[str, JsonValue] | None = None) -> AttemptFold: ...
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
 

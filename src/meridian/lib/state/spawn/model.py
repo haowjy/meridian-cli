@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, Self, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -26,13 +26,6 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
 PersistedSpawnStatus = SpawnStatus | Literal["unknown"]
-_AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
-    "runner",
-    "launcher",
-    "launch_failure",
-    "cancel",
-)
-AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
 
 
 class CancelIntent(BaseModel):
@@ -73,6 +66,8 @@ class TerminalFacts(BaseModel):
     cache_creation_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cost_is_estimate: bool = False
+    harness_cumulative: dict[str, JsonValue] | None = None
+    """The harness's running total at this launch's end; the next launch is seeded with it."""
     error: str | None = None
     origin: SpawnOrigin
     #: The reconciler decided this terminal row still owns managed-primary
@@ -103,6 +98,109 @@ class LegacyRunBoundaryOutcome(RunBoundaryOutcome):
         if (self.status == "verified") != (self.exit_chat_id is not None):
             raise ValueError("exit_chat_id must be set exactly when status is verified")
         return self
+
+
+class LaunchRef(BaseModel):
+    """Which launch of the spawn the flat row describes (``launches/<n>/``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n: int = Field(ge=1)
+
+
+def _reported_sum(prior: float, current: float | None) -> float | None:
+    """A usage figure across launches: ``None`` where no launch reported it."""
+    return None if current is None and not prior else prior + (current or 0)
+
+
+class PriorUsage(BaseModel):
+    """Usage of the launches before the current one; surfaces show it plus the current launch."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    duration_secs: float = 0.0
+    total_cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_is_estimate: bool = False
+    harness_cumulative: dict[str, JsonValue] | None = None
+    """The last finished launch's ``TerminalFacts.harness_cumulative``: what the running launch's
+    extractor starts from, since its own ``terminal`` is not there yet."""
+
+    def plus(self, terminal: TerminalFacts | None) -> PriorUsage:
+        """These totals with one more launch's outcome added (cost estimates OR together)."""
+        if terminal is None:
+            return self
+        return PriorUsage(
+            duration_secs=self.duration_secs + (terminal.duration_secs or 0.0),
+            total_cost_usd=self.total_cost_usd + (terminal.total_cost_usd or 0.0),
+            input_tokens=self.input_tokens + (terminal.input_tokens or 0),
+            output_tokens=self.output_tokens + (terminal.output_tokens or 0),
+            cache_read_input_tokens=(
+                self.cache_read_input_tokens + (terminal.cache_read_input_tokens or 0)
+            ),
+            cache_creation_input_tokens=(
+                self.cache_creation_input_tokens + (terminal.cache_creation_input_tokens or 0)
+            ),
+            reasoning_tokens=self.reasoning_tokens + (terminal.reasoning_tokens or 0),
+            cost_is_estimate=self.cost_is_estimate or terminal.cost_is_estimate,
+            # A launch that reported no total (it crashed) leaves the earlier one as the seed.
+            harness_cumulative=terminal.harness_cumulative or self.harness_cumulative,
+        )
+
+    def totals(self, terminal: TerminalFacts | None) -> UsageTotals:
+        """What a surface shows: these totals plus the current launch, ``None`` where
+        nothing has reported that figure."""
+
+        def count(prior: int, current: int | None) -> int | None:
+            total = _reported_sum(prior, current)
+            return None if total is None else int(total)
+
+        t = terminal
+        return UsageTotals(
+            duration_secs=_reported_sum(self.duration_secs, t.duration_secs if t else None),
+            total_cost_usd=_reported_sum(self.total_cost_usd, t.total_cost_usd if t else None),
+            input_tokens=count(self.input_tokens, t.input_tokens if t else None),
+            output_tokens=count(self.output_tokens, t.output_tokens if t else None),
+            cache_read_input_tokens=count(
+                self.cache_read_input_tokens, t.cache_read_input_tokens if t else None
+            ),
+            cache_creation_input_tokens=count(
+                self.cache_creation_input_tokens, t.cache_creation_input_tokens if t else None
+            ),
+            reasoning_tokens=count(self.reasoning_tokens, t.reasoning_tokens if t else None),
+            cost_is_estimate=self.cost_is_estimate or bool(t and t.cost_is_estimate),
+        )
+
+
+_NO_PRIOR_USAGE = PriorUsage()
+
+
+class UsageTotals(BaseModel):
+    """A spawn's usage across every launch; a figure no launch reported is ``None``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    duration_secs: float | None
+    total_cost_usd: float | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_input_tokens: int | None
+    cache_creation_input_tokens: int | None
+    reasoning_tokens: int | None
+    cost_is_estimate: bool
+
+
+class OwedLaunch(BaseModel):
+    """A background launch a continue moved past, still owed to the parent that started it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n: int = Field(ge=1)
+    parent_id: str
 
 
 class SpawnStateFields(BaseModel):
@@ -154,6 +252,16 @@ class SpawnStateFields(BaseModel):
     cancel_intent: CancelIntent | None = None
     terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    # State v4 (spawn-level). ``launch`` absent is a v3 row: its launch 1 lives in the spawn
+    # directory, and the other two fields are never written for it.
+    launch: LaunchRef | None = None
+    prior_usage: PriorUsage = PriorUsage()
+    owed_launches: tuple[OwedLaunch, ...] = ()
+
+    @property
+    def launch_number(self) -> int:
+        """The current launch; a v3 row (``launch`` absent) has only its first."""
+        return self.launch.n if self.launch else 1
 
     @model_validator(mode="before")
     @classmethod
@@ -178,6 +286,46 @@ class SpawnRecord(SpawnStateFields):
     """Prompt-bearing state projection assembled from persisted spawn state."""
 
     prompt: str | None = None
+
+    def index_json(self) -> str:
+        """The history index's ``record_json``: this row without its default-valued v4 fields.
+
+        Most rows are v3 or never continued, so these fields would add bytes the index
+        validates on every query. ``model_validate_json`` restores the defaults, so the
+        round trip is exact.
+        """
+        exclude: dict[str, Any] = {}
+        if self.launch is None:
+            exclude["launch"] = True
+        if self.prior_usage == _NO_PRIOR_USAGE:
+            exclude["prior_usage"] = True
+        if not self.owed_launches:
+            exclude["owed_launches"] = True
+        if self.terminal is not None and self.terminal.harness_cumulative is None:
+            exclude["terminal"] = {"harness_cumulative"}
+        return self.model_dump_json(exclude=exclude)
+
+    @property
+    def total_usage(self) -> UsageTotals:
+        """Usage across every launch, the current one included once finished. Every surface
+        reads totals, so a continue never makes a number a user sees restart."""
+        return self.prior_usage.totals(self.terminal)
+
+    @property
+    def total_duration_secs(self) -> float | None:
+        """``total_usage.duration_secs`` without building the token totals."""
+        terminal = self.terminal
+        return _reported_sum(
+            self.prior_usage.duration_secs, terminal.duration_secs if terminal else None
+        )
+
+    @property
+    def total_cost_usd(self) -> float | None:
+        """``total_usage.total_cost_usd`` without building the token totals."""
+        terminal = self.terminal
+        return _reported_sum(
+            self.prior_usage.total_cost_usd, terminal.total_cost_usd if terminal else None
+        )
 
     @property
     def has_no_session_of_its_own(self) -> bool:
@@ -216,15 +364,16 @@ class SpawnRecord(SpawnStateFields):
 
 __all__ = [
     "APP_LAUNCH_MODE",
-    "AUTHORITATIVE_ORIGINS",
     "BACKGROUND_LAUNCH_MODE",
     "FOREGROUND_LAUNCH_MODE",
-    "_AUTHORITATIVE_ORIGIN_VALUES",
     "_LAUNCH_MODE_VALUES",
     "CancelIntent",
     "LaunchMode",
     "LaunchPolicySnapshot",
+    "LaunchRef",
+    "OwedLaunch",
     "PersistedSpawnStatus",
+    "PriorUsage",
     "RunBoundaryOutcome",
     "RunnerExitFacts",
     "SpawnKind",
@@ -233,4 +382,5 @@ __all__ = [
     "SpawnStateFields",
     "TerminalFacts",
     "TerminalSpawnStatus",
+    "UsageTotals",
 ]

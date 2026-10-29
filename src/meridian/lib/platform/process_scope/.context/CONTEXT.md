@@ -50,6 +50,11 @@ the birth-time check is skipped when this sentinel is present.
 descendants that have reparented to PID 1. Single-PID `SIGTERM` only reaches
 the root; if the root has exited and its children reparented, they escape.
 
+A descendant that started its own process group (Claude's background shell task) is not in
+the group, so `terminate_pgid()` also SIGTERMs the live descendants it snapshotted whose group
+differs. Without it the task outlives the harness until the grace expires, and a cancel's
+5 s grace SIGKILLs the runner first.
+
 When the root is already dead before `terminate_pgid()` is called (degraded mode),
 the function still attempts `os.killpg()`. A full-table scan by PGID retains
 orphaned group members for the grace wait and SIGKILL escalation, including

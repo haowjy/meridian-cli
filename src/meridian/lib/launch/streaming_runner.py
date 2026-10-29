@@ -26,7 +26,11 @@ from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
 )
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
+from meridian.lib.core.spawn_lifecycle import (
+    SIGNAL_STOP_BUDGET_SECS,
+    ExecutionTerminalFacts,
+    parse_terminal_status,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -47,6 +51,7 @@ from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
+    RUNNER_HEARTBEAT_SECONDS,
     SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
@@ -92,6 +97,7 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
+from meridian.lib.state.spawn_status import read_cancel_intent
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 
 if TYPE_CHECKING:
@@ -254,7 +260,9 @@ def _install_signal_handlers(
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
-    return None if record is None else record.cancel_intent
+    if record is None:
+        return None
+    return read_cancel_intent(LaunchPaths.for_row(runtime_root, record), record)
 
 
 def _apply_cancel_intent_to_conclusion(
@@ -387,6 +395,18 @@ async def _report_watchdog(
     return True
 
 
+async def _runner_heartbeat(*, launch: LaunchPaths, completion_event: asyncio.Event) -> None:
+    """Touch the runner's lifecycle log while the turn runs.
+
+    A turn can go minutes without the runner writing a file, and a dead launch's derived
+    ``finished_at`` is the newest mtime of ``LaunchPaths.runner_activity``; without this it
+    would read as the start.
+    """
+    while not await _wait_for_event_or_timeout(completion_event, RUNNER_HEARTBEAT_SECONDS):
+        with suppress(OSError):
+            os.utime(launch.runner_lifecycle)
+
+
 async def _inactivity_watchdog(
     *,
     last_event_at: list[float],
@@ -476,15 +496,11 @@ async def run_streaming_spawn(
     terminal_outcome: TerminalEventOutcome | None = None
     subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     run_spec = spec
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        runner_pid=os.getpid(),
-    )
     resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
         project_root,
         runtime_root,
     )
+    resolved_lifecycle.record_launch_facts(spawn_id, runner_pid=os.getpid())
     try:
         connection = await _start_spawn_with_timeout(
             manager=manager,
@@ -544,6 +560,9 @@ async def run_streaming_spawn(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
 
         outcome = await completion_task
@@ -567,7 +586,7 @@ async def run_streaming_spawn(
     finally:
         if signal_cleanup is not None:
             signal_cleanup()
-        with signal_coordinator().mask_sigterm():
+        with signal_coordinator().mask_termination():
             if subscriber is not None:
                 manager.unsubscribe(spawn_id)
             for task in (completion_task, signal_task, consume_task):
@@ -607,6 +626,7 @@ async def _run_streaming_attempt(
     budget_task: asyncio.Task[bool] | None = None
     watchdog_task: asyncio.Task[bool] | None = None
     inactivity_task: asyncio.Task[bool] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
     consume_task: asyncio.Task[None] | None = None
     completion_event = asyncio.Event()
     budget_signal = asyncio.Event()
@@ -656,7 +676,7 @@ async def _run_streaming_attempt(
             recording_selection = True
             on_running(connection)
             recording_selection = False
-        lifecycle_service.mark_running(
+        lifecycle_service.record_launch_facts(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
@@ -690,6 +710,9 @@ async def _run_streaming_attempt(
                 manager=manager,
                 spawn_id=run.spawn_id,
             )
+        )
+        heartbeat_task = asyncio.create_task(
+            _runner_heartbeat(launch=launch, completion_event=completion_event)
         )
         if config.harness_id == HarnessId.CURSOR:
             inactivity_task = asyncio.create_task(
@@ -745,6 +768,9 @@ async def _run_streaming_attempt(
                 status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
+                budget_secs=(
+                    SIGNAL_STOP_BUDGET_SECS if decision.trigger == TriggerKind.SIGNAL else None
+                ),
             )
             drain_exit_code = stop_exit_code
             drain_error = decision.synthetic_error
@@ -800,6 +826,7 @@ async def _run_streaming_attempt(
             budget_task,
             watchdog_task,
             inactivity_task,
+            heartbeat_task,
             consume_task,
         ):
             if task is not None and not task.done():
@@ -1005,11 +1032,6 @@ async def execute_with_streaming(
                 f"no spawn row exists for {run.spawn_id!r}. "
                 "Call start_spawn() before execute_with_streaming()."
             )
-        spawn_store.update_spawn(
-            runtime_root,
-            run.spawn_id,
-            runner_pid=os.getpid(),
-        )
         resolved_launch_mode: LaunchMode = (
             BACKGROUND_LAUNCH_MODE
             if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
@@ -1030,6 +1052,7 @@ async def execute_with_streaming(
             project_root,
             runtime_root,
         )
+        lifecycle_service.record_launch_facts(run.spawn_id, runner_pid=os.getpid())
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -1050,7 +1073,11 @@ async def execute_with_streaming(
                 runtime_root=runtime_root,
                 spawn_id=run.spawn_id,
             ):
-                fold = harness_bundle.extractor.create_fold()
+                # The row's launch is the one this runner owns; a resumed launch's usage
+                # is counted from where the previous launch ended.
+                fold = harness_bundle.extractor.create_fold(
+                    spawn_row.prior_usage.harness_cumulative
+                )
                 facts = fold.facts
                 runner_phase[0] = "starting_attempt"
                 _record_lifecycle("attempt_started", attempt=1)
@@ -1298,13 +1325,14 @@ async def execute_with_streaming(
             )
         finalized_usage = conclusion.extracted.usage if conclusion.extracted is not None else None
         terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
-        with signal_coordinator().mask_sigterm():
-            spawn_service = build_spawn_application_service_from_roots(
-                project_root,
-                runtime_root,
-                lifecycle=lifecycle_service,
-                spawn_manager=manager,
-            )
+        spawn_service = build_spawn_application_service_from_roots(
+            project_root,
+            runtime_root,
+            lifecycle=lifecycle_service,
+        )
+        # Defer a SIGTERM racing the finish until runner_completed, the scope-release marks and
+        # the atexit unregister are done; it is re-delivered when the mask exits.
+        with signal_coordinator().mask_termination():
             execution_outcome = await spawn_service.complete_execution(
                 run.spawn_id,
                 terminal_facts,
@@ -1322,18 +1350,18 @@ async def execute_with_streaming(
                     harness_id=str(launch_context.harness.id),
                 )
 
-        runner_phase[0] = "completed"
-        lifecycle_active[0] = False
-        if lifecycle is not None:
-            _append_runner_lifecycle_event(
-                launch,
-                clock=resolved_clock,
-                event="runner_completed",
-                phase=runner_phase[0],
-                exit_code=conclusion.exit_code,
-            )
-        if atexit_callback is not None:
-            atexit.unregister(atexit_callback)
+            runner_phase[0] = "completed"
+            lifecycle_active[0] = False
+            if lifecycle is not None:
+                _append_runner_lifecycle_event(
+                    launch,
+                    clock=resolved_clock,
+                    event="runner_completed",
+                    phase=runner_phase[0],
+                    exit_code=conclusion.exit_code,
+                )
+            if atexit_callback is not None:
+                atexit.unregister(atexit_callback)
 
     return conclusion.exit_code
 

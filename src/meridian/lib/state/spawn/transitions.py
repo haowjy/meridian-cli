@@ -7,38 +7,31 @@ holding the per-spawn lock.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, validate_transition
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import TokenUsage
     from meridian.lib.state.spawn.model import (
-        CancelIntent,
         LaunchMode,
         SpawnOrigin,
         SpawnRecord,
         TerminalSpawnStatus,
     )
-    from meridian.lib.state.spawn.repository import Decline
 
 
-def apply_mark_running(
+def apply_launch_facts(
     record: SpawnRecord,
     *,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
-    validate_status_transition: bool = True,
 ) -> SpawnRecord:
-    """Return ``record`` with running status and optional launch metadata."""
+    """Return ``record`` with launch facts applied. Rows are created ``running``."""
 
-    if validate_status_transition and record.status not in {"unknown", "running"}:
-        validate_transition(cast("SpawnStatus", record.status), SpawnStatus.RUNNING)
-
-    updates: dict[str, object] = {"status": SpawnStatus.RUNNING}
+    updates: dict[str, object] = {}
     if launch_mode is not None:
         updates["launch_mode"] = launch_mode
     if worker_pid is not None:
@@ -49,73 +42,6 @@ def apply_mark_running(
     elif runner_created_at_epoch is not None:
         updates["runner_created_at_epoch"] = runner_created_at_epoch
     return record.model_copy(update=updates)
-
-
-def apply_record_exited(
-    record: SpawnRecord,
-    *,
-    exit_code: int,
-    exited_at: str,
-    spawn_id: str | None = None,
-) -> SpawnRecord:
-    """Return ``record`` with process-exit metadata applied."""
-
-    updates: dict[str, object] = {
-        "last_attempt_exit_code": exit_code,
-        "last_attempt_exited_at": exited_at,
-    }
-    if spawn_id is not None:
-        updates["id"] = spawn_id
-    return record.model_copy(update=updates)
-
-
-def apply_runner_exit(
-    record: SpawnRecord,
-    *,
-    status: TerminalSpawnStatus,
-    exit_code: int,
-    error: str | None,
-    exited_at: str,
-    spawn_id: str | None = None,
-) -> SpawnRecord:
-    """Return ``record`` with runner-resolved terminal intent applied."""
-
-    from meridian.lib.state.spawn.model import RunnerExitFacts
-
-    updates: dict[str, object] = {
-        "runner_exit": RunnerExitFacts(
-            status=status,
-            exit_code=exit_code,
-            error=error,
-            exited_at=exited_at,
-        )
-    }
-    if spawn_id is not None:
-        updates["id"] = spawn_id
-    return record.model_copy(update=updates)
-
-
-def apply_cancel_intent(
-    record: SpawnRecord,
-    *,
-    intent: CancelIntent,
-) -> SpawnRecord | Decline:
-    """Return ``record`` with durable spawn-level cancel intent applied."""
-
-    from meridian.lib.state.spawn.repository import Decline
-
-    if record.status in TERMINAL_SPAWN_STATUSES:
-        return Decline("spawn is not active")
-    if record.cancel_intent is not None:
-        return Decline("cancel intent already recorded")
-    return record.model_copy(update={"cancel_intent": intent})
-
-
-def apply_mark_finalizing(record: SpawnRecord) -> SpawnRecord:
-    """Return ``record`` after validating and applying running -> finalizing."""
-
-    validate_transition(cast("SpawnStatus", record.status), SpawnStatus.FINALIZING)
-    return record.model_copy(update={"status": SpawnStatus.FINALIZING})
 
 
 def apply_finalize(
@@ -130,16 +56,8 @@ def apply_finalize(
     usage: TokenUsage | None = None,
     error: str | None = None,
     managed_scopes_pending: bool = False,
-    validate_status_transition: bool = True,
 ) -> SpawnRecord:
     """Return ``record`` with terminal status and metrics applied."""
-
-    if (
-        validate_status_transition
-        and record.status != "unknown"
-        and record.status not in TERMINAL_SPAWN_STATUSES
-    ):
-        validate_transition(record.status, SpawnStatus(status))
 
     from meridian.lib.state.spawn.model import TerminalFacts
 
@@ -160,6 +78,7 @@ def apply_finalize(
             (usage.cost_is_estimate if usage is not None else False)
             or (record.terminal.cost_is_estimate if record.terminal is not None else False)
         ),
+        harness_cumulative=usage.harness_cumulative if usage is not None else None,
         error=error,
         origin=origin,
         managed_scopes_pending=managed_scopes_pending,

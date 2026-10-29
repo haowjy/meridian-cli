@@ -791,8 +791,10 @@ def test_primary_launch_does_not_create_work_named_by_context_from(
         harness_registry,
         *,
         prepared,
+        hold=None,
     ):
         _ = (
+            hold,
             preview_context,
             harness_registry,
             prepared,

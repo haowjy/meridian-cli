@@ -25,6 +25,7 @@ from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 from tests.support.launch_paths import launch_paths
@@ -200,7 +201,7 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
     assert row.status == ("succeeded" if behavior == "ok" else "failed")
     meta = json.loads(
         (
-            root / ".meridian" / "spawns" / str(outcome.primary_spawn_id) / "primary_meta.json"
+            launch_paths(root / ".meridian", str(outcome.primary_spawn_id)).primary_meta
         ).read_text()
     )
     assert "exit_identity" not in meta
@@ -316,6 +317,7 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
         status="queued",
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=ctx.runtime_root,
         metadata=PrimarySessionMetadata(
             harness="pi", model="pi-test", agent="", agent_path="", skills=(), skill_paths=()
@@ -410,6 +412,7 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
             status="queued",
         )
         with _session_execution_context(
+            launch_slot=LaunchSlot(),
             runtime_root=ctx.runtime_root,
             metadata=PrimarySessionMetadata(
                 harness="pi", model="pi-test", agent="", agent_path="", skills=(), skill_paths=()

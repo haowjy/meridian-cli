@@ -25,6 +25,7 @@ from meridian.lib.ops.session_search import SessionSearchInput, session_search_s
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
+from tests.support.launch_paths import launch_paths
 
 NEEDLE = "SNAPNEEDLE"
 
@@ -165,7 +166,7 @@ def test_damaged_or_rebound_snapshots_fail_closed(archived: Archived, tmp_path: 
             project_root=str(project), archive=str(archived.zip), refs=(archived.history_id,)
         )
     ).restored_histories[0]
-    snapshot = root / "spawns" / restored.spawn_id / LAUNCH_FILE_NAMES.native_snapshot
+    snapshot = launch_paths(root, restored.spawn_id).native_transcript
     original = snapshot.read_bytes()
     header, rest = original.split(b"\n", 1)
     rebound = json.loads(header)

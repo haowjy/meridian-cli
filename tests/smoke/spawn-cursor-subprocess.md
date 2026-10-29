@@ -50,7 +50,7 @@ uv run meridian spawn show "$SPAWN_ID" --format json
 - [ ] Spawn command exits 0
 - [ ] Spawn JSON has `status == "succeeded"`
 - [ ] `spawn show` reports `harness == "cursor"` and `model == "composer-2.5"`
-- [ ] `report_body` / `report_path` present
+- [ ] `report_body` present
 - [ ] Usage fields (`input_tokens`, `output_tokens`, cache tokens) are present when Cursor emits usage
 - [ ] Session identifier is surfaced if present in Cursor output (field may be absent on some Cursor CLI versions)
 

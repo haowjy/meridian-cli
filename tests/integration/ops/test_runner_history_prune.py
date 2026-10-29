@@ -359,7 +359,7 @@ def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
 
     result = prune(project)
 
-    assert result.quarantined == (key,)
+    assert [r.spawn_id for r in result.quarantined] == [key]
     hint = f"1 spawns; run `meridian doctor`: {key}"
     assert f"Skipped quarantined: {hint}" in result.format_text()
     with pytest.raises(ValueError, match=f"quarantined: {hint}"):
@@ -384,7 +384,7 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
     assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
 
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / LAUNCH_FILE_NAMES.native_snapshot).is_file()
+    assert (launch_paths(root, key).native_transcript).is_file()
     out = archive_history(
         root,
         destination=tmp_path / "zips",

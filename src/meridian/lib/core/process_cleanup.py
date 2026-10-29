@@ -18,6 +18,7 @@ from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
     birth_time_unverified,
 )
+from meridian.lib.state.launch_lock import LaunchHandle, try_exclusive
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import (
@@ -184,7 +185,8 @@ def _terminate_recorded_spawn_scopes(
             continue
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
-        mark_scope_released(launch, scope.release_id)
+        if result.skip_reason != "termination_exception":
+            mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Terminated process scope.",
             spawn_id=spawn_record.id,
@@ -337,7 +339,7 @@ def cancel_managed_primary(
     # the launcher scope is actually gone.
     launcher_scope = next((scope for scope in scopes if scope.scope_id == "launcher"), None)
     if results and launcher_scope is not None:
-        _wait_for_scope_exit(launcher_scope, timeout=1.0)
+        _wait_for_scope_exit(launcher_scope, timeout=min(1.0, grace_seconds))
 
     # 3. Terminate backend and TUI if still unreleased.
     for scope in scopes:
@@ -390,6 +392,7 @@ def cancel_managed_primary(
 def reclaim_session_owned_scopes_for_chat(
     runtime_root: Path,
     chat_id: str,
+    held: LaunchHandle | None = None,
     *,
     grace_seconds: float = 5.0,
     require_live_root: bool = False,
@@ -408,6 +411,7 @@ def reclaim_session_owned_scopes_for_chat(
     return reclaim_session_owned_scopes_for_chats(
         runtime_root,
         {chat_id},
+        held=held,
         grace_seconds=grace_seconds,
         require_live_root=require_live_root,
     )
@@ -417,10 +421,17 @@ def reclaim_session_owned_scopes_for_chats(
     runtime_root: Path,
     chat_ids: Collection[str],
     *,
+    held: LaunchHandle | None = None,
     grace_seconds: float = 5.0,
     require_live_root: bool = False,
 ) -> list[CleanupResult]:
-    """Reclaim session-owned scopes for selected chats in one streamed spawn pass."""
+    """Reclaim session-owned scopes for selected chats in one streamed spawn pass.
+
+    A spawn's scopes are reclaimed only while holding its launch lock exclusively and without
+    waiting: a busy lock means a live runner (or a brief holder) owns them, so the spawn is
+    skipped. ``held`` is the runner's own handle, used for its own spawn because a second
+    ``acquire`` in the same process would find it Busy and skip its own scopes.
+    """
 
     from meridian.lib.state.spawn.repository import (
         SpawnStateQuarantined,
@@ -444,59 +455,90 @@ def reclaim_session_owned_scopes_for_chats(
         candidates.append(record)
 
     results: list[CleanupResult] = []
-    for record in SpawnScan.ordered(candidates, ()).records:
-        chat_id = str(record.entry_chat_id)
-        launch = LaunchPaths.for_row(runtime_root, record)
-        scopes = read_scopes_from_disk(launch)
-        for scope in scopes:
-            if scope.owner_policy != "session_owned":
+    for candidate in SpawnScan.ordered(candidates, ()).records:
+        # A row from before launch locks (``None``) is acted on, as before: its scopes are
+        # read from the top-level directory, which no reopened launch ever uses.
+        with try_exclusive(runtime_root, candidate.id, held) as locked:
+            if locked is False:
                 continue
-            if is_scope_released(launch, scope.release_id):
+            # The scan above ran without the lock: a continue may have moved the row's
+            # launch or chat since, so judge the row as it is now.
+            try:
+                record = read_state(spawns_dir, candidate.id, include_prompt=False)
+            except SpawnStateQuarantined:
                 continue
-            if require_live_root:
-                skip_reason = _live_root_skip_reason(scope)
-                if skip_reason is not None:
-                    result = CleanupResult(
-                        scope_id=scope.scope_id,
-                        root_pid=scope.root_pid,
-                        descendant_count=None,
-                        reason="session_exit",
-                        grace_seconds=0.0,
-                        kill_escalated=False,
-                        degraded_fallback=False,
-                        skip_reason=skip_reason,
-                    )
-                    logger.debug(
-                        "Skipped session-owned scope reclaim during crash repair.",
-                        spawn_id=record.id,
-                        scope_id=scope.scope_id,
-                        root_pid=scope.root_pid,
-                        descendant_count=None,
-                        reason="session_exit",
-                        grace_seconds=0.0,
-                        kill_escalated=False,
-                        degraded_fallback=False,
-                        skip_reason=skip_reason,
-                        chat_id=chat_id,
-                    )
-                    results.append(result)
-                    continue
-            result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
-            mark_scope_released(launch, scope.release_id)
-            logger.debug(
-                "Reclaimed session-owned scope at session exit.",
-                spawn_id=record.id,
-                scope_id=scope.scope_id,
-                root_pid=scope.root_pid,
-                descendant_count=result.descendant_count,
-                reason="session_exit",
-                grace_seconds=grace_seconds,
-                kill_escalated=result.kill_escalated,
-                degraded_fallback=result.degraded_fallback,
-                skip_reason=result.skip_reason,
-                chat_id=chat_id,
+            if record is None or record.entry_chat_id not in selected:
+                continue
+            results.extend(
+                _reclaim_row_scopes(
+                    runtime_root,
+                    record,
+                    grace_seconds=grace_seconds,
+                    require_live_root=require_live_root,
+                )
             )
-            results.append(result)
+    return results
+
+
+def _reclaim_row_scopes(
+    runtime_root: Path,
+    record: SpawnRecord,
+    *,
+    grace_seconds: float,
+    require_live_root: bool,
+) -> list[CleanupResult]:
+    results: list[CleanupResult] = []
+    chat_id = str(record.entry_chat_id)
+    launch = LaunchPaths.for_row(runtime_root, record)
+    for scope in read_scopes_from_disk(launch):
+        if scope.owner_policy != "session_owned":
+            continue
+        if is_scope_released(launch, scope.release_id):
+            continue
+        if require_live_root:
+            skip_reason = _live_root_skip_reason(scope)
+            if skip_reason is not None:
+                result = CleanupResult(
+                    scope_id=scope.scope_id,
+                    root_pid=scope.root_pid,
+                    descendant_count=None,
+                    reason="session_exit",
+                    grace_seconds=0.0,
+                    kill_escalated=False,
+                    degraded_fallback=False,
+                    skip_reason=skip_reason,
+                )
+                logger.debug(
+                    "Skipped session-owned scope reclaim during crash repair.",
+                    spawn_id=record.id,
+                    scope_id=scope.scope_id,
+                    root_pid=scope.root_pid,
+                    descendant_count=None,
+                    reason="session_exit",
+                    grace_seconds=0.0,
+                    kill_escalated=False,
+                    degraded_fallback=False,
+                    skip_reason=skip_reason,
+                    chat_id=chat_id,
+                )
+                results.append(result)
+                continue
+        result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
+        mark_scope_released(launch, scope.release_id)
+        logger.debug(
+            "Reclaimed session-owned scope at session exit.",
+            spawn_id=record.id,
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=result.descendant_count,
+            reason="session_exit",
+            grace_seconds=grace_seconds,
+            kill_escalated=result.kill_escalated,
+            degraded_fallback=result.degraded_fallback,
+            skip_reason=result.skip_reason,
+            chat_id=chat_id,
+        )
+        results.append(result)
     return results
 
 

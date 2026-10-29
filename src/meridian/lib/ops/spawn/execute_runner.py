@@ -40,6 +40,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_store import (
     ChatBusyError,
@@ -114,6 +115,7 @@ async def _prepare_execution_handoff(
     work_id: str | None,
     request_metadata: ParamsRequestMetadata,
     ctx: RuntimeContext | None,
+    launch_slot: LaunchSlot,
     prepared: PreparedLaunchSurface | None = None,
 ) -> PreparedExecutionHandoff:
     """Prepare execution context; close session scope before re-raising on failure."""
@@ -164,6 +166,7 @@ async def _prepare_execution_handoff(
                 ),
                 execution_cwd=execution_cwd,
                 spawn_id=str(spawn.spawn_id),
+                launch_slot=launch_slot,
             )
         )
         resolved_request = resolved_request.model_copy(
@@ -334,6 +337,7 @@ async def launch_prepared_spawn(
     stream_stderr_to_terminal: bool = False,
     event_observer: Callable[[StreamEvent], None] | None = None,
     debug: bool = False,
+    launch_slot: LaunchSlot,
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
     warning_observer: Callable[[str | None], None] | None = None,
@@ -356,6 +360,7 @@ async def launch_prepared_spawn(
             work_id=work_id,
             request_metadata=request_metadata,
             ctx=ctx,
+            launch_slot=launch_slot,
             prepared=prepared,
         )
     except Exception as exc:

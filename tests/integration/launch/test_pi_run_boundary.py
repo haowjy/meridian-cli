@@ -16,6 +16,7 @@ from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.conftest import requires_pi_dist
 from tests.integration.launch.test_pi_identity_launch import (
@@ -185,7 +186,7 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         else "unresolved"
     )
     assert (row.run_boundary.status if row.run_boundary else None) == expected
-    meta = json.loads((runtime / "spawns" / row.id / "primary_meta.json").read_text())
+    meta = json.loads(launch_paths(runtime, row.id).primary_meta.read_text())
     assert "exit_identity" not in meta
     if shape == "mismatch":
         assert_entry_mismatch(runtime, row.id, entry)
@@ -331,7 +332,7 @@ def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.Ses
     assert row.current_chat_id is None
     facts = [
         json.loads(line)
-        for line in (runtime / "spawns" / spawn_id / "runner-lifecycle.jsonl")
+        for line in launch_paths(runtime, spawn_id).runner_lifecycle
         .read_text()
         .splitlines()
     ]
@@ -480,6 +481,7 @@ async def test_rpc_post_attempt_boundary(
         ),
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=ctx.runtime_root,
         metadata=PrimarySessionMetadata(
             harness="pi",
@@ -559,7 +561,7 @@ def test_primary_header_mismatch_prevents_exit_attribution(
     assert row.current_chat_id is None
     facts = [
         json.loads(line)
-        for line in (runtime / "spawns" / row.id / "runner-lifecycle.jsonl")
+        for line in launch_paths(runtime, row.id).runner_lifecycle
         .read_text()
         .splitlines()
     ]
@@ -641,7 +643,7 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
         assert code == 1
     facts = [
         json.loads(line)
-        for line in (ctx.runtime_root / "spawns" / "p42" / "runner-lifecycle.jsonl")
+        for line in launch_paths(ctx.runtime_root, "p42").runner_lifecycle
         .read_text()
         .splitlines()
     ]

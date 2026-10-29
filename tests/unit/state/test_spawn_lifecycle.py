@@ -4,7 +4,6 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
     parse_terminal_status,
-    resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
 )
@@ -238,49 +237,4 @@ def test_resolve_execution_terminal_state(
             terminal_status=facts.get("terminal_status"),  # type: ignore[arg-type]
         )
     )
-    assert (outcome.status, outcome.exit_code, outcome.error) == expected
-
-
-@pytest.mark.parametrize(
-    ("facts", "expected"),
-    [
-        (
-            {"durable_report_completion": True, "cancel_requested": True},
-            ("succeeded", 0, None),
-        ),
-        (
-            {
-                "durable_report_completion": False,
-                "cancel_requested": True,
-                "cancel_exit_code": 143,
-                "cancel_error": "terminated",
-            },
-            ("cancelled", 143, "terminated"),
-        ),
-        (
-            {
-                "durable_report_completion": True,
-                "cancel_requested": True,
-                "execution_exit_code": 143,
-                "execution_terminal_status": "cancelled",
-            },
-            ("cancelled", 143, "cancelled"),
-        ),
-        (
-            {
-                "durable_report_completion": True,
-                "cancel_requested": True,
-                "execution_exit_code": 0,
-            },
-            ("succeeded", 0, None),
-        ),
-    ],
-    ids=["no-execution-evidence", "cancel-without-report", "abnormal-exit", "clean-exit"],
-)
-def test_resolve_completion_cancel_precedence(
-    facts: dict[str, object], expected: tuple[str, int, str | None]
-) -> None:
-    outcome = resolve_completion_cancel_precedence(**facts)  # type: ignore[arg-type]
-
-    assert outcome is not None
     assert (outcome.status, outcome.exit_code, outcome.error) == expected

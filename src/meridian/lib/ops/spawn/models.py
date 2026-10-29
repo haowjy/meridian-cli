@@ -25,8 +25,48 @@ def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
     return task_line
 
 
+# The Pi extension's per-report bound (``MAX_REPORT_BYTES``).
+DELIVERY_MAX_BYTES = 64 * 1024
+_REPORT_FRAME_BYTES = 160
+
+
+def bound_delivery_reports(
+    rows: Sequence["SpawnDetailOutput"],
+) -> tuple["SpawnDetailOutput", ...]:
+    """Fit a delivery's inline reports, with its headers, in ``DELIVERY_MAX_BYTES``.
+
+    The reports share what the headers leave, equally; the Claude mod caps a collect's whole
+    output at 1 MiB and the Pi extension caps a notification at 64 KiB. The same bound applies
+    to ``spawn wait``'s owed spawns, so one rendering rule serves both.
+    """
+
+    with_reports = [row for row in rows if row.report_body is not None]
+    if not with_reports:
+        return tuple(rows)
+    headers = len(
+        render_delivery([row.model_copy(update={"report_body": None}) for row in rows]).encode()
+    )
+    share = max(0, (DELIVERY_MAX_BYTES - headers) // len(with_reports) - _REPORT_FRAME_BYTES)
+    bounded: list[SpawnDetailOutput] = []
+    for row in rows:
+        body = row.report_body
+        if body is not None and len(encoded := body.encode("utf-8")) > share:
+            body = (
+                encoded[:share].decode("utf-8", errors="ignore")
+                + f"\n[Report truncated after {share} bytes]"
+            )
+            row = row.model_copy(update={"report_body": body})
+        bounded.append(row)
+    return tuple(bounded)
+
+
 def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
-    """Render header-only notifications for terminal child details."""
+    """Render header-only notifications for terminal child details.
+
+    A detail that carries ``report_body`` is a run the spawn has since moved past, so
+    ``spawn show`` would describe the next run: its report goes inline instead, already
+    fitted by :func:`bound_delivery_reports`.
+    """
 
     rendered: list[str] = []
     for row in rows:
@@ -48,7 +88,11 @@ def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
             and row.task_cwd != row.authority_root
         ):
             lines.append(task_dir_line(row.task_cwd, row.work_id))
-        lines.append(f"meridian spawn show {row.spawn_id}")
+        if row.report_body is None:
+            lines.append(f"meridian spawn show {row.spawn_id}")
+        else:
+            lines.append("Report of this run (the spawn has since continued):")
+            lines.append(row.report_body)
         rendered.append("\n".join(lines))
     return "\n\n".join(rendered)
 
@@ -913,7 +957,9 @@ class SpawnDetailOutput(BaseModel):
     reasoning_tokens: int | None = None
     cost_usd: float | None
     cost_is_estimate: bool = False
-    report_path: str | None
+    report_path: str | None = None
+    """Deprecated: the current run's report file, kept in JSON for one release. Use
+    ``spawn report show``; the path is an internal layout and goes in the next minor release."""
     report_summary: str | None
     report_body: str | None
     harness_session_id: str | None = None
@@ -923,7 +969,6 @@ class SpawnDetailOutput(BaseModel):
     pi_cleanup_reason: str | None = None
     pi_cleanup_error: str | None = None
     last_message: str | None = None
-    log_path: str | None = None
     last_attempt_exited_at: str | None = None
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
@@ -965,8 +1010,8 @@ class SpawnDetailOutput(BaseModel):
             return ""
         return f"\n\n{report_text}"
 
-    def report_table_value(self) -> str:
-        return self.report_path or "-"
+    def _has_report(self) -> bool:
+        return self.report_summary is not None or self.report_body is not None
 
     def report_section(self) -> str | None:
         report_text = self._normalized_report_body()
@@ -1140,8 +1185,8 @@ class SpawnDetailOutput(BaseModel):
             lines.append(f"Work: {work_value}")
         if self._has_distinct_task_cwd():
             lines.append(self._task_dir_line())
-        if self.report_path is not None:
-            lines.append(f"Report: {self.report_path}")
+        if self._has_report():
+            lines.append(f"Report: meridian spawn report show {self.spawn_id}")
         failure_line = self._failure_line_for_compact_or_moderate()
         if failure_line is not None:
             label, value = failure_line
@@ -1244,11 +1289,16 @@ class SpawnDetailOutput(BaseModel):
                 None if self.reasoning_tokens is None else str(self.reasoning_tokens),
             ),
             ("Cost", cost_value),
-            ("Report", self.report_path),
+            (
+                "Report",
+                f"meridian spawn report show {self.spawn_id}" if self._has_report() else None,
+            ),
             ("Last message", self.last_message),
             (
                 "Progress",
-                f"meridian session log {self.spawn_id}" if self.log_path else None,
+                f"meridian session log {self.spawn_id}"
+                if is_active_spawn_status(self.status)
+                else None,
             ),
             (
                 "Transcript",
@@ -1427,14 +1477,13 @@ class SpawnWaitMultiOutput(BaseModel):
 
         from meridian.lib.core.formatting import tabular
 
-        rows = [["spawn_id", "status", "duration", "exit", "report"]]
+        rows = [["spawn_id", "status", "duration", "exit"]]
         rows.extend(
             [
                 run.spawn_id,
                 run.status,
                 f"{run.duration_secs:.1f}s" if run.duration_secs is not None else "-",
                 str(run.exit_code) if run.exit_code is not None else "-",
-                run.report_table_value(),
             ]
             for run in spawns
         )
@@ -1569,6 +1618,7 @@ __all__ = [
     "SpawnSubagentsOutput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
+    "bound_delivery_reports",
     "build_goal_contract_preview",
     "normalize_goal",
     "render_delivery",

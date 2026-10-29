@@ -1,4 +1,4 @@
-"""Spawn v3 state-file persistence helpers.
+"""Spawn state-file (v3, v4) persistence helpers.
 
 The helpers in this module persist one ``state.json`` per spawn under the
 runtime spawns directory.
@@ -15,13 +15,18 @@ from pathlib import Path
 from typing import Any, Literal, Self, cast
 from uuid import uuid4
 
-from pydantic import ValidationError, model_validator
+from pydantic import (
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.paths import LaunchPaths, launch_archive
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -29,15 +34,19 @@ from meridian.lib.state.spawn.legacy import (
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 from meridian.lib.utils.json_shapes import json_object
 
+# The newest ``state.json`` version this build reads; P0's newer-format check compares against it.
+MAX_STATE_VERSION = 4
+V4_ONLY_FIELDS = ("launch", "prior_usage", "owed_launches")
+
 
 class StoredSpawnState(SpawnStateFields):
-    """On-disk v3 ``state.json`` representation.
+    """On-disk ``state.json`` representation: v3, or v4 when ``launch`` is present.
 
     The prompt body is stored separately in ``starting-prompt.md``; this model
     keeps only ``prompt_length`` metadata so state reads can stay lightweight.
     """
 
-    v: Literal[3]
+    v: Literal[3, 4]
     prompt_length: int | None = None
 
     @model_validator(mode="after")
@@ -46,7 +55,20 @@ class StoredSpawnState(SpawnStateFields):
 
         if (self.status in TERMINAL_SPAWN_STATUSES) != (self.terminal is not None):
             raise ValueError("terminal status and terminal facts must appear together")
+        if (self.v == 4) != (self.launch is not None):
+            raise ValueError("state v4 and the launch field must appear together")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_v4_fields_from_v3(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """A v3 row carries none of the v4 fields: older builds quarantine unknown keys."""
+        data = cast("dict[str, Any]", handler(self))
+        if self.launch is None:
+            for name in V4_ONLY_FIELDS:
+                data.pop(name, None)
+            if isinstance(data.get("terminal"), dict):
+                data["terminal"].pop("harness_cumulative", None)
+        return data
 
 
 # Flat run-boundary fields of the PR-1 dogfood build; retire with dogfood_migration.
@@ -65,6 +87,16 @@ class SpawnStateQuarantineReport:
     spawn_id: str
     state_path: Path
     validation_errors: tuple[object, ...]
+    # Set when a later build wrote the row (``v`` above the supported version): its state
+    # version and the two chat fields as written. None for every other quarantine.
+    newer_version: int | None = None
+    chat_id: str | None = None
+    current_chat_id: str | None = None
+
+    @property
+    def newer_chat_ids(self) -> frozenset[str]:
+        """The chats a newer row names, for observer checks that need no order."""
+        return frozenset(chat for chat in (self.chat_id, self.current_chat_id) if chat)
 
     @property
     def dogfood_row(self) -> bool:
@@ -85,6 +117,18 @@ class SpawnStateQuarantined(ValueError):
         self.report = report
         hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
+
+
+class SpawnStateNewer(SpawnStateQuarantined):
+    """A row a later build wrote: this build can neither read nor rewrite it."""
+
+    def __init__(self, report: SpawnStateQuarantineReport) -> None:
+        self.report = report
+        ValueError.__init__(
+            self,
+            f"Spawn state {report.state_path} was written by a newer Meridian "
+            f"(state v{report.newer_version}); use that build to inspect or continue it",
+        )
 
 
 class QuarantinedChatIdStatus(Enum):
@@ -161,12 +205,17 @@ def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
 def record_to_stored_state(
     record: SpawnRecord,
 ) -> StoredSpawnState:
-    """Convert a spawn projection to v3 on-disk state without prompt body."""
+    """Convert a spawn projection to on-disk state without prompt body.
+
+    ``v`` follows ``launch``: older builds read v3 and quarantine v4, so only a writer
+    that holds the launch lock (proving no older runner is alive) ever sets ``launch``,
+    and a row without one stays v3 and carries none of the v4 fields.
+    """
 
     return StoredSpawnState.model_validate(
         {
             **record.model_dump(exclude={"prompt"}),
-            "v": 3,
+            "v": 4 if record.launch is not None else 3,
             "prompt_length": len(record.prompt) if record.prompt is not None else None,
         }
     )
@@ -176,11 +225,21 @@ def stored_state_to_record(
     stored: StoredSpawnState,
     prompt: str | None = None,
 ) -> SpawnRecord:
-    """Convert v3 on-disk state to a ``SpawnRecord`` projection."""
+    """Convert on-disk state to a ``SpawnRecord`` projection."""
 
     return SpawnRecord.model_validate(
         {**stored.model_dump(exclude={"v", "prompt_length"}), "prompt": prompt}
     )
+
+
+def read_launch_archive(runtime_root: Path, spawn_id: str, n: int) -> SpawnRecord | None:
+    """Launch ``n``'s finished row as archived by the holder that started launch ``n+1``."""
+
+    try:
+        text = launch_archive(runtime_root, spawn_id, n).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    return stored_state_to_record(StoredSpawnState.model_validate_json(text))
 
 
 def read_prompt(launch: LaunchPaths) -> str | None:
@@ -190,6 +249,10 @@ def read_prompt(launch: LaunchPaths) -> str | None:
         return launch.starting_prompt.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | None:
@@ -202,6 +265,24 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                     "invalid_root", "spawn state root must be an object"
                 )
             raw = cast("dict[str, Any]", parsed)
+            version = raw.get("v")
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version > MAX_STATE_VERSION
+            ):
+                raise SpawnStateNewer(
+                    SpawnStateQuarantineReport(
+                        spawn_id=spawn_id,
+                        state_path=path,
+                        validation_errors=(
+                            {"type": "newer_format", "loc": ("v",), "msg": f"state v{version}"},
+                        ),
+                        newer_version=version,
+                        chat_id=_str_or_none(raw.get("chat_id")),
+                        current_chat_id=_str_or_none(raw.get("current_chat_id")),
+                    )
+                )
             candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
             stored = StoredSpawnState.model_validate(candidate)
             if stored.id != spawn_id:
@@ -365,6 +446,7 @@ __all__ = [
     "Missing",
     "QuarantinedChatIdRead",
     "QuarantinedChatIdStatus",
+    "SpawnStateNewer",
     "SpawnStateQuarantineReport",
     "SpawnStateQuarantined",
     "StoredSpawnState",

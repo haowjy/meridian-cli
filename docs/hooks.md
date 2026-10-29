@@ -1,5 +1,7 @@
 # Hooks
 
+This page covers Meridian's own event hooks. Mars packages can also install harness hooks (Claude, Codex, OpenCode, Pi); see [Mars configuration](configuration/mars.md#what-a-package-installs).
+
 Hooks let you run commands or builtins automatically when Meridian events fire — syncing a remote repo, running checks after a spawn finishes, delivering notifications, or any custom script you want wired to the agent lifecycle.
 
 ## Commands
@@ -33,9 +35,9 @@ manually because it has no notification payload; use `meridian notify` instead.
 
 | Event | Default timeout | Fires when |
 | ----- | --------------- | ---------- |
-| `spawn.created` | 30s | A spawn record is first written, either queued or already running |
-| `spawn.started` | 30s | A spawn enters `running`, including when its initial persisted state is already `running` |
-| `spawn.finished` | 60s | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted; a later authoritative terminal write can fire it again |
+| `spawn.created` | 30s | A spawn record is first written (new spawns are created `running`) |
+| `spawn.started` | 30s | A run starts `running`: with `spawn.created` for a new spawn, alone for each `--continue` of it |
+| `spawn.finished` | 60s | A run's terminal state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted, once per run; a continued spawn fires it again under the same `spawn_id` with a new `event_id` |
 | `work.created` | 30s | `meridian work start` creates a new work item |
 | `work.activated` | 30s | `work start` or `work switch` resolves an item, with or without a session, or a primary launch attaches `--work` / `--from` work |
 | `work.done` | 60s | `meridian work done`, or an update to `done`, archives a work item |
@@ -52,9 +54,9 @@ each one to the built-in `notify` hook unless config routes it; see
 Hook failures always log and continue to the next hook; they never undo or stop
 the event that fired them.
 
-Spawn event IDs are stable for a given spawn and event, so a second
-`spawn.finished` delivery after an authoritative terminal rewrite has the same
-ID and can be deduplicated. Work and notification event IDs are unique for each
+Spawn event IDs are stable for a given run of a spawn and event, so a second
+`spawn.finished` delivery after an authoritative terminal rewrite of the same run has the same
+ID and can be deduplicated; a continue's run has its own. Work and notification event IDs are unique for each
 firing, so repeated activations of the same work item remain distinct.
 
 A primary launch with `--work`, or with work inherited through `--from`, fires

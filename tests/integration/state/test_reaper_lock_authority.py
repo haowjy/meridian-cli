@@ -28,6 +28,7 @@ from meridian.lib.state.reaper_cleanup_claim import (
     claim_active_spawn_scopes,
     cleanup_claim_path,
 )
+from tests.support import legacy_rows
 from tests.support.launch_paths import launch_paths
 
 
@@ -72,7 +73,7 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
 def test_runner_exit_does_not_turn_a_crashed_launch_into_success(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    spawn_store.record_runner_exit(
+    legacy_rows.record_runner_exit(
         runtime_root,
         spawn_id,
         status="succeeded",
@@ -93,7 +94,7 @@ def test_runner_exit_does_not_turn_a_crashed_launch_into_success(tmp_path: Path)
 def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    spawn_store.record_cancel_intent(
+    legacy_rows.record_cancel_intent(
         runtime_root,
         spawn_id,
         exit_code=130,
@@ -109,14 +110,14 @@ def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
     assert reconciled.terminal is not None
     assert reconciled.terminal.exit_code == 130
     assert reconciled.terminal.error == "cancelled by user"
-    assert reconciled.terminal.origin == "reconciler"
+    assert reconciled.terminal.origin == "cancel"
 
 
 @pytest.mark.asyncio
-async def test_cancel_dead_runner_with_report_is_cancelled(tmp_path: Path) -> None:
+async def test_cancel_dead_runner_with_report_keeps_the_completion(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    (runtime_root / "spawns" / spawn_id / "report.md").write_text(
+    launch_paths(runtime_root, spawn_id).report.write_text(
         "# Finished\n\nCompleted before the runner crashed.\n",
         encoding="utf-8",
     )
@@ -127,13 +128,13 @@ async def test_cancel_dead_runner_with_report_is_cancelled(tmp_path: Path) -> No
 
     outcome = await service.cancel(SpawnId(spawn_id))
 
-    assert outcome.status == "cancelled"
+    assert outcome.status == "succeeded"
     persisted = spawn_store.get_spawn(runtime_root, spawn_id)
     assert persisted is not None
-    assert persisted.status == "cancelled"
+    assert persisted.status == "succeeded"
     assert persisted.terminal is not None
-    assert persisted.terminal.exit_code == 130
-    assert persisted.terminal.error == "cancelled"
+    assert persisted.terminal.exit_code == 0
+    assert persisted.terminal.error is None
 
 
 def test_reaper_cleans_managed_primary_fallback_processes(tmp_path: Path) -> None:

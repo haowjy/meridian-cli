@@ -30,6 +30,7 @@ from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 # qa-validated: spawn-return-report
 
@@ -120,7 +121,7 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         spawn = cast("Any", kwargs["spawn"])
         runtime_root = Path(cast("Path", kwargs["runtime_root"]))
         spawn_id = str(spawn.spawn_id)
-        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path = launch_paths(runtime_root, spawn_id).report
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
         chat_id = session_store.start_session(
@@ -184,7 +185,7 @@ def test_execute_spawn_blocking_without_native_key_omits_transcript_hint(
         spawn = cast("Any", kwargs["spawn"])
         runtime_root = Path(cast("Path", kwargs["runtime_root"]))
         spawn_id = str(spawn.spawn_id)
-        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path = launch_paths(runtime_root, spawn_id).report
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
         spawn_store.finalize_spawn(
@@ -295,7 +296,7 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert result.spawn_id is not None
     authority = resolve_runtime_authority_for_write(tmp_path / "repo")
     assert authority.runtime_root is not None
-    params_path = authority.runtime_root / "spawns" / result.spawn_id / "params.json"
+    params_path = launch_paths(authority.runtime_root, result.spawn_id).params
     params = json.loads(params_path.read_text(encoding="utf-8"))
     spawn_row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
     assert spawn_row is not None
@@ -386,7 +387,7 @@ def test_execute_spawn_pre_init_failure_returns_failed_output(
     assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
 
 
-def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
+def test_prepare_then_reserve_graceful_prep_failure_leaks_nothing_with_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -495,7 +496,7 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     assert row.work_id == "new-work-item"
     assert row.status == expected_row_status
     assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
-    assert hook.event_types == ["spawn.created"]
+    assert hook.event_types == ["spawn.created", "spawn.started"]
     start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
     assert len(start_events) == 1
     assert start_events[0]["id"] == result.spawn_id
@@ -544,7 +545,7 @@ def test_execute_spawn_blocking_persists_unified_work_id_precedence(
     assert row.work_id == "from-request"
 
 
-def test_reserve_then_prepare_materializes_context_from_work(
+def test_prepare_then_reserve_materializes_context_from_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

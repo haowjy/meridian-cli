@@ -45,23 +45,35 @@ bare path
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
-    state.json                      — authoritative spawn state (schema v3)
+    state.json                      — authoritative spawn state (schema v4 when `launch` is
+                                      present, v3 when absent)
     launch.lock                     — runner-lifetime flock, acquired before publication
-    history.jsonl                   — legacy runner event stream (no longer written), never read
-    attempt-N/                      — legacy retry evidence; new runs do not create it
-    runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
-    process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
-    permission_requests.jsonl       — requests the model made that nobody could approve
+    launches/<n>/                   — one launch's files (a v3 row's launch 1 stays in the
+                                      spawn directory, `launch` absent). Reach them only
+                                      through `LaunchPaths`. `launch.json` is the finished
+                                      launch's row, copied there by the next launch's holder.
+      history.jsonl                 — legacy runner event stream (no longer written), never read
+      runner-lifecycle.jsonl        — runner breadcrumb journal (signals, phases, atexit)
+      process_scopes.json           — durable process identities + release markers
+      permission_requests.jsonl     — requests the model made that nobody could approve
                                       (`permission_journal.py`: one format for broker and
                                       finalization writers; `spawn show` reads it)
-    report.md · stderr.log · params.json · tokens.json
-    observed-spawns.json            — this parent's consumed child IDs and explicit-wait
-                                      leases; shared by Pi and Claude delivery; goes with
-                                      the spawn, so pruning one forgets its consumption
-  pi-bash/<spawn_id>/observed-spawns.json
-                                    — legacy-observed-spawns (#719): read, never deleted,
-                                      and mirrored by record() when this Pi dir exists
+      report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
+    attempt-N/                      — legacy retry evidence; new runs do not create it
+    observed-launches.json          — this parent's consumed launches (`<spawn id>:<n>`),
+                                      explicit-wait leases and wait pins, plus the `delivered`
+                                      map (what the last `spawn collect` handed over, per
+                                      spawn, so `spawn ack` consumes exactly that); shared by Pi and
+                                      Claude delivery; goes with the spawn, so pruning one
+                                      forgets its consumption
+    observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
+                                      read, never written
+  pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
+                                    — Pi's admission receipts and dismissals, same keys;
+                                      `delivery-receipts.json` / `cleared-spawns.json` are
+                                      the pre-launch names, read-only. The old
+                                      `pi-bash/<id>/observed-spawns.json` mirror is retired
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet
@@ -76,7 +88,19 @@ their state follows the canonical path and the source directory stays untouched.
 
 Spawn state lives in individual `spawns/<id>/state.json` files so status reads are
 O(1) instead of replaying an O(n) global event log. The directory layout came from
-the v2 migration; published rows now use schema v3.
+the v2 migration; published rows use schema v3, or v4 once they have a `launch`.
+
+**State v4** is v3 plus three spawn-level fields: `launch: {n}` (which launch the flat
+row describes), `prior_usage` (duration, cost and every token count of launches before `n`, plus the last
+`harness_cumulative` that seeds the next extractor; every
+surface, Pi included, shows it plus the current launch) and `owed_launches` (background launches a
+continue moved past before the parent consumed them). The serializer writes `v: 4` when
+`launch` is present and `v: 3` when it is not, in one conditional
+(`record_to_stored_state`), so a write by a process without the launch lock (`work
+rename`, session archive) leaves an older build's row v3 and only `reopen_spawn`, which
+holds the lock and so proves no older runner is alive, sets `launch`. Older builds
+quarantine a v4 row; the history index is v13 (own sqlite file, marker namespace and
+failure latch) so they never validate a v4 `record_json`.
 
 ### Session State
 
@@ -209,14 +233,11 @@ context roots together.
 
 ### Terminal Write Authority
 
-Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. The
-finalize mutator checks `current.terminal.origin` against the incoming origin
-under the per-spawn lock: a reconciler-origin terminal write can be replaced by
-an authoritative origin (`runner`, `launcher`, `launch_failure`, `cancel`); all
-other terminal-to-terminal writes are rejected. Terminal statuses are
-`succeeded`, `failed`, `cancelled`, and `timed_out`. The reaper will not
-overwrite a spawn that the runner already terminated with a higher-authority
-origin.
+Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. Under the
+per-spawn lock the finalize mutator accepts a write only while the row is active; any
+terminal-to-terminal write is declined (`Decline("spawn is already terminal")`), whatever
+its origin. `origin` is recorded on the terminal facts for diagnosis, not ranked.
+Terminal statuses are `succeeded`, `failed`, `cancelled`, and `timed_out`.
 
 ### Reconciliation Behavior
 
@@ -230,8 +251,10 @@ repair. It fails closed unless `is_root_side_effect_process()` is true and deleg
 `SpawnApplicationService.finalize_dead_launch()`, the only dead-launch outcome writer.
 That method writes only after `claim_dead_launch()` returns `Claimed`, retaining the
 free runner-lifetime `launch.lock`, and persists the same status, exit code, and error
-that `read_derived()` projects: cancel intent yields `cancelled`, otherwise runner
-disappearance yields `failed`/`crashed`. Origin and timestamps may differ. It never
+that `read_derived()` projects. `derive()` checks the durable report first: a report
+yields `succeeded`, with or without a cancel request. Without a report, cancel intent
+yields `cancelled`, otherwise runner disappearance yields `failed`/`crashed`. Origin and
+timestamps may differ. It never
 finalizes a lockless legacy row.
 
 Before finalization it snapshots exact cleanup targets into
@@ -246,19 +269,17 @@ and 32 recoveries per pass, lockless rows untouched, and a busy index skips the 
 Only doctor still reads every `state.json` (`iter_repair_candidates`), and only doctor
 resolves a terminal row's leftover reaper claim.
 
-Cancel convergence uses the same launch-lock claim for lock-backed rows. A report or
-runner-exit breadcrumb is not an outcome: when the runner is gone, cancel intent still
-yields `cancelled`. Lockless legacy rows retain the old report/cancel precedence until
-their explicit-command compatibility path is removed.
+Cancel convergence uses the same launch-lock claim for lock-backed rows, so it follows
+`derive()`: the durable report wins over a cancel request, and a runner-exit breadcrumb
+alone is not an outcome. Lockless legacy rows retain the old report/cancel precedence
+until their explicit-command compatibility path is removed.
 
 **Managed-primary orphan cleanup:**
 
 For managed primaries, the claim combines recorded spawn-owned scopes with fallback
 targets derived from the managed-primary snapshot when available. Birth-validated
 scope cleanup consumes only that claim after terminal finalization. Successful targets
-gain durable release markers; failed targets remain claimed for retry. A runner-origin
-terminal write clears a reconciler claim without signalling because runner authority
-supersedes reconciler cleanup intent.
+gain durable release markers; failed targets remain claimed for retry.
 
 ## Patterns
 
@@ -353,7 +374,7 @@ new OS-specific home-directory branches.
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — full dual-root layout,
   per-spawn state, session state, work item storage, and read vs write resolution
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write
-  authority lattice, how finalization interacts with the reaper
+  rules (one writer per outcome), how finalization interacts with the reaper
 ## Reference details
 
 ### Work-item metadata and project identity
@@ -417,13 +438,14 @@ which would unlock the worker too. Harnesses never inherit this descriptor.
 `LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
 requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
-Explicit continue resolves the named spawn's current chat owner, takes that
-owner's lock before the named source lock, and sweeps their birth-verified scopes
-before creating another row. An exact-continue parent publishes the new row as
-the chat owner while its launch lock is still held; a background worker confirms
-that pointer after hand-off. Lockless legacy rows alone use
-`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
-the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
+Explicit continue keeps the spawn's ID: `launch/continue_launch.py` resolves the spawn that
+owns the target chat (an older spawn of the chat, or a chat ref, reopens that owner and refuses
+when it would change the owner's parent or kind), takes its launch lock, writes the last
+launch's derived outcome, sweeps its birth-verified scopes and resolves a leftover reaper
+claim; then `reopen_spawn` commits the next launch under the same lock, which the runner
+inherits (in-process for a primary or foreground child, a duplicated fd for `--bg`). Lockless
+legacy rows alone use `legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert
+under the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
 This does not change v3 status authority.
 
 
@@ -542,10 +564,11 @@ spawn"); resume, read and `--from` still work on the chat.
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
 - An exact continue writes no link until its session starts: the start event is the only
-  writer of a chat's owner. Until then `spawn show`, `wait`, `cancel` and
-  `message` by chat ID name the previous run (a short window; once the row exists but its
-  session has not started they can act on a finished run), and a racing continue is
-  refused by the chat lock (`ChatBusyError`) in its worker.
+  writer of a chat's owner, and a reopen's link names the same spawn. Until then the row
+  (launch K+1, running, `chat_id` the target, no `session_instance_id`) resolves to the newest
+  generation linked to it in that chat. A racing continue of the same spawn is refused at its
+  launch lock; one that loses the chat to a native `/resume` takeover finds the chat lock held
+  (`ChatBusyError`), and its runner writes the launch `failed` with that error.
 - A spawn row's `chat_id` is the chat its launch runs or will resume, never the caller's.
   An exact continue reserves it with the continue target, so a continue refused before
   its session starts still resumes that chat. A fresh child is reserved with
@@ -604,12 +627,17 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   lock and never recreate a deleted spawn directory; readers union the current file
   with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
   best-effort shown-result observations wait up to one second and preserve their
-  output when the lock or filesystem is unavailable.
+  output when the lock or filesystem is unavailable. `LaunchKey(spawn_id, n)` is the one
+  key type; `str()` of it is the ledger entry. `legacy_view()` is the one place an older
+  build's bare-ID file becomes launch-1 entries. A `delivered` map records what the last
+  `spawn collect` handed out so `spawn ack` consumes exactly that; only ack removes an entry.
 - `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
   primary owns every primary generation of its chat, anyone else owns only itself. Also
   owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which
   the Pi spawn-watch extension mirrors as `isBackgroundLaunch`. `spawn collect`, the Pi
-  launch's spawn-watch scope, and the Pi drain all read it here.
+  launch's spawn-watch scope, and the Pi drain all read it here. `owed_launches()` is the
+  one rule for which launches are owed to a parent set (current background children plus
+  the index's `owed_launches` side table); `spawn collect` and the Pi drain both call it.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

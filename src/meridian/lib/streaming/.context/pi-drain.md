@@ -89,12 +89,15 @@ complete rows atomically.
 Pi extensions coordinate private work with Python through disk files:
 
 - bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
-- exact admission receipts under `runtime_root/pi-bash/<parent>/delivery-receipts.json`
+- exact admission receipts under `runtime_root/pi-bash/<parent>/launch-receipts.json`
 - Python's exact public-event acknowledgements in `delivery-observations.json`
-- explicit CLI observations/dismissals in `runtime_root/spawns/<parent>/observed-spawns.json`
-  (`legacy-observed-spawns (#719)`: readers also merge the mirrored copy under
-  `pi-bash/<parent>/`) and `pi-bash/<parent>/cleared-spawns.json`; the disk watcher
-  watches both directories and wakes only for the files it reads
+- explicit CLI observations/dismissals in `runtime_root/spawns/<parent>/observed-launches.json`
+  and `pi-bash/<parent>/cleared-launches.json`, keyed by launch (`<spawn id>:<n>`); readers
+  also merge the pre-launch files as launch 1. The drain holds the session open for a
+  launch `state/spawn_ownership.owed_launches` returns for this session (read in the same descendant refresh pass as the records) (current background
+  children plus the index's `owed_launches`, so a child a continue re-parented away still
+  counts), until its key is consumed; blocker identity is always the launch key. The disk watcher watches both
+  directories and wakes only for the files it reads
 - supervised watcher/storage diagnostics in `delivery-fault.json`
 
 See [the delivery contract](../../../pi_runtime/.context/delivery-contract.md) for full

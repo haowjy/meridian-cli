@@ -89,15 +89,16 @@ class ReplayedLaunchPolicySnapshot:
     alias_catalog: dict[str, AliasEntry] | None = None
 
 
-def overlay_continue_model_selection(
+def overlay_continue_selection(
     snapshot: LaunchPolicySnapshot,
     *,
     harness: str,
     model_selection: ContinueModelSelectionOverlay,
+    execution_policy: ResolvedExecutionPolicy,
     selection_report: dict[str, object] | None,
     field_provenance: dict[str, str],
 ) -> LaunchPolicySnapshot:
-    """Write continue routing onto a snapshot working copy; persist the same flat fields."""
+    """Write a continue's routing and policy onto a snapshot copy; persist the same flat fields."""
 
     return snapshot.model_copy(
         update={
@@ -109,6 +110,7 @@ def overlay_continue_model_selection(
             "model_selection_harness_model_id": model_selection.harness_model_id,
             "model_selection_harness_provenance": model_selection.harness_provenance,
             "model_selection_provider_constraint": model_selection.provider_constraint,
+            "execution_policy": execution_policy,
             "selection_report": selection_report,
             "field_provenance": field_provenance,
         }
@@ -302,6 +304,6 @@ __all__ = [
     "SnapshotModelSelection",
     "build_launch_policy_snapshot",
     "managed_model_override_from_persisted_model",
-    "overlay_continue_model_selection",
+    "overlay_continue_selection",
     "replay_launch_policy_snapshot",
 ]

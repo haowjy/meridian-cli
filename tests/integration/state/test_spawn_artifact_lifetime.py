@@ -194,7 +194,7 @@ def test_late_runner_lifecycle_write_does_not_recreate_deleted_spawn(
     runtime_root = tmp_path / "runtime"
     spawn_id = SpawnId("p1")
     spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    lifecycle_path = spawn_dir / "runner-lifecycle.jsonl"
+    lifecycle_path = launch_paths(runtime_root, spawn_id).runner_lifecycle
     _start_test_spawn(runtime_root, str(spawn_id), status="running")
     _append_runner_lifecycle_event(
         launch_paths(runtime_root, spawn_id),
@@ -225,7 +225,7 @@ def test_late_native_primary_metadata_does_not_recreate_deleted_spawn(
     runtime_root = tmp_path / "runtime"
     spawn_id = SpawnId("p1")
     spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    metadata_path = spawn_dir / "primary_meta.json"
+    metadata_path = launch_paths(runtime_root, spawn_id).primary_meta
     _start_test_spawn(runtime_root, str(spawn_id), status="running")
 
     def _write() -> None:

@@ -22,6 +22,7 @@ from meridian.lib.state.spawn.repository import read_state, record_to_stored_sta
 from meridian.lib.state.spawn.transitions import apply_finalize
 from meridian.lib.state.spawn_status import CRASHED, overlay_derived, read_derived
 from tests.conftest import posix_only
+from tests.support import legacy_rows
 
 if TYPE_CHECKING:
     import pytest
@@ -251,7 +252,7 @@ def test_read_derived_uses_cancel_intent(tmp_path: Path) -> None:
     _seed(runtime_root, "p1", status=SpawnStatus.FINALIZING)
     (runtime_root / "spawns" / "p1" / "launch.lock").touch()
 
-    spawn_store.record_cancel_intent(
+    legacy_rows.record_cancel_intent(
         runtime_root,
         "p1",
         exit_code=130,

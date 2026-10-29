@@ -25,6 +25,7 @@ from meridian.lib.launch.process import ProcessOutcome
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -129,8 +130,9 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
         project_root: Path,
         request: LaunchRequest,
         harness_registry: object,
+        hold: object = None,
     ) -> LaunchResult:
-        _ = (project_root, harness_registry)
+        _ = (project_root, harness_registry, hold)
         requests.append(request)
         return LaunchResult(
             command=(),
@@ -341,10 +343,8 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     ).chat_id
     requests = _record_primary_launch(monkeypatch)
 
-    try:
-        _run_primary_continue(project_root, spawn_chat_id)
-    finally:
-        session_store.stop_session(runtime_root, spawn_chat_id)
+    session_store.stop_session(runtime_root, spawn_chat_id)
+    _run_primary_continue(project_root, "p51")
 
     assert requests[0].launch_policy_snapshot == snapshot
     assert requests[0].passthrough_args == snapshot.extra_args
@@ -470,12 +470,43 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     assert work_after.task_dir == source_task_dir.as_posix()
 
 
+def test_primary_continue_yolo_reaches_command_and_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.3-codex", harness=HarnessId.CODEX)
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _seed_primary_spawn(
+        _state_root(project_root),
+        spawn_id="p47",
+        harness_session_id="00000000-0000-4000-8000-000000000047",
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    contexts: list[Any] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+
+    _run_primary_continue(project_root, "p47", dry_run=True, yolo=True)
+
+    request = contexts[0].resolved_request
+    assert request.execution_policy.approval == "never"
+    assert request.launch_policy_snapshot is not None
+    assert request.launch_policy_snapshot.execution_policy.approval == "never"
+    assert request.launch_policy_snapshot.field_provenance["approval_source"] == "cli"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message_fragments"),
     [
         ({"passthrough": ("--custom",)}, ("--",)),
         ({"task_dir": "other-worktree"}, ("--continue", "--task-dir", "--fork")),
-        ({"work": "other-work"}, ("--work", "--fork-fresh", "fresh session")),
     ],
 )
 def test_primary_continue_rejects_surface_overrides(
@@ -635,6 +666,7 @@ def test_fork_old_harness_generation_preserves_selected_history(
     from meridian.lib.launch.types import PrimarySessionMetadata
 
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=root,
         metadata=PrimarySessionMetadata(
             harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=()

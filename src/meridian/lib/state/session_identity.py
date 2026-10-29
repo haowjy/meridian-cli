@@ -89,6 +89,9 @@ def session_records_for_spawns(
 ) -> dict[str, SessionRecord]:
     """Return unmodified authoritative generations; ambiguous linkage is a conflict.
 
+    The one exception: a row with a ``chat_id`` and no ``session_instance_id`` (a reopened
+    spawn not yet bound) resolves to the newest generation linked to it in that chat.
+
     Do not fill nullable identity fields here: capture fingerprints, historical
     provenance and publication witnesses must detect changes to those fields too.
     """
@@ -122,7 +125,12 @@ def session_records_for_spawns(
                 raise ValueError(f"Session generation conflicts with history: {record.id}")
             candidates = [session] if session is not None else []
         if len(candidates) > 1:
-            raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+            if not record.chat_id or record.session_instance_id:
+                raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+            # A continue between its commit and its bind: the row has its chat but no
+            # generation of its own yet, and every earlier launch linked one in that chat.
+            # The newest is the latest.
+            candidates = candidates[-1:]
         if candidates:
             session = candidates[0]
             if session.spawn_id not in {None, record.id} or session.history_id not in {
@@ -175,10 +183,15 @@ def live_observer_for_chat(
 
     if records is None:
         scan = spawn_store.list_spawns(runtime_root)
-        if any(
-            quarantine_may_observe(runtime_root, report, chat_id)
-            for report in scan.quarantines
-        ):
+        for report in scan.quarantines:
+            if not quarantine_may_observe(runtime_root, report, chat_id):
+                continue
+            if report.newer_version is not None:
+                raise ValueError(
+                    "Cannot establish current-chat ownership: "
+                    f"spawn {report.spawn_id} was written by a newer Meridian "
+                    f"(state v{report.newer_version}); use that build to inspect or continue it"
+                )
             raise ValueError("Cannot establish current-chat ownership; run `meridian doctor`")
         records = scan.records
     for row in records:

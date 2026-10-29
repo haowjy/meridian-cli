@@ -92,12 +92,10 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
                     skill_paths=(),
                 ),
                 prompt="record lifecycle events",
-                status=SpawnStatus.QUEUED,
             ),
             launch_lock=launch_lock,
         ).spawn_id
     lifecycle.announce(spawn_id)
-    lifecycle.mark_running(spawn_id)
     lifecycle.finalize(
         spawn_id,
         "failed",
@@ -241,6 +239,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
 
     activations_before_child = activation_count()
     with _session_execution_context(
+        launch_slot=LaunchSlot(),
         runtime_root=work_runtime_root,
         metadata=PrimarySessionMetadata(
             harness="codex",

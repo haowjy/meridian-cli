@@ -22,6 +22,7 @@ from meridian.lib.platform.launch_gate import ProcessIdentity, child_birth_epoch
 from meridian.lib.state import session_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 NATIVE_ID = "12345678-1234-4234-8234-123456789abc"
 
@@ -85,6 +86,7 @@ def test_owned_event_pins_store(
         launcher,
         on_running,
         session_id_observer,
+        usage_seed,
     ):
         # Replace the external backend/TUI transport, not identity parsing or persistence.
         process = subprocess.Popen(
@@ -227,7 +229,7 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
     assert row.run_boundary.status == "mismatch"
     facts = [
         json.loads(line)
-        for line in (root / ".meridian" / "spawns" / row.id / "runner-lifecycle.jsonl")
+        for line in launch_paths(root / ".meridian", row.id).runner_lifecycle
         .read_text()
         .splitlines()
     ]
@@ -275,6 +277,7 @@ def test_primary_later_switch_has_one_conflict(tmp_path, monkeypatch):
         launcher,
         on_running,
         observer,
+        usage_seed,
     ):
         observer("entry-thread")
         on_running(ProcessIdentity(1234, 100.0, 1234))

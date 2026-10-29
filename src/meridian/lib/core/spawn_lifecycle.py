@@ -30,6 +30,13 @@ if TYPE_CHECKING:
     from meridian.lib.state.spawn.model import LaunchMode
     from meridian.plugin_api.types import SpawnKind
 
+# Cancel SIGKILLs a runner still alive after this long, and a SIGKILLed runner loses its
+# usage. A runner stopped by a termination signal must therefore finish its harness stop and
+# terminal write inside SIGNAL_STOP_BUDGET_SECS, which sits below the grace by the time the
+# terminal write itself needs.
+CANCEL_GRACE_SECS = 5.0
+SIGNAL_STOP_BUDGET_SECS = CANCEL_GRACE_SECS - 2.0
+
 
 @dataclass(frozen=True)
 class SpawnReservation:
@@ -60,34 +67,6 @@ class SpawnReservation:
 
 FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
-_ALLOWED_TRANSITIONS: dict[SpawnStatus, frozenset[SpawnStatus]] = {
-    SpawnStatus.QUEUED: frozenset(
-        {
-            SpawnStatus.RUNNING,
-            SpawnStatus.SUCCEEDED,
-            SpawnStatus.FAILED,
-            SpawnStatus.CANCELLED,
-            SpawnStatus.TIMED_OUT,
-        }
-    ),
-    SpawnStatus.RUNNING: frozenset(
-        {
-            SpawnStatus.FINALIZING,
-            SpawnStatus.SUCCEEDED,
-            SpawnStatus.FAILED,
-            SpawnStatus.CANCELLED,
-            SpawnStatus.TIMED_OUT,
-        }
-    ),
-    SpawnStatus.FINALIZING: frozenset(
-        {
-            SpawnStatus.SUCCEEDED,
-            SpawnStatus.FAILED,
-            SpawnStatus.CANCELLED,
-            SpawnStatus.TIMED_OUT,
-        }
-    ),
-}
 _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
     {"cancelled", "error", "error.connectionclosed"}
 )
@@ -245,12 +224,6 @@ def coerce_spawn_status(status: str) -> SpawnStatus:
     return SpawnStatus.FAILED
 
 
-def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> None:
-    allowed = _ALLOWED_TRANSITIONS.get(from_status, frozenset())
-    if to_status not in allowed:
-        raise ValueError(f"Illegal spawn transition: {from_status} -> {to_status}")
-
-
 def _has_report_text(payload: dict[str, object]) -> bool:
     """Return whether a structured payload carries explicit report text."""
 
@@ -367,51 +340,3 @@ def resolve_execution_terminal_outcome(
         exit_code=exit_code,
         error=error,
     )
-
-
-def resolve_completion_cancel_precedence(
-    *,
-    durable_report_completion: bool,
-    cancel_requested: bool,
-    cancel_exit_code: int = 130,
-    cancel_error: str | None = "cancelled",
-    execution_exit_code: int | None = None,
-    execution_terminal_status: TerminalSpawnStatus | None = None,
-) -> ExecutionTerminalOutcome | None:
-    """Resolve durable completion against an outstanding cancel request.
-
-    Shares one precedence authority with ``resolve_execution_terminal_state``:
-    recorded execution facts outrank report text. When callers supply the
-    runner's exit (``execution_exit_code`` / ``execution_terminal_status``), a
-    cancelled or abnormal (non-zero) exit is not a success merely because prose
-    was recovered from the killed attempt.
-
-    Only when there is no execution evidence does a durable report stay
-    authoritative in this lockless compatibility rule, preserving a genuine
-    completion that a late cleanup signal arrived after. In that case a bare
-    cancel keeps the caller's ``cancel_exit_code``.
-
-    Returns ``None`` when neither a report nor a cancel request is present, so
-    the caller keeps its own fallback outcome.
-    """
-
-    if not durable_report_completion and not cancel_requested:
-        return None
-
-    if execution_exit_code is None and execution_terminal_status is None:
-        if durable_report_completion:
-            return ExecutionTerminalOutcome(status="succeeded", exit_code=0, error=None)
-        return ExecutionTerminalOutcome(
-            status="cancelled",
-            exit_code=cancel_exit_code,
-            error=cancel_error,
-        )
-
-    status, exit_code, error = resolve_execution_terminal_state(
-        exit_code=execution_exit_code if execution_exit_code is not None else 0,
-        failure_reason=cancel_error if cancel_requested else None,
-        cancelled=cancel_requested,
-        durable_report_completion=durable_report_completion,
-        terminal_status=execution_terminal_status,
-    )
-    return ExecutionTerminalOutcome(status=status, exit_code=exit_code, error=error)

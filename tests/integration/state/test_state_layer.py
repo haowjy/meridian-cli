@@ -221,7 +221,6 @@ def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_pat
     bootstrapped = restarted.bootstrap_from_disk(spawn_id)
     assert bootstrapped is not None
     assert bootstrapped.status == "succeeded"
-    assert restarted.mark_finalizing(spawn_id) is False
     assert isinstance(restarted.finalize(spawn_id, "failed", 1, origin="runner"), Declined)
     persisted = get_spawn(runtime_root, spawn_id)
     assert persisted is not None

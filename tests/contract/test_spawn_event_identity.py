@@ -1,4 +1,4 @@
-"""Published lifecycle event IDs keep their historical namespace."""
+"""Published lifecycle event IDs keep their namespace; a later launch gets a new ID."""
 
 import uuid
 
@@ -10,4 +10,5 @@ def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
         uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
         "meridian:spawn:p1:spawn.created:0",
     )
-    assert generate_event_id("p1", "spawn.created", 0) == expected
+    assert generate_event_id("p1", 1, "spawn.created") == expected
+    assert generate_event_id("p1", 2, "spawn.created") != expected

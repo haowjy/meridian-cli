@@ -96,7 +96,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
         prompt="test",
         spawn_id="s-1",
     )
-    actions_path = spawn_dir / "control_actions.jsonl"
+    actions_path = launch_paths(runtime_root, "s-1").control_actions
     complete_row = {
         "seq": 0,
         "spawn_id": "s-1",
