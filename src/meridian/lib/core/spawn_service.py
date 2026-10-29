@@ -737,6 +737,7 @@ class SpawnApplicationService:
                     origin=terminal.origin,
                     error=terminal.error,
                     expected_n=row.launch_number,
+                    finished_at=terminal.finished_at,
                 )
                 snapshot = outcome.snapshot
                 if snapshot is None or snapshot.launch_number == row.launch_number:
@@ -840,6 +841,7 @@ class SpawnApplicationService:
                 managed_scopes_pending=(
                     not scopes_torn_down and is_managed_primary_candidate(claimed.stored)
                 ),
+                finished_at=claimed.terminal.finished_at,
             )
             snapshot = outcome.snapshot or claimed.stored
             if outcome.wrote:
@@ -942,6 +944,7 @@ class SpawnApplicationService:
         error: str | None = None,
         managed_scopes_pending: bool = False,
         expected_n: int | None = None,
+        finished_at: str | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -964,6 +967,7 @@ class SpawnApplicationService:
             error=error,
             managed_scopes_pending=managed_scopes_pending,
             expected_n=expected_n,
+            finished_at=finished_at,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (

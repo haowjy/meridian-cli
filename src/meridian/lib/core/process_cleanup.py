@@ -185,7 +185,8 @@ def _terminate_recorded_spawn_scopes(
             continue
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
-        mark_scope_released(launch, scope.release_id)
+        if result.skip_reason != "termination_exception":
+            mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Terminated process scope.",
             spawn_id=spawn_record.id,

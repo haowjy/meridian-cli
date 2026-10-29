@@ -375,7 +375,7 @@ new OS-specific home-directory branches.
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — full dual-root layout,
   per-spawn state, session state, work item storage, and read vs write resolution
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write
-  authority lattice, how finalization interacts with the reaper
+  rules (one writer per outcome), how finalization interacts with the reaper
 ## Reference details
 
 ### Work-item metadata and project identity

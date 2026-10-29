@@ -32,7 +32,7 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
   `spawn show --format json` and the human output no longer print `report_path` or
   `log_path`. A run that wrote no report shows none; it never shows an earlier run's.
 - Cost, tokens and duration are totals across every run of the spawn. A continue no longer
-  restarts them. A spawn created before v0.18.0 counts its first run twice in its totals on
+  restarts them. A spawn created before v0.18.0 counts the conversation's earlier usage again on
   its first continue: the harness reports the whole conversation's usage, and the older
   record kept no running total to subtract.
 - Continuing a chat whose spawn chain began before the upgrade (`p5`, continued as `p6`,

@@ -479,15 +479,11 @@ async def run_streaming_spawn(
     terminal_outcome: TerminalEventOutcome | None = None
     subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     run_spec = spec
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        runner_pid=os.getpid(),
-    )
     resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
         project_root,
         runtime_root,
     )
+    resolved_lifecycle.record_launch_facts(spawn_id, runner_pid=os.getpid())
     try:
         connection = await _start_spawn_with_timeout(
             manager=manager,
@@ -1008,11 +1004,6 @@ async def execute_with_streaming(
                 f"no spawn row exists for {run.spawn_id!r}. "
                 "Call start_spawn() before execute_with_streaming()."
             )
-        spawn_store.update_spawn(
-            runtime_root,
-            run.spawn_id,
-            runner_pid=os.getpid(),
-        )
         resolved_launch_mode: LaunchMode = (
             BACKGROUND_LAUNCH_MODE
             if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
@@ -1033,6 +1024,7 @@ async def execute_with_streaming(
             project_root,
             runtime_root,
         )
+        lifecycle_service.record_launch_facts(run.spawn_id, runner_pid=os.getpid())
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()

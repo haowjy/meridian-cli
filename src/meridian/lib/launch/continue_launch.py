@@ -315,6 +315,10 @@ def begin_continue(
             raise _busy_error(runtime_root, spawn_id, chat_id, caller_spawn_id)
         if lock_free is None and is_live(runtime_root, spawn_id):
             raise _legacy_live_error(spawn_id)
+        if parent_id != target.parent_id:
+            spawn_store.reject_continue_cycle(
+                RuntimePaths.from_root_dir(runtime_root).spawns_dir, spawn_id, parent_id
+            )
         return None
     try:
         handle = _acquire_source(runtime_root, spawn_id)
