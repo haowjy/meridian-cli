@@ -143,10 +143,6 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        if record.terminal is None or record.terminal.origin != "reconciler":
-            replace_cleanup_claim(runtime_root, spawn_id, [])
-            return
-
         from meridian.lib.core.process_cleanup import terminate_scope_sync
 
         unresolved: list[ProcessScopeSnapshot] = []
@@ -249,7 +245,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                     last = row.id
                     try:
                         result = await service.finalize_dead_launch(
-                            SpawnId(row.id), origin="reconciler", before_finalize=claim_cleanup
+                            SpawnId(row.id), before_finalize=claim_cleanup
                         )
                         if isinstance(result, SpawnRecord) and result.id in claimed_ids:
                             recovered.append(result)
@@ -308,7 +304,6 @@ def reconcile_active_spawn(
             runtime_root,
         ).finalize_dead_launch(
             SpawnId(record.id),
-            origin="reconciler",
             before_finalize=claim_cleanup,
         )
     )

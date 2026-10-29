@@ -12,7 +12,7 @@ from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_r
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import Spawn
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
@@ -173,7 +173,6 @@ def build_spawn_reservation(
     request: SpawnRequest,
     desc: str | None = None,
     work_id: str | None = None,
-    status: SpawnStatus = SpawnStatus.RUNNING,
     launch_mode: LaunchMode | None = None,
     runner_pid: int | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
@@ -222,7 +221,6 @@ def build_spawn_reservation(
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=launch_policy_snapshot or request.launch_policy_snapshot,
-        status=status,
     )
 
 

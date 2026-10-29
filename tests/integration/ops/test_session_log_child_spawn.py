@@ -18,6 +18,7 @@ from meridian.lib.ops.session_search import SessionSearchInput, session_search_s
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
+from tests.support import legacy_rows
 
 
 def _write_spawn_output(
@@ -367,7 +368,7 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
         prompt="do thing",
         started_at="2026-04-12T14:00:00Z",
     )
-    spawn_store.record_spawn_exited(
+    legacy_rows.record_exited(
         runtime_root,
         "p42",
         exit_code=0,

@@ -613,14 +613,12 @@ directory actually read, so a Mars-provided skill points at
 
 | Status | Meaning |
 | ------ | ------- |
-| `queued` | Registered but harness not yet started |
-| `running` | Harness process is active |
-| `finalizing` | All post-exit work is done; runner is committing the terminal state — no new work will happen, but the spawn is not yet terminal |
+| `running` | The spawn exists and its runner holds it; set when the row is created |
 | `succeeded` | Completed successfully |
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
 
-`queued`, `running`, and `finalizing` are active (in-flight) statuses. They all count toward active spawn counts in `spawn list` and the `work` dashboard. `finalizing` is typically brief — a few seconds at most — but is visible between harness exit and final persistence.
+`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued`, `--status finalizing` and `--view queued` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
 ## Spawn References
 

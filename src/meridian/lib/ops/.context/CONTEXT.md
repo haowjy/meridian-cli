@@ -54,7 +54,7 @@ Layer 5: SpawnLifecycleService        ← sole state writer (spawn_store)
 
 Key `SpawnApplicationService` methods:
 - `prepare_spawn()` — resolve-before-persist entry point for streaming-serve
-- `cancel()` — surface-neutral cancel pipeline; managed-primary, signal, finalizing races
+- `cancel()` — surface-neutral cancel pipeline; see [core cancel](../core/.context/cancel.md)
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally
 - `finalize_dead_launch()` — sole dead lock-backed outcome writer; contract in `core/AGENTS.md`
 

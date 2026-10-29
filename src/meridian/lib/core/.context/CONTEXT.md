@@ -97,12 +97,10 @@ the harness selected for the child launch.
 State transitions with post-write observer dispatch:
 
 ```
-start()           → spawn.created (+ spawn.started when initially running)
-mark_running()    → spawn.started on queued→running
-record_exited()   → (no hook event — sets exit code only)
-mark_finalizing() → CAS running→finalizing (no event)
-finalize()        → spawn.finished
-cancel()          → finalize(status='cancelled')
+start()                → spawn.created + spawn.started (rows are created `running`)
+record_launch_facts()  → records launch facts (modes, PIDs); no status change, no event
+record_exited()        → spawn.process_exited telemetry only; the row keeps no copy
+finalize()             → spawn.finished
 ```
 
 `LifecycleHook.on_event(event)` — exceptions are logged but never block
@@ -203,27 +201,17 @@ Persisted timestamp parsing lives in `state/timestamps.py`;
 `iso_timestamp_to_epoch(timestamp)` normalizes trailing `Z` to UTC, treats naive
 timestamps as UTC, and returns `None` for blank or invalid values.
 
-### Centralized Completion-vs-Cancel Precedence
+### Completion-vs-Cancel Precedence
 
-`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...,
-execution_exit_code=None, execution_terminal_status=None)` is the shared resolution rule
-for durable completion against an outstanding cancel request. It delegates to
-`resolve_execution_terminal_state` — there is one precedence authority:
+Two places decide it, each once:
 
-- With execution evidence (the runner's `execution_exit_code` / `execution_terminal_status`),
-  a cancelled or abnormal (non-zero) exit outranks report text; a clean exit keeps a
-  genuine report.
-- With no execution evidence, a durable report is authoritative → `succeeded`, else a
-  cancel request → `cancelled` with the caller's `cancel_exit_code`.
-- Neither report nor cancel → `None` (caller falls back to its own outcome).
-
-This helper remains in the application service's explicit compatibility path for
-lockless legacy rows. Lock-backed dead launches use their runner-lifetime lock instead:
-a cancel request becomes `cancelled`; otherwise loss without an outcome becomes
-`failed`/`crashed`, regardless of report text. The runner path (`complete_execution`)
-folds the durable `cancel_intent` into its `ExecutionTerminalFacts` and calls
-`resolve_execution_terminal_state` directly instead of letting a second rule override
-the resolved result.
+- **A live runner** (`complete_execution`) folds the durable `cancel_intent` into its
+  `ExecutionTerminalFacts` and calls `resolve_execution_terminal_state`: recorded execution
+  facts outrank report text, and a durable report outranks a bare cancel.
+- **A launch with no runner** (`state.spawn_status.derive`) decides for cancel, doctor and the
+  repair pass alike: a durable report makes it `succeeded` (origin `reconciler`), with or
+  without a cancel request, so `spawn cancel` never turns a crash into a success or the reverse.
+  Without a report, a cancel request makes it `cancelled` and otherwise it is `failed`/`crashed`.
 
 ### Execution Terminal State Resolution
 
@@ -246,13 +234,13 @@ cancelled or exited non-zero is not a success merely because a report was extrac
 A clean exit with a genuine report stays `succeeded` even when a later cleanup
 signal arrives on the live-runner path; only an abnormal exit or a non-succeeded
 `terminal_status` downgrades it. This report rule also remains in explicit lockless
-compatibility, but does not apply to dead lock-backed launches.
+compatibility ([cancel](cancel.md)), but does not apply to dead lock-backed launches.
 
 `resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
 runner path.
 
-Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`;
-it does not consult report text.
+Read-path status overlay belongs to `state.spawn_status.derive()` / `read_derived()`; it
+consults the report first: it decides `succeeded` whatever else the row says.
 
 ## Related KB
 
@@ -262,3 +250,7 @@ KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
 - `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md`
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md`
 → [platform/process_scope/.context/CONTEXT.md](../../platform/process_scope/.context/CONTEXT.md) — mechanism layer (dispatch, backends, PID reuse guard)
+
+## Cancel
+
+→ [cancel.md](cancel.md) — `SpawnApplicationService.cancel`, the one cancel lane.

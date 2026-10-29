@@ -114,7 +114,6 @@ terminating on error/cancel.
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — generic drain runtime and lifecycle
 → [.context/pi-drain.md](.context/pi-drain.md) — Pi quiescence and child-wave behavior
-→ [.context/signal-cancellation.md](.context/signal-cancellation.md) — cancellation dispatch and scope cleanup
 
 ## Related
 

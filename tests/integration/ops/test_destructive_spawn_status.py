@@ -33,6 +33,7 @@ from meridian.lib.state.native_snapshot import (
 )
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.utils.json_shapes import loads_json_object
+from tests.support import legacy_rows
 
 OLD = "2000-01-01T00:00:00+00:00"
 OLD_MTIME = 946_684_800.0
@@ -110,7 +111,7 @@ def _old_active_spawn(
                 launch_lock=launch,
             ).spawn_id
         )
-        spawn_store.record_spawn_exited(root, spawn_id, exit_code=1, exited_at=OLD)
+        legacy_rows.record_exited(root, spawn_id, exit_code=1, exited_at=OLD)
         spawn_dir = root / "spawns" / spawn_id
         (spawn_dir / "history.jsonl").write_text('{"event":"legacy"}\n')
         (spawn_dir / "report.md").write_text("possibly useful\n")

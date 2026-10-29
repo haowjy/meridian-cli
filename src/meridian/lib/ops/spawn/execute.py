@@ -11,11 +11,9 @@ from typing import Any
 
 import structlog
 
-from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -224,7 +222,6 @@ def _reserve_then_prepare(
         request=request,
         desc=payload.desc,
         work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
-        status=SpawnStatus.QUEUED,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
@@ -455,9 +452,6 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        build_spawn_lifecycle_service_from_roots(
-            project_paths.project_root, context.runtime_root
-        ).mark_running(context.spawn.spawn_id, launch_mode=BACKGROUND_LAUNCH_MODE)
         # The Popen object goes out of scope without wait(). This is intentional:
         # the child spawns in its own session (start_new_session=True) and is
         # re-parented to init/systemd. We only need the PID for diagnostics.

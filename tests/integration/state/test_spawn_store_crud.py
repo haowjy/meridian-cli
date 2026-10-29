@@ -2,7 +2,7 @@
 
 """CRUD operation tests for the spawn store.
 
-Covers: start, get, list, update, next_id, reserve, mark_running, and
+Covers: start, get, list, update, next_id, reserve, record_launch_facts, and
 attempt-exit and runner-exit metadata writes. Finalization and concurrency live in
 test_spawn_store_finalize.py.
 """
@@ -24,8 +24,6 @@ from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.repository import (
-    Applied,
-    Declined,
     SpawnStateQuarantined,
     StoredSpawnState,
     read_state,
@@ -35,9 +33,6 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
-    record_cancel_intent,
-    record_runner_exit,
-    record_spawn_exited,
     reserve_launch,
     start_spawn,
     update_spawn,
@@ -567,56 +562,6 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
     assert row.launch_policy_snapshot is None
 
 
-def test_record_cancel_intent_persists_first_request_and_skips_terminal(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    first = record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=130,
-        error="cancelled",
-        requested_at="2026-06-03T01:00:00Z",
-    )
-    second = record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=143,
-        error="terminated",
-        requested_at="2026-06-03T01:01:00Z",
-    )
-
-    assert isinstance(first, Applied)
-
-    first_record = first.after
-    assert first_record.cancel_intent is not None
-    assert first_record.cancel_intent.exit_code == 130
-    assert isinstance(second, Declined)
-    assert second.reason == "cancel intent already recorded"
-    assert second.snapshot.cancel_intent == first_record.cancel_intent
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.cancel_intent == first_record.cancel_intent
-
-    terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
-    finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
-
-    result = record_cancel_intent(
-        runtime_root,
-        terminal_spawn_id,
-        exit_code=130,
-        error="cancelled",
-        requested_at="2026-06-03T01:00:00Z",
-    )
-
-    assert isinstance(result, Declined)
-
-    assert result.snapshot.status == "succeeded"
-    assert result.snapshot.cancel_intent is None
-
-
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
 
@@ -717,43 +662,3 @@ def test_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
 
 
-def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    record_spawn_exited(
-        runtime_root,
-        spawn_id,
-        exit_code=143,
-        exited_at="2026-04-12T14:00:00Z",
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-    assert row.last_attempt_exited_at == "2026-04-12T14:00:00Z"
-    assert row.last_attempt_exit_code == 143
-    assert row.terminal is None
-
-
-def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="failed",
-        exit_code=42,
-        error="guardrail_failed",
-        exited_at="2026-04-12T14:03:00Z",
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-    assert row.runner_exit is not None
-    assert row.runner_exit.status == "failed"
-    assert row.runner_exit.exit_code == 42
-    assert row.runner_exit.error == "guardrail_failed"
-    assert row.runner_exit.exited_at == "2026-04-12T14:03:00Z"

@@ -26,13 +26,6 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
 PersistedSpawnStatus = SpawnStatus | Literal["unknown"]
-_AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
-    "runner",
-    "launcher",
-    "launch_failure",
-    "cancel",
-)
-AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
 
 
 class CancelIntent(BaseModel):
@@ -216,10 +209,8 @@ class SpawnRecord(SpawnStateFields):
 
 __all__ = [
     "APP_LAUNCH_MODE",
-    "AUTHORITATIVE_ORIGINS",
     "BACKGROUND_LAUNCH_MODE",
     "FOREGROUND_LAUNCH_MODE",
-    "_AUTHORITATIVE_ORIGIN_VALUES",
     "_LAUNCH_MODE_VALUES",
     "CancelIntent",
     "LaunchMode",

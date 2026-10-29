@@ -16,7 +16,7 @@ from meridian.lib.bootstrap.services import (
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import HarnessId
@@ -32,7 +32,7 @@ from meridian.lib.launch.resolve import (
     resolve_startup_timeout_seconds,
 )
 from meridian.lib.launch.session_scope import session_scope
-from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
+from meridian.lib.launch.streaming_runner import run_streaming_spawn
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
@@ -104,7 +104,6 @@ async def streaming_serve(
             harness_registry=get_default_harness_registry(),
             kind="streaming",
             launch_mode="foreground",
-            initial_status=SpawnStatus.RUNNING,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
         )
@@ -264,35 +263,34 @@ async def streaming_serve(
             failure_message = str(exc)
             raise
         finally:
-            with signal_coordinator().mask_sigterm():
-                usage = None
-                try:
-                    extraction = enrich_finalize(
-                        extractor=extractor,
-                        facts=facts,
-                        native_key=native_key,
-                        launch=prepared.launch,
-                        model_id=prepared.resolved_model,
-                        harness_id=harness_id,
-                        project_root=project_root,
-                        failure_reason=failure_message,
-                    )
-                    usage = extraction.usage
-                except Exception:
-                    structlog.get_logger(__name__).exception(
-                        "finalize_enrichment_failed", spawn_id=str(spawn_id)
-                    )
-                finalize_outcome = await spawn_service.complete_spawn(
-                    spawn_id,
-                    status=outcome_status,
-                    exit_code=outcome_exit_code,
-                    origin="launcher",
-                    usage=usage,
-                    duration_secs=max(0.0, time.monotonic() - start_monotonic),
-                    error=failure_message if outcome_status == "failed" else None,
+            usage = None
+            try:
+                extraction = enrich_finalize(
+                    extractor=extractor,
+                    facts=facts,
+                    native_key=native_key,
+                    launch=prepared.launch,
+                    model_id=prepared.resolved_model,
+                    harness_id=harness_id,
+                    project_root=project_root,
+                    failure_reason=failure_message,
                 )
-                if not finalize_outcome.wrote:
-                    print(f"Finalize skipped for spawn {spawn_id} (already terminal or missing)")
-                print(
-                    f"Stopped spawn {spawn_id} (status={outcome_status}, exit={outcome_exit_code})"
+                usage = extraction.usage
+            except Exception:
+                structlog.get_logger(__name__).exception(
+                    "finalize_enrichment_failed", spawn_id=str(spawn_id)
                 )
+            finalize_outcome = await spawn_service.complete_spawn(
+                spawn_id,
+                status=outcome_status,
+                exit_code=outcome_exit_code,
+                origin="launcher",
+                usage=usage,
+                duration_secs=max(0.0, time.monotonic() - start_monotonic),
+                error=failure_message if outcome_status == "failed" else None,
+            )
+            if not finalize_outcome.wrote:
+                print(f"Finalize skipped for spawn {spawn_id} (already terminal or missing)")
+            print(
+                f"Stopped spawn {spawn_id} (status={outcome_status}, exit={outcome_exit_code})"
+            )

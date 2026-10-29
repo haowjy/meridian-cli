@@ -448,7 +448,7 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     assert row is not None
     assert row.work_id == "new-work-item"
     assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
-    assert hook.event_types == ["spawn.created"]
+    assert hook.event_types == ["spawn.created", "spawn.started"]
     start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
     assert len(start_events) == 1
     assert start_events[0]["id"] == result.spawn_id
@@ -493,7 +493,7 @@ def test_reserve_then_prepare_background_happy_path_announces_once_with_normaliz
     assert row.work_id == "new-work-item"
     assert row.status == "running"
     assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
-    assert hook.event_types == ["spawn.created"]
+    assert hook.event_types == ["spawn.created", "spawn.started"]
     start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
     assert len(start_events) == 1
     assert start_events[0]["id"] == result.spawn_id
