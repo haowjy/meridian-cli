@@ -239,6 +239,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
 
     activations_before_child = activation_count()
     with _session_execution_context(
+        launch_slot=LaunchSlot(),
         runtime_root=work_runtime_root,
         metadata=PrimarySessionMetadata(
             harness="codex",

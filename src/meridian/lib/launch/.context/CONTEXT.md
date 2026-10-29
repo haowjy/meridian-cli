@@ -526,8 +526,15 @@ suppressed. It never delays reclamation, and a contended lock just skips the obs
 guaranteed by the context manager. Adding cleanup outside it creates a race between the
 `finally` block and the caller's explicit cleanup.
 
-The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str], object]` for
-test injection; in production it always points to `reclaim_session_owned_scopes_for_chat`.
+Reclamation takes each candidate spawn's launch lock exclusively and without waiting (busy:
+skipped, a live runner owns its scopes), then re-reads the row and re-checks its chat. The
+runner's own spawn is the one it holds, so every `session_scope` caller that is also the
+runner passes `launch_slot` and the exit reclaim uses that handle (a second `acquire` in the
+same process would find its own lock Busy and skip its own scopes).
+
+The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str, LaunchHandle | None],
+object]` for test injection; in production it always points to
+`reclaim_session_owned_scopes_for_chat`.
 
 ### User-Turn Context Threading
 

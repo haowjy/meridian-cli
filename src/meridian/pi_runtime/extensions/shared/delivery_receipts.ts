@@ -6,25 +6,35 @@ import { readPrivateJson, writeJsonAtomic } from "./json_file";
 import {
   currentSpawnIdFromEnv,
   resolveDeliveryReceiptsPath,
-  resolveLegacyObservedSpawnsPath, // legacy-observed-spawns (#719)
-  resolveObservedSpawnsPath,
+  resolveLegacyDeliveryReceiptsPath,
+  resolveLegacyObservedSpawnsPath,
+  resolveObservedLaunchesPath,
 } from "./pi_state_paths";
-import type { DeliveryReceiptsFile, ObservedSpawnsFile } from "./schemas";
+import { launchKey, type DeliveryReceiptsFile, type ObservedLaunchesFile } from "./schemas";
 
 const execFileAsync = promisify(execFile);
 const ReceiptsSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), messages: Type.Record(Type.String(), Type.Array(Type.String())),
 });
-const ObservedSchema = Type.Object({
+const Lease = { owner_pid: Type.Integer({ minimum: 1 }), owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
+  expires_at_epoch: Type.Number() };
+const ObservedLaunchesSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), updated_at_ms: Type.Optional(Type.Number()),
-  observed_spawn_ids: Type.Array(Type.String()), waiting_spawn_ids: Type.Optional(Type.Array(Type.String())),
+  observed_launches: Type.Array(Type.String()),
   wait_reservations: Type.Optional(Type.Record(Type.String(), Type.Object({
-    owner_pid: Type.Integer({ minimum: 1 }), owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
-    expires_at_epoch: Type.Number(), spawn_ids: Type.Array(Type.String()),
+    ...Lease, launches: Type.Array(Type.String()),
+  }))),
+});
+// What older builds wrote in ``observed-spawns.json``, keyed by bare spawn ID.
+const LegacyObservedSchema = Type.Object({
+  v: Type.Literal(1), spawn_id: Type.String(), updated_at_ms: Type.Optional(Type.Number()),
+  observed_spawn_ids: Type.Array(Type.String()),
+  wait_reservations: Type.Optional(Type.Record(Type.String(), Type.Object({
+    ...Lease, spawn_ids: Type.Array(Type.String()),
   }))),
 });
 
-export type WaitReservation = NonNullable<ObservedSpawnsFile["wait_reservations"]>[string];
+export type WaitReservation = NonNullable<ObservedLaunchesFile["wait_reservations"]>[string];
 const receiptQueues = new Map<string, Promise<void>>();
 
 export async function readDeliveryReceipts(spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
@@ -50,38 +60,53 @@ export function admittedWorkIds(receipts: DeliveryReceiptsFile): Set<string> {
   return new Set(Object.values(receipts.messages).flat());
 }
 
-async function readObservationsFile(file: string, spawnId: string): Promise<ObservedSpawnsFile> {
-  const value = await readPrivateJson(file);
-  if (value === undefined) return { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_spawn_ids: [] };
-  if (!Value.Check(ObservedSchema, value) || value.spawn_id !== spawnId) throw Error("invalid spawn observations");
-  if (value.updated_at_ms != null && !Number.isFinite(value.updated_at_ms)) throw Error("invalid observation timestamp");
-  for (const lease of Object.values(value.wait_reservations ?? {})) {
+function checkLeases(leases: Iterable<{ owner_birth_epoch: number; expires_at_epoch: number }>): void {
+  for (const lease of leases) {
     if (![lease.owner_birth_epoch, lease.expires_at_epoch].every(Number.isFinite)) throw Error("invalid wait lease");
   }
+}
+
+/** A parent's current observations (``spawns/<parent>/observed-launches.json``). Damaged content is an error. */
+export async function readCurrentObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedLaunchesFile> {
+  const value = await readPrivateJson(resolveObservedLaunchesPath(spawnId));
+  if (value === undefined) return { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_launches: [] };
+  if (!Value.Check(ObservedLaunchesSchema, value) || value.spawn_id !== spawnId) throw Error("invalid launch observations");
+  if (value.updated_at_ms != null && !Number.isFinite(value.updated_at_ms)) throw Error("invalid observation timestamp");
+  checkLeases(Object.values(value.wait_reservations ?? {}));
   return { updated_at_ms: 0, ...value };
 }
 
 /**
- * legacy-observed-spawns (#719)
- * A `spawn wait` from a build before the move may still write the old file.
- * Compatibility reads do not repair it, so damaged content counts as absent;
- * an I/O failure (which carries an errno code) is still unknown. A later mirrored
- * record may replace the damaged copy.
+ * What older builds wrote (``spawns/<parent>/observed-spawns.json``), as launch-1 observations.
+ * Never repaired, so damaged content counts as absent; an I/O failure (which carries an errno
+ * code) is still unknown.
  */
-export async function readLegacyObservations(spawnId: string): Promise<ObservedSpawnsFile> {
-  try { return await readObservationsFile(resolveLegacyObservedSpawnsPath(spawnId), spawnId); }
-  catch (error) {
+export async function readLegacyObservations(spawnId: string): Promise<ObservedLaunchesFile> {
+  const empty: ObservedLaunchesFile = { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_launches: [] };
+  try {
+    const value = await readPrivateJson(resolveLegacyObservedSpawnsPath(spawnId));
+    if (value === undefined) return empty;
+    if (!Value.Check(LegacyObservedSchema, value) || value.spawn_id !== spawnId) throw Error("invalid spawn observations");
+    const leases = Object.entries(value.wait_reservations ?? {});
+    checkLeases(leases.map(([, lease]) => lease));
+    return {
+      ...empty,
+      observed_launches: value.observed_spawn_ids.map((id) => launchKey(id, 1)),
+      wait_reservations: Object.fromEntries(leases.map(([token, { spawn_ids, ...lease }]) =>
+        [token, { ...lease, launches: spawn_ids.map((id) => launchKey(id, 1)) }])),
+    };
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== undefined) throw error;
-    return { v: 1, spawn_id: spawnId, updated_at_ms: 0, observed_spawn_ids: [] };
+    return empty;
   }
 }
 
-/** A parent's current observations file (`spawns/<parent>/observed-spawns.json`). */
-export async function readCurrentObservations(spawnId = currentSpawnIdFromEnv()): Promise<ObservedSpawnsFile> {
-  return readObservationsFile(resolveObservedSpawnsPath(spawnId), spawnId);
+/** Older builds' receipts (``delivery-receipts.json``): bare IDs, read-only. */
+export async function readLegacyDeliveryReceipts(spawnId: string): Promise<DeliveryReceiptsFile> {
+  return readDeliveryReceipts(spawnId, resolveLegacyDeliveryReceiptsPath(spawnId));
 }
 
-export async function reservedSpawnIds(leases: Iterable<WaitReservation>): Promise<Set<string>> {
+export async function reservedLaunchKeys(leases: Iterable<WaitReservation>): Promise<Set<string>> {
   const result = new Set<string>();
   for (const lease of leases) {
     if (lease.expires_at_epoch <= Date.now() / 1000) continue;
@@ -95,7 +120,7 @@ export async function reservedSpawnIds(leases: Iterable<WaitReservation>): Promi
       if ((error as { code?: unknown }).code === 1) continue; // ps reports no matching PID
       throw error;
     }
-    for (const id of lease.spawn_ids) result.add(id);
+    for (const key of lease.launches) result.add(key);
   }
   return result;
 }

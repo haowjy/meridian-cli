@@ -24,7 +24,6 @@ from meridian.lib.state.liveness import is_process_dead_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
 from meridian.lib.state.session_store import chat_record
-from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, spawn_lock_path
 from meridian.lib.state.spawn_status import is_live, legacy_runner_alive
 
@@ -69,18 +68,15 @@ def _group_gone(pgid: int) -> bool:
     return False
 
 
-def _owners(runtime_root: Path, spawn_id: str, chat_id: str | None) -> tuple[SpawnRecord, ...]:
-    source = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+def _owner_ids(runtime_root: Path, spawn_id: str, chat_id: str | None) -> tuple[str, ...]:
+    """The spawns to hold: the chat's current owner when it is not ``spawn_id``, then ``spawn_id``.
+
+    Only identities are read here; each row is read once its launch lock is held, because a
+    row read before the lock may be a launch behind. A spawn with no row fails its acquire.
+    """
     chat = chat_record(runtime_root, chat_id) if chat_id else None
     current_id = chat.spawn_id.strip() if chat and chat.spawn_id else ""
-    owners: list[SpawnRecord] = []
-    if current_id and current_id != spawn_id:
-        current = read_state(runtime_root / "spawns", current_id, include_prompt=False)
-        if current is not None:
-            owners.append(current)
-    if source is not None:
-        owners.append(source)
-    return tuple(owners)
+    return (current_id, spawn_id) if current_id and current_id != spawn_id else (spawn_id,)
 
 
 def _recorded_runner_dead(runtime_root: Path, spawn_id: str) -> bool:
@@ -134,10 +130,9 @@ def sweep_before_continue(
     dry_run: bool = False,
 ) -> None:
     """Refuse a live chat owner; release only safely swept scopes, never status."""
-    owners = _owners(runtime_root, spawn_id, chat_id)
+    owners = _owner_ids(runtime_root, spawn_id, chat_id)
     if dry_run:
-        for owner in owners:
-            owner_id = owner.id
+        for owner_id in owners:
             lock_free = shared_try(lock_path(runtime_root, owner_id))
             if lock_free is False:
                 raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id)
@@ -145,16 +140,18 @@ def sweep_before_continue(
                 raise _legacy_live_error(owner_id)
         return
     with ExitStack() as stack:
-        held: list[tuple[SpawnRecord, LaunchHandle]] = []
-        for owner in owners:
+        held: list[LaunchHandle] = []
+        for owner_id in owners:
             try:
-                held.append((owner, stack.enter_context(_acquire_source(runtime_root, owner.id))))
+                held.append(stack.enter_context(_acquire_source(runtime_root, owner_id)))
             except NotFound:
                 continue
             except Busy as exc:
-                raise _busy_owner_error(runtime_root, spawn_id, owner.id, chat_id) from exc
-        for owner, handle in held:
-            sweep_scopes(LaunchPaths.for_row(runtime_root, owner), handle)
+                raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id) from exc
+        for handle in held:
+            row = read_state(runtime_root / "spawns", str(handle.spawn_id), include_prompt=False)
+            if row is not None:
+                sweep_scopes(LaunchPaths.for_row(runtime_root, row), handle)
 
 
 def sweep_scopes(launch: LaunchPaths, handle: LaunchHandle) -> None:

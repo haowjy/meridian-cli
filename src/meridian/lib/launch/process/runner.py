@@ -773,6 +773,7 @@ def run_harness_process(
             kind="primary",
             spawn_id=str(reserved_spawn_id),
             startup_attempt_id=startup_attempt_id,
+            launch_slot=launch_lock,
         ) as managed:
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(

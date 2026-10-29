@@ -25,6 +25,7 @@ from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy, HistorySnapshot
+from meridian.lib.state.launch_lock import try_exclusive
 from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
@@ -426,18 +427,23 @@ def archive_history(
                     root / "spawns", candidate.id, lambda row: row, allow_terminal_overwrite=True
                 )
             directory = resolve_spawn_dir(root, candidate.id)
-            try:
-                with verified_source(directory) as witness:
-                    state = witness.state
-                    if state is None:
-                        continue
-                    activity = last_activity(state, witness.session, "")
-                    if eligible and datetime.fromisoformat(activity) > cutoff:
-                        continue
-                    record = capture_record(directory, state, witness.session, activity)
-            except (ValueError, OSError) as exc:
-                errors.append(f"{candidate.id}: {exc}")
-                continue
+            # Capture under the launch lock: a continue reopening this spawn holds it, and the
+            # files it is about to move must not be read half-way. Busy: a later run takes it.
+            with try_exclusive(root, candidate.id) as locked:
+                if locked is False:
+                    continue
+                try:
+                    with verified_source(directory) as witness:
+                        state = witness.state
+                        if state is None:
+                            continue
+                        activity = last_activity(state, witness.session, "")
+                        if eligible and datetime.fromisoformat(activity) > cutoff:
+                            continue
+                        record = capture_record(directory, state, witness.session, activity)
+                except (ValueError, OSError) as exc:
+                    errors.append(f"{candidate.id}: {exc}")
+                    continue
             size = sum(member.size for member in record.files)
             if selected and selected_bytes + size > policy.max_uncompressed_bytes:
                 limited = True

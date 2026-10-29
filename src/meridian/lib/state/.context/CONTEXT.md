@@ -61,12 +61,17 @@ bare path
                                       finalization writers; `spawn show` reads it)
       report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
     attempt-N/                      — legacy retry evidence; new runs do not create it
-    observed-spawns.json            — this parent's consumed child IDs and explicit-wait
-                                      leases; shared by Pi and Claude delivery; goes with
-                                      the spawn, so pruning one forgets its consumption
-  pi-bash/<spawn_id>/observed-spawns.json
-                                    — legacy-observed-spawns (#719): read, never deleted,
-                                      and mirrored by record() when this Pi dir exists
+    observed-launches.json          — this parent's consumed launches (`<spawn id>:<n>`),
+                                      explicit-wait leases and wait pins; shared by Pi and
+                                      Claude delivery; goes with the spawn, so pruning one
+                                      forgets its consumption
+    observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
+                                      read, never written
+  pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
+                                    — Pi's admission receipts and dismissals, same keys;
+                                      `delivery-receipts.json` / `cleared-spawns.json` are
+                                      the pre-launch names, read-only. The old
+                                      `pi-bash/<id>/observed-spawns.json` mirror is retired
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet
@@ -621,12 +626,17 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   lock and never recreate a deleted spawn directory; readers union the current file
   with the legacy `pi-bash/` one. Normal wait/ack writers block for that lock;
   best-effort shown-result observations wait up to one second and preserve their
-  output when the lock or filesystem is unavailable.
+  output when the lock or filesystem is unavailable. `LaunchKey(spawn_id, n)` is the one
+  key type; `str()` of it is the ledger entry. `legacy_view()` is the one place an older
+  build's bare-ID file becomes launch-1 entries. A `delivered` map records what the last
+  `spawn collect` handed out so `spawn ack` consumes exactly that; only ack removes an entry.
 - `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
   primary owns every primary generation of its chat, anyone else owns only itself. Also
   owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which
   the Pi spawn-watch extension mirrors as `isBackgroundLaunch`. `spawn collect`, the Pi
-  launch's spawn-watch scope, and the Pi drain all read it here.
+  launch's spawn-watch scope, and the Pi drain all read it here. `owed_launches()` is the
+  one rule for which launches are owed to a parent set (current background children plus
+  the index's `owed_launches` side table); `spawn collect` and the Pi drain both call it.
 - `reaper.py` — root-only repair that claims dead launches, persists their projected
   outcome through the application service, then cleans claimed process scopes.
 

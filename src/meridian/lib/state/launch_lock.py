@@ -98,13 +98,19 @@ class LaunchHandle(AbstractContextManager["LaunchHandle"]):
 class LaunchSlot(AbstractContextManager["LaunchSlot"]):
     """Own a staged capability before the spawn ID has been allocated."""
 
-    def __init__(self) -> None:
-        self._handle: LaunchHandle | None = None
+    def __init__(self, handle: LaunchHandle | None = None) -> None:
+        """``handle``: one the process already holds (a background worker's adopted one)."""
+        self._handle: LaunchHandle | None = handle
 
     @property
     def handle(self) -> LaunchHandle:
         if self._handle is None:
             raise RuntimeError("Launch slot is not bound")
+        return self._handle
+
+    @property
+    def held(self) -> LaunchHandle | None:
+        """The bound handle, or ``None`` before the slot is bound."""
         return self._handle
 
     def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
@@ -165,6 +171,32 @@ def acquire(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
         raise
 
 
+@contextmanager
+def try_exclusive(
+    runtime_root: Path, spawn_id: SpawnId | str, held: LaunchHandle | None = None
+) -> Generator[bool | None]:
+    """Hold a published spawn's launch lock exclusively, without waiting, for the caller's work.
+
+    ``True``: held, so no runner of this spawn is alive. ``False``: a runner or a brief
+    holder has it; skip, never retry. ``None``: a row from before launch locks, whose
+    liveness the caller must judge itself. ``held`` is a handle the caller's process already
+    holds: a second ``acquire`` there would find it Busy, so a matching one counts as held.
+    """
+    if held is not None and str(held.spawn_id) == str(spawn_id):
+        yield True
+        return
+    try:
+        handle = acquire(runtime_root, spawn_id)
+    except NotFound:
+        yield None
+        return
+    except (Busy, Contended):
+        yield False
+        return
+    with handle:
+        yield True
+
+
 def take_handoff_fd() -> int:
     """Worker's first act: stop inheritance before doing any startup work."""
     fd = int(os.environ.pop(HANDOFF_ENV))
@@ -172,8 +204,8 @@ def take_handoff_fd() -> int:
     return fd
 
 
-def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
-    """Validate the inherited description and publish this worker's identity."""
+def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> LaunchSlot:
+    """Validate the inherited description, publish this worker's identity, return its bound slot."""
     from meridian.lib.state.spawn_store import update_spawn
 
     handle = LaunchHandle(SpawnId(spawn_id), fd)
@@ -183,4 +215,4 @@ def adopt_handoff(fd: int, runtime_root: Path, spawn_id: SpawnId | str) -> Launc
     except BaseException:
         handle.close()
         raise
-    return handle
+    return LaunchSlot(handle)

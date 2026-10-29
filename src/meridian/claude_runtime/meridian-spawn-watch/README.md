@@ -36,7 +36,8 @@ retried at the next idle. Its stderr is diagnostics.
 
 Delivery text is intentionally header-only: status/outcome, worker, failure and
 distinct task directory when present, plus the exact `spawn show` lookup. It never
-contains or reads the report body. A lead that wants the body runs the lookup.
+contains or reads the report body, except for a run the spawn has since continued past
+(`spawn show` would describe the next run), whose report is inline. A lead that wants the body runs the lookup.
 A terminal report body shown by `spawn show` or `spawn report show` consumes the
 notification, so the fallback announces only results the lead has not already seen.
 `spawn status --full` follows the same rule. Summary-only output, report search, and

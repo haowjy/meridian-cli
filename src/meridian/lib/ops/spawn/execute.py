@@ -247,7 +247,9 @@ def _reserve_then_prepare(
         ctx=ctx,
     )
     if isinstance(preparation, SpawnActionOutput):
-        spawn_store.remove_spawn_events(context.runtime_root, context.spawn.spawn_id)
+        spawn_store.remove_spawn_events(
+            context.runtime_root, context.spawn.spawn_id, launch_lock.handle
+        )
         return preparation
 
     project_paths = preparation.project_paths
@@ -563,6 +565,7 @@ def execute_spawn_blocking(
                     stream_stderr_to_terminal=payload.stream,
                     event_observer=event_observer,
                     debug=payload.debug,
+                    launch_slot=launch_lock,
                     ctx=resolved_context,
                     prepared=prepared,
                     warning_observer=_capture_launch_warning,

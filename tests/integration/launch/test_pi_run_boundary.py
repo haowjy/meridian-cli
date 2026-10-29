@@ -16,6 +16,7 @@ from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.conftest import requires_pi_dist
 from tests.integration.launch.test_pi_identity_launch import (
@@ -480,6 +481,7 @@ async def test_rpc_post_attempt_boundary(
         ),
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=ctx.runtime_root,
         metadata=PrimarySessionMetadata(
             harness="pi",

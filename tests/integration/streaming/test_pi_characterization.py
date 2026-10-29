@@ -114,11 +114,11 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / str(_SPAWN_ID) / "delivery-receipts.json",
+            tmp_path / "pi-bash" / str(_SPAWN_ID) / "launch-receipts.json",
             {
                 "v": 1,
                 "spawn_id": str(_SPAWN_ID),
-                "messages": {"child-admission": [child_id]},
+                "messages": {"child-admission": [f"{child_id}:1"]},
             },
         )
         disk_wake = await coordinator.handle_aux_wake()
@@ -133,7 +133,7 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
                         "customType": "meridian-spawn-watch",
                         "details": {
                             "ids": [child_id],
-                            "work_ids": [child_id],
+                            "work_ids": [f"{child_id}:1"],
                             "delivery_id": "child-admission",
                         },
                     },

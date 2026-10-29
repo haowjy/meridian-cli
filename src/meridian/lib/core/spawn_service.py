@@ -8,6 +8,7 @@ import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -80,6 +81,7 @@ from meridian.lib.state.spawn_status import (
     derive,
     legacy_runner_alive,
     overlay_derived,
+    poll_launch,
     read_cancel_intent,
     wait_until,
 )
@@ -196,6 +198,8 @@ class CancelOutcome:
     status: SpawnStatus
     origin: SpawnOrigin
     exit_code: int
+    # The launch this outcome is for: the one the cancel observed, not necessarily the current.
+    launch_number: int
     already_terminal: bool = False
     model: str | None = None
     harness: str | None = None
@@ -609,6 +613,7 @@ class SpawnApplicationService:
 
         await asyncio.to_thread(
             self._record_cancel_intent,
+            row,
             launch,
             CancelIntent(
                 requested_at=RealClock().utc_now_iso(),
@@ -644,16 +649,26 @@ class SpawnApplicationService:
             exit_code=1,
         )
 
-    def _record_cancel_intent(self, launch: LaunchPaths, intent: CancelIntent) -> None:
-        """First request wins: ``cancel.json`` for this build, the row's field for older runners.
+    def _record_cancel_intent(
+        self, observed: SpawnRecord, launch: LaunchPaths, intent: CancelIntent
+    ) -> None:
+        """First request wins: ``cancel.json`` in the observed launch's directory.
 
-        An older-build runner decides ``cancelled`` only from the row's ``cancel_intent``
-        (``streaming_runner`` before v0.18), and every row is still one it may be running.
+        A v3 row (``launch`` absent) may be run by an older build, which decides ``cancelled``
+        only from the row's ``cancel_intent``, so that row gets the field too. The mutator
+        re-checks ``launch`` inside the write: a reopen sets it under the launch lock, so the
+        field can only land on the v3 launch it was meant for. A v4 row never gets it.
         """
         write_model_once(launch.cancel, intent)
+        if observed.launch is not None:
+            return
 
         def mutate(current: SpawnRecord) -> SpawnRecord | Decline:
-            if not is_active_spawn_status(current.status) or current.cancel_intent is not None:
+            if (
+                current.launch is not None
+                or not is_active_spawn_status(current.status)
+                or current.cancel_intent is not None
+            ):
                 return Decline("no cancel intent to record")
             return current.model_copy(update={"cancel_intent": intent})
 
@@ -670,9 +685,8 @@ class SpawnApplicationService:
         deadline: float,
     ) -> SpawnRecord | None:
         """Wait for the launch's outcome, claiming it when its runner is gone."""
-        launch = LaunchPaths.for_row(self._runtime_root, row)
         while True:
-            poll = await wait_until(self._runtime_root, row.id, launch.n, until=until)
+            poll = await wait_until(self._runtime_root, row.id, row.launch_number, until=until)
             if isinstance(poll, Finished):
                 return poll.row
             if isinstance(poll, Running):
@@ -704,7 +718,10 @@ class SpawnApplicationService:
         lock = await self._locks.acquire(row.id)
         async with lock:
             ended = await self._finalize_dead_launch_unlocked(
-                spawn_id, before_finalize=sweep, scopes_torn_down=True
+                spawn_id,
+                before_finalize=sweep,
+                scopes_torn_down=True,
+                expected_n=row.launch_number,
             )
             if isinstance(ended, SpawnRecord):
                 return ended
@@ -719,8 +736,14 @@ class SpawnApplicationService:
                     terminal.exit_code,
                     origin=terminal.origin,
                     error=terminal.error,
+                    expected_n=row.launch_number,
                 )
-                return outcome.snapshot
+                snapshot = outcome.snapshot
+                if snapshot is None or snapshot.launch_number == row.launch_number:
+                    return snapshot
+                # A continue converted the row and started the next launch during the sweep:
+                # the finish was declined, and this launch's outcome is in its archive.
+                return poll_launch(self._runtime_root, row.id, row.launch_number).row
             return None
 
     async def cancel_descendants(self, root_id: SpawnId | str) -> set[str]:
@@ -791,11 +814,10 @@ class SpawnApplicationService:
         *,
         before_finalize: Callable[[SpawnRecord], None] | None = None,
         scopes_torn_down: bool = False,
+        expected_n: int | None = None,
     ) -> SpawnRecord | Live | Lockless:
         claimed = await asyncio.to_thread(
-            claim_dead_launch,
-            self._runtime_root,
-            str(spawn_id),
+            partial(claim_dead_launch, self._runtime_root, str(spawn_id), expected_n=expected_n)
         )
         if isinstance(claimed, Settled):
             claimed.handle.close()
@@ -919,6 +941,7 @@ class SpawnApplicationService:
         usage: TokenUsage | None = None,
         error: str | None = None,
         managed_scopes_pending: bool = False,
+        expected_n: int | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -940,6 +963,7 @@ class SpawnApplicationService:
             usage=usage,
             error=error,
             managed_scopes_pending=managed_scopes_pending,
+            expected_n=expected_n,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
@@ -991,6 +1015,7 @@ def _cancel_outcome_from_record(
         already_terminal=already_terminal,
         model=record.model,
         harness=record.harness,
+        launch_number=record.launch_number,
     )
 
 

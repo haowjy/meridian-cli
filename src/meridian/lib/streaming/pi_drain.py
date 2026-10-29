@@ -327,23 +327,28 @@ class PiCompletionEvidence:
         self, private: PiPrivateWorkSnapshot
     ) -> tuple[DiagnosticBlocker, ...]:
         active_ids = {item.identity for item in self._refresh.assessment.blockers}
-        # `parent_id == self` is `owned_parent_ids` for a non-primary caller; the
-        # drain runs only for spawned sessions. A primary drain would have to own
-        # every generation of its chat, as the watcher's launch scope does.
-        return tuple(
-            DiagnosticBlocker(
-                source="profile",
-                code="pi_result_delivery_pending"
-                if row.terminal
-                else "pi_result_publication_pending",
-                identity=row.id,
-            )
-            for row in self._refresh.records
-            if row.parent_id == str(self.spawn_id)
-            and is_owed_child(row)
-            and row.id not in active_ids
-            and row.id not in private.consumed_work_ids
-        )
+        consumed = private.consumed_work_ids
+        # The drain runs only for spawned sessions, which own just their own direct children
+        # (``owned_parent_ids``); a primary drain would own every generation of its chat.
+        current = {row.id: row for row in self._refresh.records}
+        blockers: list[DiagnosticBlocker] = []
+        for key in self._refresh.owed:
+            if str(key) in consumed:
+                continue
+            row = current.get(key.spawn_id)
+            if row is None or row.launch_number != key.n:
+                # A launch a continue moved past: its archive is terminal.
+                code = "pi_result_delivery_pending"
+            elif row.id in active_ids:
+                continue
+            else:
+                code = (
+                    "pi_result_delivery_pending"
+                    if row.terminal
+                    else "pi_result_publication_pending"
+                )
+            blockers.append(DiagnosticBlocker(source="profile", code=code, identity=str(key)))
+        return tuple(blockers)
 
     def _pi_owned_blockers(
         self,

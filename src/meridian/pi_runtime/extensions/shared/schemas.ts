@@ -85,17 +85,35 @@ export function isBackgroundLaunch(row: SpawnStateFile): boolean {
   return row.launch_mode === "background";
 }
 
-export type ObservedSpawnsFile = {
+/** A consumption-ledger key: one launch of a spawn. Mirrors ``str(spawn_observations.LaunchKey)``. */
+export function launchKey(id: string, n: number): string {
+  return `${id}:${n}`;
+}
+
+/** The launch a row describes; a v3 row (``launch`` absent) has only its first. */
+export function launchNumber(row: SpawnStateFile): number {
+  return row.launch?.n ?? 1;
+}
+
+/**
+ * A ledger entry from before launches: a Pi bash task as written, a spawn as its launch 1.
+ * Mirrors ``pi_private_state._legacy_entries``.
+ */
+export function legacyEntryKeys(entry: string): string[] {
+  return [entry, launchKey(entry, 1)];
+}
+
+export type ObservedLaunchesFile = {
   v: 1;
   spawn_id: string;
   updated_at_ms: number;
-  observed_spawn_ids: string[];
-  waiting_spawn_ids?: string[];
+  observed_launches: string[];
+  /** Live explicit waits, by caller process; each holds launch keys. */
   wait_reservations?: Record<string, {
     owner_pid: number;
     owner_birth_epoch: number;
     expires_at_epoch: number;
-    spawn_ids: string[];
+    launches: string[];
   }>;
 };
 
@@ -124,6 +142,8 @@ export const SpawnStateFileSchema = Type.Object({
   launch_mode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   // State v4: which launch the flat row describes. Absent on a v3 row (launch 1, top level).
   launch: Type.Optional(Type.Object({ n: Type.Number() })),
+  // State v4: background launches a continue moved past while still owed. Their rows are the archives.
+  owed_launches: Type.Optional(Type.Array(Type.Object({ n: Type.Number(), parent_id: Type.String() }))),
   // State v4: durations of the launches before the current one. A spawn's duration is this plus the current launch's.
   prior_usage: Type.Optional(Type.Object({ duration_secs: Type.Optional(Type.Number()) })),
 });

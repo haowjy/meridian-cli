@@ -25,8 +25,48 @@ def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
     return task_line
 
 
+# The Pi extension's per-report bound (``MAX_REPORT_BYTES``).
+DELIVERY_MAX_BYTES = 64 * 1024
+_REPORT_FRAME_BYTES = 160
+
+
+def bound_delivery_reports(
+    rows: Sequence["SpawnDetailOutput"],
+) -> tuple["SpawnDetailOutput", ...]:
+    """Fit a delivery's inline reports, with its headers, in ``DELIVERY_MAX_BYTES``.
+
+    The reports share what the headers leave, equally; the Claude mod caps a collect's whole
+    output at 1 MiB and the Pi extension caps a notification at 64 KiB. The same bound applies
+    to ``spawn wait``'s owed spawns, so one rendering rule serves both.
+    """
+
+    with_reports = [row for row in rows if row.report_body is not None]
+    if not with_reports:
+        return tuple(rows)
+    headers = len(
+        render_delivery([row.model_copy(update={"report_body": None}) for row in rows]).encode()
+    )
+    share = max(0, (DELIVERY_MAX_BYTES - headers) // len(with_reports) - _REPORT_FRAME_BYTES)
+    bounded: list[SpawnDetailOutput] = []
+    for row in rows:
+        body = row.report_body
+        if body is not None and len(encoded := body.encode("utf-8")) > share:
+            body = (
+                encoded[:share].decode("utf-8", errors="ignore")
+                + f"\n[Report truncated after {share} bytes]"
+            )
+            row = row.model_copy(update={"report_body": body})
+        bounded.append(row)
+    return tuple(bounded)
+
+
 def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
-    """Render header-only notifications for terminal child details."""
+    """Render header-only notifications for terminal child details.
+
+    A detail that carries ``report_body`` is a run the spawn has since moved past, so
+    ``spawn show`` would describe the next run: its report goes inline instead, already
+    fitted by :func:`bound_delivery_reports`.
+    """
 
     rendered: list[str] = []
     for row in rows:
@@ -48,7 +88,11 @@ def render_delivery(rows: Sequence["SpawnDetailOutput"]) -> str:
             and row.task_cwd != row.authority_root
         ):
             lines.append(task_dir_line(row.task_cwd, row.work_id))
-        lines.append(f"meridian spawn show {row.spawn_id}")
+        if row.report_body is None:
+            lines.append(f"meridian spawn show {row.spawn_id}")
+        else:
+            lines.append("Report of this run (the spawn has since continued):")
+            lines.append(row.report_body)
         rendered.append("\n".join(lines))
     return "\n\n".join(rendered)
 
@@ -1569,6 +1613,7 @@ __all__ = [
     "SpawnSubagentsOutput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
+    "bound_delivery_reports",
     "build_goal_contract_preview",
     "normalize_goal",
     "render_delivery",

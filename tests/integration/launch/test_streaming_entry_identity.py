@@ -17,6 +17,7 @@ from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -110,6 +111,7 @@ async def test_streaming_initial_identity(
         status=SpawnStatus.QUEUED,
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
             harness="claude",
@@ -246,6 +248,7 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
         status=SpawnStatus.QUEUED,
     )
     with session_scope(
+        launch_slot=LaunchSlot(),
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
             harness="claude",

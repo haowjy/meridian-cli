@@ -70,11 +70,12 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
     )
     assert result.total_runs == 1
     assert result.spawns[0].status == "succeeded"
-    observed_path = runtime_root / "spawns" / str(observer_id) / "observed-spawns.json"
+    observed_path = runtime_root / "spawns" / str(observer_id) / "observed-launches.json"
     if observe:
         observed = json.loads(observed_path.read_text())
-        assert observed["observed_spawn_ids"] == [str(spawn_id)]
-        assert observed["waiting_spawn_ids"] == []
+        assert observed["observed_launches"] == [f"{spawn_id}:1"]
+        assert observed["waiting_launches"] == []
+        assert observed["wait_pins"] == {}
     else:
         assert not observed_path.exists()
 
@@ -545,25 +546,23 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
             launch_lock=finishing_launch,
         ).spawn_id
 
-        original_read_spawn_row = spawn_api.read_spawn_row
-        finishing_reads = 0
+        original_poll_launch = spawn_api.poll_launch
+        finished = False
 
         def _finish_before_snapshot_read(*args, **kwargs):
-            nonlocal finishing_reads
-            spawn_id = args[1]
-            if spawn_id == str(finishing_id):
-                finishing_reads += 1
-                if finishing_reads == 2:
-                    spawn_store.finalize_spawn(
-                        runtime_root,
-                        finishing_id,
-                        "succeeded",
-                        0,
-                        origin="runner",
-                    )
-            return original_read_spawn_row(*args, **kwargs)
+            nonlocal finished
+            if args[1] == str(finishing_id) and not finished:
+                finished = True
+                spawn_store.finalize_spawn(
+                    runtime_root,
+                    finishing_id,
+                    "succeeded",
+                    0,
+                    origin="runner",
+                )
+            return original_poll_launch(*args, **kwargs)
 
-        monkeypatch.setattr(spawn_api, "read_spawn_row", _finish_before_snapshot_read)
+        monkeypatch.setattr(spawn_api, "poll_launch", _finish_before_snapshot_read)
 
         output = spawn_api.spawn_wait_sync(
             SpawnWaitInput(
@@ -573,7 +572,6 @@ def test_spawn_wait_checkpoint_returns_terminal_snapshot_when_spawn_finishes(
             )
         )
 
-        assert finishing_reads == 2
         assert not output.fail_fast
         assert output.pending_ids == ()
         assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
