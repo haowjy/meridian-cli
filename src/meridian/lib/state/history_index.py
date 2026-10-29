@@ -1462,6 +1462,22 @@ class HistoryIndex:
         with self.query(deadline=deadline) as db:
             return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
+    def owed_launches(
+        self, parent_ids: set[str], *, deadline: float | None = None
+    ) -> tuple[tuple[str, int], ...]:
+        """Background launches that a continue moved past, still owed to these parents.
+
+        ``(spawn id, launch number)`` from the ``owed_launches`` side table; the launch's
+        row is its archive. Entries are never removed: consumption filters them at read time.
+        """
+        stmt = (
+            select(OWED_LAUNCHES.c.local_id, OWED_LAUNCHES.c.n)
+            .where(OWED_LAUNCHES.c.parent.in_(sorted(parent_ids)))
+            .order_by(OWED_LAUNCHES.c.local_id, OWED_LAUNCHES.c.n)
+        )
+        with self.query(deadline=deadline) as db:
+            return tuple((row[0], row[1]) for row in db.execute(stmt))
+
     def descendant_projection(
         self,
         root_spawn_ids: Sequence[str],

@@ -146,6 +146,7 @@ async def streaming_serve(
                 execution_cwd=str(launch_ctx.binding.child_cwd),
                 spawn_id=str(spawn_id),
                 startup_attempt_id=uuid.uuid4().hex,
+                launch_slot=launch_lock,
             ) as managed:
                 spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
                 lifecycle = LifecycleLog.for_launch(prepared.launch)

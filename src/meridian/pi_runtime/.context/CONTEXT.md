@@ -267,9 +267,9 @@ quiescence inputs:
 - exact admission and public observation files — causal notification membership,
   fenced by the matching public message event
 - explicit result consumption/dismissal, process-owned wait leases and delivery faults;
-  `observed-spawns.json` lives in the parent's `runtime_root/spawns/<parent>/`, with the
-  `legacy-observed-spawns (#719)` copy under `pi-bash/` still read and mirrored for Pi
-  parents
+  `observed-launches.json` lives in the parent's `runtime_root/spawns/<parent>/`. Ledgers
+  are keyed by launch (`<spawn id>:<n>`); the files older builds wrote are read as launch 1
+  ([delivery contract](delivery-contract.md))
 
 Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
 Missing authority is empty. Present malformed, truncated, wrong-parent or invalid

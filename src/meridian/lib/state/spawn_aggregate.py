@@ -15,6 +15,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.launch_lock import LaunchHandle, try_exclusive
 from meridian.lib.state.paths import REAPER_CLEANUP_CLAIM_FILENAME, RuntimePaths
 from meridian.lib.state.process_scope_projection import scope_projection_lock_path
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -132,8 +133,16 @@ def _remove_published_spawn[T](
     *,
     can_delete: SpawnDeletionPrecondition,
     remove: Callable[[Path], T],
+    held: LaunchHandle | None = None,
 ) -> T | None:
-    """One ownership/lock seam for ordinary deletion and verified ZIP retirement."""
+    """One ownership/lock seam for ordinary deletion and verified ZIP retirement.
+
+    The spawn's launch lock is held exclusively, without waiting, across the removal: a
+    runner or a continue in progress has it (Busy), and the spawn is skipped. A row from
+    before launch locks has no lock to take, so a caller that deletes such rows checks its
+    recorded runner in ``can_delete``. ``held`` is the caller's own handle when it removes a
+    spawn it is itself launching.
+    """
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_spawn_id = str(spawn_id)
     if not is_safe_spawn_dir_name(resolved_spawn_id):
@@ -145,10 +154,13 @@ def _remove_published_spawn[T](
     # claim must be completed or cleared before artifact retention can remove it.
     changes = HistoryChanges(runtime_root)
     with (
+        try_exclusive(runtime_root, resolved_spawn_id, held) as locked,
         lock_file(changes.mutation_lock, mode="shared"),
         lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)),
         lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)),
     ):
+        if locked is False:
+            return None
         claim_path = spawn_dir / REAPER_CLEANUP_CLAIM_FILENAME
         if claim_path.exists() or not can_delete(
             read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
@@ -177,11 +189,12 @@ def delete_published_spawn(
     spawn_id: SpawnId | str,
     *,
     can_delete: SpawnDeletionPrecondition,
+    held: LaunchHandle | None = None,
 ) -> bool:
     """Delete ordinary published artifacts under their ownership locks."""
     return bool(
         _remove_published_spawn(
-            runtime_root, spawn_id, can_delete=can_delete, remove=_remove_artifacts
+            runtime_root, spawn_id, can_delete=can_delete, remove=_remove_artifacts, held=held
         )
     )
 

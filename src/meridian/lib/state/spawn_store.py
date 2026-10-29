@@ -543,6 +543,7 @@ def reopen_spawn(
 def remove_spawn_events(
     runtime_root: Path,
     spawn_id: SpawnId | str,
+    held: LaunchHandle | None = None,
 ) -> None:
     """Remove per-spawn state for one spawn.
 
@@ -554,6 +555,7 @@ def remove_spawn_events(
         runtime_root,
         spawn_id,
         can_delete=lambda record: record is not None and _is_active_spawn_status(record.status),
+        held=held,
     )
 
 

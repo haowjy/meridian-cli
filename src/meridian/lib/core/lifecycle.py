@@ -116,11 +116,15 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 # ---------------------------------------------------------------------------
 
 
-def generate_event_id(spawn_id: str, event_type: str, sequence: int) -> UUID:
-    """Generate a stable spawn-event ID using UUID v5."""
+def generate_event_id(spawn_id: str, n: int, event_type: str) -> UUID:
+    """Generate a stable event ID for one launch of a spawn, using UUID v5.
+
+    Launch 1 hashes to the ID the old always-zero ``sequence`` gave, so events of spawns that
+    started before launches keep their identity; launch 2 would otherwise dedupe against 1.
+    """
 
     namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # URL namespace
-    name = f"meridian:spawn:{spawn_id}:{event_type}:{sequence}"
+    name = f"meridian:spawn:{spawn_id}:{event_type}:{n - 1}"
     return uuid.uuid5(namespace, name)
 
 
@@ -566,7 +570,7 @@ class SpawnLifecycleService:
             )
 
         return LifecycleEvent(
-            event_id=generate_event_id(record.id, event_type, 0),
+            event_id=generate_event_id(record.id, record.launch_number, event_type),
             event_type=event_type,
             timestamp=datetime.now(tz=UTC),
             spawn_id=record.id,

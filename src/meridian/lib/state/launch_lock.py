@@ -107,6 +107,18 @@ class LaunchSlot(AbstractContextManager["LaunchSlot"]):
             raise RuntimeError("Launch slot is not bound")
         return self._handle
 
+    @property
+    def held(self) -> LaunchHandle | None:
+        """The bound handle, or ``None`` before the slot is bound."""
+        return self._handle
+
+    @classmethod
+    def holding(cls, handle: LaunchHandle) -> LaunchSlot:
+        """A slot over a handle the process already holds (a background worker's adopted one)."""
+        slot = cls()
+        slot._handle = handle
+        return slot
+
     def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
         if self._handle is not None:
             raise RuntimeError("Launch slot already bound")
@@ -163,6 +175,32 @@ def acquire(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
     except BaseException:
         os.close(fd)
         raise
+
+
+@contextmanager
+def try_exclusive(
+    runtime_root: Path, spawn_id: SpawnId | str, held: LaunchHandle | None = None
+) -> Generator[bool | None]:
+    """Hold a published spawn's launch lock exclusively, without waiting, for the caller's work.
+
+    ``True``: held, so no runner of this spawn is alive. ``False``: a runner or a brief
+    holder has it; skip, never retry. ``None``: a row from before launch locks, whose
+    liveness the caller must judge itself. ``held`` is a handle the caller's process already
+    holds: a second ``acquire`` there would find it Busy, so a matching one counts as held.
+    """
+    if held is not None and str(held.spawn_id) == str(spawn_id):
+        yield True
+        return
+    try:
+        handle = acquire(runtime_root, spawn_id)
+    except NotFound:
+        yield None
+        return
+    except (Busy, Contended):
+        yield False
+        return
+    with handle:
+        yield True
 
 
 def take_handoff_fd() -> int:

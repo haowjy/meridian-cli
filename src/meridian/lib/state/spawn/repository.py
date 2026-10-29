@@ -26,7 +26,7 @@ from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.paths import LaunchPaths, launch_archive
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -208,6 +208,16 @@ def stored_state_to_record(
     return SpawnRecord.model_validate(
         {**stored.model_dump(exclude={"v", "prompt_length"}), "prompt": prompt}
     )
+
+
+def read_launch_archive(runtime_root: Path, spawn_id: str, n: int) -> SpawnRecord | None:
+    """Launch ``n``'s finished row as archived by the holder that started launch ``n+1``."""
+
+    try:
+        text = launch_archive(runtime_root, spawn_id, n).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    return stored_state_to_record(StoredSpawnState.model_validate_json(text))
 
 
 def read_prompt(launch: LaunchPaths) -> str | None:

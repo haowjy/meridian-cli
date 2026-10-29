@@ -54,7 +54,7 @@ against a recreated inode (split-brain).
   background worker). Functions take a `LaunchPaths`, never a `log_dir`/`spawn_dir` path,
   and never recover the runtime root or spawn ID from a launch directory path. Spawn-level
   files (`state.json`, `launch.lock`,
-  `scope.json`, `observed-spawns.json`, `reaper_cleanup_claim.json`, the ambient `work/`
+  `scope.json`, `observed-launches.json`, `reaper_cleanup_claim.json`, the ambient `work/`
   directory, the control socket) stay joined to `resolve_spawn_dir`: nothing a user sees
   resets on a continue; code that slices a *spawn* directory (retention) stays valid.
   Per-launch name constants are private to `paths.py`; code that recognizes a name (not

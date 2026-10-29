@@ -149,6 +149,7 @@ def report_show_sync(
         runtime_root=launch.runtime_root,
         caller=resolved_ctx,
         spawn_id=spawn_id,
+        launch_number=launch.n or 1,
         status=status,
         body=report,
     )

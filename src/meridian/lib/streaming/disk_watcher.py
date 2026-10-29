@@ -16,9 +16,12 @@ from watchfiles import (
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_private_state import (
-    CLEARED_SPAWNS_FILENAME,
+    CLEARED_LAUNCHES_FILENAME,
     DELIVERY_RECEIPTS_FILENAME,
-    OBSERVED_SPAWNS_FILENAME,
+    LEGACY_CLEARED_SPAWNS_FILENAME,
+    LEGACY_DELIVERY_RECEIPTS_FILENAME,
+    LEGACY_OBSERVED_SPAWNS_FILENAME,
+    OBSERVED_LAUNCHES_FILENAME,
     BashEvidenceFile,
     DeliveryFault,
     DeliveryObservations,
@@ -26,7 +29,7 @@ from meridian.lib.harness.pi_private_state import (
     read_pi_consumption_state,
     read_pi_private_doc,
 )
-from meridian.lib.state.paths import observed_spawns_path
+from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
@@ -39,8 +42,12 @@ _WATCHED_NAMES = frozenset(
         "bash-records.json",
         DELIVERY_RECEIPTS_FILENAME,
         "delivery-observations.json",
-        OBSERVED_SPAWNS_FILENAME,
-        CLEARED_SPAWNS_FILENAME,
+        OBSERVED_LAUNCHES_FILENAME,
+        CLEARED_LAUNCHES_FILENAME,
+        # Older builds' files, still read until the ledgers they key are retired.
+        LEGACY_DELIVERY_RECEIPTS_FILENAME,
+        LEGACY_OBSERVED_SPAWNS_FILENAME,
+        LEGACY_CLEARED_SPAWNS_FILENAME,
         "delivery-fault.json",
     }
 )
@@ -60,7 +67,7 @@ class PiDiskWatcher:
         self._spawn_id = str(current_spawn_id)
         self._runtime_root = runtime_root
         self._bash_dir = pi_coordination_dir(runtime_root, self._spawn_id)
-        self._observations_path = observed_spawns_path(runtime_root, self._spawn_id)
+        self._observations_path = observed_launches_path(runtime_root, self._spawn_id)
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
         self._state_changed = asyncio.Event()
@@ -143,8 +150,7 @@ class PiDiskWatcher:
 
     async def _watch_state_dirs(self) -> None:
         # Pi coordination files keep the bash-directory watch. The spawn-directory
-        # watch adds the current observed-spawns.json without waking on unrelated files.
-        # legacy-observed-spawns (#719): old observation writes also wake the bash watch.
+        # watch adds the observations file without waking on unrelated files.
         watched = [self._bash_dir]
         if self._observations_path.parent.is_dir():
             watched.append(self._observations_path.parent)

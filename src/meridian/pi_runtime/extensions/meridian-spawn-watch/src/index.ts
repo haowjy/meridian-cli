@@ -8,18 +8,21 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { readBashRecords } from "../../shared/bash_records";
 import { readPrivateJson, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { admitDelivery, admittedWorkIds, readCurrentObservations, readDeliveryReceipts, readLegacyObservations, reservedSpawnIds, type WaitReservation } from "../../shared/delivery_receipts";
+import { admitDelivery, admittedWorkIds, readCurrentObservations, readDeliveryReceipts, readLegacyDeliveryReceipts, readLegacyObservations, reservedLaunchKeys, type WaitReservation } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
   owedParentIdsFromEnv,
   resolveBashRecordsPath,
-  resolveClearedSpawnsPath,
+  resolveClearedLaunchesPath,
+  resolveDeliveryReceiptsPath,
+  resolveLaunchArchivePath,
+  resolveLegacyClearedSpawnsPath,
   resolvePiBashDir,
   resolveReportPath,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
-import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, parseSpawnStateFile, totalDurationSecs } from "../../shared/schemas";
+import { isBackgroundLaunch, isTerminalBashStatus, isTrackedBackground, launchKey, launchNumber, legacyEntryKeys, parseSpawnStateFile, totalDurationSecs } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import { bashOutcome } from "../../shared/task_outcome";
 import {
@@ -31,9 +34,19 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
-type ChildDiscovery = { rows: SpawnStateFile[]; revision: number };
+/** One launch of a spawn: the unit that is owed, delivered and consumed. */
+type LaunchRef = { id: string; n: number };
+/**
+ * What the spawn state files say about the children: the current rows this session owns, and
+ * the launches a continue moved past while still owed to one of its parents (their rows are
+ * archives, read only if unconsumed).
+ */
+type ChildScan = { rows: SpawnStateFile[]; moved: LaunchRef[] };
+type ChildDiscovery = ChildScan & { revision: number };
 type NotificationFields = {
   id: string;
+  /** What consumption names: the launch key of a spawn, the bash ID of a task. */
+  workId: string;
   status: string;
   label: string;
   duration: string;
@@ -41,7 +54,7 @@ type NotificationFields = {
   error?: string;
 };
 // A spawn's report path comes from its parsed state, so the launch it names is the one read.
-type SpawnNotificationItem = NotificationFields & { kind: "spawn"; reportPath: string };
+type SpawnNotificationItem = NotificationFields & { kind: "spawn"; reportPath: string; n: number };
 type NotificationItem = SpawnNotificationItem | (NotificationFields & { kind: "bash" });
 type NotificationFrame = {
   prefix: string;
@@ -50,12 +63,13 @@ type NotificationFrame = {
   lookup: string;
 };
 type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
-type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
+type ClearedLaunchesFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_launches: string[] };
+type LegacyClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
 /** The consumption files one parent can hold, read independently. */
-type ConsumptionSource = "receipts" | "observations" | "legacy-observations" | "cleared";
-// The current and legacy observation files are separate sources, as in core's read_pi_consumption_state:
-// a damaged one must not drop the other's ids.
-const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "observations", "legacy-observations", "cleared"];
+type ConsumptionSource = "receipts" | "legacy-receipts" | "observations" | "legacy-observations" | "cleared" | "legacy-cleared";
+// Each current file and its legacy (bare-ID, launch 1) predecessor are separate sources, as in core's
+// read_pi_consumption_state: a damaged one must not drop the other's ids.
+const CONSUMPTION_SOURCES: readonly ConsumptionSource[] = ["receipts", "legacy-receipts", "observations", "legacy-observations", "cleared", "legacy-cleared"];
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -71,11 +85,12 @@ export class SpawnWatchRuntime {
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
-  private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
-  private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
+  private readonly clearedPath = resolveClearedLaunchesPath(this.currentSpawnId);
+  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.currentSpawnId);
   private readonly spawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly queued = new Map<string, string[]>();
-  private candidateChildIds = new Set<string>();
+  /** Launches worth rereading on an idle tick, by launch key; rebuilt by every full scan. */
+  private candidates = new Map<string, LaunchRef>();
   /** Damaged consumption sources already reported, so a skip logs once. */
   private readonly skippedSources = new Set<string>();
   private watchers: FSWatcher[] = [];
@@ -111,11 +126,10 @@ export class SpawnWatchRuntime {
     mkdirSync(this.bashDir, { recursive: true });
     const watched: Array<[string, (filename: string | null) => void]> = [
       [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
-      // legacy-observed-spawns (#719): old writes wake the Pi coordination watch.
       [this.bashDir, () => this.requestIdleDelivery()],
-      // Current home. The directory also holds frequently rewritten spawn files
-      // (state, logs); only the observations file is read here.
-      [this.spawnDir, (filename) => { if (filename === null || filename === "observed-spawns.json") this.requestIdleDelivery(); }],
+      // The directory also holds frequently rewritten spawn files (state, logs); only the
+      // observation files are read here.
+      [this.spawnDir, (filename) => { if (filename === null || filename === "observed-launches.json" || filename === "observed-spawns.json") this.requestIdleDelivery(); }],
     ];
     for (const [dir, onChange] of watched) {
       if (!existsSync(dir)) continue; // no spawn directory outside a Meridian launch; the idle poll still covers it
@@ -176,18 +190,19 @@ export class SpawnWatchRuntime {
 
   async rows(): Promise<SpawnStateFile[]> {
     const cleared = await this.readClearedUnion();
-    return (await this.discoverChildStates()).rows.filter((row) => row.terminal === null || !cleared.has(row.id));
+    return (await this.discoverChildStates()).rows.filter((row) => row.terminal === null || !cleared.has(launchKey(row.id, launchNumber(row))));
   }
 
   async clearFinished(): Promise<number> {
     // Hide whatever any owned parent already cleared; only this spawn's file is written.
     const hidden = await this.readClearedUnion();
-    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !hidden.has(row.id));
+    const terminal = (await this.discoverChildStates()).rows
+      .filter((row) => row.terminal !== null && !hidden.has(launchKey(row.id, launchNumber(row))));
     if (terminal.length) {
       const cleared = await this.readCleared();
-      for (const row of terminal) cleared.add(row.id);
+      for (const row of terminal) cleared.add(launchKey(row.id, launchNumber(row)));
       await writeJsonAtomic(this.clearedPath, {
-        v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
+        v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_launches: [...cleared].sort(),
       });
     }
     this.requestIdleDelivery();
@@ -242,16 +257,19 @@ export class SpawnWatchRuntime {
     return new Set([...this.queued.values()].flat());
   }
 
-  private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
+  private async collectEligible(scan: ChildScan): Promise<NotificationItem[]> {
     // Only a background child is owed back; a launcher that waited saw its result.
     // Mirrors core's `spawn_ownership.is_owed_child`.
-    const owedStates = states.filter(isBackgroundLaunch);
+    const owedStates = scan.rows.filter(isBackgroundLaunch);
     const claimed = this.claimedWorkIds();
     // This spawn's own sources are always read: Bash records belong to it, and they
     // decide whether any child still needs the wider union.
     const [bash, own] = await Promise.all([this.readBash(), this.readConsumption([this.currentSpawnId])]);
+    const open = (key: string, consumed: Set<string>, reserved: Set<string>) =>
+      !consumed.has(key) && !reserved.has(key) && !claimed.has(key);
     const undecided = owedStates.some((row) => row.terminal !== null
-      && !own.consumed.has(row.id) && !own.reserved.has(row.id) && !claimed.has(row.id));
+      && open(launchKey(row.id, launchNumber(row)), own.consumed, own.reserved))
+      || scan.moved.some((ref) => open(launchKey(ref.id, ref.n), own.consumed, own.reserved));
     // Every owned generation's consumption only decides a terminal candidate this
     // spawn's own sources leave open, so an idle tick stays proportional to what
     // is owed rather than to the chat's whole history.
@@ -259,31 +277,52 @@ export class SpawnWatchRuntime {
       ? await this.readConsumption(this.parentIds) : own;
     const correlated = new Set(owedStates.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
     const eligible: NotificationItem[] = [];
+    const push = (row: SpawnStateFile): void => {
+      if (row.terminal === null) return;
+      eligible.push({
+        id: row.id, workId: launchKey(row.id, launchNumber(row)), n: launchNumber(row), kind: "spawn",
+        status: row.status, reportPath: resolveReportPath(row),
+        label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
+        duration: formatDurationSecs(totalDurationSecs(row)),
+        exitCode: row.terminal.exit_code,
+        error: row.terminal.error ?? undefined,
+      });
+    };
     for (const row of owedStates) {
-      // Consumption only grows, so a consumed terminal row can never become owed
+      const key = launchKey(row.id, launchNumber(row));
+      // Consumption only grows, so a consumed terminal launch can never become owed
       // again and need not be reread on every idle tick.
-      if (row.terminal !== null && consumed.has(row.id)) this.candidateChildIds.delete(row.id);
-      if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
-        eligible.push({
-          id: row.id, kind: "spawn", status: row.status, reportPath: resolveReportPath(row),
-          label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
-          duration: formatDurationSecs(totalDurationSecs(row)),
-          exitCode: row.terminal.exit_code,
-          error: row.terminal.error ?? undefined,
-        });
-      }
+      if (row.terminal !== null && consumed.has(key)) this.candidates.delete(key);
+      if (open(key, consumed, reserved)) push(row);
+    }
+    // A launch the spawn moved past: its row is the archive, which is terminal by construction.
+    for (const ref of scan.moved) {
+      const key = launchKey(ref.id, ref.n);
+      if (consumed.has(key)) { this.candidates.delete(key); continue; }
+      if (!open(key, consumed, reserved)) continue;
+      const archived = await this.readArchivedRow(ref);
+      if (archived && isBackgroundLaunch(archived)) push(archived);
     }
     for (const record of Object.values(bash.records)) {
       const outcome = bashOutcome(record);
       if (isTrackedBackground(record) && isTerminalBashStatus(record.status)
           && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
           && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
-        id: record.bash_id, kind: "bash", status: outcome.status, label: record.command,
+        id: record.bash_id, workId: record.bash_id, kind: "bash", status: outcome.status, label: record.command,
         duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
         exitCode: outcome.exit_code ?? undefined, error: outcome.error,
       });
     }
     return eligible;
+  }
+
+  /** Launch `ref`'s archived row, if it names this launch and a parent this session owns. */
+  private async readArchivedRow(ref: LaunchRef): Promise<SpawnStateFile | undefined> {
+    const value = await readPrivateJson(resolveLaunchArchivePath(ref.id, ref.n));
+    if (value === undefined) return undefined;
+    const row = parseSpawnStateFile(value);
+    if (!row || row.id !== ref.id || launchNumber(row) !== ref.n) throw Error(`invalid launch archive: ${ref.id}:${ref.n}`);
+    return row.parent_id && this.parentIds.has(row.parent_id) && row.terminal !== null ? row : undefined;
   }
 
   private async collectAndPublish(
@@ -295,9 +334,9 @@ export class SpawnWatchRuntime {
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     const mayRead = () => this.canContinue(deliverAs, generation, signal);
     const discovered = discover ? await this.discoverChildStates(mayRead) : undefined;
-    const initialStates = discovered?.rows ?? await this.readCandidateStates(this.candidateChildIds, mayRead);
+    const initialScan = discovered ?? await this.readCandidateStates(this.candidates.values(), mayRead);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
-    const initial = await this.collectEligible(initialStates);
+    const initial = await this.collectEligible(initialScan);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!initial.length) return true;
 
@@ -346,13 +385,14 @@ export class SpawnWatchRuntime {
     // launcher's obligation from its already-published canonical child.
     const correlation = selected.some(({ item }) => item.kind === "bash")
       ? await this.discoverChildStates(mayRead) : undefined;
-    const freshStates = correlation?.rows
-      ?? await this.readCandidateStates(selected.map(({ item }) => item.id), mayRead);
+    const freshScan = correlation
+      ?? await this.readCandidateStates(selected.flatMap(({ item }) =>
+        item.kind === "spawn" ? [{ id: item.id, n: item.n }] : []), mayRead);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
-    // Revalidate the selected IDs, not a hint cache another discovery may have
+    // Revalidate the selected launches, not a hint cache another discovery may have
     // superseded. Observe the same idle generation around the final snapshot.
-    const fresh = await this.collectEligible(freshStates);
+    const fresh = await this.collectEligible(freshScan);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
     // This collector is deliberately finite. Work that arrived after the first
@@ -374,7 +414,7 @@ export class SpawnWatchRuntime {
     if (!this.canContinue(deliverAs, generation, signal) || !content) return false;
 
     const deliveryId = randomUUID();
-    const workIds = batch.map(({ item }) => item.id);
+    const workIds = batch.map(({ item }) => item.workId);
     this.queued.set(deliveryId, workIds);
     try {
       this.pi.sendMessage({ customType: "meridian-spawn-watch", content, display: true,
@@ -420,13 +460,16 @@ export class SpawnWatchRuntime {
       for (const id of result.consumed) consumed.add(id);
       leases.push(...result.leases);
     }
-    return { consumed, reserved: await reservedSpawnIds(leases) };
+    return { consumed, reserved: await reservedLaunchKeys(leases) };
   }
 
   /**
    * Read one source for one parent. A damaged file from an older generation is
    * logged once and skipped, as core's `owed_consumed_ids` skips each source; this
    * spawn's own files stay fail-closed so unknown evidence cannot publish.
+   *
+   * IDs come back as ledger keys: a legacy file's bare entry is a bash task as written
+   * and a spawn's launch 1 (`legacyEntryKeys`).
    */
   private async readConsumptionSource(
     parentId: string,
@@ -436,14 +479,18 @@ export class SpawnWatchRuntime {
       switch (source) {
         case "receipts":
           return { consumed: [...admittedWorkIds(await readDeliveryReceipts(parentId))], leases: [] };
+        case "legacy-receipts":
+          return { consumed: [...admittedWorkIds(await readLegacyDeliveryReceipts(parentId))].flatMap(legacyEntryKeys), leases: [] };
         case "observations":
         case "legacy-observations": {
           const observed = source === "observations"
             ? await readCurrentObservations(parentId) : await readLegacyObservations(parentId);
-          return { consumed: observed.observed_spawn_ids, leases: Object.values(observed.wait_reservations ?? {}) };
+          return { consumed: observed.observed_launches, leases: Object.values(observed.wait_reservations ?? {}) };
         }
         case "cleared":
           return { consumed: [...await this.readCleared(parentId)], leases: [] };
+        case "legacy-cleared":
+          return { consumed: [...await this.readLegacyCleared(parentId)].flatMap(legacyEntryKeys), leases: [] };
       }
     } catch (error) {
       if (parentId === this.currentSpawnId) throw error;
@@ -456,22 +503,34 @@ export class SpawnWatchRuntime {
     }
   }
 
-  /** Cleared IDs across every owned parent, as `/spawn` hides them. */
+  /** Cleared launch keys across every owned parent, as `/spawn` hides them. */
   private async readClearedUnion(): Promise<Set<string>> {
     const cleared = new Set<string>();
     for (const parentId of [...this.parentIds].sort()) {
-      const source = await this.readConsumptionSource(parentId, "cleared");
-      for (const id of source?.consumed ?? []) cleared.add(id);
+      for (const source of ["cleared", "legacy-cleared"] as const) {
+        for (const key of (await this.readConsumptionSource(parentId, source))?.consumed ?? []) cleared.add(key);
+      }
     }
     return cleared;
   }
 
   private async readCleared(spawnId = this.currentSpawnId): Promise<Set<string>> {
     const value = await readPrivateJson(
-      spawnId === this.currentSpawnId ? this.clearedPath : resolveClearedSpawnsPath(spawnId),
+      spawnId === this.currentSpawnId ? this.clearedPath : resolveClearedLaunchesPath(spawnId),
     );
     if (value === undefined) return new Set();
-    const file = value as ClearedSpawnsFile;
+    const file = value as ClearedLaunchesFile;
+    if (file.v !== 1 || file.spawn_id !== spawnId || !Array.isArray(file.cleared_launches)
+      || !Number.isFinite(file.updated_at_ms)
+      || !file.cleared_launches.every((id) => typeof id === "string")) throw Error("invalid cleared launch evidence");
+    return new Set(file.cleared_launches);
+  }
+
+  /** Older builds' `cleared-spawns.json`: bare spawn IDs, read-only. */
+  private async readLegacyCleared(spawnId: string): Promise<Set<string>> {
+    const value = await readPrivateJson(resolveLegacyClearedSpawnsPath(spawnId));
+    if (value === undefined) return new Set();
+    const file = value as LegacyClearedSpawnsFile;
     if (file.v !== 1 || file.spawn_id !== spawnId || !Array.isArray(file.cleared_spawn_ids)
       || !Number.isFinite(file.updated_at_ms)
       || !file.cleared_spawn_ids.every((id) => typeof id === "string")) throw Error("invalid cleared spawn evidence");
@@ -484,26 +543,22 @@ export class SpawnWatchRuntime {
     // events or overlapping discoveries leave another full scan owed.
     const revision = ++this.discoveryRevision;
     try {
-      const candidates = new Set<string>();
-      const rows: SpawnStateFile[] = [];
+      const candidates = new Map<string, LaunchRef>();
+      const scan: ChildScan = { rows: [], moved: [] };
       if (existsSync(this.spawnsDir)) {
         for (const name of (await readdir(this.spawnsDir)).sort()) {
           if (!mayRead()) break;
           if (!name.startsWith("p")) continue;
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
-          const state = this.parseOwnedChild(name, value);
-          if (state) {
-            rows.push(state);
-            if (isBackgroundLaunch(state)) candidates.add(name);
-          }
+          this.addScanned(name, value, scan, candidates);
         }
       }
       if (mayRead() && this.discoveryRevision === revision) {
-        this.candidateChildIds = candidates;
+        this.candidates = candidates;
         this.reconciledRevision = revision;
       }
-      return { rows, revision };
+      return { ...scan, revision };
     } catch (error) {
       // A concurrent successful scan must not make a later observed failure look
       // clean merely because that failing attempt started first.
@@ -512,28 +567,55 @@ export class SpawnWatchRuntime {
     }
   }
 
-  private async readCandidateStates(ids: Iterable<string>, mayRead: () => boolean): Promise<SpawnStateFile[]> {
-    const rows: SpawnStateFile[] = [];
-    for (const name of [...ids].sort()) {
+  /**
+   * Reread the state of every spawn named by `refs`: a spawn whose `launch.n` moved shows up
+   * under its new launch, and the launches it moved past are found through `owed_launches`.
+   */
+  private async readCandidateStates(refs: Iterable<LaunchRef>, mayRead: () => boolean): Promise<ChildScan> {
+    const scan: ChildScan = { rows: [], moved: [] };
+    for (const name of [...new Set([...refs].map((ref) => ref.id))].sort()) {
       if (!mayRead()) break;
       const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
+      for (const [key, ref] of this.candidates) if (ref.id === name) this.candidates.delete(key);
       if (value === undefined) continue;
-      const state = this.parseOwnedChild(name, value);
-      if (state) rows.push(state);
-      else this.candidateChildIds.delete(name);
+      this.addScanned(name, value, scan, this.candidates);
     }
-    return rows;
+    return scan;
   }
 
-  private parseOwnedChild(name: string, value: unknown): SpawnStateFile | undefined {
-    // A definitively foreign row cannot affect this session's obligations.
-    // Unknown membership and malformed own-child evidence still fail closed.
-    if (value && typeof value === "object" && "id" in value && value.id === name
-        && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
-        && (value.parent_id === null || !this.parentIds.has(value.parent_id))) return undefined;
+  /** Add one spawn's state to a scan: its current row if this session owns it, and its owed launches. */
+  private addScanned(name: string, value: unknown, scan: ChildScan, candidates: Map<string, LaunchRef>): void {
+    const { state, moved } = this.parseOwnedChild(name, value);
+    if (state) {
+      scan.rows.push(state);
+      if (isBackgroundLaunch(state)) {
+        const ref = { id: name, n: launchNumber(state) };
+        candidates.set(launchKey(ref.id, ref.n), ref);
+      }
+    }
+    for (const ref of moved) {
+      scan.moved.push(ref);
+      candidates.set(launchKey(ref.id, ref.n), ref);
+    }
+  }
+
+  private parseOwnedChild(name: string, value: unknown): { state?: SpawnStateFile; moved: LaunchRef[] } {
+    // A definitively foreign row cannot affect this session's obligations. A launch it moved
+    // past can still be owed to us after the spawn went to another parent, so look at
+    // `owed_launches` before deciding. Unknown membership and malformed own-child evidence
+    // still fail closed.
+    const ours = (parent: unknown): boolean => typeof parent === "string" && this.parentIds.has(parent);
+    const loose = value as { id?: unknown; parent_id?: unknown; owed_launches?: unknown } | null;
+    const owedAtAll = Array.isArray(loose?.owed_launches) && loose.owed_launches.some((entry: { parent_id?: unknown }) => ours(entry?.parent_id));
+    if (value && typeof value === "object" && loose?.id === name
+        && "parent_id" in value && (loose.parent_id === null || typeof loose.parent_id === "string")
+        && (loose.parent_id === null || !ours(loose.parent_id)) && !owedAtAll) return { moved: [] };
     const state = parseSpawnStateFile(value);
     if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
-    return state.parent_id && this.parentIds.has(state.parent_id) ? state : undefined;
+    const moved = (state.owed_launches ?? [])
+      .filter((entry) => this.parentIds.has(entry.parent_id))
+      .map((entry) => ({ id: name, n: entry.n }));
+    return { state: state.parent_id && this.parentIds.has(state.parent_id) ? state : undefined, moved };
   }
 
   private logWarning(error: unknown): void {
@@ -580,7 +662,7 @@ async function readBoundedReport(reportPath: string): Promise<{ text: string | n
 }
 
 function notificationKey(item: NotificationItem): string {
-  return `${item.kind}:${item.id}`;
+  return `${item.kind}:${item.workId}`;
 }
 
 function sameNotification(left: NotificationItem, right: NotificationItem): boolean {

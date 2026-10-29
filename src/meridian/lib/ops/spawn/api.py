@@ -65,6 +65,7 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_observations import WaitPin, launch_key, live_wait_pins
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_signals import (
@@ -72,7 +73,13 @@ from meridian.lib.state.spawn_signals import (
     read_accepted_signals,
     write_spawn_signal,
 )
-from meridian.lib.state.spawn_status import overlay_derived, read_derived
+from meridian.lib.state.spawn_status import (
+    LaunchNotFound,
+    Running,
+    overlay_derived,
+    poll_launch,
+    read_derived,
+)
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
@@ -113,9 +120,13 @@ from .models import (
     format_spawn_identity_table,
 )
 from .owed import (
+    LaunchRef,
     consume_result_if_shown,
+    owed_consumed_ids,
     record_result_shown_to_caller,
+    ref_key,
     resolve_owed_finished_rows,
+    row_ref,
     select_delivery_rows,
 )
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
@@ -141,8 +152,8 @@ class _WaitTargetDiscovery:
     blocked_on_ids: tuple[str, ...] = ()
     active_rows: tuple[SpawnRecord, ...] = ()
     owed_rows: tuple[SpawnRecord, ...] = ()
-    # Every finished owed id seen, including rows the delivery cap held back.
-    owed_candidate_ids: frozenset[str] = frozenset()
+    # Every finished owed launch seen, including rows the delivery cap held back.
+    owed_candidate_refs: frozenset[LaunchRef] = frozenset()
     discovery_pending: bool = False
 
 
@@ -1022,6 +1033,7 @@ def spawn_show_sync(
         runtime_root=runtime_root,
         caller=resolved_context,
         spawn_id=result.spawn_id,
+        launch_number=row.launch_number,
         status=result.status,
         body=result.report_body,
     )
@@ -1432,6 +1444,7 @@ async def _spawn_cancel_impl(
             runtime_root=runtime_root,
             caller=resolved_context,
             spawn_id=outcome.spawn_id,
+            launch_number=outcome.launch_number,
         )
     return _spawn_cancel_output_from_outcome(outcome)
 
@@ -1595,7 +1608,7 @@ def _resolve_wait_targets(
     ctx: RuntimeContext,
     *,
     deadline: float,
-    excluded_owed_ids: frozenset[str] = frozenset(),
+    excluded_owed_refs: frozenset[LaunchRef] = frozenset(),
 ) -> _WaitTargetDiscovery:
     """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
@@ -1633,7 +1646,7 @@ def _resolve_wait_targets(
             chat_id=chat_id,
             caller_spawn_id=caller_spawn_id,
             parent_ids=roots,
-            excluded_ids=excluded_owed_ids.union(row.id for row in pending),
+            excluded_refs=excluded_owed_refs.union(row_ref(row) for row in pending),
             deadline=deadline,
         )
     except history_index.HistoryIndexBusy:
@@ -1643,7 +1656,7 @@ def _resolve_wait_targets(
         blocked_on_ids=tuple(row.id for row in pending),
         active_rows=tuple(pending),
         owed_rows=select_delivery_rows(owed_candidates),
-        owed_candidate_ids=frozenset(row.id for row in owed_candidates),
+        owed_candidate_refs=frozenset(row_ref(row) for row in owed_candidates),
     )
 
 
@@ -1705,8 +1718,8 @@ def _since_started_spawns(
             runtime_root,
             ctx,
             deadline=time.monotonic() + history_index.QUERY_TIMEOUT,
-            excluded_owed_ids=initial_targets.owed_candidate_ids.union(
-                initial_targets.blocked_on_ids
+            excluded_owed_refs=initial_targets.owed_candidate_refs.union(
+                row_ref(row) for row in initial_targets.active_rows
             ),
         )
         if current_targets.discovery_pending:
@@ -1942,12 +1955,36 @@ def spawn_wait_sync(
             runtime_root=runtime_root,
         )
 
-    observed_ids = tuple((*blocked_on_ids, *(row.id for row in owed_rows)))
-
-    for spawn_id in observed_ids:
+    parent_wait_observer_id = (
+        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
+    )
+    # Each target is waited on as the launch it is now, or the one an earlier run of this
+    # wait pinned (a `--yield-after-secs` re-run is a new process). Pins are stored only for
+    # an explicit wait by a caller with a spawn ID; any other wait pins in this process.
+    stored_pins = (
+        live_wait_pins(
+            runtime_root,
+            parent_wait_observer_id,
+            owed_consumed_ids(runtime_root, (parent_wait_observer_id,)),
+        )
+        if parent_wait_observer_id is not None and has_explicit_ids
+        else {}
+    )
+    pins: dict[str, int] = {}
+    for spawn_id in blocked_on_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         if record is not None and record.record_mode == "historical":
             raise ValueError("Historical records cannot be waited on")
+        pins[spawn_id] = stored_pins.get(spawn_id) or (record.launch_number if record else 1)
+    for owed_row in owed_rows:
+        if owed_row.record_mode == "historical":
+            raise ValueError("Historical records cannot be waited on")
+    observed_keys = tuple(
+        (
+            *(launch_key(spawn_id, n) for spawn_id, n in pins.items()),
+            *(ref_key(row_ref(row)) for row in owed_rows),
+        )
+    )
 
     poll = (
         payload.poll_interval_secs
@@ -1957,14 +1994,19 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    parent_wait_observer_id = (
-        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
-    )
     lease_seconds = max(30.0, poll * 2 + 5)
+
+    def pin_documents() -> dict[str, WaitPin]:
+        if not has_explicit_ids:
+            return {}
+        expires_at = time.time() + checkpoint_seconds
+        return {target: WaitPin(n=n, expires_at=expires_at) for target, n in pins.items()}
+
     record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
-        waiting_add=observed_ids,
+        waiting_add=observed_keys,
+        pins_set=pin_documents(),
         lease_seconds=lease_seconds,
     )
     details: tuple[SpawnDetailOutput, ...] = ()
@@ -2003,21 +2045,23 @@ def spawn_wait_sync(
                 record_spawn_observation(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
-                    waiting_add=tuple(pending),
+                    waiting_add=tuple(launch_key(spawn_id, pins[spawn_id]) for spawn_id in pending),
+                    pins_set=pin_documents(),
                     lease_seconds=lease_seconds,
                 )
                 for spawn_id in tuple(pending):
-                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                    if row is None:
+                    try:
+                        launch_poll = poll_launch(runtime_root, spawn_id, pins[spawn_id])
+                    except LaunchNotFound:
                         if has_explicit_ids:
-                            raise ValueError(f"Spawn '{spawn_id}' not found")
+                            raise
                         # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
                         # waiting, treat it as resolved instead of failing unrelated waits.
                         pending.discard(spawn_id)
                         rows.pop(spawn_id, None)
                         continue
-                    rows[spawn_id] = row
-                    if _spawn_is_terminal(row.status):
+                    rows[spawn_id] = launch_poll.row
+                    if not isinstance(launch_poll, Running):
                         pending.remove(spawn_id)
 
                 now = time.monotonic()
@@ -2086,14 +2130,14 @@ def spawn_wait_sync(
         record_spawn_observation(
             runtime_root=runtime_root,
             parent_spawn_id=parent_wait_observer_id,
-            waiting_remove=observed_ids,
+            waiting_remove=observed_keys,
             observed_add=(
                 *(
-                    detail.spawn_id
+                    launch_key(detail.spawn_id, pins[detail.spawn_id])
                     for detail in details
                     if _spawn_is_terminal(detail.status)
                 ),
-                *(row.id for row in owed_rows),
+                *(ref_key(row_ref(row)) for row in owed_rows),
             ),
         )
 

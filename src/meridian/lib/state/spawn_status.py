@@ -29,6 +29,7 @@ from meridian.lib.state.spawn.repository import (
     QuarantinedChatIdStatus,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
+    read_launch_archive,
     read_quarantined_chat_id,
     read_state,
 )
@@ -154,8 +155,15 @@ class Lockless:
 type DeadLaunchClaim = Claimed | Settled | Live | Lockless
 
 
-def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
-    """Claim a lock-backed dead launch and return its lock-consistent rows."""
+def claim_dead_launch(
+    runtime_root: Path, spawn_id: str, *, expected_n: int | None = None
+) -> DeadLaunchClaim:
+    """Claim a lock-backed dead launch and return its lock-consistent rows.
+
+    ``expected_n`` pins the claim to the launch the caller observed. A guard under the lock,
+    not a new result: if the row has moved past it, the claim writes nothing and returns
+    ``Live`` (launch ``expected_n`` is finished and archived; the caller reads the archive).
+    """
     try:
         handle = acquire(runtime_root, spawn_id)
     except NotFound:
@@ -164,7 +172,7 @@ def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
         return Live()
     try:
         row = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
-        if row is None:
+        if row is None or (expected_n is not None and row.launch_number != expected_n):
             handle.close()
             return Live()
         if not is_active_spawn_status(row.status):
@@ -179,8 +187,8 @@ def claim_dead_launch(runtime_root: Path, spawn_id: str) -> DeadLaunchClaim:
         raise
 
 
-def _read_launch(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None, bool]:
-    """Read one row with liveness consistent with its runner-lifetime lock.
+def _read_current(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None, bool]:
+    """Read the current launch's row with liveness consistent with its lock.
 
     The flag says the row was derived (no runner), not read as stored.
     """
@@ -198,9 +206,28 @@ def _read_launch(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None,
     return derive(runtime_root, row), True
 
 
+def _read_launch(
+    runtime_root: Path, spawn_id: str, n: int | None = None
+) -> tuple[SpawnRecord | None, bool]:
+    """``_read_current``, or launch ``n``'s archive once the spawn has moved past it.
+
+    The archive is terminal by construction: the holder that starts launch ``n+1`` writes
+    ``n``'s outcome before copying its row.
+    """
+    row, derived = _read_current(runtime_root, spawn_id)
+    if row is not None and n is not None and row.launch_number > n:
+        return read_launch_archive(runtime_root, spawn_id, n), False
+    return row, derived
+
+
 def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
     """Read one row with liveness consistent with its runner-lifetime lock."""
-    return _read_launch(runtime_root, spawn_id)[0]
+    return _read_current(runtime_root, spawn_id)[0]
+
+
+def read_launch(runtime_root: Path, spawn_id: str, n: int) -> SpawnRecord | None:
+    """Launch ``n``'s row: the current one (derived) or its archive."""
+    return _read_launch(runtime_root, spawn_id, n)[0]
 
 
 @dataclass(frozen=True)
@@ -219,7 +246,9 @@ class LockFree:
 
 @dataclass(frozen=True)
 class Running:
-    """A runner holds the launch."""
+    """A runner holds the launch. ``row`` is its current (active) row."""
+
+    row: SpawnRecord
 
 
 type LaunchPoll = Finished | LockFree | Running
@@ -227,22 +256,25 @@ type LaunchPoll = Finished | LockFree | Running
 POLL_INTERVAL_SECS = 0.1
 
 
-def poll_launch(runtime_root: Path, spawn_id: str, n: int | None) -> LaunchPoll:
+class LaunchNotFound(ValueError):
+    """The spawn has no row (never existed, or was deleted or archived)."""
+
+
+def poll_launch(runtime_root: Path, spawn_id: str, n: int) -> LaunchPoll:
     """One cheap answer to "has launch ``n`` finished", from a single ``read_derived``.
 
-    ``n`` is unused until a spawn can have more than one launch (every row is launch 1).
+    Once the spawn has moved past ``n``, the launch's archive answers (always ``Finished``).
     """
-    del n
-    row, derived = _read_launch(runtime_root, spawn_id)
+    row, derived = _read_launch(runtime_root, spawn_id, n)
     if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise LaunchNotFound(f"Spawn '{spawn_id}' not found")
     if derived:
         return LockFree(row)
-    return Running() if is_active_spawn_status(row.status) else Finished(row)
+    return Running(row) if is_active_spawn_status(row.status) else Finished(row)
 
 
 async def wait_until(
-    runtime_root: Path, spawn_id: str, n: int | None, *, until: float
+    runtime_root: Path, spawn_id: str, n: int, *, until: float
 ) -> LaunchPoll:
     """Poll until the launch finishes, loses its runner, or ``until`` (monotonic)."""
     while True:
@@ -294,6 +326,7 @@ __all__ = [
     "Claimed",
     "DeadLaunchClaim",
     "Finished",
+    "LaunchNotFound",
     "LaunchPoll",
     "Live",
     "LockFree",
@@ -309,5 +342,6 @@ __all__ = [
     "quarantine_may_observe",
     "read_cancel_intent",
     "read_derived",
+    "read_launch",
     "wait_until",
 ]

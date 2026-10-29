@@ -55,10 +55,21 @@ in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: eac
 the latest row of every waited spawn, and every exit builds its result and pending set from that
 one pass, so each spawn appears in exactly one category.
 
-With `observe` (the default), the wait leases its pending IDs in the caller's
-`spawns/<caller>/observed-spawns.json` while it polls. A caller whose spawn row is gone writes
+With `observe` (the default), the wait leases its pending launches in the caller's
+`spawns/<caller>/observed-launches.json` while it polls. A caller whose spawn row is gone writes
 nothing. Every exit, including errors and the hard timeout, makes one write in `finally` that
-releases the lease and records the terminal spawns it returned as consumed.
+releases the lease and records the terminal launches it returned as consumed.
+
+**A wait is on a launch.** Each explicit target is waited on as launch `n`, pinned when the
+wait resolves it and checked every poll through `poll_launch(runtime_root, id, n)`: once the
+spawn has moved past `n` (a continue), the answer is `launches/<n>/launch.json`, so the wait
+returns the launch it started on. A re-run after `--yield-after-secs` is a new process, so
+an explicit wait by a caller with a spawn ID stores its pin in that caller's
+`observed-launches.json` (`wait_pins`) and the re-run honours it while the pin is unexpired
+(refreshed each poll to now plus the yield interval), its launch is unconsumed (union reader,
+any path), and the caller has not continued the target (`clear_wait_pin`, for the continue's
+commit). Otherwise the wait pins the current launch. A caller with no spawn ID, and no-arg
+waits, pin in-process only.
 
 The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
 awareness) unless `yield_after_secs` is explicitly passed.
@@ -121,11 +132,15 @@ When `spawn wait` is called with no explicit IDs (from inside a spawn):
 protocol:
 
 - `spawn collect --exclude p1,p2` returns exactly one JSON object with
-  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. It never
+  `{kind: "delivery"|"empty", ids: [...], text: "..."}` and exit 0. `ids` are launch keys
+  (`p7:2`: spawn `p7`, launch 2), which `--exclude` and `spawn ack` take back (a bare spawn ID
+  to `ack` means its current launch). It never
   consumes. Index discovery is parent-scoped; polling re-reads only still-owed
   authority rows with derived status.
 - Owed membership is background direct children of all primary generations for
-  `MERIDIAN_CHAT_ID`, minus consumption read across those same generations and
+  `MERIDIAN_CHAT_ID`, plus the background launches a continue moved past while still owed
+  to one of those parents (`owed_launches`, projected into the index's side table; their
+  rows are `launches/<n>/launch.json`, whoever the spawn belongs to now), minus consumption read across those same generations and
   minus `--exclude`. Consumption includes CLI wait/ack observations, cancelled results,
   and terminal report bodies shown by the CLI, plus Pi's delivery receipts and cleared
   IDs. One Pi-private-state reader unions the current
@@ -141,12 +156,12 @@ protocol:
   Claude leads explicitly read one with `spawn show`. Printing a terminal report body
   through `spawn show` or `spawn report show` consumes it, as do `spawn wait`
   completion, `spawn ack`, and a `spawn cancel` that reports `cancelled`.
-- `spawn ack <ids...>` writes those IDs under the caller's current primary and
+- `spawn ack <ids...>` writes those launch keys under the caller's current primary and
   returns exactly `{acked: [...]}`; it fails when that primary's row is gone. The CLI
   refuses `spawn ack -C` before calling the operation. Reading across the chat is what
   makes an ack written after resume consume a child of an earlier primary.
 
-Both commands use `observed-spawns.json`, the same state as explicit `spawn wait`.
+Both commands use `observed-launches.json`, the same state as explicit `spawn wait`.
 The collector retries index contention and malformed owned authority internally,
 and exits cleanly when its parent PID changes.
 

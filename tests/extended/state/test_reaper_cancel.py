@@ -24,6 +24,7 @@ from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state import spawn_store, spawn_tree
 from meridian.lib.state.launch_lock import acquire
 from meridian.lib.state.process_scope_projection import record_scope
+from meridian.lib.state.spawn_status import read_cancel_intent
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
@@ -160,7 +161,9 @@ async def test_cancel_descendants_reports_only_proven_terminal_descendants(
     terminal = spawn_store.get_spawn(runtime_root, "p3")
     assert nonterminal is not None
     assert nonterminal.status == "running"
-    assert nonterminal.cancel_intent is not None
+    # A v4 row's request lives in its launch directory only; no field for older runners.
+    assert nonterminal.cancel_intent is None
+    assert read_cancel_intent(launch_paths(runtime_root, "p2"), nonterminal) is not None
     assert terminal is not None
     assert terminal.status == "cancelled"
     assert reaped_ids == {"p3"}
@@ -384,7 +387,7 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
     assert output.exit_code == 130
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"
-    assert latest.cancel_intent is not None
+    assert latest.cancel_intent is None  # a v4 row's request lives in its launch directory
 
 
 def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(

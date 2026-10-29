@@ -84,7 +84,7 @@ describe("managed Bash execution ownership", () => {
     try {
       const started = await runtime.execute({ command: "printf admitted", background: true }, undefined) as { bash_id: string };
       await until(() => runtime.list(true)[0]?.status === "exited");
-      const receiptsPath = path.join(path.dirname(recordsPath), "delivery-receipts.json");
+      const receiptsPath = path.join(path.dirname(recordsPath), "launch-receipts.json");
       await writeFile(receiptsPath, "{");
       await expect(runtime.clearFinished()).rejects.toThrow();
       await writeFile(receiptsPath, JSON.stringify({ v: 1, spawn_id: "different-parent", messages: {} }));

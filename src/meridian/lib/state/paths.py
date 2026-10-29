@@ -360,7 +360,7 @@ def resolve_work_scratch_dir_for_project(
 
 def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return the spawn directory. Spawn-level files (``state.json``, ``launch.lock``,
-    ``scope.json``, ``observed-spawns.json``, the reaper claim, the ambient ``work/``
+    ``scope.json``, ``observed-launches.json``, the reaper claim, the ambient ``work/``
     directory) live here for every launch; per-launch files go through ``LaunchPaths``."""
 
     return runtime_root / "spawns" / str(spawn_id)
@@ -622,7 +622,13 @@ def resolve_ambient_work_dir(
     return resolve_spawn_dir(resolved_root, spawn_id) / "work"
 
 
+def observed_launches_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Consumed-launch, wait-lease and wait-pin record owned by one parent spawn."""
+
+    return resolve_spawn_dir(runtime_root, spawn_id) / "observed-launches.json"
+
+
 def observed_spawns_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Consumed-result and wait-lease record owned by one parent spawn."""
+    """The file older builds kept at ``observed_launches_path``'s place. Read-only."""
 
     return resolve_spawn_dir(runtime_root, spawn_id) / "observed-spawns.json"

@@ -15,6 +15,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.spawn_observations import launch_key
 from meridian.lib.state.spawn_ownership import is_owed_child
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -327,23 +328,39 @@ class PiCompletionEvidence:
         self, private: PiPrivateWorkSnapshot
     ) -> tuple[DiagnosticBlocker, ...]:
         active_ids = {item.identity for item in self._refresh.assessment.blockers}
+        consumed = private.consumed_work_ids
         # `parent_id == self` is `owned_parent_ids` for a non-primary caller; the
         # drain runs only for spawned sessions. A primary drain would have to own
         # every generation of its chat, as the watcher's launch scope does.
-        return tuple(
-            DiagnosticBlocker(
-                source="profile",
-                code="pi_result_delivery_pending"
-                if row.terminal
-                else "pi_result_publication_pending",
-                identity=row.id,
+        blockers: list[DiagnosticBlocker] = []
+        for row in self._refresh.records:
+            if (
+                row.parent_id == str(self.spawn_id)
+                and is_owed_child(row)
+                and row.id not in active_ids
+                and launch_key(row.id, row.launch_number) not in consumed
+            ):
+                blockers.append(
+                    DiagnosticBlocker(
+                        source="profile",
+                        code="pi_result_delivery_pending"
+                        if row.terminal
+                        else "pi_result_publication_pending",
+                        identity=row.id,
+                    )
+                )
+            # A launch a continue moved past is still owed (its archive is terminal).
+            blockers.extend(
+                DiagnosticBlocker(
+                    source="profile",
+                    code="pi_result_delivery_pending",
+                    identity=launch_key(row.id, owed.n),
+                )
+                for owed in row.owed_launches
+                if owed.parent_id == str(self.spawn_id)
+                and launch_key(row.id, owed.n) not in consumed
             )
-            for row in self._refresh.records
-            if row.parent_id == str(self.spawn_id)
-            and is_owed_child(row)
-            and row.id not in active_ids
-            and row.id not in private.consumed_work_ids
-        )
+        return tuple(blockers)
 
     def _pi_owned_blockers(
         self,

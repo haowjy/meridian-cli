@@ -21,7 +21,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.launch_lock import adopt_handoff, take_handoff_fd
+from meridian.lib.state.launch_lock import LaunchSlot, adopt_handoff, take_handoff_fd
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
 from meridian.lib.telemetry.init import setup_telemetry
@@ -108,6 +108,7 @@ async def _execute_existing_spawn(
     ctx: RuntimeContext | None = None,
     prepared: RuntimeWriteContext,
     runtime_root: Path,
+    launch_slot: LaunchSlot,
 ) -> int:
     spawn_id = launch.spawn_id
     resolved_context = runtime_context(ctx)
@@ -172,6 +173,7 @@ async def _execute_existing_spawn(
         work_id=spawn_record.work_id,
         debug=runtime_request.debug,
         ctx=resolved_context,
+        launch_slot=launch_slot,
     )
 
 
@@ -241,6 +243,7 @@ def _background_worker_main(
                     ctx=resolved_context,
                     prepared=prepared,
                     runtime_root=runtime_root,
+                    launch_slot=LaunchSlot.holding(launch_lock),
                 )
             )
         except Exception:

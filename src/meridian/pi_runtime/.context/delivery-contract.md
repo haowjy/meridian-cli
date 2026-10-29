@@ -1,8 +1,10 @@
 # Pi result delivery
 
 Every coordination file in the table lives under `pi-bash/<parent>/` except
-`observed-spawns.json`, which lives in the parent's spawn directory,
-`spawns/<parent>/`. Missing
+`observed-launches.json`, which lives in the parent's spawn directory,
+`spawns/<parent>/`. Results are consumed per launch, not per spawn: a continue keeps the
+spawn ID, so a ledger entry names a **launch key** `"<spawn id>:<n>"` (a Pi bash task keeps
+its bare ID). Missing
 coordination files mean empty; present malformed or wrong-parent authority means
 unknown, never successful empty. Task logs are different: missing, unreadable or
 non-regular logs are unavailable, not empty output.
@@ -12,11 +14,13 @@ one launch-scoped notification owner, and one Python public-event observer.
 | File | Writer | Shape and purpose |
 |---|---|---|
 | `bash-records.json` | managed Bash | v1 task records, written at lifecycle transitions only (`log_bytes` is the size at the last one); a terminal status is present only once published; tracked terminal background rows stay owed until wait/output consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
-| `delivery-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}`; exact native custom-message admission, never `sendMessage()` return. |
+| `launch-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}` with launch keys for spawns; exact native custom-message admission, never `sendMessage()` return. |
 | `delivery-observations.json` | Python | `{v:1,spawn_id,observed_message_ids:[]}`; exact public admission event observed after marking the parent active. |
-| `observed-spawns.json` (in `spawns/<parent>/`) | CLI `spawn wait`, `spawn ack`, observed terminal report-body show/status/report-show, and observed `spawn cancel` results reported as `cancelled` | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. Writers always update the current location under the parent's published-spawn lock. `legacy-observed-spawns (#719)`: when `pi-bash/<parent>/` exists, writers mirror the same update to its old file under the old lock; every reader unions that copy's consumed IDs and leases because an older `spawn wait` may still write it. A damaged legacy copy counts as absent and may be replaced by a later mirror; a damaged current file is unknown, as for the other files. Shared beyond Pi: Python's model of the same schema is `lib/state/spawn_observations.py`, and Claude's `spawn collect` reads this file for every primary spawn of a chat, so a schema change updates the extension and that module in the same change. |
-| `cleared-spawns.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_spawn_ids`; explicit dismissal. Reads union every owned parent's file; only the current spawn's file is written. |
+| `observed-launches.json` (in `spawns/<parent>/`) | CLI `spawn wait`, `spawn ack`, observed terminal report-body show/status/report-show, and observed `spawn cancel` results reported as `cancelled` | v1 parent, durable `observed_launches` (launch keys), diagnostic `waiting_launches`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `launches`, and `wait_pins`: `{target spawn id: {n, expires_at}}`, the launch an explicit `spawn wait` is waiting on, which survives `--yield-after-secs` re-runs (a pin dies when its launch is consumed, when `expires_at` passes, or when a continue of the target clears it). Only live matching process leases suppress temporarily. Writers update it under the parent's published-spawn lock. Shared beyond Pi: Python's model of the same schema is `lib/state/spawn_observations.py`, and Claude's `spawn collect` reads this file for every primary spawn of a chat, so a schema change updates the extension and that module in the same change. |
+| `cleared-launches.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_launches`; explicit dismissal. Reads union every owned parent's file; only the current spawn's file is written. |
 | `delivery-fault.json` | spawn watcher | `{v:1,spawn_id,operation:"scan"|"admission"|null,error:string|null}`; bounded delivery diagnostics independent of execution records. |
+
+**Files from before launches** (`delivery-receipts.json`, `cleared-spawns.json` under `pi-bash/<parent>/`, `observed-spawns.json` in `spawns/<parent>/`) key spawns by bare ID. They are read and never written: a bare spawn entry means launch 1 (an older build cannot read a v4 row, so it only consumed launch 1), a bare bash ID is read as written. The Pi mirror `pi-bash/<parent>/observed-spawns.json` is retired: not read, not written. An older build mixed in re-delivers results the new build consumed, once per run of that older build; it never loses one.
 
 The watcher treats canonical direct `parent_id` rows as this session's children and
 delivers only those launched with `launch_mode: "background"`: a launcher that waited for
@@ -31,8 +35,12 @@ spawned session owns only its own children. Meridian computes that parent set at
 and passes it in `_MERIDIAN_PI_OWED_PARENT_IDS`; the variable is absent outside a
 Meridian launch, where the watcher scopes itself to the current spawn. Logs, timers,
 origin sidecars, and remembered scans cannot supply child authority. A disposable
-candidate-ID set scopes frequent idle reads, but each row is reparsed and must still have
-an exact parent in that set. A terminal candidate leaves that set once it is consumed,
+candidate set, keyed by launch (`<spawn id>:<n>`), scopes frequent idle reads, but each row is
+reparsed and must still have an exact parent in that set. The state scan adds the spawn's
+current launch, so a child whose `launch.n` moved is a new candidate even though its earlier
+launch was consumed, and adds every `owed_launches` entry whose parent is in the set: such a
+launch has moved past `state.json`, so its row is `launches/<n>/launch.json` and its report
+is in that launch's directory. A terminal candidate leaves that set once it is consumed,
 and the all-generation consumption sources are read only while a terminal candidate is
 still undecided under the current spawn's own sources, so an idle tick stays proportional
 to what is still owed rather than to the chat's history. Directories without state are
@@ -149,8 +157,9 @@ bundles; never mix old and new writers for one parent.
 
 One Python reader in `lib/harness/pi_private_state.py` supplies both CLI owed-result
 discovery and this watcher with the same consumption set: admitted work IDs from
-`delivery-receipts.json`, CLI wait/ack/cancel/show/status/report-show observations from the current and legacy
-`observed-spawns.json`, and explicit dismissals from `cleared-spawns.json`. It reads
+`launch-receipts.json`, CLI wait/ack/cancel/show/status/report-show observations from
+`observed-launches.json`, and explicit dismissals from `cleared-launches.json`, plus their
+pre-launch predecessors read as launch 1. It reads
 each source once per parent and skips a damaged source independently. Both union that
 set over every parent in the scope, so work consumed under a crashed generation stays
 consumed after the resume. A damaged source is never empty evidence, but the two sides

@@ -61,12 +61,17 @@ bare path
                                       finalization writers; `spawn show` reads it)
       report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
     attempt-N/                      — legacy retry evidence; new runs do not create it
-    observed-spawns.json            — this parent's consumed child IDs and explicit-wait
-                                      leases; shared by Pi and Claude delivery; goes with
-                                      the spawn, so pruning one forgets its consumption
-  pi-bash/<spawn_id>/observed-spawns.json
-                                    — legacy-observed-spawns (#719): read, never deleted,
-                                      and mirrored by record() when this Pi dir exists
+    observed-launches.json          — this parent's consumed launches (`<spawn id>:<n>`),
+                                      explicit-wait leases and wait pins; shared by Pi and
+                                      Claude delivery; goes with the spawn, so pruning one
+                                      forgets its consumption
+    observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
+                                      read, never written
+  pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
+                                    — Pi's admission receipts and dismissals, same keys;
+                                      `delivery-receipts.json` / `cleared-spawns.json` are
+                                      the pre-launch names, read-only. The old
+                                      `pi-bash/<id>/observed-spawns.json` mirror is retired
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata; readers accept
                                       absent v as v1, writers do not emit v yet
