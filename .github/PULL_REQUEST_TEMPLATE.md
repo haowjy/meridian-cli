@@ -91,6 +91,21 @@
 - **Bug fix: <what was broken>.** Before: ... After: ...
 - **<capability or behavior change>.** After: ...
 
+## End-to-End Walkthrough
+
+<!-- Take a reviewer through the new or changed behavior from the user's side,
+     when there is something to walk through. A UI or TUI change gets
+     screenshots or a short recording with numbered steps and the before/after
+     state. A CLI, config, library or docs change gets a numbered text
+     walkthrough: copy-pasteable commands and their real output, or
+     before/after files. Where behavior changed, show main's state and this
+     branch's side by side. If nothing is runnable or visible, write
+     "Not applicable" and say what check replaces it. -->
+
+1. Setup: ...
+2. ...
+3. Expected: ... Observed: ...
+
 ## Code Changes
 
 <!-- For each part in the Summary, explain how it works and name its key
@@ -126,18 +141,19 @@
 
 ## Verification
 
-<!-- Describe how to exercise changed behavior, then record what was tested and
-     observed. Include setup, steps, expected/actual results, and workflows a
-     probe covered. Name which harnesses (claude, codex, cursor, opencode, pi)
-     were exercised live and which only through fakes. Runtime probes run
-     against a copied or scratch runtime (`_MERIDIAN_RUNTIME_DIR=<dir>`, honoured
-     at any spawn depth, including inside a spawn; confirm with `spawn --dry-run`
-     that `Write root` names it; `-C` to another project drops it), never a real one. If no manual path exists, say why. For performance changes, report
-     comparable numbers with metric, method, environment/workload, and
-     baseline/result; omit benchmarks when performance is unaffected. -->
+<!-- Record what the walkthrough, the probes and the gates showed: expected
+     against observed, which harnesses (claude, codex, cursor, opencode, pi)
+     were exercised live and which only through fakes, and any workflow a probe
+     covered. Runtime probes run against a copied or scratch runtime
+     (`_MERIDIAN_RUNTIME_DIR=<dir>`, honoured at any spawn depth, including
+     inside a spawn; confirm with `spawn --dry-run` that `Write root` names it;
+     `-C` to another project drops it), never a real one. For performance
+     changes, report comparable numbers with metric, method,
+     environment/workload, and baseline/result; omit benchmarks when
+     performance is unaffected. -->
 
 - Gates (`scripts/preflight.sh full`, pyright, extension build/tests):
-- Live check (setup, steps, expected / observed):
+- Live check (expected / observed):
 - Not exercised live:
 - Performance (when relevant):
 
