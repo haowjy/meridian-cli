@@ -258,7 +258,9 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                 if last is not None:
                     atomic_write_text(cursor_path, last)
                 if failed:
-                    logger.warning("repair_rows_failed", count=len(failed), spawn_ids=failed[:10])
+                    logger.warning(
+                        "repair_rows_failed", count=len(failed), spawn_ids=failed[:10]
+                    )
             return tuple(recovered)
 
         return asyncio.run(run())

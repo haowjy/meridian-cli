@@ -45,7 +45,11 @@ def legacy_runner_alive(row: SpawnRecord) -> bool:
     ):
         return True
     started_at = iso_timestamp_to_epoch(row.started_at)
-    return bool(not row.runner_pid and started_at is not None and time.time() - started_at < 15.0)
+    return bool(
+        not row.runner_pid
+        and started_at is not None
+        and time.time() - started_at < 15.0
+    )
 
 
 def read_cancel_intent(launch: LaunchPaths, row: SpawnRecord) -> CancelIntent | None:
