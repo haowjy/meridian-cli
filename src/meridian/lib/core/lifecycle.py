@@ -426,8 +426,10 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            # Only the store write is masked: a SIGTERM or SIGHUP (a closing terminal) mid-write
-            # would leave the launch reading as crashed where it had finished. Hooks run unmasked.
+            # A SIGTERM or SIGHUP (a closing terminal) mid-write would leave the launch reading as
+            # crashed where it had finished, and one right after would kill the runner before the
+            # hooks ran. The mask defers it past the hooks and re-delivers it on exit, so a cancel
+            # racing the finish still gets ``spawn.finished``; its SIGKILL deadline bounds the wait.
             with signal_coordinator().mask_termination():
                 outcome = _spawn_store().finalize_spawn(
                     self._runtime_root,
@@ -443,15 +445,15 @@ class SpawnLifecycleService:
                     expected_n=expected_n,
                     clock=clock,
                 )
-            from meridian.lib.state.spawn.repository import Applied
+                from meridian.lib.state.spawn.repository import Applied
 
-            if isinstance(outcome, Applied):
-                snapshot = outcome.after
-                if self._owns_record(spawn_id):
-                    self._record = snapshot
-                event = self._build_event("spawn.finished", snapshot)
-                self._dispatch(event)
-                self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
+                if isinstance(outcome, Applied):
+                    snapshot = outcome.after
+                    if self._owns_record(spawn_id):
+                        self._record = snapshot
+                    event = self._build_event("spawn.finished", snapshot)
+                    self._dispatch(event)
+                    self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
 
     # ------------------------------------------------------------------

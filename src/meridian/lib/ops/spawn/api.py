@@ -912,12 +912,13 @@ def spawn_stats_sync(
         acc["total"] = int(acc["total"]) + 1
         if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
-        usage = row.total_usage
-        if usage.total_cost_usd is not None:
-            acc["cost_usd"] = float(acc["cost_usd"]) + usage.total_cost_usd
-            total_cost_usd += usage.total_cost_usd
-        if usage.duration_secs is not None:
-            total_duration_secs += usage.duration_secs
+        cost = row.total_cost_usd
+        if cost is not None:
+            acc["cost_usd"] = float(acc["cost_usd"]) + cost
+            total_cost_usd += cost
+        duration = row.total_duration_secs
+        if duration is not None:
+            total_duration_secs += duration
 
     models: dict[str, ModelStats] = {
         k: ModelStats(

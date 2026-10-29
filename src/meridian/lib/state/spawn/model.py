@@ -108,6 +108,11 @@ class LaunchRef(BaseModel):
     n: int = Field(ge=1)
 
 
+def _reported_sum(prior: float, current: float | None) -> float | None:
+    """A usage figure across launches: ``None`` where no launch reported it."""
+    return None if current is None and not prior else prior + (current or 0)
+
+
 class PriorUsage(BaseModel):
     """Usage of the launches before the current one; surfaces show it plus the current launch."""
 
@@ -150,17 +155,14 @@ class PriorUsage(BaseModel):
         """What a surface shows: these totals plus the current launch, ``None`` where
         nothing has reported that figure."""
 
-        def add(prior: float, current: float | None) -> float | None:
-            return None if current is None and not prior else prior + (current or 0)
-
         def count(prior: int, current: int | None) -> int | None:
-            total = add(prior, current)
+            total = _reported_sum(prior, current)
             return None if total is None else int(total)
 
         t = terminal
         return UsageTotals(
-            duration_secs=add(self.duration_secs, t.duration_secs if t else None),
-            total_cost_usd=add(self.total_cost_usd, t.total_cost_usd if t else None),
+            duration_secs=_reported_sum(self.duration_secs, t.duration_secs if t else None),
+            total_cost_usd=_reported_sum(self.total_cost_usd, t.total_cost_usd if t else None),
             input_tokens=count(self.input_tokens, t.input_tokens if t else None),
             output_tokens=count(self.output_tokens, t.output_tokens if t else None),
             cache_read_input_tokens=count(
@@ -172,6 +174,9 @@ class PriorUsage(BaseModel):
             reasoning_tokens=count(self.reasoning_tokens, t.reasoning_tokens if t else None),
             cost_is_estimate=self.cost_is_estimate or bool(t and t.cost_is_estimate),
         )
+
+
+_NO_PRIOR_USAGE = PriorUsage()
 
 
 class UsageTotals(BaseModel):
@@ -282,11 +287,45 @@ class SpawnRecord(SpawnStateFields):
 
     prompt: str | None = None
 
+    def index_json(self) -> str:
+        """The history index's ``record_json``: this row without its default-valued v4 fields.
+
+        Most rows are v3 or never continued, so these fields would add bytes the index
+        validates on every query. ``model_validate_json`` restores the defaults, so the
+        round trip is exact.
+        """
+        exclude: dict[str, Any] = {}
+        if self.launch is None:
+            exclude["launch"] = True
+        if self.prior_usage == _NO_PRIOR_USAGE:
+            exclude["prior_usage"] = True
+        if not self.owed_launches:
+            exclude["owed_launches"] = True
+        if self.terminal is not None and self.terminal.harness_cumulative is None:
+            exclude["terminal"] = {"harness_cumulative"}
+        return self.model_dump_json(exclude=exclude)
+
     @property
     def total_usage(self) -> UsageTotals:
         """Usage across every launch, the current one included once finished. Every surface
         reads totals, so a continue never makes a number a user sees restart."""
         return self.prior_usage.totals(self.terminal)
+
+    @property
+    def total_duration_secs(self) -> float | None:
+        """``total_usage.duration_secs`` without building the token totals."""
+        terminal = self.terminal
+        return _reported_sum(
+            self.prior_usage.duration_secs, terminal.duration_secs if terminal else None
+        )
+
+    @property
+    def total_cost_usd(self) -> float | None:
+        """``total_usage.total_cost_usd`` without building the token totals."""
+        terminal = self.terminal
+        return _reported_sum(
+            self.prior_usage.total_cost_usd, terminal.total_cost_usd if terminal else None
+        )
 
     @property
     def has_no_session_of_its_own(self) -> bool:

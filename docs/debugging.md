@@ -38,20 +38,22 @@ Use `show` first to inspect the persisted state for one spawn. Use `wait` if the
 
 ## Logs
 
-Each run of a spawn keeps its own stderr log in `launches/<n>/stderr.log` inside the spawn's directory (older spawns keep it at the top of that directory). Find the directory from `spawn show`, then list the latest run's files:
+Each run of a spawn keeps its own stderr log in `launches/<n>/stderr.log` inside the spawn's directory (older spawns keep it at the top of that directory). Find the runtime root with `meridian doctor` (`runtime_root:`), then list the latest run's files:
 
 ```bash
-meridian spawn show SPAWN_ID
-ls ~/.meridian/projects/<project-id>/spawns/SPAWN_ID/launches/
+meridian doctor
+ls <runtime_root>/spawns/SPAWN_ID/launches/
 ```
 
 Tail a running log only when you need detailed harness traces:
 
 ```bash
-tail -f ~/.meridian/projects/<project-id>/spawns/SPAWN_ID/launches/N/stderr.log
+tail -f <runtime_root>/spawns/SPAWN_ID/launches/N/stderr.log
 ```
 
 To read what a run reported rather than how it ran, use `meridian spawn report show SPAWN_ID`.
+After a continue, that shows the latest run. An earlier run's report is found by
+`meridian spawn report search QUERY`, and its conversation by `meridian session log SPAWN_ID`.
 
 ## Shared Files
 
