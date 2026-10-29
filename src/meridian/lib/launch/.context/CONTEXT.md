@@ -92,8 +92,8 @@ requires the complete recorded native key; no legacy hint repair is allowed.
 
 ### Exact Continue Replay
 
-A continue keeps the spawn's ID. `continue_launch.begin_continue` (steps 1-4: pick the spawn that
-owns the chat, take its launch lock, end and sweep the last launch, pre-check the cycle and the
+A continue keeps the spawn's ID. `continue_launch` (step 1, `resolve_continue_target`: pick the spawn that
+owns the chat, before the caller builds anything; steps 2-4, `begin_continue`: take its launch lock, end and sweep the last launch, pre-check the cycle and the
 chat) returns a `ContinueHold`; the caller prepares, then `lifecycle.reopen` commits the next
 launch and the same lock becomes the runner's. `launch/` imports nothing from `ops/` here: callers
 pass the resolved row and target chat in.

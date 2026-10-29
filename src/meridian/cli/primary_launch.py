@@ -23,7 +23,11 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
-from meridian.lib.launch.continue_launch import ContinueHold, begin_continue
+from meridian.lib.launch.continue_launch import (
+    ContinueHold,
+    begin_continue,
+    resolve_continue_target,
+)
 from meridian.lib.launch.continue_replay import (
     MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
@@ -42,6 +46,7 @@ from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -222,7 +227,7 @@ def run_primary_launch(
     source_execution_cwd: str | None = None
     source_native_store: str | None = None
     continue_source_tracked = False
-    continue_source_spawn_id: str | None = None
+    continue_source: SpawnRecord | None = None
     continue_source_chat_id: str | None = None
     continue_source_ref: str | None = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
@@ -254,10 +259,35 @@ def run_primary_launch(
             continue_ref=resume_target,
             harness_hint=harness,
         )
+        continue_source_chat_id = resolved_continue.source_chat_id
+        # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
+        # continue reopens before anything is built, then build everything from that spawn.
+        named_spawn = (
+            spawn_store.get_spawn(
+                resolve_project_runtime_root(project_root), resolved_continue.source_spawn_id
+            )
+            if resolved_continue.source_spawn_id is not None
+            else None
+        )
+        if named_spawn is not None:
+            continue_source, redirect_notice = resolve_continue_target(
+                resolve_project_runtime_root(project_root),
+                named_spawn,
+                named_by_spawn_ref=parse_ref(resume_target).kind in {"spawn", "selector"},
+                chat_id=continue_source_chat_id,
+                parent_id=None,
+                kind="primary",
+            )
+            if continue_source.id != named_spawn.id:
+                resume_target = continue_source.id
+                resolved_continue = resolve_session_target(
+                    project_root=project_root,
+                    continue_ref=resume_target,
+                    harness_hint=harness,
+                )
+            continue_warning = redirect_notice
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
-        continue_source_spawn_id = resolved_continue.source_spawn_id
-        continue_source_chat_id = resolved_continue.source_chat_id
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
@@ -274,7 +304,7 @@ def run_primary_launch(
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
-        continue_warning = resolved_continue.warning
+        continue_warning = _merge_warnings(continue_warning, resolved_continue.warning)
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
         source_native_store = continue_contract.session.source_native_store
@@ -361,27 +391,18 @@ def run_primary_launch(
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
     hold: ContinueHold | None = None
-    continue_source = (
-        spawn_store.get_spawn(resolve_project_runtime_root(project_root), continue_source_spawn_id)
-        if continue_source_spawn_id is not None
-        else None
-    )
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
         # owns it, so a second terminal's continue is refused rather than racing this one.
         hold = begin_continue(
             project_root=project_root,
             runtime_root=resolve_project_runtime_root(project_root),
-            named=continue_source,
-            named_by_spawn_ref=parse_ref(resume_target or "").kind in {"spawn", "selector"},
+            target=continue_source,
             chat_id=continue_source_chat_id,
             parent_id=None,
-            kind="primary",
             caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
             dry_run=dry_run,
         )
-        if hold is not None and hold.notice:
-            continue_warning = _merge_warnings(continue_warning, hold.notice)
     with hold.slot if hold is not None else nullcontext():
         launch_result = launch_primary(
             project_root=project_root,

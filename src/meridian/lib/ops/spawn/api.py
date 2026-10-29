@@ -40,7 +40,11 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
-from meridian.lib.launch.continue_launch import ContinueHold, begin_continue
+from meridian.lib.launch.continue_launch import (
+    ContinueHold,
+    begin_continue,
+    resolve_continue_target,
+)
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -2483,6 +2487,24 @@ def spawn_continue_sync(
         runtime_root=runtime_root,
         harness_hint=payload.harness,
     )
+    # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
+    # continue reopens before anything is built, then build everything from that spawn.
+    caller_spawn_id = str(runtime_context(ctx).spawn_id or "") or None
+    target, redirect_notice = resolve_continue_target(
+        runtime_root,
+        source_spawn,
+        named_by_spawn_ref=parse_ref(payload.spawn_id.strip()).kind in {"spawn", "selector"},
+        chat_id=resolved_reference.source_chat_id,
+        parent_id=caller_spawn_id,
+        kind="child",
+    )
+    if target.id != source_spawn.id:
+        resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
+            target.id,
+            project_root,
+            runtime_root=runtime_root,
+            harness_hint=payload.harness,
+        )
     source_snapshot = resolved_reference.source_launch_policy_snapshot
     source_check = _run_spawn_creation_boundary(
         payload,
@@ -2518,19 +2540,17 @@ def spawn_continue_sync(
     hold = begin_continue(
         project_root=project_root,
         runtime_root=runtime_root,
-        named=source_spawn,
-        named_by_spawn_ref=parse_ref(payload.spawn_id.strip()).kind in {"spawn", "selector"},
+        target=source_spawn,
         chat_id=resolved_reference.source_chat_id,
-        parent_id=str(preparation.resolved_context.spawn_id or "") or None,
-        kind="child",
-        caller_spawn_id=str(preparation.resolved_context.spawn_id or "") or None,
+        parent_id=caller_spawn_id,
+        caller_spawn_id=caller_spawn_id,
         dry_run=payload.dry_run,
     )
     with hold.slot if hold is not None else nullcontext():
         result = _execute_prepared_spawn_create(preparation, sink=sink, hold=hold)
-    if hold is not None and hold.notice:
+    if redirect_notice:
         result = result.model_copy(
-            update={"warning": _merge_warnings(result.warning, hold.notice)}
+            update={"warning": _merge_warnings(result.warning, redirect_notice)}
         )
     return _with_command(result, "spawn.continue")
 

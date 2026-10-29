@@ -451,8 +451,8 @@ def test_continue_io_bound(
         before = probe.count("read")
         hold = begin_continue(
             project_root=tmp_path, runtime_root=root,
-            named=spawn_store.get_spawn(root, f"p{source}"), named_by_spawn_ref=True,
-            chat_id=None, parent_id=None, kind="child", caller_spawn_id=None,
+            target=spawn_store.get_spawn(root, f"p{source}"),
+            chat_id=None, parent_id=None, caller_spawn_id=None,
             dry_run=False,
         )
         assert hold is not None
