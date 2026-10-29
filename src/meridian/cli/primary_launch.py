@@ -245,15 +245,6 @@ def run_primary_launch(
         reject_continue_policy_overrides(
             {
                 "--skills": bool(skills),
-                "--yolo": yolo,
-                "--approval": approval is not None,
-                "--sandbox": sandbox is not None,
-                "--network": network is not None,
-                "--network-allow": bool(network_allow),
-                "--network-deny": bool(network_deny),
-                "--effort": effort is not None,
-                "--autocompact": autocompact is not None,
-                "--autocompact-pct": autocompact_pct is not None,
                 "--": bool(passthrough),
                 "--task-dir": normalized_task_dir is not None,
             }

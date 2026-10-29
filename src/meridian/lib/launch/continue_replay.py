@@ -200,11 +200,11 @@ def _reject_exact_continue_agent_override(
 
 
 def reject_continue_policy_overrides(given: Mapping[str, bool]) -> None:
-    """Refuse the options an exact continue cannot change, for a primary and a child alike.
+    """Refuse the options an exact continue cannot take, as each path defines them.
 
-    ``given`` maps each option's flag to whether the caller passed it. A continue replays
-    the launch's skills, policy and working directory; ``--model``, ``--work`` and ``--desc``
-    are the options it may change, so they are not asked about here.
+    ``given`` maps each flag the calling path refuses to whether the caller passed it. The
+    sets differ by path (a primary accepts approval, sandbox, effort and the like and applies
+    them; a child refuses them), so each caller lists only its own.
     """
     rejected = [flag for flag, present in given.items() if present]
     if not rejected:

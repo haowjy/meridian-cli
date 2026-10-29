@@ -718,6 +718,16 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             harness=session.continue_harness or "",
         )
         replayed = _resolve_policy_from_snapshot(surface=surface, snapshot=snapshot)
+        # A continue replays the stored policy; the options it accepts replace the stored fields.
+        given = surface.cli_overrides
+        changed = {
+            name: value
+            for name in ("effort", "approval", "sandbox", "autocompact", "autocompact_pct")
+            if (value := getattr(given, name)) is not None
+        }
+        execution_policy = replayed.execution_policy.model_copy(update=changed)
+        net = surface.network_overrides
+        network_given = net.mode is not None or bool(net.allow) or bool(net.deny)
         bundle = bundle_adapter.request_and_resolve(
             bundle_adapter.BundleRequest(
                 agent=None,
@@ -728,9 +738,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 ),
                 harness_override=session.continue_harness,
                 excluded_harnesses=_excluded_harnesses_for_surface(surface),
-                effort_override=snapshot.execution_policy.effort,
-                approval_override=snapshot.execution_policy.approval,
-                sandbox_override=snapshot.execution_policy.sandbox,
+                effort_override=execution_policy.effort,
+                approval_override=execution_policy.approval,
+                sandbox_override=execution_policy.sandbox,
+                network_overrides=net,
             ),
             harness_registry=surface.harness_registry,
         )
@@ -741,8 +752,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             and intent.selected_token
         ):
             selected_token = intent.selected_token
+        if network_given:
+            execution_policy = execution_policy.model_copy(
+                update={"network": resolve_network_policy(bundle.network, execution_policy.sandbox)}
+            )
         return replace(
             _with_platform_natives(replayed, surface, bundle),
+            execution_policy=execution_policy,
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
             model_selection=ModelSelectionContext(
