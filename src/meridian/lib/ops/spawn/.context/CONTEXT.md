@@ -136,7 +136,10 @@ protocol:
   de-duplicated spawn IDs (launches are internal), which `--exclude` and `spawn ack` take
   back; `--exclude pN` excludes every launch of `pN`. It never consumes, but a delivery
   records the launches it delivered (`delivered: {pN: [K, ...]}`) in the caller's
-  `observed-launches.json`, one write per delivery, so `ack` can consume exactly those.
+  `observed-launches.json`, one write per delivery, so `ack` can consume exactly those. The
+  write is a precondition: if it fails (any `OSError`, including a lock timeout), `collect`
+  returns nothing and polls again. Only `ack` drops a record; consumption leaves it, so an
+  absent record means "delivered and acked".
   Index discovery is parent-scoped; polling re-reads only still-owed authority rows with
   derived status.
 - Owed membership (`state/spawn_ownership.owed_launches`, shared with the Pi drain) is background direct children of all primary generations for
@@ -157,14 +160,17 @@ protocol:
   `meridian spawn show <id>` lookup. The collector does not read report bodies;
   Claude leads explicitly read one with `spawn show`. The exception is a launch the spawn
   has since continued past: `spawn show` and `report show` describe the next launch, so that
-  member carries its own report inline (`delivery_detail`; 64 KiB, the Pi path's bound),
-  and so does the owed list of a no-argument `spawn wait`. Printing a terminal report body
+  member carries its own report inline (`delivery_details`). The whole delivery text,
+  headers and reports, fits one 64 KiB budget (the Pi path's bound), the reports sharing what
+  the headers leave; the owed list of a no-argument `spawn wait` uses the same bound. Printing a terminal report body
   through `spawn show` or `spawn report show` consumes it, as do `spawn wait`
   completion, `spawn ack`, and a `spawn cancel` that reports `cancelled`.
 - `spawn ack <ids...>` consumes, under the caller's current primary, exactly the launches
   the last delivery recorded for each ID and drops the record. With no record (a person
   running `ack`) it consumes the ID's finished, owed, unconsumed launches, never one still
-  running. It returns exactly `{acked: [...]}` and fails when that primary's row is gone. The CLI
+  running; a primary caller without `MERIDIAN_CHAT_ID` fails there. It returns `{acked: [...]}`
+  naming the IDs it consumed, plus `not_consumed: [...]` for named IDs that consumed nothing,
+  and fails when that primary's row is gone. The CLI
   refuses `spawn ack -C` before calling the operation. Reading across the chat is what
   makes an ack written after resume consume a child of an earlier primary.
 

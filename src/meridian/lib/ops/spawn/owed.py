@@ -39,7 +39,7 @@ from meridian.lib.state.spawn_ownership import (
 )
 from meridian.lib.state.spawn_status import read_derived, read_launch
 
-from .models import SpawnDetailOutput, render_delivery
+from .models import SpawnDetailOutput, bound_delivery_reports, render_delivery
 from .query import detail_from_row
 
 _COLLECT_POLL_INTERVAL_SECS = 1.0
@@ -77,9 +77,13 @@ class SpawnAckOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     acked: tuple[str, ...]
+    not_consumed: tuple[str, ...] = ()
 
     def to_wire(self) -> dict[str, object]:
-        return {"acked": list(self.acked)}
+        wire: dict[str, object] = {"acked": list(self.acked)}
+        if self.not_consumed:
+            wire["not_consumed"] = list(self.not_consumed)
+        return wire
 
 
 _EMPTY = SpawnCollectOutput(kind="empty", ids=(), text="")
@@ -106,27 +110,30 @@ class OwedSnapshot:
     unavailable_keys: tuple[LaunchKey, ...]
 
 
-def delivery_detail(
-    *, project_root: Path, runtime_root: Path, row: SpawnRecord
-) -> SpawnDetailOutput:
-    """A row's detail for ``render_delivery``, with its report when it is a past run.
+def delivery_details(
+    *, project_root: Path, runtime_root: Path, rows: Sequence[SpawnRecord]
+) -> tuple[SpawnDetailOutput, ...]:
+    """Rows' details for ``render_delivery``, a past run carrying its report, in one byte budget.
 
     Once a continue starts the next launch, ``spawn show`` and ``spawn report show`` describe
     that one, so a delivered earlier launch carries its own report.
     """
 
-    moved = (current := read_derived(runtime_root, row.id)) is not None and (
-        current.launch_number != row.launch_number
-    )
-    detail = detail_from_row(
-        project_root=project_root,
-        row=row,
-        include_report_body=moved,
-        runtime_root=runtime_root,
-    )
-    if moved and detail.report_body is None:
-        return detail.model_copy(update={"report_body": "(no report was written)"})
-    return detail
+    details: list[SpawnDetailOutput] = []
+    for row in rows:
+        moved = (current := read_derived(runtime_root, row.id)) is not None and (
+            current.launch_number != row.launch_number
+        )
+        detail = detail_from_row(
+            project_root=project_root,
+            row=row,
+            include_report_body=moved,
+            runtime_root=runtime_root,
+        )
+        if moved and detail.report_body is None:
+            detail = detail.model_copy(update={"report_body": "(no report was written)"})
+        details.append(detail)
+    return bound_delivery_reports(details)
 
 
 def select_delivery_rows(rows: Sequence[SpawnRecord]) -> tuple[SpawnRecord, ...]:
@@ -335,9 +342,8 @@ def collect_owed_sync(
             wait_for_batch = not terminal
         if terminal and not (wait_for_batch and snapshot.pending_keys):
             delivered_rows = select_delivery_rows(terminal)
-            delivered_details = tuple(
-                delivery_detail(project_root=project_root, runtime_root=runtime_root, row=row)
-                for row in delivered_rows
+            delivered_details = delivery_details(
+                project_root=project_root, runtime_root=runtime_root, rows=delivered_rows
             )
             text = render_delivery(delivered_details)
             # An explicit wait or ack may have taken a result meanwhile.
@@ -345,21 +351,27 @@ def collect_owed_sync(
                 runtime_root, scope.parent_ids
             )
             keys = tuple(LaunchKey.of(row) for row in delivered_rows)
-            if not any(str(key) in taken for key in keys):
-                delivered: dict[str, list[int]] = {}
-                for key in keys:
-                    delivered.setdefault(key.spawn_id, []).append(key.n)
-                _record_best_effort(runtime_root, current_spawn_id, delivered_set=delivered)
+            if any(str(key) in taken for key in keys):
+                continue
+            delivered: dict[str, list[int]] = {}
+            for key in keys:
+                delivered.setdefault(key.spawn_id, []).append(key.n)
+            # Fail closed: `spawn ack` consumes what this record names, so a delivery that
+            # cannot be recorded is not made. Nothing was shown yet; retry next poll.
+            if _record_best_effort(runtime_root, current_spawn_id, delivered_set=delivered):
                 return SpawnCollectOutput(kind="delivery", ids=tuple(delivered), text=text)
-            continue
         time.sleep(_COLLECT_POLL_INTERVAL_SECS)
     return _EMPTY
 
 
 def _record_best_effort(
     runtime_root: Path, caller_spawn_id: str | None, **changes: Any
-) -> None:
-    """Write to the caller's ledger; a failure costs a repeated delivery, never a lost one."""
+) -> bool:
+    """Write to the caller's ledger; whether it was written.
+
+    Consumption writes may fail: that costs a repeated delivery, never a lost one. The
+    delivery record may not: ``collect`` retries until it is written.
+    """
 
     try:
         recorded = record_spawn_observation(
@@ -380,9 +392,10 @@ def _record_best_effort(
             error_type=type(exc).__name__,
             error=str(exc),
         )
-        return
+        return False
     if not recorded:
         logger.warning("spawn_result_consumption_not_recorded", caller_spawn_id=caller_spawn_id)
+    return recorded
 
 
 def record_result_shown_to_caller(
@@ -434,9 +447,13 @@ def _finished_owed_keys(
 
     if not spawn_ids:
         return ()
+    chat_id = (context.chat_id or "").strip()
+    caller = read_derived(runtime_root, caller_spawn_id)
+    if not chat_id and caller is not None and caller.kind == "primary":
+        raise ValueError("Spawn acknowledgement requires MERIDIAN_CHAT_ID")
     scope = discover_owed_scope(
         runtime_root=runtime_root,
-        chat_id=(context.chat_id or "").strip(),
+        chat_id=chat_id,
         caller_spawn_id=caller_spawn_id,
     )
     finished: list[str] = []
@@ -474,18 +491,24 @@ def ack_owed_sync(
             spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip()
         )
     )
-    unrecorded = frozenset(acked) - delivered_launches(runtime_root, parent_spawn_id).keys()
+    recorded_ids = {
+        spawn_id for spawn_id, ns in delivered_launches(runtime_root, parent_spawn_id).items() if ns
+    }
+    unrecorded = frozenset(acked) - recorded_ids
+    fallback = _finished_owed_keys(runtime_root, resolved_context, parent_spawn_id, unrecorded)
     recorded = record_spawn_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_spawn_id,
-        observed_add=_finished_owed_keys(
-            runtime_root, resolved_context, parent_spawn_id, unrecorded
-        ),
+        observed_add=fallback,
         ack_delivered=acked,
     )
     if not recorded:
         raise ValueError(f"Spawn acknowledgement: spawn '{parent_spawn_id}' is not published")
-    return SpawnAckOutput(acked=acked)
+    consumed = recorded_ids | {key.partition(":")[0] for key in fallback}
+    return SpawnAckOutput(
+        acked=tuple(spawn_id for spawn_id in acked if spawn_id in consumed),
+        not_consumed=tuple(spawn_id for spawn_id in acked if spawn_id not in consumed),
+    )
 
 
 __all__ = [
@@ -496,7 +519,7 @@ __all__ = [
     "ack_owed_sync",
     "collect_owed_sync",
     "consume_result_if_shown",
-    "delivery_detail",
+    "delivery_details",
     "discover_owed_scope",
     "owed_consumed_ids",
     "read_owed_snapshot",

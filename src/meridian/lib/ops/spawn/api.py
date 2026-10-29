@@ -121,7 +121,7 @@ from .models import (
 )
 from .owed import (
     consume_result_if_shown,
-    delivery_detail,
+    delivery_details,
     owed_consumed_ids,
     record_result_shown_to_caller,
     resolve_owed_finished_rows,
@@ -2010,9 +2010,8 @@ def spawn_wait_sync(
     details: tuple[SpawnDetailOutput, ...] = ()
     owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     try:
-        owed_spawns = tuple(
-            delivery_detail(project_root=project_root, runtime_root=runtime_root, row=row)
-            for row in owed_rows
+        owed_spawns = delivery_details(
+            project_root=project_root, runtime_root=runtime_root, rows=owed_rows
         )
         if not blocked_on_ids:
             output = _build_wait_multi_output(())

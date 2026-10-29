@@ -629,7 +629,7 @@ Rationale and rejected reader-side fallbacks: KB `decisions/chat-spawn-ownership
   output when the lock or filesystem is unavailable. `LaunchKey(spawn_id, n)` is the one
   key type; `str()` of it is the ledger entry. `legacy_view()` is the one place an older
   build's bare-ID file becomes launch-1 entries. A `delivered` map records what the last
-  `spawn collect` handed out so `spawn ack` consumes exactly that.
+  `spawn collect` handed out so `spawn ack` consumes exactly that; only ack removes an entry.
 - `spawn_ownership.py` — the one rule for which parents a delivery caller owns: a live
   primary owns every primary generation of its chat, anyone else owns only itself. Also
   owns `is_owed_child` (a child is owed only when `launch_mode == "background"`), which

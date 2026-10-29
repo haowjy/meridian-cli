@@ -123,7 +123,7 @@ def legacy_view(legacy: LegacyObservations) -> LaunchObservations:
     )
 
 
-def _read_legacy(runtime_root: Path, parent_spawn_id: str) -> LaunchObservations | None:
+def read_legacy(runtime_root: Path, parent_spawn_id: str) -> LaunchObservations | None:
     legacy = read_model(observed_spawns_path(runtime_root, parent_spawn_id), LegacyObservations)
     if legacy is None or legacy.spawn_id != parent_spawn_id:
         return None
@@ -159,7 +159,8 @@ def record(
 
     ``delivered_set`` replaces the delivery record of each spawn it names. ``ack_delivered``
     consumes the recorded launches of those spawns and drops their records; a spawn with no
-    record is left to the caller.
+    record is left to the caller. Only ``ack_delivered`` drops a record, so a record that is
+    absent means "delivered and acked", never "consumed some other way and maybe not delivered".
     """
 
     waiting_add_ids = tuple(waiting_add)
@@ -214,11 +215,6 @@ def record(
         delivered = {**existing.delivered, **delivery_updates}
         for target in ack_ids:
             observed.update(str(LaunchKey(target, k)) for k in delivered.pop(target, ()))
-        delivered = {
-            target: remaining
-            for target, ns in delivered.items()
-            if (remaining := [k for k in ns if str(LaunchKey(target, k)) not in observed])
-        }
         pins = {**existing.wait_pins, **pin_updates}
         for target in pins_clear_ids:
             pins.pop(target, None)
@@ -293,7 +289,7 @@ def leased_launches(runtime_root: Path, parent_ids: Iterable[str]) -> frozenset[
     for parent_id in set(parent_ids):
         for doc in (
             _read(observed_launches_path(runtime_root, parent_id), parent_id),
-            _read_legacy(runtime_root, parent_id),
+            read_legacy(runtime_root, parent_id),
         ):
             if doc is None:
                 continue
@@ -326,5 +322,6 @@ __all__ = [
     "leased_launches",
     "legacy_view",
     "live_wait_pins",
+    "read_legacy",
     "record",
 ]

@@ -10,12 +10,11 @@ from typing import Literal, TypeVar
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from meridian.lib.state.json_doc import VersionedPrivateDoc
-from meridian.lib.state.paths import observed_launches_path, observed_spawns_path
+from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.state.spawn_observations import (
     LaunchKey,
     LaunchObservations,
-    LegacyObservations,
-    legacy_view,
+    read_legacy,
 )
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -159,9 +158,7 @@ def read_pi_consumption_state(
     receipts = read(coordination_dir / DELIVERY_RECEIPTS_FILENAME, DeliveryReceipts)
     legacy_receipts = read(coordination_dir / LEGACY_DELIVERY_RECEIPTS_FILENAME, DeliveryReceipts)
     observations = read(observed_launches_path(runtime_root, parent_spawn_id), LaunchObservations)
-    legacy_observations = read(
-        observed_spawns_path(runtime_root, parent_spawn_id), LegacyObservations
-    )
+    legacy_observations = read_legacy(runtime_root, parent_spawn_id)
     cleared = read(coordination_dir / CLEARED_LAUNCHES_FILENAME, ClearedLaunches)
     legacy_cleared = read(coordination_dir / LEGACY_CLEARED_SPAWNS_FILENAME, LegacyClearedSpawns)
 
@@ -179,7 +176,7 @@ def read_pi_consumption_state(
     if observations is not None:
         consumed.update(observations.observed_launches)
     if legacy_observations is not None:
-        consumed.update(legacy_view(legacy_observations).observed_launches)
+        consumed.update(legacy_observations.observed_launches)
     if cleared is not None:
         consumed.update(cleared.cleared_launches)
     if legacy_cleared is not None:
