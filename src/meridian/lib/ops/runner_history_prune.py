@@ -29,7 +29,7 @@ from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy
-from meridian.lib.state.paths import RETIRED_RUNNER_STREAM_FILENAMES, LaunchPaths, resolve_spawn_dir
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
@@ -98,7 +98,7 @@ def runner_stream_files(root: Path, spawn_id: str) -> tuple[Path, ...]:
             if _ATTEMPT_DIR.fullmatch(child.name) and child.is_dir() and not child.is_symlink()
         )
         for directory in (base, *attempts):
-            for name in RETIRED_RUNNER_STREAM_FILENAMES:
+            for name in LAUNCH_FILE_NAMES.retired_runner_stream:
                 for path in (directory / name, *iter_atomic_temp_paths(directory, name)):
                     try:
                         regular = stat.S_ISREG(path.lstat().st_mode)

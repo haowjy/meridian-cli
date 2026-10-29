@@ -132,7 +132,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         build_spawn_application_service=cast("Any", None),
         receiver=receiver,
         config=ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(tmp_path, spawn_id),
             harness_id=HarnessId.CLAUDE,
             prompt="probe",
             control_root=tmp_path,

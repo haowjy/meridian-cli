@@ -4,7 +4,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -20,6 +20,10 @@ from meridian.lib.state.project_identity import (
 )
 from meridian.lib.state.user_paths import project_lifetime_lock_path
 
+if TYPE_CHECKING:
+    from meridian.lib.state.spawn.model import SpawnRecord
+    from meridian.lib.state.spawn.repository import StoredSpawnState
+
 
 def normalize_path_for_write(path: str | None) -> str | None:
     """Return a stable absolute form for a path persisted in state."""
@@ -27,11 +31,6 @@ def normalize_path_for_write(path: str | None) -> str | None:
     if not path:
         return path
     return os.path.abspath(os.path.normpath(path))
-
-
-class _HasId(Protocol):
-    @property
-    def id(self) -> SpawnId | str: ...
 
 
 class RuntimePaths(BaseModel):
@@ -368,40 +367,56 @@ def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
 
 
 # Per-launch file names. This module is the only place they appear as literals
-# (``meridian.dev.check_launch_paths``, part of the fast gate, enforces it).
-HISTORY_FILENAME = "history.jsonl"  # retired runner stream; never written
-RETIRED_RUNNER_STREAM_FILENAMES: tuple[str, ...] = (HISTORY_FILENAME, "last-observed-event.json")
-NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
-PROCESS_SCOPES_FILENAME = "process_scopes.json"
-STARTING_PROMPT_FILENAME = "starting-prompt.md"
-REPORT_FILENAME = "report.md"
-PI_RUNTIME_META_FILENAME = "pi_runtime_meta.json"
-BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
-BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
-BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
+# (``meridian.dev.check_launch_paths``, part of the fast gate, enforces it, and flags a
+# private name imported elsewhere). Code that must recognize a name rather than reach a
+# file (retention, transcript discovery, legacy import) uses ``LAUNCH_FILE_NAMES``.
+_HISTORY_FILENAME = "history.jsonl"  # retired runner stream; never written
+_NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
+_PROCESS_SCOPES_FILENAME = "process_scopes.json"
+_STARTING_PROMPT_FILENAME = "starting-prompt.md"
+_REPORT_FILENAME = "report.md"
+_PI_RUNTIME_META_FILENAME = "pi_runtime_meta.json"
+_BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
+_BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
+_BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
 REAPER_CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"  # spawn-level
-# Files the archive skips. Older builds still write the legacy ones; remove with
-# legacy_runner_alive once no lockless rows remain.
-RETENTION_EXCLUDED_FILENAMES = frozenset(
-    {
-        "heartbeat",
-        "finalize-evidence.json",
-        "launch-boundary.jsonl",
-        PROCESS_SCOPES_FILENAME,
-        REAPER_CLEANUP_CLAIM_FILENAME,
-        "restored-from.json",
-    }
-)
+
+
+@dataclass(frozen=True)
+class LaunchFileNames:
+    """Per-launch names for code that recognizes a name instead of reaching a file."""
+
+    history: str = _HISTORY_FILENAME
+    native_snapshot: str = _NATIVE_SNAPSHOT_FILENAME
+    starting_prompt: str = _STARTING_PROMPT_FILENAME
+    report: str = _REPORT_FILENAME
+    pi_runtime_meta: str = _PI_RUNTIME_META_FILENAME
+    retired_runner_stream: tuple[str, ...] = (_HISTORY_FILENAME, "last-observed-event.json")
+    # Files the archive skips. Older builds still write the legacy ones; remove with
+    # legacy_runner_alive once no lockless rows remain.
+    retention_excluded: frozenset[str] = frozenset(
+        {
+            "heartbeat",
+            "finalize-evidence.json",
+            "launch-boundary.jsonl",
+            _PROCESS_SCOPES_FILENAME,
+            REAPER_CLEANUP_CLAIM_FILENAME,
+            "restored-from.json",
+        }
+    )
+
+
+LAUNCH_FILE_NAMES = LaunchFileNames()
 
 
 @dataclass(frozen=True)
 class LaunchPaths:
     """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
 
-    This module is the only place that constructs it (``for_row`` today; P5a adds
-    ``for_launch``); everything else is handed one by the launch's owner. Today a launch
-    directory is the spawn directory, so ``n`` is unused. Spawn-level files stay on
-    ``resolve_spawn_dir``.
+    This module is the only place that constructs it (``for_row``); the code that
+    publishes a row returns the launch it wrote, and everyone else is handed that one.
+    Today a launch directory is the spawn directory, so ``n`` is unused. Spawn-level
+    files stay on ``resolve_spawn_dir``.
     """
 
     runtime_root: Path
@@ -409,20 +424,27 @@ class LaunchPaths:
     n: int | None
 
     @classmethod
-    def for_row(cls, runtime_root: Path, row: _HasId) -> Self:
+    def for_row(cls, runtime_root: Path, row: "SpawnRecord | StoredSpawnState") -> Self:
         """The launch a published row names. The only way to reach an existing launch."""
 
-        return cls(runtime_root, SpawnId(str(row.id)), None)
+        return cls(runtime_root, SpawnId(row.id), None)
 
     @classmethod
-    def for_launch(cls, runtime_root: Path, spawn_id: SpawnId) -> Self:
-        """A launch its owner is about to publish, named by the ID it reserved.
+    def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int | None) -> Self:
+        """The launch ``spawn_store`` is about to publish as launch ``n`` of ``spawn_id``.
 
-        Only the launch-lock holder that reserved ``spawn_id`` calls this, before the
-        row exists. P5a assigns ``n`` here.
+        Only ``spawn_store`` calls this (the gate enforces it): the code that assigns
+        ``n`` names the launch before its row exists, so the bind phase can reference
+        its files. Everyone else is handed the launch.
         """
 
-        return cls(runtime_root, spawn_id, None)
+        return cls(runtime_root, spawn_id, n)
+
+    @classmethod
+    def preview(cls, runtime_root: Path, label: str) -> Self:
+        """A placeholder launch for a dry-run bind. It is never published or written."""
+
+        return cls(runtime_root, SpawnId(label), None)
 
     @property
     def dir(self) -> Path:
@@ -430,7 +452,7 @@ class LaunchPaths:
 
     @property
     def starting_prompt(self) -> Path:
-        return self.dir / STARTING_PROMPT_FILENAME
+        return self.dir / _STARTING_PROMPT_FILENAME
 
     @property
     def system_prompt(self) -> Path:
@@ -454,7 +476,7 @@ class LaunchPaths:
 
     @property
     def report(self) -> Path:
-        return self.dir / REPORT_FILENAME
+        return self.dir / _REPORT_FILENAME
 
     @property
     def stderr_log(self) -> Path:
@@ -486,7 +508,7 @@ class LaunchPaths:
 
     @property
     def pi_runtime_meta(self) -> Path:
-        return self.dir / PI_RUNTIME_META_FILENAME
+        return self.dir / _PI_RUNTIME_META_FILENAME
 
     @property
     def pi_lifecycle(self) -> Path:
@@ -498,7 +520,7 @@ class LaunchPaths:
 
     @property
     def process_scopes(self) -> Path:
-        return self.dir / PROCESS_SCOPES_FILENAME
+        return self.dir / _PROCESS_SCOPES_FILENAME
 
     @property
     def accepted_signals(self) -> Path:
@@ -526,19 +548,19 @@ class LaunchPaths:
 
     @property
     def native_transcript(self) -> Path:
-        return self.dir / NATIVE_SNAPSHOT_FILENAME
+        return self.dir / _NATIVE_SNAPSHOT_FILENAME
 
     @property
     def background_stdout(self) -> Path:
-        return self.dir / BACKGROUND_STDOUT_FILENAME
+        return self.dir / _BACKGROUND_STDOUT_FILENAME
 
     @property
     def background_stderr(self) -> Path:
-        return self.dir / BACKGROUND_STDERR_FILENAME
+        return self.dir / _BACKGROUND_STDERR_FILENAME
 
     @property
     def bg_worker_request(self) -> Path:
-        return self.dir / BG_WORKER_REQUEST_FILENAME
+        return self.dir / _BG_WORKER_REQUEST_FILENAME
 
     @property
     def permission_requests(self) -> Path:
@@ -549,7 +571,7 @@ def staged_starting_prompt(stage_dir: Path) -> Path:
     """Where ``start_spawn`` writes the prompt inside its staging directory, before the
     directory is renamed into place as the spawn directory."""
 
-    return stage_dir / STARTING_PROMPT_FILENAME
+    return stage_dir / _STARTING_PROMPT_FILENAME
 
 
 def resolve_ambient_work_dir(

@@ -12,7 +12,14 @@ from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
-from meridian.lib.state.launch_lock import Busy, LaunchHandle, NotFound, acquire, shared_try
+from meridian.lib.state.launch_lock import (
+    Busy,
+    LaunchHandle,
+    NotFound,
+    acquire,
+    lock_path,
+    shared_try,
+)
 from meridian.lib.state.liveness import is_process_dead_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
@@ -28,23 +35,21 @@ def _legacy_live_error(spawn_id: str) -> ValueError:
 
 def _acquire_source(runtime_root: Path, spawn_id: str) -> LaunchHandle:
     spawns_dir = runtime_root / "spawns"
-    spawn_dir = spawns_dir / spawn_id
-    if (spawn_dir / "launch.lock").exists():
-        return acquire(spawn_dir)
+    path = lock_path(runtime_root, spawn_id)
+    if path.exists():
+        return acquire(runtime_root, spawn_id)
     # Old runners use this same mutation lock. Re-read before converting;
     # another continue may have created the lifetime lock while we waited.
     with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
         row = read_state(spawns_dir, spawn_id, include_prompt=False)
         if row is None:
             raise NotFound(f"Spawn '{spawn_id}' not found")
-        if not (spawn_dir / "launch.lock").exists():
+        if not path.exists():
             if not is_terminal_spawn_status(row.status) and legacy_runner_alive(row):
                 raise _legacy_live_error(spawn_id)
-            fd = os.open(
-                spawn_dir / "launch.lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
-            )
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
             os.close(fd)
-        return acquire(spawn_dir)
+        return acquire(runtime_root, spawn_id)
 
 
 def _unknown_scope_gone(pid: int, pgid: int | None) -> bool:
@@ -133,7 +138,7 @@ def sweep_before_continue(
     if dry_run:
         for owner in owners:
             owner_id = owner.id
-            lock_free = shared_try(runtime_root / "spawns" / owner_id / "launch.lock")
+            lock_free = shared_try(lock_path(runtime_root, owner_id))
             if lock_free is False:
                 raise _busy_owner_error(runtime_root, spawn_id, owner_id, chat_id)
             if lock_free is None and is_live(runtime_root, owner_id):

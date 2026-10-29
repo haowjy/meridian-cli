@@ -98,7 +98,7 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._state = "connected"
 
     async def stop(
@@ -366,7 +366,7 @@ async def start_pi_manager(
     )
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(runtime_root, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=runtime_root,
@@ -435,7 +435,7 @@ def write_json(path: Path, payload: object) -> None:
 
 def _config(runtime_root: Path, spawn_id: SpawnId) -> ConnectionConfig:
     return ConnectionConfig(
-        spawn_id=spawn_id,
+        launch=launch_paths(runtime_root, spawn_id),
         harness_id=HarnessId.PI,
         prompt="hello",
         control_root=runtime_root,

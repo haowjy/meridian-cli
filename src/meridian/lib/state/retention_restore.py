@@ -21,7 +21,7 @@ from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import STARTING_PROMPT_FILENAME, resolve_spawn_dir
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     ArchiveReceipt,
@@ -49,7 +49,7 @@ from meridian.lib.state.session_store import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, record_to_stored_state
-from meridian.lib.state.spawn_store import list_spawns, reserve_spawn_id
+from meridian.lib.state.spawn_store import list_spawns, reserve_launch
 
 
 class RestorePlan(BaseModel):
@@ -181,9 +181,9 @@ def _stage_record(
         }
     )
     stored = record_to_stored_state(state)
-    if STARTING_PROMPT_FILENAME in record.required_files:
+    if LAUNCH_FILE_NAMES.starting_prompt in record.required_files:
         stored = stored.model_copy(
-            update={"prompt_length": len((stage / STARTING_PROMPT_FILENAME).read_text())}
+            update={"prompt_length": len((stage / LAUNCH_FILE_NAMES.starting_prompt).read_text())}
         )
     atomic_write_text(stage / "state.json", stored.model_dump_json())
     if (
@@ -252,7 +252,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                     if plan.portable_digest != record.portable_digest:
                         raise ValueError("Unfinished restore conflicts with selected content")
                 elif existing is None:
-                    local_id = str(reserve_spawn_id(root))
+                    local_id = str(reserve_launch(root).spawn_id)
                     chat_id = reserve_chat_id(root)
                     generation = new_historical_generation()
                     plan = RestorePlan(

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -201,7 +201,7 @@ def launch_primary(
     preview_context = bind_launch_context(
         prepared=prepared,
         bindings=RuntimeBindings(
-            spawn_id="dry-run-primary",
+            launch=LaunchPaths.preview(Path(runtime.runtime_root), "dry-run-primary"),
             runtime_work_id=effective_work_id,
             dry_run=True,
         ),

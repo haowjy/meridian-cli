@@ -67,7 +67,6 @@ class CodexPassthrough:
     ) -> ConnectionConfig:
         ws_bind_host = "127.0.0.1"
         return ConnectionConfig(
-            spawn_id=launch.spawn_id,
             launch=launch,
             harness_id=HarnessId.CODEX,
             prompt=spec.prompt,

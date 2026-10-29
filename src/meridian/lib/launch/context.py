@@ -340,13 +340,17 @@ class MaterializedLaunchArtifacts:
 class RuntimeBindings:
     """Runtime-only values for the bind phase."""
 
-    spawn_id: str
+    launch: LaunchPaths
     runtime_work_id: str | None = None
     chat_id: str | None = None
     forked_harness_session_id: str | None = None
     continue_fork_override: bool | None = None
     plan_overrides: dict[str, str] = field(default_factory=lambda: {})
     dry_run: bool = False
+
+    @property
+    def spawn_id(self) -> str:
+        return str(self.launch.spawn_id)
 
 
 @dataclass(frozen=True)
@@ -1539,9 +1543,8 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    launch_paths = LaunchPaths.for_launch(runtime_root, SpawnId(bindings.spawn_id))
-    report_artifact_path = launch_paths.report
-    system_prompt_path = launch_paths.system_prompt
+    report_artifact_path = bindings.launch.report
+    system_prompt_path = bindings.launch.system_prompt
     logical_task_cwd = project_paths.execution_cwd.resolve()
     directory_context = LaunchDirectoryContext(
         authority_root=resolved_control_root,

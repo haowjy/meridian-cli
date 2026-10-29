@@ -131,8 +131,8 @@ class SpawnManager:
     ) -> HarnessConnection[Any]:
         """Start one connection and register durable drain/control resources."""
 
-        spawn_id = config.spawn_id
-        launch = config.resolve_launch(self._runtime_root)
+        launch = config.launch
+        spawn_id = launch.spawn_id
         if spawn_id in self._sessions:
             msg = f"Spawn {spawn_id} is already active"
             raise ValueError(msg)

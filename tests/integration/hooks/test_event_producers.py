@@ -95,7 +95,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
                 status=SpawnStatus.QUEUED,
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
     lifecycle.announce(spawn_id)
     lifecycle.mark_running(spawn_id)
     lifecycle.finalize(
@@ -122,7 +122,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
                 status=SpawnStatus.RUNNING,
             ),
             launch_lock=launch_lock,
-        )
+        ).spawn_id
     lifecycle.announce(running_spawn_id)
 
     work_runtime_root = resolve_roots(str(project_root)).runtime_root
@@ -367,7 +367,7 @@ def test_spawn_lifecycle_drops_invalid_hook_rows_and_runs_valid_hooks(
                     status=SpawnStatus.QUEUED,
                 ),
                 launch_lock=launch_lock,
-            )
+            ).spawn_id
         lifecycle.announce(spawn_id)
 
     warnings = [log for log in logs if log.get("log_level") == "warning"]

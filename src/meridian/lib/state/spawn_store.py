@@ -124,13 +124,15 @@ def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
     )
 
 
-def reserve_spawn_id(
+def reserve_launch(
     runtime_root: Path,
-) -> SpawnId:
-    """Reserve and return the next spawn ID (`p1`, `p2`, ...).
+) -> LaunchPaths:
+    """Reserve the next spawn ID (`p1`, `p2`, ...) and return its first launch.
 
     Reservation is persisted separately from spawn rows so callers can compose
-    launch context with the final ID before writing lifecycle-visible events.
+    launch context with the final launch before writing lifecycle-visible events.
+    Pass the result to ``start_spawn`` (via the reservation); the launch it publishes
+    equals this one.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -140,7 +142,8 @@ def reserve_spawn_id(
             current = _seed_spawn_counter_from_dirs(paths)
         next_value = current + 1
         atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
-        return SpawnId(f"p{next_value}")
+        # P4b: a fresh spawn's first launch is n=1.
+        return LaunchPaths.reserved(runtime_root, SpawnId(f"p{next_value}"), None)
 
 
 def _runner_created_at_epoch_for_pid(runner_pid: int | None) -> float | None:
@@ -241,8 +244,8 @@ def start_spawn(
     started_at: str | None = None,
     clock: Clock | None = None,
     launch_lock: LaunchSlot | None = None,
-) -> SpawnId:
-    """Create a v2 spawn state directory and return the spawn ID."""
+) -> LaunchPaths:
+    """Create a spawn state directory and return the launch it published."""
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -360,7 +363,7 @@ def start_spawn(
             if launch_lock is not None:
                 launch_lock.bind_staged(resolved_spawn_id, stage_dir)
             atomic_publish_dir(stage_dir, spawn_dir)
-        return resolved_spawn_id
+        return LaunchPaths.for_row(runtime_root, record)
 
 
 def remove_spawn_events(
@@ -749,8 +752,9 @@ def list_spawns(
 def read_launch_paths(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchPaths:
     """Read the published row once and return its launch's paths.
 
-    For a launch owner that has just published (or adopted) a spawn and holds only the ID;
-    read surfaces use the row they already hold.
+    For a process that adopts a launch it did not publish and holds only the ID (the
+    background worker) or sits at an ID-only command boundary. The publisher hands out
+    the launch it wrote; read surfaces use the row they already hold.
     """
 
     row = get_spawn(runtime_root, spawn_id)

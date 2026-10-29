@@ -34,7 +34,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     resolve_network_policy,
 )
-from meridian.lib.state.paths import resolve_kb_dir
+from meridian.lib.state.paths import LaunchPaths, resolve_kb_dir
 from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
 
 
@@ -240,7 +240,7 @@ def build_launch_context(
         context = bind_launch_context(
             prepared=prepared,
             bindings=RuntimeBindings(
-                spawn_id=spawn_id,
+                launch=LaunchPaths.preview(Path(runtime.runtime_root), spawn_id),
                 runtime_work_id=runtime_work_id,
                 forked_harness_session_id=forked_harness_session_id,
                 plan_overrides=dict(plan_overrides or {}),

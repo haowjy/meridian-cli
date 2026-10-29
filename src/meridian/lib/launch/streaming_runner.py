@@ -978,7 +978,6 @@ async def execute_with_streaming(
             policy=launch_context.resolved_request.launch_policy_snapshot,
         )
         config = ConnectionConfig(
-            spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
             prompt=spec.prompt,
             control_root=control_root,

@@ -219,7 +219,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
     launch_task = asyncio.create_task(
         manager.start_spawn(
             ConnectionConfig(
-                spawn_id=spawn_id,
+                launch=launch_paths(runtime_root, spawn_id),
                 harness_id=HarnessId.CODEX,
                 prompt="FIRST",
                 control_root=project_root,
@@ -247,7 +247,8 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         assert outcome.status == "succeeded"
         assert "Message delivered" in capsys.readouterr().out
         assert received_messages == [
-            "[Meridian] Message with no sender identity; it has no reply address.\n\nSECOND"
+            "[Meridian] Message with no sender identity; it has no reply "
+            "address.\n\nSECOND"
         ]
     finally:
         if not launch_task.done():
@@ -297,7 +298,6 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
 
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
@@ -363,7 +363,6 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
 
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,

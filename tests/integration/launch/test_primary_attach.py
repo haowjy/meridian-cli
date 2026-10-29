@@ -157,7 +157,7 @@ def _build_config(
     harness_id: HarnessId = HarnessId.CODEX,
 ) -> ConnectionConfig:
     return ConnectionConfig(
-        spawn_id=spawn_id,
+        launch=launch_paths(control_root, spawn_id),
         harness_id=harness_id,
         prompt="hello",
         control_root=control_root,
@@ -269,7 +269,7 @@ class FakeManagedConnection:
         _ = spec
         self.start_calls += 1
         self.started_ports.append(config.ws_port)
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         start_in_observer_mode = self.started_primary_observer_mode is True
         if start_in_observer_mode and config.ws_port > 0:
             self._observer_endpoint = ObserverEndpoint(

@@ -242,7 +242,7 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
             launch_mode=FOREGROUND_LAUNCH_MODE,
             manager=HangingStartupManager(),  # type: ignore[arg-type]
             config=ConnectionConfig(
-                spawn_id=run.spawn_id,
+                launch=launch_paths(tmp_path, run.spawn_id),
                 harness_id=HarnessId.CODEX,
                 prompt=run.prompt,
                 control_root=tmp_path,
@@ -351,7 +351,7 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             launch_mode=FOREGROUND_LAUNCH_MODE,
             manager=manager,  # type: ignore[arg-type]
             config=ConnectionConfig(
-                spawn_id=run.spawn_id,
+                launch=launch_paths(tmp_path, run.spawn_id),
                 harness_id=HarnessId.CURSOR,
                 prompt=run.prompt,
                 control_root=tmp_path,

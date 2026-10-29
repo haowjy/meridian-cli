@@ -50,7 +50,7 @@ def _select_plan(
         launch=launch_paths(manager.runtime_root, f"p-{harness_id}"),
         receiver=receiver,
         config=ConnectionConfig(
-            spawn_id=SpawnId(f"p-{harness_id}"),
+            launch=launch_paths(manager.runtime_root, SpawnId(f"p-{harness_id}")),
             harness_id=harness_id,
             prompt="hello",
             control_root=manager.runtime_root,

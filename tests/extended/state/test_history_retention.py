@@ -62,7 +62,7 @@ def _terminal(root: Path) -> str:
             harness="codex",
             harness_session_id=native_id,
             prompt="hello",
-        )
+        ).spawn_id
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     events = [
@@ -115,7 +115,7 @@ def test_capture_record_refuses_stored_active_state(tmp_path: Path) -> None:
         agent="coder",
         harness="codex",
         prompt="still active",
-    )
+    ).spawn_id
     state = spawn_store.get_spawn(root, key)
     assert state is not None
 
@@ -250,7 +250,7 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             harness="codex",
             prompt="first",
             kind="primary",
-        )
+        ).spawn_id
         session_store.update_session_spawn_id(root, source, first)
         original = spawn_store.get_spawn(root, first)
         assert original is not None
@@ -279,7 +279,7 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             harness="codex",
             prompt="resumed",
             kind="primary",
-        )
+        ).spawn_id
         session_store.update_session_spawn_id(root, source, resumed)
         child = spawn_store.start_spawn(
             root,
@@ -289,7 +289,7 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             harness="codex",
             prompt="fork",
             kind="primary",
-        )
+        ).spawn_id
         state = spawn_store.get_spawn(root, child)
         assert state is not None
         assert state.forked_from_history_id == original.history_id
@@ -554,7 +554,7 @@ def test_unsafe_transitive_dependency_protects_dependent(tmp_path: Path) -> None
     dependent = str(
         spawn_store.start_spawn(
             root, chat_id="c2", model="test", agent="coder", harness="codex", prompt="dependent"
-        )
+        ).spawn_id
     )
     spawn_store.finalize_spawn(root, dependent, status="succeeded", exit_code=0, origin="runner")
     row = spawn_store.get_spawn(root, dependency)
@@ -835,7 +835,7 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
         prompt="fork",
         kind="child",
         metadata=SpawnStartMetadata(forked_from_history_id=source.history_id),
-    )
+    ).spawn_id
     # Reservation already protects the requested ancestor, before a session exists.
     assert not archive_history(
         root, destination=tmp_path / "zips", refs=(source_id,), apply=True
@@ -1070,7 +1070,7 @@ def test_archive_cleanup_allows_unrelated_history_writer(tmp_path: Path, monkeyp
     other = str(
         spawn_store.start_spawn(
             root, chat_id="c2", model="test", agent="coder", harness="codex", prompt="writer"
-        )
+        ).spawn_id
     )
     remove = spawn_aggregate.shutil.rmtree
 

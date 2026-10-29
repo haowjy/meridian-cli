@@ -299,7 +299,7 @@ def execute_spawn_background(
         spawn_id_text = str(context.spawn.spawn_id)
         execution_cwd_str = initial_execution_cwd
         parent_launch_cwd_str = execution_contract.control_root.as_posix()
-        launch = spawn_store.read_launch_paths(context.runtime_root, context.spawn.spawn_id)
+        launch = context.launch
         launch.dir.mkdir(parents=True, exist_ok=True)
         request_metadata = _build_params_request_metadata(
             request,
@@ -345,6 +345,7 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
             _cleanup_background_runtime_artifacts(launch)
             logger.exception(
@@ -424,6 +425,7 @@ def execute_spawn_background(
                 project_paths.project_root,
                 context.spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
             _cleanup_background_runtime_artifacts(launch)
             logger.exception(
@@ -519,7 +521,7 @@ def execute_spawn_blocking(
             warning = value
 
         context_from_resolved = context_ref_values(request.context_refs)
-        launch = spawn_store.read_launch_paths(context.runtime_root, spawn.spawn_id)
+        launch = context.launch
 
         try:
             execution_cwd_str = initial_execution_cwd
@@ -547,6 +549,7 @@ def execute_spawn_blocking(
             exit_code = asyncio.run(
                 launch_prepared_spawn(
                     spawn=spawn,
+                    launch=launch,
                     request=request,
                     runtime_request=build_spawn_mars_runtime(
                         runtime=runtime,
@@ -577,6 +580,7 @@ def execute_spawn_blocking(
                 project_paths.project_root,
                 spawn.spawn_id,
                 str(exc),
+                launch=launch,
             )
             logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
             failure_row = read_spawn_row(project_paths.project_root, spawn_id_text)

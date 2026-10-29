@@ -38,7 +38,7 @@ from meridian.lib.state.spawn_store import (
     record_cancel_intent,
     record_runner_exit,
     record_spawn_exited,
-    reserve_spawn_id,
+    reserve_launch,
     start_spawn,
     update_spawn,
 )
@@ -61,7 +61,7 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
-        )
+        ).spawn_id
     )
 
 
@@ -77,7 +77,7 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
             prompt="hello",
             launch_mode="app",
             runner_pid=1111,
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -109,7 +109,7 @@ def test_spawn_path_fields_are_normalized_at_write_boundary(
             control_root="project/./root/",
             task_cwd=None,
             execution_cwd="project/root/../initial-task/",
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -305,7 +305,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
                         harness="codex",
                         prompt="hello",
                         spawn_id=spawn_id,
-                    )
+                    ).spawn_id
                 )
             )
         except BaseException as exc:
@@ -416,7 +416,7 @@ def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
             control_root=control_root.as_posix(),
             task_cwd=task_cwd.as_posix(),
             execution_cwd=task_cwd.as_posix(),
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -441,7 +441,7 @@ def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
                 work_id="  w-goal  ",
                 goal="  keep scope tight  ",
             ),
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -493,7 +493,7 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
             harness="claude",
             prompt="hello",
             launch_policy_snapshot=snapshot,
-        )
+        ).spawn_id
     )
 
     row = get_spawn(runtime_root, spawn_id)
@@ -528,7 +528,7 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
             harness="claude",
             prompt="hello",
             launch_policy_snapshot=snapshot,
-        )
+        ).spawn_id
     )
 
     spawn_dir = runtime_root / "spawns" / spawn_id
@@ -554,7 +554,7 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
             agent="coder",
             harness="codex",
             prompt="hello",
-        )
+        ).spawn_id
     )
     paths = RuntimePaths.from_root_dir(runtime_root)
     state_path = paths.spawns_dir / spawn_id / "state.json"
@@ -647,7 +647,7 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
             prompt="world",
             desc="desc-2",
             work_id="w2",
-        )
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
@@ -681,7 +681,7 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
             agent="coder",
             harness="codex",
             prompt="world",
-        )
+        ).spawn_id
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
@@ -713,7 +713,7 @@ def test_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
             (spawn_dir / "state.json").write_text(state_payload, encoding="utf-8")
     (runtime_root / "spawn-id-counter").write_text("20\n", encoding="utf-8")
 
-    assert reserve_spawn_id(runtime_root) == "p21"
+    assert reserve_launch(runtime_root).spawn_id == "p21"
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
 
 

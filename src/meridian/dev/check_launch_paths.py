@@ -4,12 +4,18 @@ Fails when, outside ``state/paths.py`` (Python) and ``shared/pi_state_paths.ts``
 
 - a string literal is, or ends with ``/``, a per-launch file name (``"spawns/p1/report.md"``,
   ``f"{d}/report.md"``), or ends with ``.signal``;
-- ``LaunchPaths(...)`` is constructed (use ``for_row``/``for_launch`` in ``paths.py``);
+- ``LaunchPaths(...)`` is constructed, aliased, or copied with ``replace(launch, ...)``
+  (``for_row`` in ``paths.py`` is the only way to a published launch);
+- ``LaunchPaths.reserved(...)`` is called outside ``state/spawn_store.py``, the code that
+  assigns ``n``;
+- a private name (``_X``) is imported from ``paths.py`` (code that recognizes a per-launch
+  name uses ``LAUNCH_FILE_NAMES``);
 - the retired ``resolve_spawn_log_dir`` reappears.
 
 Test files are not scanned. A path built from a name held in a variable
 (``d / name``) is invisible to a literal check; the construction rule is what keeps a
-spawn directory from being wrapped as a launch.
+spawn directory from being wrapped as a launch. A file name ``LaunchPaths`` lacks is
+invisible too: add the property first.
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ import ast
 import re
 import sys
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.state.paths import LaunchPaths
@@ -28,12 +33,9 @@ _ALLOWED = {
     _SRC / "lib" / "state" / "paths.py",
     _SRC / "pi_runtime" / "extensions" / "shared" / "pi_state_paths.ts",
 }
+_RESERVE_ALLOWED = _SRC / "lib" / "state" / "spawn_store.py"
+_PATHS_MODULE = "meridian.lib.state.paths"
 _RETIRED_IDENTIFIER = "resolve_spawn_log_dir"
-
-
-@dataclass(frozen=True)
-class _ProbeRow:
-    id: str
 
 
 def per_launch_names() -> frozenset[str]:
@@ -42,7 +44,7 @@ def per_launch_names() -> frozenset[str]:
     The retired ``history.jsonl`` is not gated: Claude's own config dir has a file of the
     same name that ``claude_sessions`` reads.
     """
-    probe = LaunchPaths.for_row(Path("/probe"), _ProbeRow("p1"))
+    probe = LaunchPaths.preview(Path("/probe"), "p1")
     names = {
         value.name
         for attr in dir(LaunchPaths)
@@ -67,14 +69,46 @@ def _python_literals(path: Path) -> Iterator[tuple[int, str]]:
             yield node.lineno, node.value
 
 
-def _python_constructions(path: Path) -> Iterator[int]:
+def _is_launch_paths(node: ast.expr) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "LaunchPaths") or (
+        isinstance(node, ast.Attribute) and node.attr == "LaunchPaths"
+    )
+
+
+def _is_launch_name(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and (
+        node.id in {"launch", "launch_paths"} or node.id.endswith("_launch")
+    )
+
+
+def _python_structure(path: Path) -> Iterator[tuple[int, str]]:
+    """Constructions, aliases, copies, restricted calls, and private-name imports."""
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Call):
             target = node.func
-            if (isinstance(target, ast.Name) and target.id == "LaunchPaths") or (
-                isinstance(target, ast.Attribute) and target.attr == "LaunchPaths"
+            if _is_launch_paths(target):
+                yield node.lineno, "LaunchPaths(...) is constructed in state/paths.py only"
+            is_replace = (isinstance(target, ast.Name) and target.id == "replace") or (
+                isinstance(target, ast.Attribute) and target.attr == "replace"
+            )
+            if is_replace and node.args and _is_launch_name(node.args[0]):
+                yield node.lineno, "a launch is copied; only its publisher assigns n"
+            if (
+                isinstance(target, ast.Attribute)
+                and target.attr == "reserved"
+                and _is_launch_paths(target.value)
+                and path != _RESERVE_ALLOWED
             ):
-                yield node.lineno
+                yield node.lineno, "LaunchPaths.reserved(...) is spawn_store's: it assigns n"
+        elif isinstance(node, ast.Assign) and _is_launch_paths(node.value):
+            yield node.lineno, "LaunchPaths is aliased; construct nothing outside state/paths.py"
+        elif isinstance(node, ast.ImportFrom) and node.module == _PATHS_MODULE:
+            for alias in node.names:
+                if alias.name.startswith("_"):
+                    yield (
+                        node.lineno,
+                        f"{alias.name} is private to paths.py; use LAUNCH_FILE_NAMES",
+                    )
 
 
 def _typescript_literals(path: Path) -> Iterator[tuple[int, str]]:
@@ -102,8 +136,7 @@ def violations(src: Path = _SRC) -> list[str]:
         )
         if path.suffix == ".py":
             found.extend(
-                f"{relative}:{line}: LaunchPaths(...) is constructed in state/paths.py only"
-                for line in _python_constructions(path)
+                f"{relative}:{line}: {message}" for line, message in _python_structure(path)
             )
     return found
 

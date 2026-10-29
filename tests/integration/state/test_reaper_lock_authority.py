@@ -52,7 +52,7 @@ def _active_spawn(
         runner_created_at_epoch=runner_created_at_epoch,
         started_at="2000-01-01T00:00:00Z",
         status="running",
-    )
+    ).spawn_id
     (runtime_root / "spawns" / str(created) / "launch.lock").touch()
     return str(created)
 
@@ -251,7 +251,7 @@ def test_lockless_crash_projection_is_never_finalized(
         prompt="hello",
         started_at=started_at,
         status="running",
-    )
+    ).spawn_id
     state_path = runtime_root / "spawns" / str(spawn_id) / "state.json"
     before = state_path.read_bytes()
 

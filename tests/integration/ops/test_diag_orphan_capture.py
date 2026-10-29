@@ -13,10 +13,7 @@ from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops import diag
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import (
-    NATIVE_SNAPSHOT_FILENAME,
-    resolve_project_runtime_root_for_write,
-)
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper_cleanup_claim import claim_active_spawn_scopes
 from meridian.lib.state.spawn.model import SpawnKind, SpawnRecord
@@ -262,4 +259,4 @@ def test_repair_captures_every_orphan_primary_of_one_native_session(
     for spawn_id in spawn_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         assert record is not None and record.status == "failed"
-        assert (runtime_root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME).is_file()
+        assert (runtime_root / "spawns" / spawn_id / LAUNCH_FILE_NAMES.native_snapshot).is_file()

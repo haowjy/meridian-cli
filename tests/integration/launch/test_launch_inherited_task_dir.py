@@ -15,6 +15,7 @@ from meridian.lib.launch.request import LaunchArgvIntent
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_store import start_spawn
@@ -106,7 +107,7 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     bound = bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
-            spawn_id="p-child",
+            launch=LaunchPaths.preview(runtime_root, "p-child"),
             dry_run=True,
         ),
         runtime=launch_runtime,

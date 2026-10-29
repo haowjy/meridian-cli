@@ -103,6 +103,7 @@ def _log_launch_failure_without_traceback(
 async def _prepare_execution_handoff(
     *,
     spawn: Spawn,
+    launch: LaunchPaths,
     request: SpawnRequest,
     runtime_request: LaunchRuntime,
     runtime: OperationRuntime,
@@ -120,7 +121,6 @@ async def _prepare_execution_handoff(
     local_stack = ExitStack()
     request_before_session = request
     try:
-        launch = spawn_store.read_launch_paths(runtime_root, spawn.spawn_id)
         harness_id = HarnessId(request.harness or "")
         harness_adapter = runtime.harness_registry.get_subprocess_harness(harness_id)
         resolved_session = _resolve_session_continuation(
@@ -219,7 +219,7 @@ async def _prepare_execution_handoff(
             }
         )
         bindings = RuntimeBindings(
-            spawn_id=str(spawn.spawn_id),
+            launch=launch,
             runtime_work_id=runtime_work_id,
             plan_overrides=dict(run_env_overrides),
             dry_run=False,
@@ -320,6 +320,7 @@ def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
 async def launch_prepared_spawn(
     *,
     spawn: Spawn,
+    launch: LaunchPaths,
     request: SpawnRequest,
     runtime_request: LaunchRuntime,
     runtime: OperationRuntime,
@@ -344,6 +345,7 @@ async def launch_prepared_spawn(
     try:
         handoff = await _prepare_execution_handoff(
             spawn=spawn,
+            launch=launch,
             request=request,
             runtime_request=runtime_request,
             runtime=runtime,
@@ -363,6 +365,7 @@ async def launch_prepared_spawn(
             project_paths.project_root,
             spawn.spawn_id,
             exc,
+            launch=launch,
         )
         _log_launch_failure_without_traceback(
             message="Pre-launch setup failed.",
@@ -432,6 +435,7 @@ async def launch_prepared_spawn(
                 project_paths.project_root,
                 spawn.spawn_id,
                 exc,
+                launch=launch,
             )
             _log_launch_failure_without_traceback(
                 message="Child harness pre-run setup failed.",

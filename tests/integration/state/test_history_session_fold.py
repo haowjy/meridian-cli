@@ -284,7 +284,7 @@ def test_metadata_is_history_blind(tmp_path: Path):
     key = str(
         spawn_store.start_spawn(
             tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="test"
-        )
+        ).spawn_id
     )
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     _append(tmp_path, _start("g1", spawn_id=key))

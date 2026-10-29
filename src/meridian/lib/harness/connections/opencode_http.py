@@ -578,11 +578,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         self._config = config
         self._agent_name = spec.agent_name
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._tracer = config.debug_tracer
         self._liveness.reset()
         self._startup_emitter = StartupPhaseEmitter(
-            str(config.spawn_id),
+            str(config.launch.spawn_id),
             harness_id=config.harness_id.value,
             model=spec.model,
             agent=spec.agent_name,
@@ -1054,7 +1054,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = dict(config.child_env)
-        launch = config.resolve_launch()
+        launch = config.launch
         self._stderr_log_path = launch.stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()

@@ -611,7 +611,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(tmp_path, spawn_id),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,

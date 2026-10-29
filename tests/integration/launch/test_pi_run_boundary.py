@@ -602,7 +602,13 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
     observed = {**expected, "session_id": "wrong-entry"}
     error = NativeEntryMismatch(NativeKeyFields(**expected), NativeKeyFields(**observed))
     if trigger == "launch-failure":
-        await finalize_launch_failure(ctx.runtime_root, root, run.spawn_id, error)
+        await finalize_launch_failure(
+            ctx.runtime_root,
+            root,
+            run.spawn_id,
+            error,
+            launch=launch_paths(ctx.runtime_root, run.spawn_id),
+        )
     else:
         from meridian.lib.core.native_identity import PostExit
         from meridian.lib.launch.session_scope import SessionAttempt

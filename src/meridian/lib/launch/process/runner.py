@@ -761,7 +761,7 @@ def run_harness_process(
     startup_attempt_id = uuid.uuid4().hex
     # The session's first event names the spawn that runs it. A crash between this
     # reservation and the row write leaves a link to no row, which readers skip.
-    reserved_spawn_id = spawn_store.reserve_spawn_id(runtime_root)
+    reserved_spawn_id = spawn_store.reserve_launch(runtime_root).spawn_id
     try:
         with LaunchSlot() as launch_lock, session_scope(
             runtime_root=runtime_root,
@@ -796,7 +796,7 @@ def run_harness_process(
                     is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
-                primary_spawn_id = SpawnId(
+                launch = (
                     lifecycle_service.start(
                         SpawnReservation(
                             chat_id=chat_id,
@@ -824,8 +824,8 @@ def run_harness_process(
                 # The start event already names the spawn; the spawn's history ID only
                 # exists once its row is written, and the session listing matches
                 # archived primaries to their session by it.
+                primary_spawn_id = launch.spawn_id
                 update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
-                launch = LaunchPaths.for_launch(runtime_root, primary_spawn_id)
                 lifecycle = LifecycleLog.for_launch(launch)
                 forked_session_id: str | None = None
                 if should_fork:
@@ -868,7 +868,7 @@ def run_harness_process(
                 runtime_context = bind_launch_context(
                     prepared=prepared,
                     bindings=RuntimeBindings(
-                        spawn_id=str(primary_spawn_id),
+                        launch=launch,
                         runtime_work_id=attached_work_id,
                         forked_harness_session_id=forked_session_id,
                         chat_id=chat_id,

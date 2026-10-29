@@ -55,7 +55,7 @@ def _start_test_spawn(
             prompt="hello",
             spawn_id=spawn_id,
             status=resolved_status,
-        )
+        ).spawn_id
     )
     if status == "succeeded":
         finalize_spawn(runtime_root, resolved_spawn_id, "succeeded", 0, origin="runner")

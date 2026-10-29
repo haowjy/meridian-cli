@@ -43,7 +43,7 @@ def _build_config(
 ) -> ConnectionConfig:
     pi_session_role = "spawned" if harness_id is HarnessId.PI else None
     return ConnectionConfig(
-        spawn_id=spawn_id,
+        launch=launch_paths(resolve_runtime_paths(project_root).root_dir, spawn_id),
         harness_id=harness_id,
         prompt="hello",
         control_root=project_root,
@@ -198,7 +198,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
 
         async def stop(
@@ -248,7 +248,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
     observed: list[RawHarnessEvent] = []
     await manager.start_spawn(
@@ -366,7 +366,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     reaped: list[tuple[str, str]] = []
 
     def _record_reap(runtime_root_arg: Path, record: Any, *, reason: str) -> list[Any]:
@@ -536,7 +536,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self.state = "connected"
 
         async def stop(
@@ -597,7 +597,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         prompt="hello",
         launch_mode="foreground",
         status="running",
-    )
+    ).spawn_id
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
     connection = cast(
         "Any",

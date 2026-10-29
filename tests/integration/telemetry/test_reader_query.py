@@ -237,7 +237,7 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
                 status="running",
             ),
             launch_lock=launch_lock_a,
-        )
+        ).spawn_id
         spawn_b = service_b.start(
             SpawnReservation(
                 chat_id="chat-b",
@@ -253,7 +253,7 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
                 status="running",
             ),
             launch_lock=launch_lock_b,
-        )
+        ).spawn_id
         assert spawn_a == "p1"
         assert spawn_b == "p1"
         monkeypatch.setattr("meridian.lib.telemetry.status.is_process_alive", lambda pid: False)

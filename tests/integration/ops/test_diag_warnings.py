@@ -62,7 +62,7 @@ def _seed_active_spawn(
         prompt="running",
         started_at=started_at,
         status=status,
-    )
+    ).spawn_id
     if with_launch_lock:
         (runtime_root / "spawns" / str(spawn_id) / "launch.lock").touch()
     return str(spawn_id)

@@ -125,7 +125,7 @@ class _ReportThenHangConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         self.state = "connected"
 
@@ -245,14 +245,14 @@ class _OpenCodeTerminalWithScopeConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         current_scope = self._scope_snapshot
         assert current_scope is not None
         self._scope_snapshot = ProcessScopeSnapshot(
             scope_id=current_scope.scope_id,
             owner_policy=current_scope.owner_policy,
-            owner_id=str(config.spawn_id),
+            owner_id=str(config.launch.spawn_id),
             role=current_scope.role,
             containment=current_scope.containment,
             root_pid=current_scope.root_pid,
@@ -371,7 +371,7 @@ class _ResidentDeadlineConnection:
         _ResidentDeadlineConnection.resident_deadlines.append(
             config.resident_deadline_seconds
         )
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self.state = "connected"
 
     async def stop(

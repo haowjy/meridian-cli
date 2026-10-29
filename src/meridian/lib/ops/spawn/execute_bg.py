@@ -22,7 +22,7 @@ from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import adopt_handoff, take_handoff_fd
-from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -101,7 +101,7 @@ def _build_background_worker_command(
 
 async def _execute_existing_spawn(
     *,
-    spawn_id: SpawnId,
+    launch: LaunchPaths,
     project_paths: Any,
     launch_request: BackgroundWorkerLaunchRequest,
     sink: Any | None = None,
@@ -109,6 +109,7 @@ async def _execute_existing_spawn(
     prepared: RuntimeWriteContext,
     runtime_root: Path,
 ) -> int:
+    spawn_id = launch.spawn_id
     resolved_context = runtime_context(ctx)
     runtime = OperationRuntime.from_prepared(
         prepared,
@@ -130,6 +131,7 @@ async def _execute_existing_spawn(
             project_paths.project_root,
             spawn_id,
             "Missing harness",
+            launch=launch,
         )
         return 1
 
@@ -151,6 +153,7 @@ async def _execute_existing_spawn(
 
     return await launch_prepared_spawn(
         spawn=spawn,
+        launch=launch,
         request=request.model_copy(
             update={
                 "model": resolved_model,
@@ -195,7 +198,7 @@ def _background_worker_main(
     # Bootstrap and child context derive their runtime from the argv authority.
     os.environ["_MERIDIAN_RUNTIME_DIR"] = str(runtime_root)
     resolved_context = runtime_context(ctx)
-    launch_lock = adopt_handoff(handoff_fd, resolve_spawn_dir(runtime_root, spawn_id))
+    launch_lock = adopt_handoff(handoff_fd, runtime_root, spawn_id)
     with launch_lock:
         prepared = prepare_for_runtime_write(project_root)
         project_paths = resolve_project_config_paths(project_root=prepared.project_root)
@@ -220,6 +223,7 @@ def _background_worker_main(
                     project_root,
                     spawn_id,
                     error,
+                    launch=launch,
                 )
                 logger.error(
                     "Failed to load background worker request.",
@@ -231,7 +235,7 @@ def _background_worker_main(
 
             return asyncio.run(
                 _execute_existing_spawn(
-                    spawn_id=spawn_id,
+                    launch=launch,
                     project_paths=project_paths,
                     launch_request=launch_request,
                     ctx=resolved_context,
@@ -245,6 +249,7 @@ def _background_worker_main(
                 project_root,
                 spawn_id,
                 "background_worker_crash",
+                launch=launch,
             )
             logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
             return 1

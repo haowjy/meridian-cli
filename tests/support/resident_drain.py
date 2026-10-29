@@ -113,7 +113,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._state = "connected"
 
     async def stop(
@@ -286,7 +286,7 @@ async def start_manager(
     )
     await manager.start_spawn(
         ConnectionConfig(
-            spawn_id=spawn_id,
+            launch=launch_paths(tmp_path, spawn_id),
             harness_id=connection.harness_id,
             prompt="hello",
             control_root=tmp_path,

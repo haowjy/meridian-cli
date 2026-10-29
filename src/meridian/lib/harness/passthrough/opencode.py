@@ -84,7 +84,6 @@ class OpenCodePassthrough:
         env: dict[str, str],
     ) -> ConnectionConfig:
         return ConnectionConfig(
-            spawn_id=launch.spawn_id,
             launch=launch,
             harness_id=HarnessId.OPENCODE,
             prompt=spec.prompt,

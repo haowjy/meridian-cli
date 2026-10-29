@@ -54,7 +54,6 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
         with pytest.raises(RuntimeError, match="injected registration failure"):
             await managed_stdio.launch_managed_stdio(
                 config=ConnectionConfig(
-                    spawn_id=spawn_id,
                     harness_id=HarnessId.PI,
                     prompt="test",
                     control_root=tmp_path,
@@ -108,7 +107,6 @@ async def test_managed_stdio_cleans_surviving_group_after_leader_exit(tmp_path: 
     )
     child = await managed_stdio.launch_managed_stdio(
         config=ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="test",
             control_root=tmp_path,

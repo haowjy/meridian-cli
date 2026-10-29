@@ -53,7 +53,7 @@ async def dispatch_start(
 
     if config.harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
         request_handler = PermissionBroker(
-            launch=config.resolve_launch(),
+            launch=config.launch,
             event_sink=_runtime_event_sink,
             auto_reject_runtime_requests=True,
             harness_id=config.harness_id.value,

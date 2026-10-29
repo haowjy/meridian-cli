@@ -53,7 +53,7 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         agent="",
         kind="primary",
         prompt="test",
-    )
+    ).spawn_id
     session_store.start_session(
         tmp_path,
         "pi",

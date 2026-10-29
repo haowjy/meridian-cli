@@ -80,10 +80,10 @@ class _ClaudeSeedPersistenceConnection:
         return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         self._project_root = config.control_root
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         assert row.harness_session_id == spec.native_identity.session_id
@@ -159,9 +159,9 @@ class _UnboundOpenCodeConnection:
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         self.state = "connected"
@@ -235,11 +235,11 @@ class _OpenCodeConnectSessionConnection:
         plan = spec.native_identity
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
-        self._spawn_id = config.spawn_id
+        self._spawn_id = config.launch.spawn_id
         if config.session_id_observer is not None:
             config.session_id_observer(self._session_id)
         runtime_root = resolve_project_runtime_root_for_write(config.control_root)
-        row = spawn_store.get_spawn(runtime_root, config.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, config.launch.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
         self.state = "connected"

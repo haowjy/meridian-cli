@@ -110,7 +110,7 @@ def _assert_legacy_untouched(root: Path, before: dict[str, bytes]) -> None:
 def _finished_spawn(root: Path) -> str:
     key = spawn_store.start_spawn(
         root, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     return key
 
@@ -157,7 +157,7 @@ def test_unreleased_projection_rebuilds_in_current_namespace(
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
 
     index = HistoryIndex(tmp_path)
     assert [row.id for row in index.spawns()] == [key]
@@ -207,7 +207,7 @@ def test_active_rows_and_session_log_follow_writers_that_mark_another_queue(
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
-    )
+    ).spawn_id
     session_store.start_session(
         tmp_path, harness="codex", harness_session_id="", model="test", chat_id="c9"
     )

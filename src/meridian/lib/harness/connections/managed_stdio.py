@@ -174,7 +174,7 @@ async def launch_managed_stdio(
 ) -> ManagedStdioProcess:
     """Launch and register a spawn-lifetime stdio child process."""
 
-    stderr_log_path = config.resolve_launch().stderr_log
+    stderr_log_path = config.launch.stderr_log
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
     gate = LaunchGate(grace_seconds=kill_grace_seconds)
@@ -204,13 +204,12 @@ async def launch_managed_stdio(
             process.pid, kill_and_reap=lambda: kill_and_reap_unowned_process(process)
         )
         scope_handle = await register_spawn_owned_process(
-            launch=config.resolve_launch(),
+            launch=config.launch,
             process=process,
             scope_id="stdio",
             role="harness_stdio",
             identity=identity,
             gate=gate,
-            persist=config.launch is not None,
         )
         gate.open()
     except BaseException:

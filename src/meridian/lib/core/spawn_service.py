@@ -393,10 +393,11 @@ class SpawnApplicationService:
 
         effective_work_id = (payload.work_id or "").strip() or None
 
-        final_spawn_id = await asyncio.to_thread(
-            spawn_store.reserve_spawn_id,
+        reserved_launch = await asyncio.to_thread(
+            spawn_store.reserve_launch,
             self._runtime_root,
         )
+        final_spawn_id = reserved_launch.spawn_id
         config_env = _config_snapshot_env(payload.runtime.config_snapshot)
         request_env = dict(prepared_surface.request.env)
         resolved_env = {**config_env, **request_env}
@@ -404,7 +405,7 @@ class SpawnApplicationService:
             bind_spawn_launch_context,
             prepared=prepared_surface,
             bindings=RuntimeBindings(
-                spawn_id=str(final_spawn_id),
+                launch=reserved_launch,
                 runtime_work_id=effective_work_id,
                 dry_run=False,
                 plan_overrides=resolved_env,
@@ -439,7 +440,7 @@ class SpawnApplicationService:
             skills=resolved_request.skills,
             skill_paths=resolved_request.skill_paths,
         )
-        persisted_spawn_id = SpawnId(
+        published_launch = (
             await asyncio.to_thread(
                 self._lifecycle.start,
                 SpawnReservation(
@@ -465,13 +466,13 @@ class SpawnApplicationService:
                 launch_lock=launch_lock,
             )
         )
-        if persisted_spawn_id != final_spawn_id:
+        if published_launch != reserved_launch:
             raise RuntimeError(
-                f"Reserved spawn ID {final_spawn_id} but persisted {persisted_spawn_id}"
+                f"Reserved launch {reserved_launch} but published {published_launch}"
             )
         # The spawn dir exists only now, and the bound launch may reference files in it
         # (``system-prompt.md``), so a prepared spawn is launchable without caller help.
-        launch = LaunchPaths.for_launch(self._runtime_root, persisted_spawn_id)
+        launch = published_launch
         write_projection_artifacts(
             launch=launch,
             launch_context=launch_ctx,
@@ -512,7 +513,6 @@ class SpawnApplicationService:
                 reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             )
         connection_config = ConnectionConfig(
-            spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.binding.run_params.prompt,
             control_root=launch_ctx.control_root,

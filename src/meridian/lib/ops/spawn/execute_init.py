@@ -17,7 +17,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import ModelId
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
@@ -72,9 +72,13 @@ class _SpawnContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn: Spawn
-    runtime_root: Path
+    launch: LaunchPaths
     current_depth: int
     work_id: str | None = None
+
+    @property
+    def runtime_root(self) -> Path:
+        return self.launch.runtime_root
 
 
 def _emit_subrun_event(
@@ -234,16 +238,16 @@ def _reserve_spawn(
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
-    spawn_id = service.reserve(reservation, launch_lock=launch_lock)
+    launch = service.reserve(reservation, launch_lock=launch_lock)
     spawn = Spawn(
-        spawn_id=SpawnId(spawn_id),
+        spawn_id=launch.spawn_id,
         prompt=reservation.prompt,
         model=ModelId(reservation.session_metadata.model or ""),
         status=reservation.status,
     )
     return _SpawnContext(
         spawn=spawn,
-        runtime_root=runtime_root,
+        launch=launch,
         current_depth=resolved_context.depth,
         work_id=reservation.work_id,
     )

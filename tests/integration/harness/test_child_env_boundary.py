@@ -48,7 +48,9 @@ def _write_recording_harness(path: Path, *, harness: HarnessId) -> None:
     )
     version_output = "pi 1.1.0" if harness is HarnessId.PI else "2.1.0"
     help_branch = (
-        f"if '--help' in sys.argv[1:]:\n    print({_PI_HELP!r})\n    raise SystemExit(0)\n"
+        "if '--help' in sys.argv[1:]:\n"
+        f"    print({_PI_HELP!r})\n"
+        "    raise SystemExit(0)\n"
         if harness is HarnessId.PI
         else ""
     )
@@ -121,7 +123,6 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
     launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     await connection.start(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
             prompt="hello",
             control_root=tmp_path,
@@ -217,7 +218,6 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
     launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
     await connection.start(
         ConnectionConfig(
-            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,

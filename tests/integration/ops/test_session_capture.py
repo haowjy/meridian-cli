@@ -20,16 +20,13 @@ from meridian.lib.ops.session_target import resolve_capture_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.native_snapshot import TranscriptValidation, read_snapshot
-from meridian.lib.state.paths import (
-    NATIVE_SNAPSHOT_FILENAME,
-    resolve_project_runtime_root_for_write,
-)
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
 from tests.support.launch_paths import launch_paths
 
 
 def _snapshot_path(root: Path, key: str) -> Path:
-    return root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME
+    return root / "spawns" / key / LAUNCH_FILE_NAMES.native_snapshot
 
 
 def _assert_sealed_snapshot(path: Path, *, contains: str, excludes: str | None = None) -> None:
@@ -85,7 +82,7 @@ def test_stop_maintenance_captures_completed_spawn_with_another_chat(
             agent="coder",
             kind="primary",
             harness_session_id=native_id,
-        )
+        ).spawn_id
         keys.append(key)
         session_store.start_session(
             root,
@@ -142,7 +139,7 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
         agent="coder",
         kind="primary",
         harness_session_id=native_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
@@ -228,7 +225,7 @@ def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, m
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     with pytest.raises(NativeCaptureDeferred, match="active owner") as deferred:
         materialize_native_history(project, root, key)
     assert deferred.value.owner == f"spawn {owner}"
@@ -275,7 +272,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
         prompt="before crash",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     process = multiprocessing.get_context("spawn").Process(
         target=_start_session_then_abandon,
         args=(root, native_root, str(old_run)),
@@ -302,7 +299,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
         prompt="after crash",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         "pi",
@@ -377,7 +374,7 @@ def test_stop_capture_deferral_does_not_skip_automatic_archive(
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "true")
     monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", str(tmp_path / "archives"))
 
@@ -412,7 +409,7 @@ def test_capture_defers_for_live_observer_of_native_chat(tmp_path: Path, monkeyp
         prompt="observing",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         "pi",
@@ -477,7 +474,7 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
         prompt="continued",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     # Its native binding is only in its exact session generation, not state.json.
     session_store.start_session(
         root,
@@ -560,7 +557,7 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         model="test",
         agent="coder",
         harness_session_id="exact-native" if binding == "state" else None,
-    )
+    ).spawn_id
     session_store.start_session(
         root, "pi", "", "test", chat_id="c2", kind="primary", spawn_id=owner
     )
@@ -618,7 +615,7 @@ def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, m
         prompt="child",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.start_session(
         root,
@@ -685,7 +682,7 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
         prompt="headless prompt",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.start_session(
         root,
@@ -750,7 +747,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
         prompt="child",
         model="test",
         agent="coder",
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, legacy_key, status="succeeded", exit_code=0, origin="runner")
     legacy_state = spawn_store.get_spawn(root, legacy_key)
     assert legacy_state is not None and legacy_state.history_id is not None
@@ -832,7 +829,7 @@ def test_capture_conflicting_owner_facts_are_conservative_without_cross_harness_
         model="test",
         agent="coder",
         harness_session_id="exact-native",
-    )
+    ).spawn_id
     session_store.start_session(
         root,
         linked_harness,
@@ -1113,7 +1110,7 @@ def _opencode_capture_fixture(
         agent="coder",
         kind="primary",
         harness_session_id=session_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key
@@ -1196,7 +1193,7 @@ def _opencode_v2_capture_fixture(
         agent="coder",
         kind="primary",
         harness_session_id=session_id,
-    )
+    ).spawn_id
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, "c1")
     return project, root, key

@@ -631,10 +631,10 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
         canonical_transcript_path,
         published_snapshot_state,
     )
-    from meridian.lib.state.paths import NATIVE_SNAPSHOT_FILENAME
+    from meridian.lib.state.paths import LAUNCH_FILE_NAMES
 
     transcript = canonical_transcript_path(LaunchPaths.for_row(root, candidate))
-    if transcript is not None and transcript.name == NATIVE_SNAPSHOT_FILENAME:
+    if transcript is not None and transcript.name == LAUNCH_FILE_NAMES.native_snapshot:
         state = published_snapshot_state(transcript, history_id=candidate.history_id)
         if state == "complete":
             return True

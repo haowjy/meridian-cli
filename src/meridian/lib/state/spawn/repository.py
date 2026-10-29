@@ -21,7 +21,7 @@ from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import STARTING_PROMPT_FILENAME
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -153,10 +153,6 @@ def _state_path(spawns_dir: Path, spawn_id: str) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "state.json"
 
 
-def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
-    return _spawn_dir(spawns_dir, spawn_id) / STARTING_PROMPT_FILENAME
-
-
 def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
     """Return the stable external-writer lock for one published spawn."""
     return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
@@ -187,12 +183,11 @@ def stored_state_to_record(
     )
 
 
-def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
-    """Read a spawn's starting prompt body, if present."""
+def read_prompt(launch: LaunchPaths) -> str | None:
+    """Read a launch's starting prompt body, if present."""
 
-    path = _prompt_path(spawns_dir, spawn_id)
     try:
-        return path.read_text(encoding="utf-8")
+        return launch.starting_prompt.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
 
@@ -269,7 +264,9 @@ def read_state(
     stored = _read_stored_state(spawns_dir, spawn_id)
     if stored is None:
         return None
-    prompt = read_prompt(spawns_dir, spawn_id) if include_prompt else None
+    prompt = (
+        read_prompt(LaunchPaths.for_row(spawns_dir.parent, stored)) if include_prompt else None
+    )
     return stored_state_to_record(stored, prompt=prompt)
 
 

@@ -180,7 +180,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             host=host,
             port=port,
         )
-        launch = config.resolve_launch()
+        launch = config.launch
         self._stderr_log_path = launch.stderr_log
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()

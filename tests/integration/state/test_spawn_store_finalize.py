@@ -45,7 +45,7 @@ def _start_test_spawn(runtime_root: Path) -> str:
             agent="coder",
             harness="codex",
             prompt="hello",
-        )
+        ).spawn_id
     )
 
 def test_finalize_propagates_concurrent_disappearance(
@@ -130,7 +130,7 @@ def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> 
                 harness="codex",
                 prompt="hello",
                 status=initial_status,
-            )
+            ).spawn_id
         )
         if start_status in TERMINAL_SPAWN_STATUSES:
             finalize_spawn(

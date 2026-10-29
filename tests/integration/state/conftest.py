@@ -52,7 +52,7 @@ def _create_spawn(
         status=initial_status,
         runner_pid=runner_pid,
         started_at=started_at,
-    )
+    ).spawn_id
     if status in {"succeeded", "failed", "cancelled", "timed_out"}:
         spawn_store.finalize_spawn(
             runtime_root,

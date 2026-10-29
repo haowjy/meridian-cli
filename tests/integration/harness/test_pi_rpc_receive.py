@@ -64,7 +64,6 @@ async def rpc_process(
         timing=timing or PiRpcTimingPolicy(abort_grace_seconds=0.05, kill_grace_seconds=0.05)
     )
     config = ConnectionConfig(
-        spawn_id=spawn_id,
         harness_id=HarnessId.PI,
         prompt=prompt,
         control_root=root,
@@ -265,7 +264,6 @@ async def test_live_budget_stops_on_sum_of_pi_message_costs(tmp_path: Path) -> N
                     launch_mode="foreground",
                     manager=manager,
                     config=ConnectionConfig(
-                        spawn_id=spawn_id,
                         harness_id=HarnessId.PI,
                         prompt="FIRST",
                         control_root=tmp_path,

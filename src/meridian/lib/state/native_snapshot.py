@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.state.history_codec import TranscriptHeader
-from meridian.lib.state.paths import HISTORY_FILENAME, NATIVE_SNAPSHOT_FILENAME, LaunchPaths
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 from meridian.lib.utils.json_shapes import json_object
 
 SNAPSHOT_RECORD = "meridian.native.snapshot"
@@ -441,10 +441,10 @@ def canonical_transcript_path(launch: LaunchPaths) -> Path | None:
 def canonical_transcript_member(names: Iterable[str]) -> str:
     """Select the authoritative transcript member name from a member set."""
     name_set = set(names)
-    if NATIVE_SNAPSHOT_FILENAME in name_set:
-        return NATIVE_SNAPSHOT_FILENAME
-    if HISTORY_FILENAME in name_set:
-        return HISTORY_FILENAME
+    if LAUNCH_FILE_NAMES.native_snapshot in name_set:
+        return LAUNCH_FILE_NAMES.native_snapshot
+    if LAUNCH_FILE_NAMES.history in name_set:
+        return LAUNCH_FILE_NAMES.history
     raise ValueError("A retained record requires a canonical transcript member")
 
 

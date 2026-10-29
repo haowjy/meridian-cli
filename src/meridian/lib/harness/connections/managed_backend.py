@@ -56,7 +56,6 @@ async def register_spawn_owned_process(
     role: str,
     identity: ProcessIdentity,
     gate: LaunchGate,
-    persist: bool = True,
 ) -> ScopedProcessHandle:
     """Persist crash-recovery ownership for an already launched child process."""
 
@@ -72,8 +71,7 @@ async def register_spawn_owned_process(
         gate=gate,
     )
     try:
-        if persist:
-            record_scope(launch, scope_handle.snapshot)
+        record_scope(launch, scope_handle.snapshot)
     except BaseException:
         await reap_on_ownership_transfer_failure(
             lambda: scope_handle.terminate(reason="scope_registration_failed")

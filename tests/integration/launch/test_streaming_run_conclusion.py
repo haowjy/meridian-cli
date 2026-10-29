@@ -29,7 +29,6 @@ _PERMISSION_ENVELOPE_REPORT = (
     '"type":"permission.asked"}\n'
 )
 
-
 def _seed_report(launch: LaunchPaths, *, report_text: str) -> None:
     launch.dir.mkdir(parents=True, exist_ok=True)
     launch.report.write_text(report_text, encoding="utf-8")

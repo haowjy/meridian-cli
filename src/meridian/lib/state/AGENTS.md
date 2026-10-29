@@ -41,18 +41,24 @@ against a recreated inode (split-brain).
   prompts, `primary_meta.json`, `process_scopes.json`, signals, `control_actions.jsonl`,
   debug and runner logs, and the harness boundary files only through `LaunchPaths`
   (`paths.py`). It is the launch's identity (`runtime_root`, `spawn_id`, `n`) plus its
-  files, and only `paths.py` constructs it (`for_row(runtime_root, row)` for an existing
-  launch, `for_launch` for the owner about to publish one). The launch-lock holder builds
-  it once and hands it down (launch context, `ConnectionConfig.launch`,
-  `PreparedSpawn.launch`); read surfaces build it from the row they hold; an external
-  ID-only command reads the row once (`spawn_store.read_launch_paths`). Functions take a
-  `LaunchPaths`, never a `log_dir`/`spawn_dir` path, and never recover the runtime root or
-  spawn ID by slicing a directory path. Spawn-level files (`state.json`, `launch.lock`,
+  files, and only `paths.py` constructs it: `for_row(runtime_root, row)` for a published
+  row, `reserved` (called only by `spawn_store`, which assigns `n`) before publication.
+  The code that publishes a row returns the launch it wrote (`spawn_store.reserve_launch`,
+  `start_spawn`, `LifecycleService.start`) and callers carry it (`RuntimeBindings.launch`,
+  `ConnectionConfig.launch`, `PreparedSpawn.launch`, `_SpawnContext.launch`); read
+  surfaces build it from the row they hold. A process that adopts a launch it did not
+  publish and holds only the ID reads the row once (`spawn_store.read_launch_paths`: the
+  background worker). Functions take a `LaunchPaths`, never a `log_dir`/`spawn_dir` path,
+  and never recover the runtime root or spawn ID from a launch directory path. Spawn-level
+  files (`state.json`, `launch.lock`,
   `scope.json`, `observed-spawns.json`, `reaper_cleanup_claim.json`, the ambient `work/`
   directory, the control socket) stay joined to `resolve_spawn_dir`: nothing a user sees
-  resets on a continue. `meridian.dev.check_launch_paths` (fast gate) rejects a per-launch
-  file name written as a literal (or a literal ending in one) and any `LaunchPaths(...)`
-  call outside `paths.py`.
+  resets on a continue; code that slices a *spawn* directory (retention) stays valid.
+  Per-launch name constants are private to `paths.py`; code that recognizes a name (not
+  reaches a file) uses `LAUNCH_FILE_NAMES`. `meridian.dev.check_launch_paths` (fast gate)
+  rejects a per-launch file name written as a literal (or a literal ending in one), a
+  `LaunchPaths(...)` construction, alias or `replace` copy outside `paths.py`, a `reserved`
+  call outside `spawn_store`, and an import of a private `paths.py` name.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

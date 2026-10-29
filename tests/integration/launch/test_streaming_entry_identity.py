@@ -53,7 +53,7 @@ async def test_streaming_initial_identity(
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             nonlocal expected_id, observed_id, expected_store
-            self._spawn_id = config.spawn_id
+            self._spawn_id = config.launch.spawn_id
             self._project_root = config.control_root
             self.state = "connected"
             assert spec.native_identity is not None

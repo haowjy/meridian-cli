@@ -51,7 +51,7 @@ def _create_primary_spawn(tmp_path: Path, spawn_id: str = "p1") -> tuple[Path, s
         runner_pid=111,
         started_at=_OLD_STARTED_AT,
         status="running",
-    )
+    ).spawn_id
     return runtime_root, str(created)
 
 

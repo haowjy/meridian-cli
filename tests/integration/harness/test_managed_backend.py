@@ -212,7 +212,6 @@ async def test_missing_binary_uses_launch_path_and_keeps_typed_error(
         else:
             await launch_managed_stdio(
                 config=ConnectionConfig(
-                    spawn_id=spawn_id,
                     harness_id=HarnessId.PI,
                     prompt="",
                     control_root=tmp_path,

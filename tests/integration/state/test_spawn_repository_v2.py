@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
@@ -317,7 +318,7 @@ def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     restored = read_state(spawns_dir, "p1")
 
     assert restored == record
-    assert read_prompt(spawns_dir, "p1") == "hello world"
+    assert read_prompt(LaunchPaths.for_row(spawns_dir.parent, record)) == "hello world"
 
 
 def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
@@ -428,7 +429,7 @@ def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: 
         prompt="summarize this task please",
         desc=None,
         goal=None,
-    )
+    ).spawn_id
 
     state_text = (
         RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "state.json"
