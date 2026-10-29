@@ -24,12 +24,13 @@ def _stopped_chat(runtime_root: Path) -> str:
     return chat_id
 
 
-def _write_v4_row(
+def _write_quarantined_row(
     runtime_root: Path,
     spawn_id: str,
     *,
     current_chat_id: str | None,
     launch_lock: LaunchSlot,
+    version: int = 3,
 ) -> None:
     spawn_store.start_spawn(
         runtime_root,
@@ -43,7 +44,9 @@ def _write_v4_row(
         launch_lock=launch_lock,
     )
     state_path = runtime_root / "spawns" / spawn_id / "state.json"
-    payload: dict[str, object] = {"v": 4, "id": spawn_id}
+    payload: dict[str, object] = {"v": version, "id": spawn_id}
+    if version == 3:
+        payload["unknown_field"] = True  # Fails v3 validation without being a newer format.
     if current_chat_id is not None:
         payload["current_chat_id"] = current_chat_id
     atomic_write_text(
@@ -67,7 +70,7 @@ def test_quarantined_row_does_not_block_resume(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
-        _write_v4_row(
+        _write_quarantined_row(
             runtime_root,
             "p1",
             current_chat_id="c-other",
@@ -91,7 +94,7 @@ def test_quarantined_row_for_same_chat_with_held_lock_blocks_resume(tmp_path: Pa
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
-        _write_v4_row(
+        _write_quarantined_row(
             runtime_root,
             "p1",
             current_chat_id=chat_id,
@@ -102,15 +105,32 @@ def test_quarantined_row_for_same_chat_with_held_lock_blocks_resume(tmp_path: Pa
             _resume(runtime_root, chat_id)
 
 
-def test_quarantined_row_for_same_chat_with_free_lock_allows_resume(tmp_path: Path) -> None:
+def test_newer_format_row_for_same_chat_with_held_lock_blocks_resume(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
-        _write_v4_row(
+        _write_quarantined_row(
             runtime_root,
             "p1",
             current_chat_id=chat_id,
             launch_lock=launch_lock,
+            version=4,
+        )
+
+        with pytest.raises(ValueError, match="written by a newer Meridian"):
+            _resume(runtime_root, chat_id)
+
+
+def test_newer_format_row_for_same_chat_with_free_lock_allows_resume(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    chat_id = _stopped_chat(runtime_root)
+    with LaunchSlot() as launch_lock:
+        _write_quarantined_row(
+            runtime_root,
+            "p1",
+            current_chat_id=chat_id,
+            launch_lock=launch_lock,
+            version=4,
         )
 
     _resume(runtime_root, chat_id)
@@ -120,7 +140,7 @@ def test_quarantined_chatless_row_with_free_lock_allows_resume(tmp_path: Path) -
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
-        _write_v4_row(
+        _write_quarantined_row(
             runtime_root,
             "p1",
             current_chat_id=None,
@@ -130,15 +150,31 @@ def test_quarantined_chatless_row_with_free_lock_allows_resume(tmp_path: Path) -
     _resume(runtime_root, chat_id)
 
 
-def test_quarantined_chatless_row_with_held_lock_blocks_resume(tmp_path: Path) -> None:
+def test_newer_format_chatless_row_with_held_lock_allows_resume(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     chat_id = _stopped_chat(runtime_root)
     with LaunchSlot() as launch_lock:
-        _write_v4_row(
+        _write_quarantined_row(
             runtime_root,
             "p1",
             current_chat_id=None,
             launch_lock=launch_lock,
+            version=4,
+        )
+
+        _resume(runtime_root, chat_id)
+
+
+def test_invalid_v3_chatless_row_with_held_lock_blocks_resume(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    chat_id = _stopped_chat(runtime_root)
+    with LaunchSlot() as launch_lock:
+        _write_quarantined_row(
+            runtime_root,
+            "p1",
+            current_chat_id=None,
+            launch_lock=launch_lock,
+            version=3,
         )
 
         with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):

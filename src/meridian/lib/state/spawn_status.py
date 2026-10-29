@@ -191,6 +191,9 @@ def quarantine_may_observe(
 
     lock_path = runtime_root / "spawns" / report.spawn_id / "launch.lock"
     with shared_hold(lock_path) as lock_free:
+        if report.newer_version is not None:
+            # A later build's runner holds the lock for its whole life; a free lock is no observer.
+            return chat_id in report.newer_chat_ids and lock_free is not True
         current_chat_id = read_quarantined_chat_id(report)
         if current_chat_id is QuarantinedChatIdStatus.UNREADABLE:
             return True

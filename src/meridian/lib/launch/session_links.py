@@ -35,6 +35,7 @@ import structlog
 from meridian.lib.platform.atomic import atomic_symlink
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import RuntimePaths, resolve_ambient_work_dir
+from meridian.lib.state.spawn.repository import SpawnStateNewer
 from meridian.lib.state.spawn_scope import read_spawn_scope
 
 logger = structlog.get_logger(__name__)
@@ -100,11 +101,21 @@ def execution_of(runtime_root: Path, *, chat_id: str, spawn_id: str | None) -> E
     """
 
     chat = chat_id.strip()
-    row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
-    if row is None or chat not in (row.chat_id, row.continue_chat_id):
-        record = session_store.chat_record(runtime_root, chat)
-        named = (record.spawn_id or "").strip() if record is not None else ""
-        row = spawn_store.get_spawn(runtime_root, named) if named else None
+    try:
+        row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
+        if row is None or chat not in (row.chat_id, row.continue_chat_id):
+            record = session_store.chat_record(runtime_root, chat)
+            named = (record.spawn_id or "").strip() if record is not None else ""
+            row = spawn_store.get_spawn(runtime_root, named) if named else None
+    except SpawnStateNewer as exc:
+        # A newer build's row: this build reads only its chat fields, as the v3 branch does.
+        report = exc.report
+        entry = (report.chat_id or "").strip() or chat
+        return Execution(
+            spawn_id=report.spawn_id,
+            entry_chat=entry,
+            chats=_chats(chat, entry, report.current_chat_id or entry),
+        )
     if row is None:
         return Execution(spawn_id="", entry_chat=chat, chats=(chat,))
     entry = (row.chat_id or "").strip() or chat

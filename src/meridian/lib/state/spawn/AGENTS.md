@@ -25,7 +25,10 @@ substrate under `spawn_store.py`. Locking, lock order, and the mutation seam:
   it, active and `unknown` rows forbid it. Branch on `record.terminal`.
 - The persisted model is `extra="forbid"`; validation failures become `SpawnStateQuarantined`
   reports. Collection reads return `SpawnScan` with separate `records` and `quarantines`;
-  callers must handle both.
+  callers must handle both. A file whose `v` is an int above `MAX_STATE_VERSION` raises `SpawnStateNewer` (a `SpawnStateQuarantined`;
+  decided once in `_read_stored_state`, chat set on the report): the history index skips it with
+  a warning, `start_spawn` ignores it as a parent, and the chat observer limits it to its
+  `current_chat_id`/`chat_id` while its `launch.lock` is held. Other quarantines fail closed.
 - Terminal write authority and applicability are decided inside finalize's locked transition.
 
 [../.context/CONTEXT.md](../.context/CONTEXT.md) — atomic writes, layout, reconciliation.
