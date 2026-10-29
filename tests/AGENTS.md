@@ -28,6 +28,14 @@ under test with no deadline of its own (the 60 s pytest-timeout, `timeout_method
 is the hang guard); no fixed sleep before an assertion; no path shared between tests. A
 flake can be a product bug: check the product before blaming the test.
 
+**A rule about the source tree is a lint, not a test.** A check that reads files under
+`src/` and asserts a structural property of them (import layering, raw file writes, an
+unregistered `MERIDIAN_*` literal) runs no behavior, so it belongs in
+`src/meridian/dev/lints.py` and the preflight `lints` step, not here. Reserving tests for
+behavior keeps the suite's cost proportional to what regressions actually look like.
+`tests/unit/dev/test_lints.py` is the guard for the lints themselves; add a planted case
+there when you add a rule.
+
 ## Running
 
 ```bash
