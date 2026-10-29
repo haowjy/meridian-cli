@@ -28,6 +28,9 @@ from meridian.lib.state.spawn.legacy import (
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 from meridian.lib.utils.json_shapes import json_object
 
+# The newest ``state.json`` version this build reads; P0's newer-format check compares against it.
+MAX_STATE_VERSION = 3
+
 
 class StoredSpawnState(SpawnStateFields):
     """On-disk v3 ``state.json`` representation.
@@ -65,9 +68,15 @@ class SpawnStateQuarantineReport:
     state_path: Path
     validation_errors: tuple[object, ...]
     # Set when a later build wrote the row (``v`` above the supported version): its state
-    # version and the chats it names. None for every other quarantine.
+    # version and the two chat fields as written. None for every other quarantine.
     newer_version: int | None = None
-    newer_chat_ids: frozenset[str] = frozenset()
+    chat_id: str | None = None
+    current_chat_id: str | None = None
+
+    @property
+    def newer_chat_ids(self) -> frozenset[str]:
+        """The chats a newer row names, for observer checks that need no order."""
+        return frozenset(chat for chat in (self.chat_id, self.current_chat_id) if chat)
 
     @property
     def dogfood_row(self) -> bool:
@@ -88,10 +97,6 @@ class SpawnStateQuarantined(ValueError):
         self.report = report
         hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
         super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
-
-
-MAX_STATE_VERSION = 3
-"""Newest spawn state version this build reads; a higher `v` is quarantined as newer."""
 
 
 class SpawnStateNewer(SpawnStateQuarantined):
@@ -216,6 +221,10 @@ def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
         return None
 
 
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | None:
     path = _state_path(spawns_dir, spawn_id)
     try:
@@ -240,11 +249,8 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                             {"type": "newer_format", "loc": ("v",), "msg": f"state v{version}"},
                         ),
                         newer_version=version,
-                        newer_chat_ids=frozenset(
-                            value
-                            for value in (raw.get("current_chat_id"), raw.get("chat_id"))
-                            if isinstance(value, str)
-                        ),
+                        chat_id=_str_or_none(raw.get("chat_id")),
+                        current_chat_id=_str_or_none(raw.get("current_chat_id")),
                     )
                 )
             candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw

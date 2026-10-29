@@ -108,12 +108,13 @@ def execution_of(runtime_root: Path, *, chat_id: str, spawn_id: str | None) -> E
             named = (record.spawn_id or "").strip() if record is not None else ""
             row = spawn_store.get_spawn(runtime_root, named) if named else None
     except SpawnStateNewer as exc:
-        # A newer build's row: this build can't read its fields, only the chats it names.
+        # A newer build's row: this build reads only its chat fields, as the v3 branch does.
         report = exc.report
+        entry = (report.chat_id or "").strip() or chat
         return Execution(
             spawn_id=report.spawn_id,
-            entry_chat=chat,
-            chats=_chats(chat, *sorted(report.newer_chat_ids)),
+            entry_chat=entry,
+            chats=_chats(chat, entry, report.current_chat_id or entry),
         )
     if row is None:
         return Execution(spawn_id="", entry_chat=chat, chats=(chat,))
