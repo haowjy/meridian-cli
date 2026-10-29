@@ -45,6 +45,7 @@ from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     LaunchRef,
     OwedLaunch,
+    PriorUsage,
 )
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
@@ -165,6 +166,7 @@ def _resolve_start_metadata(
         )
     return SpawnStartMetadata(
         forked_from_history_id=metadata.forked_from_history_id,
+        usage_seed=metadata.usage_seed,
         desc=metadata.desc if metadata.desc is not None else desc,
         work_id=metadata.work_id if metadata.work_id is not None else work_id,
         goal=metadata.goal if metadata.goal is not None else goal,
@@ -446,6 +448,7 @@ def start_spawn(
             goal=launch.goal,
             claude_config_dir=claude_config_dir,
             launch_policy_snapshot=resolved_launch_policy_snapshot,
+            prior_usage=PriorUsage(harness_cumulative=start_metadata.usage_seed),
             **_launch_fields(
                 runtime_root,
                 launch,

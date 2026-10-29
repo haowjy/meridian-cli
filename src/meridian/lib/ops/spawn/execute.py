@@ -28,7 +28,7 @@ from meridian.lib.state.spawn.model import (
     LaunchMode,
 )
 
-from ..runtime import OperationRuntime, runtime_context
+from ..runtime import OperationRuntime, resolve_runtime_root, runtime_context
 from .execute_bg import (
     BackgroundWorkerLaunchRequest,
     _background_worker_main,
@@ -229,6 +229,7 @@ def _prepare_then_reserve(
         control_root=contract.control_root.as_posix(),
         task_cwd=contract.task_cwd,
         execution_cwd=contract.execution_cwd.as_posix(),
+        runtime_root=resolve_runtime_root(runtime.project_root),
         ctx=resolved_context,
     )
     logger.debug("spawn_launcher_phase", phase="reservation", launcher_pid=os.getpid())

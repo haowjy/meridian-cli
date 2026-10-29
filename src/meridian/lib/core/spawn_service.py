@@ -47,6 +47,7 @@ from meridian.lib.launch.context import (
     materialize_launch_context,
 )
 from meridian.lib.launch.env import apply_pi_bind_time_env, resolve_pi_session_role
+from meridian.lib.launch.fork import fork_usage_seed
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
@@ -427,6 +428,7 @@ class SpawnApplicationService:
         effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
         start_metadata = SpawnStartMetadata(
             forked_from_history_id=resolved_request.session.forked_from_history_id,
+            usage_seed=fork_usage_seed(self._runtime_root, resolved_request.session),
             desc=payload.desc,
             work_id=effective_work_id,
             goal=getattr(resolved_request, "goal", None),
