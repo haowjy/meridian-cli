@@ -28,6 +28,7 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -199,7 +200,7 @@ def test_sigkilled_runner_shows_failed_immediately(
         state_path = runtime_root / "spawns" / "p1" / "state.json"
         state = json.loads(state_path.read_text())
         runner_pid = int(state["runner_pid"])
-        scopes_path = runtime_root / "spawns" / "p1" / "process_scopes.json"
+        scopes_path = launch_paths(runtime_root, "p1").process_scopes
         scopes = _until(
             lambda: json.loads(scopes_path.read_text()) if scopes_path.exists() else None
         )

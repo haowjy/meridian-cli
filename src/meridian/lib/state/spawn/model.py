@@ -98,6 +98,34 @@ class LegacyRunBoundaryOutcome(RunBoundaryOutcome):
         return self
 
 
+class LaunchRef(BaseModel):
+    """Which launch of the spawn the flat row describes (``launches/<n>/``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n: int = Field(ge=1)
+
+
+class PriorUsage(BaseModel):
+    """Usage of the launches before the current one; surfaces show it plus the current launch."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    duration_secs: float = 0.0
+    total_cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class OwedLaunch(BaseModel):
+    """A background launch a continue moved past, still owed to the parent that started it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n: int = Field(ge=1)
+    parent_id: str
+
+
 class SpawnStateFields(BaseModel):
     """Fields shared by the stored and prompt-bearing state projections."""
 
@@ -147,6 +175,11 @@ class SpawnStateFields(BaseModel):
     cancel_intent: CancelIntent | None = None
     terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    # State v4 (spawn-level). ``launch`` absent is a v3 row: its launch 1 lives in the spawn
+    # directory, and the other two fields are never written for it.
+    launch: LaunchRef | None = None
+    prior_usage: PriorUsage = PriorUsage()
+    owed_launches: tuple[OwedLaunch, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -171,6 +204,30 @@ class SpawnRecord(SpawnStateFields):
     """Prompt-bearing state projection assembled from persisted spawn state."""
 
     prompt: str | None = None
+
+    def _total(self, prior: float, field: str) -> float | None:
+        """``prior_usage`` plus the current launch's ``field``; None while neither reported."""
+        current = getattr(self.terminal, field, None)
+        return None if current is None and not prior else prior + (current or 0)
+
+    @property
+    def total_duration_secs(self) -> float | None:
+        """The spawn's duration across every launch, the current one included once finished."""
+        return self._total(self.prior_usage.duration_secs, "duration_secs")
+
+    @property
+    def total_cost_usd(self) -> float | None:
+        return self._total(self.prior_usage.total_cost_usd, "total_cost_usd")
+
+    @property
+    def total_input_tokens(self) -> int | None:
+        total = self._total(self.prior_usage.input_tokens, "input_tokens")
+        return None if total is None else int(total)
+
+    @property
+    def total_output_tokens(self) -> int | None:
+        total = self._total(self.prior_usage.output_tokens, "output_tokens")
+        return None if total is None else int(total)
 
     @property
     def has_no_session_of_its_own(self) -> bool:
@@ -215,7 +272,10 @@ __all__ = [
     "CancelIntent",
     "LaunchMode",
     "LaunchPolicySnapshot",
+    "LaunchRef",
+    "OwedLaunch",
     "PersistedSpawnStatus",
+    "PriorUsage",
     "RunBoundaryOutcome",
     "RunnerExitFacts",
     "SpawnKind",

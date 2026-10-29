@@ -435,7 +435,7 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert row.status == "succeeded"
     assert row.terminal.exit_code == 0
     assert row.terminal.error is None
-    report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
+    report = launch_paths(runtime_root, str(run.spawn_id)).report.read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
 
 

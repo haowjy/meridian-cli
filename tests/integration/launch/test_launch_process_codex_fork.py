@@ -34,6 +34,7 @@ from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -322,7 +323,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     assert row.run_boundary.status == "mismatch"
     facts = [
         json.loads(line)
-        for line in (launch_context.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        for line in launch_paths(launch_context.runtime_root, row.id).runner_lifecycle
         .read_text()
         .splitlines()
     ]
@@ -478,7 +479,7 @@ def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
     row = list_spawns(ctx.runtime_root).records[0]
     facts = [
         json.loads(line)
-        for line in (ctx.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        for line in launch_paths(ctx.runtime_root, row.id).runner_lifecycle
         .read_text()
         .splitlines()
     ]

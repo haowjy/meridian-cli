@@ -200,7 +200,7 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
     assert row.status == ("succeeded" if behavior == "ok" else "failed")
     meta = json.loads(
         (
-            root / ".meridian" / "spawns" / str(outcome.primary_spawn_id) / "primary_meta.json"
+            launch_paths(root / ".meridian", str(outcome.primary_spawn_id)).primary_meta
         ).read_text()
     )
     assert "exit_identity" not in meta

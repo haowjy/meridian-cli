@@ -37,6 +37,7 @@ from tests.support.launch import (
     build_launch_context,
     stub_bundle_request_and_resolve,
 )
+from tests.support.launch_paths import launch_paths
 
 
 def _write_minimal_mars_config(project_root: Path, *, claude_agent_copy: bool = False) -> None:
@@ -532,5 +533,5 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
     assert row.status == "succeeded"
     assert row.terminal.input_tokens == 7
     assert (
-        "surviving report" in (context.runtime_root / "spawns" / row.id / "report.md").read_text()
+        "surviving report" in launch_paths(context.runtime_root, row.id).report.read_text()
     )

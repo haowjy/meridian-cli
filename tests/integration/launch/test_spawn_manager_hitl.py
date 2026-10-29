@@ -44,7 +44,7 @@ def _build_spec() -> ResolvedLaunchSpec:
 
 
 def _read_permission_statuses(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
-    journal_path = runtime_root / "spawns" / str(spawn_id) / "permission_requests.jsonl"
+    journal_path = launch_paths(runtime_root, str(spawn_id)).permission_requests
     if not journal_path.exists():
         return []
     statuses: list[str] = []

@@ -45,17 +45,22 @@ bare path
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
-    state.json                      — authoritative spawn state (schema v3)
+    state.json                      — authoritative spawn state (schema v4 when `launch` is
+                                      present, v3 when absent)
     launch.lock                     — runner-lifetime flock, acquired before publication
-    history.jsonl                   — legacy runner event stream (no longer written), never read
-    attempt-N/                      — legacy retry evidence; new runs do not create it
-    runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
-    process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
-    permission_requests.jsonl       — requests the model made that nobody could approve
+    launches/<n>/                   — one launch's files (a v3 row's launch 1 stays in the
+                                      spawn directory, `launch` absent). Reach them only
+                                      through `LaunchPaths`. `launch.json` is the finished
+                                      launch's row, copied there by the next launch's holder.
+      history.jsonl                 — legacy runner event stream (no longer written), never read
+      runner-lifecycle.jsonl        — runner breadcrumb journal (signals, phases, atexit)
+      process_scopes.json           — durable process identities + release markers
+      permission_requests.jsonl     — requests the model made that nobody could approve
                                       (`permission_journal.py`: one format for broker and
                                       finalization writers; `spawn show` reads it)
-    report.md · stderr.log · params.json · tokens.json
+      report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
+    attempt-N/                      — legacy retry evidence; new runs do not create it
     observed-spawns.json            — this parent's consumed child IDs and explicit-wait
                                       leases; shared by Pi and Claude delivery; goes with
                                       the spawn, so pruning one forgets its consumption
@@ -76,7 +81,18 @@ their state follows the canonical path and the source directory stays untouched.
 
 Spawn state lives in individual `spawns/<id>/state.json` files so status reads are
 O(1) instead of replaying an O(n) global event log. The directory layout came from
-the v2 migration; published rows now use schema v3.
+the v2 migration; published rows use schema v3, or v4 once they have a `launch`.
+
+**State v4** is v3 plus three spawn-level fields: `launch: {n}` (which launch the flat
+row describes), `prior_usage` (duration, cost and tokens of launches before `n`; every
+surface shows it plus the current launch) and `owed_launches` (background launches a
+continue moved past before the parent consumed them). The serializer writes `v: 4` when
+`launch` is present and `v: 3` when it is not, in one conditional
+(`record_to_stored_state`), so a write by a process without the launch lock (`work
+rename`, session archive) leaves an older build's row v3 and only `reopen_spawn`, which
+holds the lock and so proves no older runner is alive, sets `launch`. Older builds
+quarantine a v4 row; the history index is v13 (own sqlite file, marker namespace and
+failure latch) so they never validate a v4 `record_json`.
 
 ### Session State
 

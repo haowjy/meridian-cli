@@ -114,7 +114,7 @@ class Runtime:
     def orphan_spawn(self, spawn: str, *, backend: bool = False) -> tuple[int, int]:
         harness, worker = self.started(spawn)
         scope = json.loads(
-            (self.root / f"runtime/spawns/{spawn}/process_scopes.json").read_text()
+            (self.root / f"runtime/spawns/{spawn}/launches/1/process_scopes.json").read_text()
         )["scopes"][0]
         pgid = scope["pgid"]
         guardians = []
@@ -183,7 +183,7 @@ def continue_args(
 
 def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: bool) -> None:
     _, worker = runtime.orphan(backend=backend)
-    projection = runtime.root / "runtime/spawns/p1/process_scopes.json"
+    projection = runtime.root / "runtime/spawns/p1/launches/1/process_scopes.json"
     before = projection.read_bytes()
     process = runtime.cli(*continue_args(primary, dry_run=dry_run))
     if dry_run:
@@ -272,7 +272,7 @@ def test_continue_of_superseded_spawn_refuses_live_successor(
     first = runtime.cli(*continue_args(False, background=True))
     assert first.wait(timeout=30) == 0
     p2_harness, p2_worker = runtime.started("p2")
-    p2_scopes = runtime.root / "runtime/spawns/p2/process_scopes.json"
+    p2_scopes = runtime.root / "runtime/spawns/p2/launches/1/process_scopes.json"
     scopes_before_refusal = p2_scopes.read_bytes()
 
     process = runtime.cli(*continue_args(primary, background=True))
@@ -396,7 +396,7 @@ def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> N
     sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
     runtime.processes.append(sleeper)
     runtime.groups.add(sleeper.pid)
-    projection = runtime.root / "runtime/spawns/p1/process_scopes.json"
+    projection = runtime.root / "runtime/spawns/p1/launches/1/process_scopes.json"
     data = json.loads(projection.read_text())
     scope = data["scopes"][0]
     scope["root_pid"] = scope["pgid"] = sleeper.pid

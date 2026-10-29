@@ -42,7 +42,10 @@ against a recreated inode (split-brain).
   debug and runner logs, and the harness boundary files only through `LaunchPaths`
   (`paths.py`). It is the launch's identity (`runtime_root`, `spawn_id`, `n`) plus its
   files, and only `paths.py` constructs it: `for_row(runtime_root, row)` for a published
-  row, `reserved` (called only by `spawn_store`, which assigns `n`) before publication.
+  row, `reserved` (called only by `spawn_store`, which assigns `n`) before publication, and
+  `preview` (the dry-run placeholder; only `ops/spawn/prepare.py` and `launch/__init__.py`).
+  A launch's directory is `launches/<n>/` when the row has `launch` (state v4, every new
+  spawn) and the spawn directory when it does not (a v3 row's launch 1).
   The code that publishes a row returns the launch it wrote (`spawn_store.reserve_launch`,
   `start_spawn`, `LifecycleService.start`) and callers carry it (`RuntimeBindings.launch`,
   `ConnectionConfig.launch`, `PreparedSpawn.launch`, `_SpawnContext.launch`); read
@@ -58,7 +61,14 @@ against a recreated inode (split-brain).
   reaches a file) uses `LAUNCH_FILE_NAMES`. `meridian.dev.check_launch_paths` (fast gate)
   rejects a per-launch file name written as a literal (or a literal ending in one), a
   `LaunchPaths(...)` construction, alias or `replace` copy outside `paths.py`, a `reserved`
-  call outside `spawn_store`, and an import of a private `paths.py` name.
+  call outside `spawn_store`, a `preview` call outside the two dry-run entry points, and an
+  import of a private `paths.py` name.
+- **Next launch**: `spawn_store.reopen_spawn(handle, ...)` is the only writer of `launch`
+  on an existing row. It needs the launch lock (`LaunchHandle`), requires K's outcome,
+  copies K's row to `launches/K/launch.json`, folds K's usage into `prior_usage`, and
+  returns the new `LaunchPaths`. It has no CLI caller yet. `start_spawn` and `reopen_spawn`
+  build per-launch fields through one builder (`_launch_fields`); add a per-launch field
+  there.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.
@@ -124,6 +134,6 @@ go through `work_repository` under `work-store.flock`.
 
 ## Subpackage
 
-[spawn/AGENTS.md](spawn/AGENTS.md) — models, v3 persistence, pure transitions.
+[spawn/AGENTS.md](spawn/AGENTS.md) — models, v3/v4 persistence, pure transitions.
 `../harness/AGENTS.md` (native evidence at finalization), `../launch/AGENTS.md` (writes
 spawn state during launch).

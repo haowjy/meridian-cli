@@ -15,13 +15,14 @@ import pytest
 from meridian.lib.harness.bundle import PrimaryInboxError
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.harness.claude_inbox import post_primary_message
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from tests.support.launch_paths import launch_paths
 
 
 def _primary_record(pid: int) -> SpawnRecord:
     return SpawnRecord(
         id="p1",
+        launch=LaunchRef(n=1),
         harness="claude",
         kind="primary",
         status="running",

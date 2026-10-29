@@ -27,8 +27,11 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
-# Project conversation lineage and native model observations.
-SCHEMA_VERSION = 12
+# Project conversation lineage and native model observations. A bump gives the index a
+# new sqlite file, marker namespace and failure latch (``versioned``), so an older build
+# never validates a row shape it cannot read. v13: spawn state v4 and the
+# ``owed_launches`` side table.
+SCHEMA_VERSION = 13
 
 
 def versioned(stem: str) -> str:

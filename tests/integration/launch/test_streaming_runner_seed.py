@@ -600,7 +600,7 @@ async def test_streaming_claude_exec_receives_prebound_identity(
             assert row is not None and row.run_boundary is not None
             assert row.run_boundary.status == ("mismatch" if artifact_mismatch else "unresolved")
             assert (
-                runtime_root / "spawns" / run.spawn_id / "report.md"
+                launch_paths(runtime_root, run.spawn_id).report
             ).read_text().strip() == "# Report\n\ndone"
             if artifact_mismatch:
                 assert row.terminal.error == "entry_mismatch"

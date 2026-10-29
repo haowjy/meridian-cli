@@ -608,7 +608,7 @@ def execute_spawn_blocking(
 
         duration = time.monotonic() - started
         row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
-        _, report_body = read_report(launch)
+        report_body = read_report(launch)
         status = "failed"
         if row is not None:
             status = row.status

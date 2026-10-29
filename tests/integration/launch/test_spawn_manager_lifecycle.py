@@ -618,7 +618,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         assert inject_result.success is True
 
         spawn_dir = runtime_root / "spawns" / str(spawn_id)
-        control_actions_path = spawn_dir / "control_actions.jsonl"
+        control_actions_path = launch_paths(runtime_root, spawn_id).control_actions
         assert control_actions_path.exists()
         assert not (spawn_dir / "inbound.jsonl").exists()
         records = [

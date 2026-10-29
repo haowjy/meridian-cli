@@ -191,6 +191,16 @@ LINEAGE = Table(
     Column("history_id", Text),
 )
 Index("lineage_parent", LINEAGE.c.parent)
+# A spawn's background launches that a continue moved past while the parent had not yet
+# consumed them (state.json ``owed_launches``); owed discovery unions these with current children.
+OWED_LAUNCHES = Table(
+    "owed_launches",
+    INDEX_SCHEMA,
+    Column("local_id", Text, nullable=False, primary_key=True),
+    Column("n", Integer, nullable=False, primary_key=True),
+    Column("parent", Text, nullable=False),
+)
+Index("owed_launch_parent", OWED_LAUNCHES.c.parent)
 WORK_CHATS = Table(
     "work_chats",
     INDEX_SCHEMA,
@@ -534,10 +544,19 @@ class HistoryIndex:
             return active  # Unchanged: rewriting would only cost a FULL-sync commit.
         db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
         db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+        db.execute(delete(OWED_LAUNCHES).where(OWED_LAUNCHES.c.local_id == key))
         if old:
             self._refresh(db, old[0])
         if record is None:
             return False
+        if record.owed_launches:
+            db.execute(
+                insert(OWED_LAUNCHES),
+                [
+                    {"local_id": key, "n": owed.n, "parent": owed.parent_id}
+                    for owed in record.owed_launches
+                ],
+            )
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
         if db.exec_driver_sql(
             "SELECT 1 FROM locations WHERE history_id = ? AND kind = 'spawn'", (history_id,)

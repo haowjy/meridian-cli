@@ -32,7 +32,7 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.launch.process import runner as runner_module
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_dir
 from tests.integration.launch.test_launch_process_opencode import _build_primary_launch_context
 from tests.integration.launch.test_primary_attach import FakeProcessLauncher
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -188,7 +188,7 @@ def test_project_config_v2_drives_managed_primary_attach(
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     spawn_id = SpawnId("p-v2-managed-primary")
     launch = launch_paths(runtime_root, spawn_id)
-    process_launcher = FakeProcessLauncher(spawn_dir=launch.dir)
+    process_launcher = FakeProcessLauncher(spawn_dir=resolve_spawn_dir(runtime_root, spawn_id))
 
     captured_endpoints: list[Any] = []
 

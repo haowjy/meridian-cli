@@ -22,7 +22,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import RuntimePaths, staged_starting_prompt
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
     StoredSpawnState,
@@ -316,7 +316,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
         assert len(staged_dirs) == 1
         stage_dir = staged_dirs[0]
         assert stage_dir.parent == paths.spawns_dir / ".staging"
-        assert (stage_dir / "starting-prompt.md").read_text(encoding="utf-8") == "hello"
+        assert staged_starting_prompt(stage_dir, 1).read_text(encoding="utf-8") == "hello"
         staged_row = StoredSpawnState.model_validate_json((stage_dir / "state.json").read_bytes())
         assert staged_row.id == spawn_id
         assert staged_row.prompt_length == len("hello")
@@ -328,7 +328,7 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
     assert errors == []
     assert created_spawn_ids == [spawn_id]
     assert scan_spawn_ids(paths.spawns_dir) == [spawn_id]
-    assert (paths.spawns_dir / spawn_id / "starting-prompt.md").read_text(
+    assert staged_starting_prompt(paths.spawns_dir / spawn_id, 1).read_text(
         encoding="utf-8"
     ) == "hello"
     row = read_state(paths.spawns_dir, spawn_id)

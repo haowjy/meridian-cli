@@ -122,6 +122,8 @@ export const SpawnStateFileSchema = Type.Object({
   originating_bash_id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   // Only a background child is owed back: a launcher that waited saw the result.
   launch_mode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  // State v4: which launch the flat row describes. Absent on a v3 row (launch 1, top level).
+  launch: Type.Optional(Type.Object({ n: Type.Number() })),
 });
 
 export type SpawnStateFile = Static<typeof SpawnStateFileSchema>;

@@ -13,7 +13,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from typing import TypedDict
+from uuid import UUID, uuid4
 
 import psutil
 import structlog
@@ -32,12 +33,18 @@ from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.launch_lock import LaunchHandle, LaunchSlot
 from meridian.lib.state.paths import (
     LaunchPaths,
     RuntimePaths,
     normalize_path_for_write,
     staged_starting_prompt,
+)
+from meridian.lib.state.spawn.model import (
+    BACKGROUND_LAUNCH_MODE,
+    LaunchRef,
+    OwedLaunch,
+    PriorUsage,
 )
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
@@ -131,8 +138,7 @@ def reserve_launch(
             current = _seed_spawn_counter_from_dirs(paths)
         next_value = current + 1
         atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
-        # P4b: a fresh spawn's first launch is n=1.
-        return LaunchPaths.reserved(runtime_root, SpawnId(f"p{next_value}"), None)
+        return LaunchPaths.reserved(runtime_root, SpawnId(f"p{next_value}"), FIRST_LAUNCH)
 
 
 def _runner_created_at_epoch_for_pid(runner_pid: int | None) -> float | None:
@@ -198,6 +204,103 @@ def gc_abandoned_stages(runtime_root: Path) -> None:
                     shutil.rmtree(entry)
                 else:
                     entry.unlink()
+
+
+FIRST_LAUNCH = 1
+
+
+class _LaunchFields(TypedDict):
+    session_instance_id: str | None
+    parent_history_id: UUID | None
+    owner_history_id: UUID | None
+    forked_from_history_id: UUID | None
+    chat_id: ChatId | None
+    owner_chat_id: ChatId | None
+    parent_id: str | None
+    originating_bash_id: str | None
+    kind: SpawnKind
+    display_label: str | None
+    harness_session_id: HarnessSessionId | None
+    launch_mode: LaunchMode | None
+    worker_pid: int | None
+    runner_pid: int | None
+    runner_created_at_epoch: float | None
+    status: SpawnStatus
+    prompt: str
+    started_at: str
+    current_chat_id: None
+    run_boundary: None
+    resident_rearm_count: int
+    last_attempt_exited_at: None
+    last_attempt_exit_code: None
+    runner_exit: None
+    cancel_intent: None
+    terminal: None
+
+
+def _launch_fields(
+    runtime_root: Path,
+    *,
+    chat_id: str | None,
+    owner_chat_id: str | None,
+    parent_id: str | None,
+    kind: SpawnKind,
+    forked_from_history_id: UUID | None,
+    goal: str | None,
+    desc: str | None,
+    prompt: str,
+    harness_session_id: str | None,
+    launch_mode: LaunchMode | None,
+    worker_pid: int | None,
+    runner_pid: int | None,
+    runner_created_at_epoch: float | None,
+    started_at: str,
+    status: SpawnStatus,
+) -> _LaunchFields:
+    """Every field of a row that one launch owns, or derives from who starts it.
+
+    The one builder behind a new spawn's first launch and a reopen's next one: a field
+    added here reaches both, and the reset list cannot drift from the creation list.
+    Spawn-level fields (ID, history identity, work, harness, launch policy) stay with
+    the caller.
+    """
+    from meridian.lib.state.session_store import chat_record
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    parent = _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
+    owner_chat = owner_chat_id or chat_id
+    owner = chat_record(runtime_root, owner_chat) if owner_chat else None
+    return {
+        "session_instance_id": owner.session_instance_id if owner and kind == "primary" else None,
+        "parent_history_id": parent.history_id if parent else None,
+        "owner_history_id": owner.history_id if owner and kind != "primary" else None,
+        "forked_from_history_id": forked_from_history_id
+        or (owner.forked_from_history_id if owner and kind == "primary" else None),
+        "chat_id": ChatId(chat_id) if chat_id is not None else None,
+        "owner_chat_id": ChatId(owner_chat_id) if owner_chat_id is not None else None,
+        "parent_id": parent_id,
+        "originating_bash_id": os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
+        "kind": kind,
+        "display_label": derive_display_label(goal=goal, desc=desc, prompt=prompt),
+        "harness_session_id": (
+            HarnessSessionId(harness_session_id) if harness_session_id is not None else None
+        ),
+        "launch_mode": launch_mode,
+        "worker_pid": worker_pid,
+        "runner_pid": runner_pid,
+        "runner_created_at_epoch": runner_created_at_epoch,
+        "status": status,
+        "prompt": prompt,
+        "started_at": started_at,
+        "current_chat_id": None,
+        "run_boundary": None,
+        "resident_rearm_count": 0,
+        "last_attempt_exited_at": None,
+        "last_attempt_exit_code": None,
+        "runner_exit": None,
+        "cancel_intent": None,
+        "terminal": None,
+    }
 
 
 def start_spawn(
@@ -274,35 +377,17 @@ def start_spawn(
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
             resolved_spawn_id = SpawnId(f"p{next_value}")
-        from meridian.lib.state.session_store import chat_record
-
-        parent = (
-            _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
-        )
-        owner_chat = owner_chat_id or chat_id
-        owner = chat_record(runtime_root, owner_chat) if owner_chat else None
         record = SpawnRecord(
-            session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
-            parent_history_id=parent.history_id if parent else None,
-            owner_history_id=owner.history_id if owner and kind != "primary" else None,
-            forked_from_history_id=(
-                start_metadata.forked_from_history_id
-                or (owner.forked_from_history_id if owner and kind == "primary" else None)
-            ),
             id=str(resolved_spawn_id),
             history_id=uuid4(),
             state_revision=1,
-            chat_id=ChatId(chat_id) if chat_id is not None else None,
-            owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
-            parent_id=parent_id,
-            originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
+            launch=LaunchRef(n=FIRST_LAUNCH),
             model=model,
             agent=agent,
             agent_path=agent_path,
             skills=skills,
             skill_paths=skill_paths,
             harness=harness,
-            kind=kind,
             desc=start_metadata.desc,
             work_id=(
                 start_metadata.work_id.strip() or None
@@ -310,37 +395,37 @@ def start_spawn(
                 else None
             ),
             goal=normalized_goal,
-            display_label=derive_display_label(
-                goal=normalized_goal,
-                desc=start_metadata.desc,
-                prompt=prompt,
-            ),
-            harness_session_id=(
-                HarnessSessionId(harness_session_id) if harness_session_id is not None else None
-            ),
             control_root=normalize_path_for_write(control_root),
             task_cwd=normalize_path_for_write(task_cwd),
             execution_cwd=normalize_path_for_write(execution_cwd),
             claude_config_dir=claude_config_dir,
-            launch_mode=launch_mode,
-            worker_pid=worker_pid,
-            runner_pid=runner_pid,
-            runner_created_at_epoch=resolved_runner_created_at_epoch,
-            status=status,
-            prompt=prompt,
-            started_at=started,
-            last_attempt_exited_at=None,
-            last_attempt_exit_code=None,
-            runner_exit=None,
-            cancel_intent=None,
-            terminal=None,
             launch_policy_snapshot=resolved_launch_policy_snapshot,
+            **_launch_fields(
+                runtime_root,
+                chat_id=chat_id,
+                owner_chat_id=owner_chat_id,
+                parent_id=parent_id,
+                kind=kind,
+                forked_from_history_id=start_metadata.forked_from_history_id,
+                goal=normalized_goal,
+                desc=start_metadata.desc,
+                prompt=prompt,
+                harness_session_id=harness_session_id,
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                runner_created_at_epoch=resolved_runner_created_at_epoch,
+                started_at=started,
+                status=status,
+            ),
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
         staging_dir = ensure_spawn_staging_dir(paths)
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
-        atomic_write_text(staged_starting_prompt(stage_dir), prompt)
+        staged_prompt = staged_starting_prompt(stage_dir, FIRST_LAUNCH)
+        staged_prompt.parent.mkdir(parents=True)
+        atomic_write_text(staged_prompt, prompt)
         stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
@@ -353,6 +438,102 @@ def start_spawn(
                 launch_lock.bind_staged(resolved_spawn_id, stage_dir)
             atomic_publish_dir(stage_dir, spawn_dir)
         return LaunchPaths.for_row(runtime_root, record)
+
+
+def reopen_spawn(
+    handle: LaunchHandle,
+    runtime_root: Path,
+    *,
+    chat_id: str | None,
+    owner_chat_id: str | None = None,
+    parent_id: str | None = None,
+    kind: SpawnKind,
+    prompt: str,
+    goal: str | None = None,
+    harness_session_id: str | None = None,
+    launch_mode: LaunchMode | None = None,
+    worker_pid: int | None = None,
+    runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
+    clock: Clock | None = None,
+) -> LaunchPaths:
+    """Start the next launch of a finished spawn under its launch lock; return its paths.
+
+    ``handle`` is the proof that no runner of launch K is alive, so this is the only
+    writer that may set ``launch`` on a v3 row. Order: K's row is copied to
+    ``launches/K/launch.json`` (idempotent, so a crash here repeats it), ``launches/K+1/``
+    is created with the prompt, then one ``state.json`` write turns the row into launch
+    K+1. K's outcome must already be written: the archive is terminal by construction.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = str(handle.spawn_id)
+    observed = _read_state(paths.spawns_dir, spawn_id)
+    if observed is None:
+        raise ValueError(f"spawn row not found: {spawn_id}")
+    if observed.terminal is None:
+        raise ValueError(f"Cannot reopen {spawn_id}: its last launch has no outcome")
+    k = observed.launch.n if observed.launch else FIRST_LAUNCH
+    previous = LaunchPaths.reserved(runtime_root, handle.spawn_id, k)
+    atomic_write_text(
+        previous.row_copy, record_to_stored_state(observed).model_dump_json(indent=2) + "\n"
+    )
+    following = LaunchPaths.reserved(runtime_root, handle.spawn_id, k + 1)
+    following.dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(following.starting_prompt, prompt)
+
+    normalized_goal = goal.strip() if goal is not None else None
+    if goal is not None and not normalized_goal:
+        raise ValueError("--goal cannot be empty")
+    started = (clock or RealClock()).utc_now_iso()
+
+    def next_launch(current: SpawnRecord) -> SpawnRecord:
+        terminal = current.terminal
+        if terminal is None or (current.launch.n if current.launch else FIRST_LAUNCH) != k:
+            raise ValueError(f"{spawn_id} changed under its launch lock")
+        prior = current.prior_usage
+        effective_goal = normalized_goal if normalized_goal is not None else current.goal
+        owed = current.owed_launches
+        if current.launch_mode == BACKGROUND_LAUNCH_MODE and current.parent_id:
+            owed = (*owed, OwedLaunch(n=k, parent_id=current.parent_id))
+        return current.model_copy(
+            update={
+                **_launch_fields(
+                    runtime_root,
+                    chat_id=chat_id,
+                    owner_chat_id=owner_chat_id,
+                    parent_id=parent_id,
+                    kind=kind,
+                    forked_from_history_id=current.forked_from_history_id,
+                    goal=effective_goal,
+                    desc=current.desc,
+                    prompt=prompt,
+                    harness_session_id=harness_session_id,
+                    launch_mode=launch_mode,
+                    worker_pid=worker_pid,
+                    runner_pid=runner_pid,
+                    runner_created_at_epoch=runner_created_at_epoch,
+                    started_at=started,
+                    status=SpawnStatus.RUNNING,
+                ),
+                "goal": effective_goal,
+                "launch": LaunchRef(n=k + 1),
+                "prior_usage": PriorUsage(
+                    duration_secs=prior.duration_secs + (terminal.duration_secs or 0.0),
+                    total_cost_usd=prior.total_cost_usd + (terminal.total_cost_usd or 0.0),
+                    input_tokens=prior.input_tokens + (terminal.input_tokens or 0),
+                    output_tokens=prior.output_tokens + (terminal.output_tokens or 0),
+                ),
+                "owed_launches": owed,
+            }
+        )
+
+    result = _write_state_locked(
+        paths.spawns_dir, spawn_id, next_launch, allow_terminal_overwrite=True
+    )
+    if not isinstance(result, Applied):
+        raise ValueError(f"Cannot reopen {spawn_id}: {type(result).__name__}")
+    return LaunchPaths.for_row(runtime_root, result.after)
 
 
 def remove_spawn_events(

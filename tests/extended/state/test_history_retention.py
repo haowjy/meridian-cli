@@ -22,6 +22,7 @@ from meridian.lib.state.retention_archive import (
     verify_archive,
 )
 from meridian.lib.state.retention_restore import restore_archive
+from tests.support.launch_paths import launch_paths
 
 
 def test_receipt_catalog_ignores_empty_rows_but_fails_closed_on_corruption(
@@ -98,7 +99,7 @@ def _terminal(root: Path) -> str:
             ),
         ),
     )
-    snapshot = root / "spawns" / key / "native-transcript.jsonl"
+    snapshot = launch_paths(root, key).native_transcript
     with snapshot.open("wb") as handle:
         write_snapshot(handle, header, records, lambda: observation)
     return key
@@ -158,7 +159,7 @@ def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(tmp_path: Pa
     assert state.session_instance_id is not None
     assert state.session_instance_id.startswith("historical-")
     assert state.runner_pid is None and state.harness_session_id is None
-    history = destination / "spawns" / restored[0] / "native-transcript.jsonl"
+    history = launch_paths(destination, restored[0]).native_transcript
     assert json.loads(history.read_text().splitlines()[0])["transcript"]["history_id"] == str(
         original.history_id
     )
@@ -205,7 +206,7 @@ def test_transferred_native_content_renders_without_harness_storage(tmp_path: Pa
     root = tmp_path / "runtime"
     key = _terminal(root)
     copied = tmp_path / "transferred.jsonl"
-    copied.write_bytes((root / "spawns" / key / "native-transcript.jsonl").read_bytes())
+    copied.write_bytes(launch_paths(root, key).native_transcript.read_bytes())
     segments, _ = parse_transcript_file(copied)
     assert any("portable needle" in message.content for segment in segments for message in segment)
 
@@ -315,7 +316,7 @@ def test_mismatched_local_identity_cannot_redirect_record_mutation(tmp_path: Pat
 def test_missing_referenced_prompt_prevents_reclaim(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     key = _terminal(root)
-    (root / "spawns" / key / "starting-prompt.md").unlink()
+    launch_paths(root, key).starting_prompt.unlink()
     result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
     assert not result.reclaimed and result.errors
     assert (root / "spawns" / key / "state.json").exists()
@@ -515,15 +516,16 @@ def test_inventory_excludes_reserved_atomic_capture_temps(tmp_path: Path) -> Non
     root = tmp_path / "runtime"
     key = _terminal(root)
     directory = root / "spawns" / key
-    (directory / ".native-transcript.jsonl.deadbeef.tmp").write_text("partial snapshot")
-    (directory / ".history.jsonl.deadbeef.tmp").write_text("partial history")
-    (directory / "notes.tmp").write_text("unrelated temp content")
+    launch = launch_paths(root, key).dir
+    (launch / ".native-transcript.jsonl.deadbeef.tmp").write_text("partial snapshot")
+    (launch / ".history.jsonl.deadbeef.tmp").write_text("partial history")
+    (launch / "notes.tmp").write_text("unrelated temp content")
     names = {member.name for member in inventory(directory)}
-    assert ".native-transcript.jsonl.deadbeef.tmp" not in names
-    assert ".history.jsonl.deadbeef.tmp" not in names
-    assert "native-transcript.jsonl" in names and "state.json" in names
+    assert "launches/1/.native-transcript.jsonl.deadbeef.tmp" not in names
+    assert "launches/1/.history.jsonl.deadbeef.tmp" not in names
+    assert "launches/1/native-transcript.jsonl" in names and "state.json" in names
     # The exclusion is reserved-name specific, not a blanket .tmp suffix skip.
-    assert "notes.tmp" in names
+    assert "launches/1/notes.tmp" in names
 
 
 def test_recent_session_activity_protects_old_transcript(tmp_path: Path) -> None:
@@ -659,7 +661,7 @@ def test_damaged_zip_cannot_publish_restore(tmp_path: Path, damage: str) -> None
     with zipfile.ZipFile(original) as source, zipfile.ZipFile(damaged, "w") as output:
         for entry in source.infolist():
             content = source.read(entry)
-            if entry.filename.endswith("aggregate/starting-prompt.md"):
+            if entry.filename.endswith("/starting-prompt.md"):
                 if damage == "missing":
                     continue
                 if damage == "changed":

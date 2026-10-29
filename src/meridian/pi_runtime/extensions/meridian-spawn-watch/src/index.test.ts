@@ -215,6 +215,10 @@ describe('durable result delivery', () => {
     const root = await setup();
     await child(root, 'p1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'direct report text');
+    // A v4 row's report is in its launch directory; a v3 row's (above) is at the top.
+    await child(root, 'p3', null, { v: 4, launch: { n: 2 } });
+    await mkdir(path.join(root, 'spawns', 'p3', 'launches', '2'), { recursive: true });
+    writeFileSync(path.join(root, 'spawns', 'p3', 'launches', '2', 'report.md'), 'launch two report');
     const h = host(false);
     const runtime = owner(h);
 
@@ -223,6 +227,8 @@ describe('durable result delivery', () => {
     expect(formatter).not.toHaveBeenCalled();
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0]!.content).toContain('direct report text');
+    expect(h.notices[0]!.content).toContain('launch two report');
+    expect(h.notices[0]!.content).toContain('Full report: meridian spawn report show p1');
     expect(h.notices[0]!.details).not.toHaveProperty('ids');
   });
 
@@ -254,7 +260,7 @@ describe('durable result delivery', () => {
 
     await runtime.deliverAtBoundary(new AbortController().signal);
 
-    expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: ${reportPath}]`);
+    expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: meridian spawn report show p1]`);
     expect(h.notices[0]!.content).not.toContain('TAIL');
   });
 

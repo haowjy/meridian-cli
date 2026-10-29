@@ -384,7 +384,7 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
     assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
 
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / LAUNCH_FILE_NAMES.native_snapshot).is_file()
+    assert (launch_paths(root, key).native_transcript).is_file()
     out = archive_history(
         root,
         destination=tmp_path / "zips",

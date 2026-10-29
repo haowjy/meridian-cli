@@ -409,14 +409,21 @@ class LaunchFileNames:
 LAUNCH_FILE_NAMES = LaunchFileNames()
 
 
+def launch_subdir(n: int | None) -> Path:
+    """A launch directory relative to its spawn directory (empty for a v3 row's launch 1)."""
+
+    return Path() if n is None else Path("launches") / str(n)
+
+
 @dataclass(frozen=True)
 class LaunchPaths:
     """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
 
     This module is the only place that constructs it (``for_row``); the code that
     publishes a row returns the launch it wrote, and everyone else is handed that one.
-    Today a launch directory is the spawn directory, so ``n`` is unused. Spawn-level
-    files stay on ``resolve_spawn_dir``.
+    A launch's directory is ``spawns/<id>/launches/<n>/``; ``n`` is ``None`` only for a
+    v3 row (``launch`` absent), whose launch 1 stays in the spawn directory, and for the
+    dry-run preview. Spawn-level files stay on ``resolve_spawn_dir``.
     """
 
     runtime_root: Path
@@ -427,10 +434,10 @@ class LaunchPaths:
     def for_row(cls, runtime_root: Path, row: "SpawnRecord | StoredSpawnState") -> Self:
         """The launch a published row names. The only way to reach an existing launch."""
 
-        return cls(runtime_root, SpawnId(row.id), None)
+        return cls(runtime_root, SpawnId(row.id), row.launch.n if row.launch else None)
 
     @classmethod
-    def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int | None) -> Self:
+    def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int) -> Self:
         """The launch ``spawn_store`` is about to publish as launch ``n`` of ``spawn_id``.
 
         Only ``spawn_store`` calls this (the gate enforces it): the code that assigns
@@ -441,14 +448,23 @@ class LaunchPaths:
         return cls(runtime_root, spawn_id, n)
 
     @classmethod
-    def preview(cls, runtime_root: Path, label: str) -> Self:
-        """A placeholder launch for a dry-run bind. It is never published or written."""
+    def preview(cls, runtime_root: Path) -> Self:
+        """A placeholder launch for a dry-run bind. It is never published or written.
 
-        return cls(runtime_root, SpawnId(label), None)
+        The fixed ID keeps it from naming a real spawn; the gate limits callers to the two
+        dry-run entry points.
+        """
+
+        return cls(runtime_root, SpawnId("dry-run"), None)
 
     @property
     def dir(self) -> Path:
-        return resolve_spawn_dir(self.runtime_root, self.spawn_id)
+        return resolve_spawn_dir(self.runtime_root, self.spawn_id) / launch_subdir(self.n)
+
+    @property
+    def row_copy(self) -> Path:
+        """The finished launch's row, copied here by the holder that starts the next one."""
+        return self.dir / "launch.json"
 
     @property
     def starting_prompt(self) -> Path:
@@ -576,11 +592,11 @@ class LaunchPaths:
         return self.dir / "permission_requests.jsonl"
 
 
-def staged_starting_prompt(stage_dir: Path) -> Path:
-    """Where ``start_spawn`` writes the prompt inside its staging directory, before the
-    directory is renamed into place as the spawn directory."""
+def staged_starting_prompt(stage_dir: Path, n: int) -> Path:
+    """Where ``start_spawn`` writes launch ``n``'s prompt inside its staging directory,
+    before the directory is renamed into place as the spawn directory."""
 
-    return stage_dir / _STARTING_PROMPT_FILENAME
+    return stage_dir / launch_subdir(n) / _STARTING_PROMPT_FILENAME
 
 
 def resolve_ambient_work_dir(

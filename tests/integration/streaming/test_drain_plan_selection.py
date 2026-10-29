@@ -136,7 +136,7 @@ def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
             ),
         )
 
-    sidecar = tmp_path / "spawns" / "p-pi" / "pi-lifecycle.json"
+    sidecar = launch_paths(tmp_path, "p-pi").pi_lifecycle
     recorded = json.loads(sidecar.read_text(encoding="utf-8"))
     assert recorded["phase"] == "cleanup_completed"
     assert recorded["cleanup_status"] == "escalated"

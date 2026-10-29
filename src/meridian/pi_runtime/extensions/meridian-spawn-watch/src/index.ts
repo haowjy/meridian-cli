@@ -394,7 +394,7 @@ export class SpawnWatchRuntime {
     const reportPath = item.reportPath;
     const report = await readBoundedReport(reportPath);
     const frame = spawnNotificationFrame(item, report.text);
-    if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(reportPath);
+    if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(item.id);
     return renderNotificationFrame(frame, maxBytes);
   }
 
@@ -596,7 +596,6 @@ function notificationOutcome(item: NotificationItem): string {
 }
 
 function spawnNotificationFrame(item: SpawnNotificationItem, report: string | null): NotificationFrame {
-  const reportPath = item.reportPath;
   const details = [`Worker: ${item.label}`];
   if (item.error) details.push(`Failure: ${item.error}`);
   details.push("", report || "No durable report content was published.");
@@ -604,13 +603,13 @@ function spawnNotificationFrame(item: SpawnNotificationItem, report: string | nu
     prefix: `${item.id} ${item.status} (${notificationOutcome(item)})`,
     detail: details.join("\n"),
     truncationNotice: `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
-    lookup: `Full report: ${reportPath}\nTranscript: meridian session log ${item.id}`,
+    lookup: `Full report: meridian spawn report show ${item.id}\nTranscript: meridian session log ${item.id}`,
   };
 }
 
-function spawnReportTruncationNotice(reportPath: string): string {
+function spawnReportTruncationNotice(id: string): string {
   return [
-    `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`,
+    `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: meridian spawn report show ${id}]`,
     `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
   ].join("\n");
 }
@@ -633,8 +632,7 @@ function mandatoryNotificationBytes(item: NotificationItem): number {
     ? spawnNotificationFrame(item, null)
     : bashNotificationFrame(item);
   if (item.kind === "spawn") {
-    const reportPath = item.reportPath;
-    frame.truncationNotice = spawnReportTruncationNotice(reportPath);
+    frame.truncationNotice = spawnReportTruncationNotice(item.id);
   }
   return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);
 }

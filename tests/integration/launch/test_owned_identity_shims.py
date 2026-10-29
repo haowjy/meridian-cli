@@ -22,6 +22,7 @@ from meridian.lib.platform.launch_gate import ProcessIdentity, child_birth_epoch
 from meridian.lib.state import session_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
+from tests.support.launch_paths import launch_paths
 
 NATIVE_ID = "12345678-1234-4234-8234-123456789abc"
 
@@ -227,7 +228,7 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
     assert row.run_boundary.status == "mismatch"
     facts = [
         json.loads(line)
-        for line in (root / ".meridian" / "spawns" / row.id / "runner-lifecycle.jsonl")
+        for line in launch_paths(root / ".meridian", row.id).runner_lifecycle
         .read_text()
         .splitlines()
     ]

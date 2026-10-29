@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -11,23 +13,29 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.ops.pruning import (
     StaleSpawnArtifact,
     prune_stale_spawn_artifacts,
     scan_stale_spawn_artifacts,
 )
+from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import spawn_store as spawn_store_module
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.launch_lock import acquire as acquire_lock
+from meridian.lib.state.paths import LaunchPaths, RuntimePaths, resolve_spawn_dir
 from meridian.lib.state.spawn import repository as spawn_repository
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, read_state, scan_spawn_ids
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     gc_abandoned_stages,
+    get_spawn,
     remove_spawn_events,
+    reopen_spawn,
     start_spawn,
+    update_spawn,
 )
 
 
@@ -418,3 +426,71 @@ def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> No
     assert not writer.is_alive()
     assert not deletion.is_alive()
     assert not (paths.spawns_dir / spawn_id).exists()
+
+
+def test_new_spawn_layout(tmp_path: Path) -> None:
+    """A new spawn is state v4 with launch 1 in ``launches/1/``; a v3 row keeps its files at
+    the top; ``reopen_spawn`` converts a v3 row only under its lock; nothing printed names
+    ``launches/``."""
+    runtime_root = _state_root(tmp_path)
+    with LaunchSlot() as slot:
+        launch = start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            launch_lock=slot,
+        )
+        spawn_dir = resolve_spawn_dir(runtime_root, launch.spawn_id)
+        assert launch.dir == spawn_dir / "launches" / "1"
+        assert sorted(p.name for p in spawn_dir.iterdir()) == [
+            "launch.lock",
+            "launches",
+            "state.json",
+        ]
+        assert [p.name for p in launch.dir.iterdir()] == ["starting-prompt.md"]
+        row = get_spawn(runtime_root, launch.spawn_id)
+        assert row is not None and row.launch == LaunchRef(n=1) and row.prompt == "hello"
+        assert json.loads((spawn_dir / "state.json").read_text())["v"] == 4
+
+        # An older build's row: v3, launch 1 at the top level.
+        legacy_dir = resolve_spawn_dir(runtime_root, "p9")
+        shutil.copytree(spawn_dir, legacy_dir)
+        shutil.move(legacy_dir / "launches" / "1" / "starting-prompt.md", legacy_dir)
+        shutil.rmtree(legacy_dir / "launches")
+        state = json.loads((legacy_dir / "state.json").read_text())
+        for key in ("launch", "prior_usage", "owed_launches"):
+            state.pop(key, None)
+        (legacy_dir / "state.json").write_text(json.dumps({**state, "v": 3, "id": "p9"}))
+        legacy = get_spawn(runtime_root, "p9")
+        assert legacy is not None and legacy.launch is None and legacy.prompt == "hello"
+        assert LaunchPaths.for_row(runtime_root, legacy).dir == legacy_dir
+
+        # A write by a process without the lock leaves the row v3.
+        update_spawn(runtime_root, "p9", desc="renamed")
+        assert json.loads((legacy_dir / "state.json").read_text())["v"] == 3
+        assert "launch" not in json.loads((legacy_dir / "state.json").read_text())
+
+        # The holder reopens the finished launch: K archived, usage folded, v3 -> v4.
+        finalize_spawn(
+            runtime_root, "p9", "succeeded", 0, origin="runner", duration_secs=5.0,
+            usage=TokenUsage(total_cost_usd=0.5, input_tokens=10, output_tokens=2),
+        )
+        with acquire_lock(runtime_root, "p9") as handle:
+            reopened = reopen_spawn(
+                handle, runtime_root, chat_id="c1", kind="child", prompt="again"
+            )
+        assert reopened.dir == legacy_dir / "launches" / "2"
+        assert json.loads((legacy_dir / "launches" / "1" / "launch.json").read_text())["v"] == 3
+        after = get_spawn(runtime_root, "p9")
+        assert after is not None and after.launch == LaunchRef(n=2) and after.terminal is None
+        assert after.prior_usage.duration_secs == 5.0 and after.prior_usage.total_cost_usd == 0.5
+        assert after.total_duration_secs == 5.0 and after.prompt == "again"
+        assert json.loads((legacy_dir / "state.json").read_text())["v"] == 4
+
+        detail = detail_from_row(
+            project_root=tmp_path, row=after, include_report_body=True, runtime_root=runtime_root
+        )
+        assert "launches/" not in detail.format_text() + json.dumps(detail.to_cli_wire())

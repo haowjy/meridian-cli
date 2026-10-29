@@ -277,7 +277,7 @@ async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
     start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
     start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
     legacy_rows.mark_finalizing(tmp_path, str(child_id))
-    (tmp_path / "spawns" / str(child_id) / "report.md").write_text(
+    launch_paths(tmp_path, str(child_id)).report.write_text(
         "# Report\n\nChild completed.\n",
         encoding="utf-8",
     )

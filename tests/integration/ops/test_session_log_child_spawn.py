@@ -19,6 +19,7 @@ from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from tests.support import legacy_rows
+from tests.support.launch_paths import launch_paths
 
 
 def _write_spawn_output(
@@ -299,7 +300,7 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
             )
         )
 
-    assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
+    assert not launch_paths(runtime_root, "p42").native_transcript.exists()
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None
 
@@ -461,7 +462,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
         session_id=primary_session_id,
         assistant_text="primary transcript",
     )
-    report_path = runtime_root / "spawns" / child_spawn_id / "report.md"
+    report_path = launch_paths(runtime_root, child_spawn_id).report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("Child spawn report body.\n", encoding="utf-8")
 
