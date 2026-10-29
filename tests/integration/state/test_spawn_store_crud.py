@@ -32,6 +32,7 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
+    reserve_launch,
     start_spawn,
     update_spawn,
 )
@@ -511,3 +512,30 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     assert row.chat_id == "c2"
     assert row.status == "running"
     assert row.prompt == "world"
+
+
+@pytest.mark.parametrize(
+    ("counter", "expected"),
+    [
+        # The counter outranks the directories: an ID whose directory is missing is not reissued.
+        ("20\n", "p21"),
+        # With no counter the directories seed it; opaque names don't count.
+        (None, "p13"),
+    ],
+)
+def test_reserved_spawn_id_follows_counter_then_directories(
+    tmp_path: Path, counter: str | None, expected: str
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    for spawn_id in ("abc", "p7x", "p5", "p12"):
+        spawn_dir = runtime_root / "spawns" / spawn_id
+        spawn_dir.mkdir(parents=True)
+        if spawn_id[1:].isdigit():
+            (spawn_dir / "state.json").write_text(
+                f'{{"v":2,"id":"{spawn_id}"}}\n', encoding="utf-8"
+            )
+    if counter is not None:
+        (runtime_root / "spawn-id-counter").write_text(counter, encoding="utf-8")
+
+    assert reserve_launch(runtime_root).spawn_id == expected
+    assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == expected[1:]
