@@ -161,9 +161,8 @@ sessions load only session-boundary.
 `meridian [-C <root>] spawn message <primary chat ID>` posts to the messaging socket that
 meridian-session-boundary recorded at SessionStart, which is Claude Code's
 cross-session peer lane. Claude decides delivery, not Meridian, and the command
-can only report that the message was posted. Address a primary by its chat ID, since
-its spawn ID changes on every `--continue`; `-C <root>` reaches a primary in another
-project.
+can only report that the message was posted. Address a primary by its chat ID or its spawn ID; both survive a
+`--continue`. `-C <root>` reaches a primary in another project.
 
 Claude's `crossSessionInbound` setting picks the policy:
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -12,20 +13,22 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.continue_launch import ContinueHold, begin_continue
 from meridian.lib.launch.continue_replay import (
     MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
-from meridian.lib.launch.continue_sweep import sweep_before_continue
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -225,6 +228,8 @@ def run_primary_launch(
     source_execution_cwd: str | None = None
     source_native_store: str | None = None
     continue_source_tracked = False
+    continue_source_spawn_id: str | None = None
+    continue_source_chat_id: str | None = None
     continue_source_ref: str | None = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     continue_passthrough_args: tuple[str, ...] = ()
@@ -254,13 +259,8 @@ def run_primary_launch(
         )
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
-        if resolved_continue.source_spawn_id is not None:
-            sweep_before_continue(
-                resolve_project_runtime_root(project_root),
-                resolved_continue.source_spawn_id,
-                chat_id=resolved_continue.source_chat_id,
-                dry_run=dry_run,
-            )
+        continue_source_spawn_id = resolved_continue.source_spawn_id
+        continue_source_chat_id = resolved_continue.source_chat_id
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
@@ -363,69 +363,97 @@ def run_primary_launch(
     context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
-    launch_result = launch_primary(
-        project_root=project_root,
-        request=LaunchRequest(
-            ignore_direnv=ignore_direnv,
-            model=requested_model,
-            harness=(
-                continue_harness
-                if (resume_target is not None or selected_fork_target is not None)
-                else harness
-            ),
-            agent=requested_agent,
-            agent_opt_out=agent_opt_out,
-            work_id=requested_work_id,
-            task_dir=launch_task_dir,
-            passthrough_args=(
-                continue_passthrough_args if resume_target is not None else passthrough
-            ),
-            session_mode=session_mode,
-            pinned_context="",
-            supplemental_prompt_documents=supplemental_prompt_documents,
-            include_bootstrap_documents=include_bootstrap_documents,
-            context_refs=context_sources,
-            reference_files=reference_files,
-            prompt=prompt,
-            skills=requested_skills,
-            goal=resolved_goal,
-            dry_run=dry_run,
-            network_overrides=NetworkOverrides(
-                mode=network,
-                allow=network_allow,
-                deny=network_deny,
-            ),
-            execution_policy=ResolvedExecutionPolicy(
-                approval=resolved_approval if resolved_approval != "default" else None,
-                effort=effort,
-                sandbox=sandbox,
-                timeout=timeout,
-                autocompact=autocompact,
-                autocompact_pct=autocompact_pct,
-            ),
-            launch_policy_snapshot=continue_launch_policy_snapshot,
-            session=continue_session.model_copy(
-                update={
-                    "context_from_chat_id": context_source.chat_id if context_source else None,
-                    "context_from_history_id": context_source.history_id
-                    if context_source
-                    else None,
-                    "requested_harness_session_id": continue_harness_session_id,
-                    "continue_harness": continue_harness,
-                    "continue_chat_id": continue_chat_id,
-                    "continue_fork": continue_fork,
-                    "forked_from_chat_id": forked_from_chat_id,
-                    "forked_from_history_id": forked_from_history_id,
-                    "source_control_root": source_control_root,
-                    "source_execution_cwd": source_execution_cwd,
-                    "source_native_store": source_native_store,
-                    "continue_source_tracked": continue_source_tracked,
-                    "continue_source_ref": continue_source_ref,
-                }
-            ),
-        ),
-        harness_registry=harness_registry,
+    continue_hold: ContinueHold | None = None
+    continue_source = (
+        spawn_store.get_spawn(resolve_project_runtime_root(project_root), continue_source_spawn_id)
+        if continue_source_spawn_id is not None
+        else None
     )
+    if continue_source is not None:
+        # The continue keeps the spawn's ID: hold its launch lock from here until the runner
+        # owns it, so a second terminal's continue is refused rather than racing this one.
+        continue_hold = begin_continue(
+            project_root=project_root,
+            runtime_root=resolve_project_runtime_root(project_root),
+            named=continue_source,
+            named_by_spawn_ref=parse_ref(resume_target or "").kind in {"spawn", "selector"},
+            chat_id=continue_source_chat_id,
+            parent_id=None,
+            kind="primary",
+            caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
+            max_depth=load_config(project_root).max_depth,
+            dry_run=dry_run,
+        )
+        if continue_hold is not None and continue_hold.notice:
+            continue_warning = _merge_warnings(continue_warning, continue_hold.notice)
+    try:
+        launch_result = launch_primary(
+            project_root=project_root,
+            continue_hold=continue_hold,
+            request=LaunchRequest(
+                ignore_direnv=ignore_direnv,
+                model=requested_model,
+                harness=(
+                    continue_harness
+                    if (resume_target is not None or selected_fork_target is not None)
+                    else harness
+                ),
+                agent=requested_agent,
+                agent_opt_out=agent_opt_out,
+                work_id=requested_work_id,
+                task_dir=launch_task_dir,
+                passthrough_args=(
+                    continue_passthrough_args if resume_target is not None else passthrough
+                ),
+                session_mode=session_mode,
+                pinned_context="",
+                supplemental_prompt_documents=supplemental_prompt_documents,
+                include_bootstrap_documents=include_bootstrap_documents,
+                context_refs=context_sources,
+                reference_files=reference_files,
+                prompt=prompt,
+                skills=requested_skills,
+                goal=resolved_goal,
+                dry_run=dry_run,
+                network_overrides=NetworkOverrides(
+                    mode=network,
+                    allow=network_allow,
+                    deny=network_deny,
+                ),
+                execution_policy=ResolvedExecutionPolicy(
+                    approval=resolved_approval if resolved_approval != "default" else None,
+                    effort=effort,
+                    sandbox=sandbox,
+                    timeout=timeout,
+                    autocompact=autocompact,
+                    autocompact_pct=autocompact_pct,
+                ),
+                launch_policy_snapshot=continue_launch_policy_snapshot,
+                session=continue_session.model_copy(
+                    update={
+                        "context_from_chat_id": context_source.chat_id if context_source else None,
+                        "context_from_history_id": context_source.history_id
+                        if context_source
+                        else None,
+                        "requested_harness_session_id": continue_harness_session_id,
+                        "continue_harness": continue_harness,
+                        "continue_chat_id": continue_chat_id,
+                        "continue_fork": continue_fork,
+                        "forked_from_chat_id": forked_from_chat_id,
+                        "forked_from_history_id": forked_from_history_id,
+                        "source_control_root": source_control_root,
+                        "source_execution_cwd": source_execution_cwd,
+                        "source_native_store": source_native_store,
+                        "continue_source_tracked": continue_source_tracked,
+                        "continue_source_ref": continue_source_ref,
+                    }
+                ),
+            ),
+            harness_registry=harness_registry,
+        )
+    finally:
+        if continue_hold is not None:
+            continue_hold.slot.close()
 
     continue_chat_id = launch_result.continue_chat_id
     row = None

@@ -15,10 +15,10 @@ from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.launch.context import PreparedLaunchSurface
+from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.spawn.model import (
@@ -189,24 +189,7 @@ def _prepare_spawn_execution(
     return run_pre_init_boundary(payload=payload, request=request, operation=_operation)
 
 
-def _persist_execution_contract(
-    context: _SpawnContext,
-    execution_contract: SpawnExecutionContract,
-) -> None:
-    execution_cwd_str = execution_contract.execution_cwd.as_posix()
-    spawn_store.update_spawn(
-        context.runtime_root,
-        context.spawn.spawn_id,
-        control_root=execution_contract.control_root.as_posix(),
-        task_cwd=_task_cwd_from_execution(
-            control_root=execution_contract.control_root,
-            execution_cwd=execution_cwd_str,
-        ),
-        execution_cwd=execution_cwd_str,
-    )
-
-
-def _reserve_then_prepare(
+def _prepare_then_reserve(
     *,
     payload: SpawnCreateInput,
     request: SpawnRequest,
@@ -215,16 +198,35 @@ def _reserve_then_prepare(
     launch_mode: LaunchMode,
     runner_pid: int | None = None,
     launch_lock: LaunchSlot,
+    reopen: ContinueHold | None,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
+    """Prepare, then write the launch's row: a setup error leaves nothing to clean up.
+
+    ``reopen``: a continue's hold on a finished spawn (``launch_lock`` is its slot), so its
+    next launch is committed rather than a new spawn created.
+    """
     resolved_context = runtime_context(ctx)
+    preparation = _prepare_spawn_execution(
+        payload=payload,
+        request=request,
+        runtime=runtime,
+        ctx=ctx,
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+
+    contract = preparation.execution_contract
     reservation = build_spawn_reservation(
         payload=payload,
         request=request,
         desc=payload.desc,
-        work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
+        work_id=contract.work_id,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
+        control_root=contract.control_root.as_posix(),
+        task_cwd=contract.task_cwd,
+        execution_cwd=contract.execution_cwd.as_posix(),
         ctx=resolved_context,
     )
     logger.debug("spawn_launcher_phase", phase="reservation", launcher_pid=os.getpid())
@@ -232,6 +234,7 @@ def _reserve_then_prepare(
         reservation=reservation,
         launch_lock=launch_lock,
         runtime=runtime,
+        reopen=reopen,
         ctx=resolved_context,
     )
     logger.debug(
@@ -240,30 +243,18 @@ def _reserve_then_prepare(
         launcher_pid=os.getpid(),
         spawn_id=str(context.spawn.spawn_id),
     )
-    preparation = _prepare_spawn_execution(
-        payload=payload,
-        request=request,
-        runtime=runtime,
-        ctx=ctx,
-    )
-    if isinstance(preparation, SpawnActionOutput):
-        spawn_store.remove_spawn_events(
-            context.runtime_root, context.spawn.spawn_id, launch_lock.handle
-        )
-        return preparation
-
     project_paths = preparation.project_paths
     context = _materialize_spawn_work_item(
         context=context,
         payload=payload,
         project_root=project_paths.project_root,
     )
-    _persist_execution_contract(context, preparation.execution_contract)
     _announce_reserved_spawn(
         context=context,
         request=request,
         runtime=runtime,
         project_root=project_paths.project_root,
+        created=reopen is None,
         ctx=resolved_context,
     )
     return context, preparation
@@ -275,9 +266,10 @@ def execute_spawn_background(
     request: SpawnRequest,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
+    reopen: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with LaunchSlot() as launch_lock:
-        reserved = _reserve_then_prepare(
+    with reopen.slot if reopen is not None else LaunchSlot() as launch_lock:
+        reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
             runtime=runtime,
@@ -285,6 +277,7 @@ def execute_spawn_background(
             launch_mode=BACKGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
+            reopen=reopen,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved
@@ -486,9 +479,10 @@ def execute_spawn_blocking(
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
     on_spawn_id: Callable[[str], None] | None = None,
+    reopen: ContinueHold | None = None,
 ) -> SpawnActionOutput:
-    with LaunchSlot() as launch_lock:
-        reserved = _reserve_then_prepare(
+    with reopen.slot if reopen is not None else LaunchSlot() as launch_lock:
+        reserved = _prepare_then_reserve(
             payload=payload,
             request=request,
             runtime=runtime,
@@ -496,6 +490,7 @@ def execute_spawn_blocking(
             launch_mode=FOREGROUND_LAUNCH_MODE,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
+            reopen=reopen,
         )
         if isinstance(reserved, SpawnActionOutput):
             return reserved

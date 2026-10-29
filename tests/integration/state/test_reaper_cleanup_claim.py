@@ -113,10 +113,10 @@ def test_reaper_recovers_claim_after_crash_before_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-    from meridian.lib.state.reaper import _cleanup_claimed_scopes
+    from meridian.lib.state.reaper import resolve_cleanup_claim
 
     monkeypatch.setattr(
-        "meridian.lib.state.reaper._cleanup_claimed_scopes",
+        "meridian.lib.state.reaper.resolve_cleanup_claim",
         lambda *_args, **_kwargs: None,
     )
 
@@ -126,8 +126,8 @@ def test_reaper_recovers_claim_after_crash_before_cleanup(
     assert claim_path.is_file()
 
     monkeypatch.setattr(
-        "meridian.lib.state.reaper._cleanup_claimed_scopes",
-        _cleanup_claimed_scopes,
+        "meridian.lib.state.reaper.resolve_cleanup_claim",
+        resolve_cleanup_claim,
     )
     terminated: list[str] = []
 

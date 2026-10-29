@@ -24,7 +24,7 @@ from meridian.lib.state.process_scope_projection import (
 )
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_store import delete_published_spawn
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from tests.support.launch_paths import launch_paths
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"

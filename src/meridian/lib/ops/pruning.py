@@ -29,6 +29,7 @@ from meridian.lib.state.project_identity import (
     AdHocOrigin,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_status import legacy_runner_alive, overlay_derived
 from meridian.lib.state.user_paths import get_context_home
 
@@ -523,7 +524,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue
 
-            if spawn_store.delete_published_spawn(
+            if delete_published_spawn(
                 runtime_root,
                 artifact.spawn_id,
                 can_delete=_not_running_legacy,

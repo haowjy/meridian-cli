@@ -121,8 +121,10 @@ def session_records_for_spawns(
             if session is None and candidates:
                 raise ValueError(f"Session generation conflicts with history: {record.id}")
             candidates = [session] if session is not None else []
-        if len(candidates) > 1:
-            raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+        # Only an unbound row reaches here with several (a bound one has its exact generation):
+        # a continue between its commit and its bind shares its chat with every earlier
+        # launch's generations, and the newest is the latest.
+        candidates = candidates[-1:]
         if candidates:
             session = candidates[0]
             if session.spawn_id not in {None, record.id} or session.history_id not in {

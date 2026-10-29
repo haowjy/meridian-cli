@@ -1,5 +1,55 @@
 # Upgrade notes
 
+## A continue keeps the spawn ID
+
+`--continue pN`, `--continue cN` and the session browser now keep the spawn's ID: the
+continued conversation is still `pN`, `MERIDIAN_SPAWN_ID` stays `pN`, and children started
+after a continue record `pN` as their parent. `--fork` and `--from` still create a new spawn.
+`spawn show pN`, `spawn wait pN` and `spawn report show pN` show the latest run; a wait that
+started during an earlier run still returns that run's result. Continuing a spawn from another
+spawn moves it under the caller, and a spawn cannot be continued from one of its own
+descendants.
+
+A spawn can be continued only while no run of it is live. A second terminal continuing the same
+spawn is refused ("pN is still running") before anything is written.
+
+**What changed**
+
+- Each run writes its files into its own directory under `spawns/pN/`. Use
+  `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths;
+  `spawn show --format json` and the human output no longer print `report_path` or
+  `log_path`. A run that wrote no report shows none; it never shows an earlier run's.
+- Cost, tokens and duration are totals across every run of the spawn. A continue no longer
+  restarts them. A spawn created before v0.18.0 counts its first run twice in its totals on
+  its first continue: the harness reports the whole conversation's usage, and the older
+  record kept no running total to subtract.
+- Continuing a chat whose spawn chain began before the upgrade (`p5`, continued as `p6`,
+  continued as `p9`) reopens the chat's newest spawn: `meridian --continue p5` prints
+  "p5's conversation continues as p9". It refuses when that would change the newest spawn's
+  parent or kind; continue it by its ID, or use `--fork`.
+- A spawn that ended without recording an outcome (killed, or its terminal closed) is
+  recorded as `crashed` by the next continue, which also stops what it left running,
+  including a managed primary's backend and TUI.
+- `--dry-run` still reports without writing or stopping anything.
+
+**Mixed versions.** Before running v0.18.0, update every worktree and install that shares this
+project's runtime to v0.17.N or later (N is set when that patch ships). Builds older than
+v0.17.N stop listing spawns and stop launching primaries once v0.18.0 has written a spawn.
+v0.17.x builds refuse the spawns v0.18.0 created or continued, refuse prune and archive while
+those exist, and may show a child's result a second time: an older build re-delivers a result
+v0.18.0 already consumed, and never loses one. Spawns that an older build archives are not in
+the v0.18.0 index until you run `meridian session index rebuild`.
+
+**Pi.** Restart long-lived Pi sessions after upgrading. A Pi session started before the upgrade
+can hide an earlier run's result after a continue, and marks it delivered without showing it.
+
+## New spawns start running
+
+A new spawn is `running` from the moment it exists. It no longer shows `queued` before its
+runner starts or `finalizing` while it writes its outcome. `--status queued` and
+`--status finalizing` (and `--view queued`) still parse, with a deprecation warning, and are
+removed in the next minor release. Rows written by older builds keep those statuses.
+
 ## Removed hook names and keys
 
 Hook config that the event-name migration deprecated is now rejected. `meridian hooks
@@ -763,16 +813,22 @@ directory, `spawns/<parent>/observed-spawns.json`, and goes away when that spawn
 pruned or archived. It used to sit under `pi-bash/<parent>/`, a name left over from
 Pi, although `spawn wait`, `spawn ack` and `spawn collect` use it for every harness.
 
+Since v0.18.0 this file is only read. A continue keeps a child's ID, so a result is
+consumed per run, not per child: `spawn wait`, `spawn ack` and `spawn collect` record
+`(child, run)` in `spawns/<parent>/observed-launches.json`, and the Pi receipts moved to
+`pi-bash/<parent>/launch-receipts.json` and `cleared-launches.json`. An entry that
+names only a child in the old files reads as that child's first run, which is exact:
+older builds could not read a continued spawn, so they only ever consumed its first run.
+See [a continue keeps the spawn ID](#a-continue-keeps-the-spawn-id).
+
 **What changed**
 
-- `spawn wait` and `spawn ack` write the new location. Where a Pi session keeps a
-  `pi-bash/<parent>/` directory, they also update the old file, so a Pi session
-  started before the upgrade still sees results consumed after it.
-- Every reader also reads the old `pi-bash/<parent>/observed-spawns.json` and honors
-  its consumed IDs and live waits, so results already consumed stay consumed and a
-  `spawn wait` still running from the old build keeps holding its children. A
-  damaged old file counts as empty.
-- Nothing deletes the old file. It is read, and mirrored for Pi parents, for one release.
+- Every reader still reads `spawns/<parent>/observed-spawns.json` and honors its consumed
+  IDs and live waits, so results already consumed stay consumed and a `spawn wait` still
+  running from the old build keeps holding its children. A damaged file counts as empty.
+- The `pi-bash/<parent>/observed-spawns.json` mirror is neither read nor written any more.
+  Nothing deletes either old file. A build older than v0.18.0 still writes them, and does not
+  see what v0.18.0 recorded, so it may show a result a second time.
 
 **Before installing**
 
@@ -1330,15 +1386,17 @@ background completions; returned foreground results can be cleared.
 
 Private coordination files under `pi-bash/<parent>/` now include:
 
-- `delivery-receipts.json`: v1 parent and `messages`, mapping each delivery ID
+- `delivery-receipts.json` (read-only since v0.18.0; `launch-receipts.json` replaces it,
+  keyed by child and run): v1 parent and `messages`, mapping each delivery ID
   to its admitted work IDs. Queueing a message creates no receipt.
 - `delivery-observations.json`: v1 parent and `observed_message_ids`, written
   by the Python runner when it observes that exact native admission event.
 - `delivery-fault.json`: v1 parent, operation and error, preserving notification
   failures separately from shell execution failures.
-- `observed-spawns.json`: durable observed child IDs plus temporary wait leases
-  bound to the caller's PID, birth time and expiry. Interrupted waits no longer
-  suppress child completion permanently.
+- `observed-spawns.json` (retired in v0.18.0: neither read nor written here; the parent's
+  `spawns/<parent>/observed-launches.json` replaced it): durable observed child IDs plus
+  temporary wait leases bound to the caller's PID, birth time and expiry. Interrupted waits
+  no longer suppress child completion permanently.
 
 Valid existing v1 Bash records remain readable; no migration command is needed.
 Missing receipt files leave unconsumed work eligible. The old

@@ -6,7 +6,6 @@ import fcntl
 import json
 import os
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
@@ -19,7 +18,6 @@ from typing import Any
 import psutil
 import pytest
 
-from meridian.lib.state.session_store import chat_record
 from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
 
@@ -190,10 +188,10 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
         assert process.wait(timeout=30) == 0
         assert alive(worker), "dry run killed the orphan"
         assert projection.read_bytes() == before, "dry run released scopes"
-        assert not (runtime.root / "runtime/spawns/p2").exists()
+        assert not (runtime.root / "runtime/spawns/p1/launches/2").exists()
         return
     try:
-        runtime.pid("p2.pid")
+        runtime.pid("p1.2.pid")
     except AssertionError as exc:
         log = runtime.root / f"cli-{runtime.processes.index(process)}.log"
         raise AssertionError(
@@ -201,13 +199,18 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
             + log.read_text(errors="replace")[-4000:]
         ) from exc
     orphan_gone_before_start = not alive(worker)
-    (runtime.root / "p2.exit").touch()
+    (runtime.root / "p1.2.exit").touch()
     code = process.wait(timeout=30)
     assert (orphan_gone_before_start, code) == (True, 0), (
         "old group gone before new harness start, continue exit code",
         orphan_gone_before_start, code,
     )
-    assert not (runtime.root / "p2.writer-busy").exists()
+    assert not (runtime.root / "p1.2.writer-busy").exists()
+    # The continue kept the ID: launch 1 was ended as crashed, launch 2 is the same spawn's.
+    archived = json.loads((runtime.root / "runtime/spawns/p1/launches/1/launch.json").read_text())
+    assert (archived["status"], archived["terminal"]["error"]) == ("failed", "crashed")
+    assert runtime.row("p1")["launch"] == {"n": 2}
+    assert not (runtime.root / "runtime/spawns/p2").exists()
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
@@ -243,7 +246,7 @@ def test_continue_names_non_runner_holder_of_dead_source(
         log = (runtime.root / f"cli-{runtime.processes.index(process)}.log").read_text()
         assert "held by a repair or another continue" in log
         assert "still running" not in log
-        assert not (runtime.root / "runtime/spawns/p2").exists()
+        assert not (runtime.root / "runtime/spawns/p1/launches/2").exists()
     finally:
         holder.kill()
         holder.wait()
@@ -259,78 +262,26 @@ def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: 
     code = process.wait(timeout=30)
     assert code != 0
     assert alive(harness) and alive(worker)
-    assert not (runtime.root / "runtime/spawns/p2").exists(), "preview/refusal wrote a new row"
-    assert not (runtime.root / "p2.pid").exists()
+    assert not (runtime.root / "runtime/spawns/p1/launches/2").exists(), "refusal wrote a launch"
+    assert not (runtime.root / "p1.2.pid").exists()
     assert "still running" in (runtime.root / "cli-1.log").read_text()
 
 
-@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
-def test_continue_of_superseded_spawn_refuses_live_successor(
-    runtime: Runtime, primary: bool,
-) -> None:
-    runtime.orphan()
-    first = runtime.cli(*continue_args(False, background=True))
-    assert first.wait(timeout=30) == 0
-    p2_harness, p2_worker = runtime.started("p2")
-    p2_scopes = runtime.root / "runtime/spawns/p2/launches/1/process_scopes.json"
-    scopes_before_refusal = p2_scopes.read_bytes()
-
-    process = runtime.cli(*continue_args(primary, background=True))
-    p3_row = runtime.root / "runtime/spawns/p3/state.json"
-    until(lambda: process.poll() is not None or p3_row.exists())
-    if p3_row.exists() and process.poll() is None:
-        process.kill()
-    code = process.wait(timeout=30)
-
-    assert code != 0
-    assert not p3_row.exists(), "refusal wrote a new row"
-    assert alive(p2_harness) and alive(p2_worker)
-    assert p2_scopes.read_bytes() == scopes_before_refusal, "refusal released live scopes"
-    assert "p1 was continued as p2" in (runtime.root / "cli-2.log").read_text()
-
-
-def test_second_continue_before_first_worker_starts_runs_one_harness(
-    runtime: Runtime,
-) -> None:
+def test_second_continue_before_first_worker_starts_is_refused(runtime: Runtime) -> None:
     runtime.orphan()
     runtime.env["FAKE_HOLD_WORKER"] = "1"
     first = runtime.cli(*continue_args(False, background=True))
-    runtime.pid("p2.worker-gate.pid")
+    runtime.pid("p1.worker-gate.pid")
     assert first.wait(timeout=30) == 0
-    # p2's worker has not started its session: nothing names p2 as the chat's owner yet.
+    # The lock moved to launch 2's worker, which has not started its session or recorded itself.
     second = runtime.cli(*continue_args(False, background=True))
-    second.wait(timeout=30)
-    (runtime.root / "p2.worker-release").touch()
-    runtime.started("p2")
-    (runtime.root / "p3.worker-release").touch()
-    until(lambda: runtime.row("p3")["status"] == "failed")
-    assert not (runtime.root / "p3.pid").exists(), "second continue started a harness"
-    assert alive(runtime.pid("p2.pid"))
-
-
-def test_continue_ignores_pruned_successor(runtime: Runtime) -> None:
-    runtime.orphan()
-    first = runtime.cli(*continue_args(False, background=True))
-    assert first.wait(timeout=30) == 0
-    p2_harness, p2_worker = runtime.started("p2")
-    chat_id = runtime.row("p1")["chat_id"]
-    chat = chat_record(runtime.root / "runtime", chat_id)
-    assert chat is not None
-    assert chat.spawn_id == "p2"
-    p2_runner = runtime.row("p2")["runner_pid"]
-    (runtime.root / "p2.exit").touch()
-    # Prune only after p2's runner has finished writing its finalization.
-    until(lambda: not alive(p2_harness) and not alive(p2_worker) and exited(p2_runner))
-    shutil.rmtree(runtime.root / "runtime/spawns/p2")
-
-    process = runtime.cli(*continue_args(False))
-    p3_row = runtime.root / "runtime/spawns/p3/state.json"
-    until(lambda: process.poll() is not None or p3_row.exists())
-    if p3_row.exists():
-        runtime.pid("p3.pid")
-        (runtime.root / "p3.exit").touch()
-
-    assert process.wait(timeout=30) == 0
+    assert second.wait(timeout=30) != 0
+    log = (runtime.root / f"cli-{runtime.processes.index(second)}.log").read_text()
+    assert "held by a repair or another continue" in log
+    (runtime.root / "p1.worker-release").touch()
+    runtime.started("p1.2")
+    assert runtime.row("p1")["launch"] == {"n": 2}
+    assert not (runtime.root / "runtime/spawns/p1/launches/3").exists()
 
 
 def test_primary_continue_after_source_archive(runtime: Runtime) -> None:
@@ -358,21 +309,6 @@ def test_primary_continue_after_source_archive(runtime: Runtime) -> None:
     runtime.started("p2")
     (runtime.root / "p2.exit").touch()
     assert continued.wait(timeout=30) == 0
-
-
-def test_continue_of_superseded_spawn_sweeps_dead_successor(runtime: Runtime) -> None:
-    runtime.orphan()
-    first = runtime.cli(*continue_args(False, background=True))
-    assert first.wait(timeout=30) == 0
-    p2_harness, p2_worker = runtime.orphan_spawn("p2")
-
-    process = runtime.cli(*continue_args(False))
-    runtime.pid("p3.pid")
-    successor_gone_before_start = not alive(p2_harness) and not alive(p2_worker)
-    (runtime.root / "p3.exit").touch()
-
-    assert process.wait(timeout=30) == 0
-    assert successor_gone_before_start, "successor group survived until the new harness started"
 
 
 def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
@@ -403,8 +339,8 @@ def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> N
     scope["root_created_at_epoch"] = psutil.Process(sleeper.pid).create_time() - 60
     projection.write_text(json.dumps(data))
     process = runtime.cli(*continue_args(False))
-    runtime.started("p2")
-    (runtime.root / "p2.exit").touch()
+    runtime.started("p1.2")
+    (runtime.root / "p1.2.exit").touch()
     assert process.wait(timeout=30) == 0
     assert alive(sleeper.pid), "reused PID was signalled"
     assert json.loads(projection.read_text())["released"]
@@ -417,26 +353,25 @@ def test_detached_session_descendant_survives_sweep(runtime: Runtime) -> None:
     process = runtime.cli(
         "spawn", "--continue", "p1", "-m", "haiku", "-p", "finish", "--no-background"
     )
-    runtime.started("p2")
+    runtime.started("p1.2")
     assert not alive(worker)
     assert alive(detached), "setsid tool is explicitly outside containment"
-    (runtime.root / "p2.exit").touch()
+    (runtime.root / "p1.2.exit").touch()
     assert process.wait(timeout=30) == 0
 
 
 def test_concurrent_continue_of_dead_source(runtime: Runtime) -> None:
     runtime.orphan()
-    # Both follow-ups race through the sweep; the chat lock lets one start a harness.
+    # Both follow-ups race for the dead source's lock: one reopens it, the other is refused.
     runtime.env["FAKE_RACE"] = "first"
     first = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
     runtime.env["FAKE_RACE"] = "second"
     second = runtime.cli("spawn", "--continue", "p1", "-m", "haiku", "-p", "hold", "--bg")
-    for process in (first, second):
-        assert process.wait(timeout=30) == 0
-    until(lambda: any((runtime.root / f"p{n}.pid").exists() for n in (2, 3)))
-    until(lambda: {runtime.row(f"p{n}")["status"] for n in (2, 3)} & {"failed"})
-    started = [n for n in (2, 3) if (runtime.root / f"p{n}.pid").exists()]
-    assert len(started) == 1, f"harnesses started for p{started}"
+    codes = sorted(process.wait(timeout=30) for process in (first, second))
+    assert codes[0] == 0 and codes[1] != 0
+    runtime.started("p1.2")
+    assert runtime.row("p1")["launch"] == {"n": 2}
+    assert not (runtime.root / "runtime/spawns/p1/launches/3").exists()
 
 
 def lock_held(path: Path) -> bool:
@@ -492,7 +427,7 @@ def test_launch_lock_lifetime(runtime: Runtime, shape: str) -> None:
 def test_continue_io_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool,
 ) -> None:
-    from meridian.lib.launch.continue_sweep import sweep_before_continue
+    from meridian.lib.launch.continue_launch import begin_continue
     from meridian.lib.state import spawn_store
     from meridian.lib.state.launch_lock import LaunchSlot
     from meridian.lib.state.spawn import repository
@@ -506,16 +441,23 @@ def test_continue_io_bound(
                 harness="claude", prompt="test", launch_lock=None if legacy else slot,
                 started_at="2020-01-01T00:00:00+00:00",
             )
-    # Isolate added sweep I/O: full continue also reads source/session metadata
-    # for replay. CLI behavior is covered above, without faking that pipeline.
     probe = IOProbe(monkeypatch)
     probe.watch("scan", repository.scan_spawn_ids)
     probe.watch("read", repository.read_state)
+    reads: list[int] = []
     for source, count in enumerate((240, 2400, 12000), start=1):
         for number in range(4, count + 1):
             (root / "spawns" / f"p{number}").mkdir(exist_ok=True)
         before = probe.count("read")
-        sweep_before_continue(root, f"p{source}", chat_id=f"c{source}")
+        hold = begin_continue(
+            project_root=tmp_path, runtime_root=root,
+            named=spawn_store.get_spawn(root, f"p{source}"), named_by_spawn_ref=True,
+            chat_id=None, parent_id=None, kind="child", caller_spawn_id=None, max_depth=3,
+            dry_run=False,
+        )
+        assert hold is not None
+        hold.slot.close()
         assert probe.count("scan") == 0
-        assert probe.count("read") - before == 1 + int(legacy)
+        reads.append(probe.count("read") - before)
         assert all(call.args[1] == f"p{source}" for call in probe.calls("read")[before:])
+    assert len(set(reads)) == 1, f"a continue's reads grew with the row count: {reads}"

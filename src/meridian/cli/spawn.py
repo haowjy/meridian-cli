@@ -593,7 +593,10 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--continue",
-            help="Continue a session ref: chat ID, spawn ID, or raw harness session ID.",
+            help=(
+                "Continue a session ref: chat ID, spawn ID, or raw harness session ID. "
+                "The spawn keeps its ID."
+            ),
         ),
     ] = None,
     fork_from: Annotated[

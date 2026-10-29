@@ -78,10 +78,10 @@ from meridian.lib.state.spawn.transitions import (
     apply_launch_facts,
 )
 from meridian.lib.state.spawn_aggregate import (
-    delete_published_spawn,
     ensure_spawn_staging_dir,
     sync_retirement_parents,
 )
+from meridian.lib.state.spawn_observations import clear_wait_pin
 from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
@@ -463,14 +463,41 @@ def start_spawn(
         return LaunchPaths.for_row(runtime_root, record)
 
 
+def spawn_would_cycle(
+    spawns_dir: Path, spawn_id: str, new_parent_id: str | None, *, max_depth: int
+) -> bool:
+    """Whether making ``new_parent_id`` the parent of ``spawn_id`` closes a loop.
+
+    Walks the new parent's ancestor chain, at most ``max_depth`` links with a visited set, so a
+    chain that already loops cannot spin. The answer is only stable under ``spawns_flock``.
+    """
+    visited: set[str] = set()
+    current = new_parent_id
+    for _ in range(max(max_depth, 1) + 1):
+        if current is None:
+            return False
+        if current == spawn_id:
+            return True
+        if current in visited:
+            return False
+        visited.add(current)
+        row = _read_state(spawns_dir, current, include_prompt=False)
+        current = row.parent_id if row is not None else None
+    return False
+
+
 def reopen_spawn(
     handle: LaunchHandle,
     runtime_root: Path,
     launch: LaunchInput,
     *,
+    max_depth: int,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
+    execution_cwd: str | None = None,
     clock: Clock | None = None,
-) -> LaunchPaths:
-    """Start the next launch of a finished spawn under its launch lock; return its paths.
+) -> SpawnRecord:
+    """Start the next launch of a finished spawn under its launch lock; return its new row.
 
     ``handle`` is the proof that no runner of launch K is alive, so this is the only
     writer that may set ``launch`` on a v3 row. Order: K's row is copied to
@@ -478,9 +505,10 @@ def reopen_spawn(
     created with the prompt, then one ``state.json`` write turns the row into launch
     K+1. K's outcome must already be written: the archive is terminal by construction.
 
-    ``launch.parent_id`` must be the row's own: moving a spawn to another parent needs
-    the ancestry check under ``spawns_flock`` that P5b's cycle transaction adds, and
-    this function does not yet take that lock.
+    A continue moves the spawn under its caller. When the parent changes, the ancestor
+    walk, the check and the write share ``spawns_flock``, so two continues moving each
+    other's ancestors cannot both pass the check. The caller's wait pin for the spawn is
+    dropped last: it has moved past launch K.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -490,13 +518,18 @@ def reopen_spawn(
         raise ValueError(f"spawn row not found: {spawn_id}")
     if observed.terminal is None:
         raise ValueError(f"Cannot reopen {spawn_id}: its last launch has no outcome")
-    if launch.parent_id != observed.parent_id:
-        raise ValueError(
-            f"Cannot reopen {spawn_id} under a different parent: re-parenting needs "
-            "the cycle-checked transaction that is not implemented yet"
-        )
     k = observed.launch_number
     started = (clock or RealClock()).utc_now_iso()
+    # The next launch may run elsewhere than the last: all three paths move together.
+    contract = (
+        {
+            "control_root": normalize_path_for_write(control_root),
+            "task_cwd": normalize_path_for_write(task_cwd),
+            "execution_cwd": normalize_path_for_write(execution_cwd),
+        }
+        if execution_cwd is not None
+        else {}
+    )
 
     def next_launch(current: SpawnRecord) -> SpawnRecord:
         terminal = current.terminal
@@ -529,34 +562,35 @@ def reopen_spawn(
                 "launch": LaunchRef(n=k + 1),
                 "prior_usage": current.prior_usage.plus(terminal),
                 "owed_launches": owed,
+                **contract,
             }
         )
 
-    result = _write_state_locked(
-        paths.spawns_dir, spawn_id, next_launch, allow_terminal_overwrite=True
-    )
+    def commit() -> LockedMutationResult:
+        return _write_state_locked(
+            paths.spawns_dir, spawn_id, next_launch, allow_terminal_overwrite=True
+        )
+
+    if launch.parent_id == observed.parent_id:
+        result = commit()
+    else:
+        with (
+            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+            lock_file(paths.spawns_flock),
+        ):
+            if spawn_would_cycle(
+                paths.spawns_dir, spawn_id, launch.parent_id, max_depth=max_depth
+            ):
+                raise ValueError(
+                    f"Cannot continue {spawn_id} under {launch.parent_id}: "
+                    f"{launch.parent_id} is {spawn_id} or one of its descendants"
+                )
+            result = commit()
     if not isinstance(result, Applied):
         raise ValueError(f"Cannot reopen {spawn_id}: {type(result).__name__}")
-    return LaunchPaths.for_row(runtime_root, result.after)
-
-
-def remove_spawn_events(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    held: LaunchHandle | None = None,
-) -> None:
-    """Remove per-spawn state for one spawn.
-
-    This narrow rollback seam is for failed spawn preparation before any runner
-    can observe or act on the row. It is not a user-facing delete/archive path.
-    """
-
-    delete_published_spawn(
-        runtime_root,
-        spawn_id,
-        can_delete=lambda record: record is not None and _is_active_spawn_status(record.status),
-        held=held,
-    )
+    if launch.parent_id:
+        clear_wait_pin(runtime_root, launch.parent_id, spawn_id)
+    return result.after
 
 
 def update_spawn(

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         compile_prepared_policy_surface,
         prepare_launch_surface,
     )
+    from meridian.lib.launch.continue_launch import ContinueHold
     from meridian.lib.launch.materialize import MaterializedLaunch, materialize_harness
     from meridian.lib.launch.policies import (
         ResolvedLaunchPolicy,
@@ -84,8 +85,13 @@ def launch_primary(
     project_root: Path,
     request: LaunchRequest,
     harness_registry: HarnessRegistry,
+    continue_hold: ContinueHold | None = None,
 ) -> LaunchResult:
-    """Launch the primary agent process and wait for exit."""
+    """Launch the primary agent process and wait for exit.
+
+    ``continue_hold``: the finished spawn this launch reopens, its lock held; the runner commits
+    the next launch to it instead of creating a spawn.
+    """
 
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -238,6 +244,7 @@ def launch_primary(
         preview_context,
         harness_registry,
         prepared=prepared,
+        continue_hold=continue_hold,
     )
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 

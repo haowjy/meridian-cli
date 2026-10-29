@@ -168,6 +168,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             process_launcher: Any,
             on_running: Any = None,
             session_id_observer: Any = None,
+            usage_seed: Any = None,
         ) -> PrimaryAttachOutcome:
             _ = harness_id, control_root, task_cwd, env, spec, process_launcher
             captured["log_dir"] = launch.dir
@@ -281,6 +282,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = control_root, task_cwd, env, spec, process_launcher, on_running
         captured["harness_id"] = harness_id
@@ -364,6 +366,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = launch, spec, process_launcher
         captured["harness_id"] = harness_id
@@ -449,6 +452,7 @@ def test_run_harness_process_managed_records_worker_before_attach_returns(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, launch, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
@@ -528,6 +532,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, control_root, task_cwd, env, spec, process_launcher, on_running
         launch.dir.mkdir(parents=True, exist_ok=True)

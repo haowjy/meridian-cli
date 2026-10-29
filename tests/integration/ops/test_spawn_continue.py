@@ -119,8 +119,9 @@ def _record_spawn_create(
         ctx: object = None,
         prepared: object = None,
         on_spawn_id: object = None,
+        reopen: object = None,
     ) -> SpawnActionOutput:
-        _ = (runtime, ctx, prepared, on_spawn_id)
+        _ = (runtime, ctx, prepared, on_spawn_id, reopen)
         calls.append((payload, request))
         return SpawnActionOutput(
             command="spawn.create",
@@ -287,7 +288,7 @@ def test_spawn_follow_up_refuses_caller_without_spawn_capability_before_source_r
 
 
 @pytest.mark.parametrize("operation", ["continue", "fork"])
-def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
+def test_spawn_continue_refuses_replayed_passthrough_before_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -319,9 +320,9 @@ def test_spawn_continue_refuses_replayed_passthrough_before_sweep(
     )
 
     def _must_not_sweep(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("delegation refusal must precede the continue sweep")
+        raise AssertionError("delegation refusal must precede taking the launch lock")
 
-    monkeypatch.setattr(spawn_api, "sweep_before_continue", _must_not_sweep)
+    monkeypatch.setattr(spawn_api, "begin_continue", _must_not_sweep)
 
     if operation == "continue":
         result = spawn_api.spawn_continue_sync(

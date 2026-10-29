@@ -130,8 +130,9 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
         project_root: Path,
         request: LaunchRequest,
         harness_registry: object,
+        continue_hold: object = None,
     ) -> LaunchResult:
-        _ = (project_root, harness_registry)
+        _ = (project_root, harness_registry, continue_hold)
         requests.append(request)
         return LaunchResult(
             command=(),
@@ -362,10 +363,8 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     ).chat_id
     requests = _record_primary_launch(monkeypatch)
 
-    try:
-        _run_primary_continue(project_root, spawn_chat_id)
-    finally:
-        session_store.stop_session(runtime_root, spawn_chat_id)
+    session_store.stop_session(runtime_root, spawn_chat_id)
+    _run_primary_continue(project_root, "p51")
 
     assert requests[0].launch_policy_snapshot == snapshot
     assert requests[0].passthrough_args == snapshot.extra_args

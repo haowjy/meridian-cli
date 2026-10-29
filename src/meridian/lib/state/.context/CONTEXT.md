@@ -439,124 +439,15 @@ which would unlock the worker too. Harnesses never inherit this descriptor.
 `LaunchHandle` capability with a concrete ID and fd. Lifecycle/service creation
 requires a slot; only low-level `start_spawn` permits lockless test seeding.
 
-Explicit continue resolves the named spawn's current chat owner, takes that
-owner's lock before the named source lock, and sweeps their birth-verified scopes
-before creating another row. An exact-continue parent publishes the new row as
-the chat owner while its launch lock is still held; a background worker confirms
-that pointer after hand-off. Lockless legacy rows alone use
-`legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert under
-the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
-This does not change v3 status authority.
+Explicit continue keeps the spawn's ID: `launch/continue_launch.py` resolves the spawn that
+owns the target chat (an older spawn of the chat, or a chat ref, reopens that owner and refuses
+when it would change the owner's parent or kind), takes its launch lock, writes the last
+launch's derived outcome, sweeps its birth-verified scopes and resolves a leftover reaper
+claim; then `reopen_spawn` commits the next launch under the same lock, which the runner
+inherits (in-process for a primary or foreground child, a duplicated fd for `--bg`). Lockless
+legacy rows alone use `legacy_runner_alive()`'s 15-second pre-worker PID-less window and convert
+under the mutation lock. Lock-backed rows have no grace: a free lock derives terminal.
 
-
-### History discovery and retention
-
-
-Machine-wide retention has disjoint owners: committed-root scanning rejects
-`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity is the
-latest tree mtime under `projects/<id>/` or `context/<id>/`, including
-`origin.json`, plus persisted spawn/session start and finish times. Pruning
-rechecks eligibility under the exclusive project-lifetime gate and removes
-`projects/<id>/` with `context/<id>/`.
-`state.adhoc_retention_days` is user-config/environment-only; cwd project config
-must never control a machine-wide scan.
-
-Use `history_index.py` for filtered discovery, not repeated broad authority scans.
-Keep lifecycle/control decisions on direct authoritative reads. All new indexed
-writers must publish dirty intent before file mutation; SQLite is never a writer
-dependency. Restored `record_mode="historical"` aggregates are inert and immutable;
-their reserved `historical-` generation prefix makes the append guard O(1).
-Per-operation session reads and all appends use the keyed seam in `session_store.py`;
-multi-chat reads use one `chats_rows` pass, never a loop over single-chat reads.
-Indexed queries build a missing projection, then make one catch-up attempt bounded
-by the caller deadline (two seconds by default). Contention raises
-`HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller
-gives an absent projection a separate, sticky 15-second cold build before its
-ordinary read attempt. An exhausted cold build latches failure.
-Warm catch-up projects `sessions.jsonl` to the committed end even when its writer
-lock is busy; the lock gates marker acknowledgement, not the read. Spawn and archive
-catalog projection still require their source locks. Incremental session catch-up
-loads only the working sets for chats touched after its cursor.
-The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
-locks, init latch) are named by both `SCHEMA_VERSION` and the latest supported
-session event version; either change builds a new file from authority and never
-touches an older build's file. Unsupported session rows are skipped; the cursor
-stores their versions so every indexed read warns.
-Never migrate in place.
-See [history.md](history.md) before changing locks, projection,
-transcript retry behavior, ZIP retention, or restore.
-
-
-### Reconciliation: repair and cleanup
-
-
-Readers get status only from `spawn_status.py`: `read_derived()` for one spawn and
-`overlay_derived()` for rows from a scan or the index. For lock-backed rows, they hold
-the shared launch lock across the authority read. Lockless legacy rows use the bounded
-legacy liveness rule instead. Both may return an in-memory terminal status, never
-persist state or terminate processes, and are safe at any depth.
-
-Use derived status for liveness, display, wait, and idle questions. Selection for
-cancel/archive/destruction uses stored status until dead-launch finalization persists
-an outcome. `claim_dead_launch()` returns `Claimed`, `Settled`, `Live`, or `Lockless`;
-only `Claimed` authorizes `SpawnApplicationService.finalize_dead_launch()`, the sole
-writer of a dead lock-backed launch's outcome.
-
-`reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-and fails closed outside root depth. It delegates persistence to
-`finalize_dead_launch()`, which retains the claimed runner-lifetime `launch.lock`;
-lockless legacy rows are never finalized here. The repairer snapshots a cleanup claim,
-persists the derived outcome while retaining the launch lock, then terminates the
-claimed, birth-validated scopes. A separate stable
-cleanup lock prevents concurrent repairers from double-signalling; terminal rows
-retain failed claims for the next doctor pass. Doctor's candidate discovery streams
-authoritative spawn rows directly, selecting active rows and rows with a cleanup claim;
-the background pass instead takes its candidates from the history index. Doctor
-captures orphan primaries only after its whole walk: the capture guard defers
-while any row bound to the same native session is active, and crashed `--continue`
-generations share one. Primary scope termination additionally requires positive
-runner-death evidence against the recorded birth, with the same one-second clock
-tolerance as the liveness check. Unknown identity and access errors never authorize
-primary scope termination, including replayed terminal claims; they do not block
-status finalization.
-Read-only projected status is not authorization to terminate a scope.
-
-
-### Native chat identity
-
-
-A chat keeps one `(harness, native_store, harness_session_id)` binding across
-starts and updates. `update_session_harness_id` atomically returns
-`BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
-`native_binding.bind`; callers mirror its accepted ID, not their candidate.
-`session_fold.py` owns event models and replay; `by_native_key(records)`
-inverts accepted chat records without discarding aliases or doing I/O. A later
-accepted start projects every earlier unstopped live generation of that chat as
-stopped at the new start time: ordinary starts hold the chat's exclusive lifetime
-lock, while observed-chat starts mint a new chat and immediately stop it.
-Historical multi-ID arrays are ignored on read. Chat IDs are `c<digits>` by shape
-(`core/refs.is_chat_id`): `reserve_chat_id` mints them and `start_session` rejects a
-caller-supplied ID of any other shape. `native_generations` is the one native-ID lookup: it
-finds a native ID on any generation, picks the newest with a native session key (else the newest), and refuses an ID recorded under two harnesses or two
-native stores.
-
-Fork and context-source ancestry belong to the chat, not its latest generation:
-accepted starts carry both parent identities and original creation time forward.
-Tmux targets belong to the generation and may be absent. HistoryIndex projects
-parent edges and native model observations from the journal; list consumers batch
-model lookups rather than scanning observations once per row.
-
-
-### Chat→spawn link
-
-A chat runs as one or more generations, one start event each: a launch, a
-`--continue`, or the new chat a running primary moves into after `/clear`. Every start
-event names the spawn that runs that generation (`spawn_id`) when it is written. `session_identity.chat_owner_spawn` relies on it: it returns the newest
-generation's spawn that has a row, with no scan and no fallback, so a writer that links
-late or not at all leaves spawn commands unable to name the chat's owner ("Chat cN has no
-spawn"); resume, read and `--from` still work on the chat.
-
-- Children write the spawn row first, then start the session.
 - The primary runner reserves its ID (`spawn_store.reserve_launch`) before
   `session_scope`, so the start event can carry it, and passes the same ID to
   `SpawnReservation`. Its
@@ -564,10 +455,11 @@ spawn"); resume, read and `--from` still work on the chat.
   `history_id`, which the session listing needs to hide archived primaries.
 - An observed (`/clear`) chat's start event names the observing run.
 - An exact continue writes no link until its session starts: the start event is the only
-  writer of a chat's owner. Until then `spawn show`, `wait`, `cancel` and
-  `message` by chat ID name the previous run (a short window; once the row exists but its
-  session has not started they can act on a finished run), and a racing continue is
-  refused by the chat lock (`ChatBusyError`) in its worker.
+  writer of a chat's owner, and a reopen's link names the same spawn. Until then the row
+  (launch K+1, running, `chat_id` the target, no `session_instance_id`) resolves to the newest
+  generation linked to it in that chat. A racing continue of the same spawn is refused at its
+  launch lock; one that loses the chat to a native `/resume` takeover finds the chat lock held
+  (`ChatBusyError`), and its runner writes the launch `failed` with that error.
 - A spawn row's `chat_id` is the chat its launch runs or will resume, never the caller's.
   An exact continue reserves it with the continue target, so a continue refused before
   its session starts still resumes that chat. A fresh child is reserved with

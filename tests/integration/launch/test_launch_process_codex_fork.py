@@ -158,6 +158,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -281,6 +282,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         process_launcher: Any,
         on_running: Any = None,
         session_id_observer: Any = None,
+        usage_seed: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -420,6 +422,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         launcher,
         on_running,
         session_id_observer,
+        usage_seed,
     ):
         assert spec.codex_runtime.rules_file_path == rules_path.as_posix()
         assert spec.native_identity is not None

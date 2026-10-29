@@ -106,7 +106,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
-Session initiation modes: `--continue` resumes the same transcript (bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+Session initiation modes: `--continue` resumes the same transcript and keeps the spawn's ID (`--continue p7` is still `p7`; bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
 
 Meridian follows a native `/resume` inside a running harness on a best-effort basis (commands then name the run live in the chat). `meridian --continue <chat>` and `meridian session browse` are the reliable ways to resume, because they record which run owns the chat.
 

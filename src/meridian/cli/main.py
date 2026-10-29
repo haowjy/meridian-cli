@@ -247,7 +247,7 @@ def root(
             name="--continue",
             help=(
                 "Continue from a session ref: chat id (c123), spawn id (p123), "
-                "or raw harness session id."
+                "or raw harness session id. A spawn keeps its ID."
             ),
         ),
     ] = None,

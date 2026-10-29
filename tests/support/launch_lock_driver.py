@@ -9,6 +9,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 
 def fake_harness() -> None:
@@ -16,7 +17,12 @@ def fake_harness() -> None:
         print("2.0.0")
         return
     root = Path(os.environ["FAKE_ROOT"])
+    # Marker files name the spawn, and its launch from the second on: `p1`, then `p1.2`.
     spawn = os.environ["MERIDIAN_SPAWN_ID"]
+    state = json.loads((root / "runtime" / "spawns" / spawn / "state.json").read_text())
+    launch = (state.get("launch") or {}).get("n", 1)
+    if launch > 1:
+        spawn = f"{spawn}.{launch}"
     session = next(
         sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg in ("--session-id", "--resume")
     )
@@ -85,25 +91,22 @@ def main() -> None:
     if race:
         from meridian.lib.ops.spawn import api
 
-        original = api.sweep_before_continue
+        original = api.begin_continue
 
-        def scheduled_sweep(
-            runtime_root: Path,
-            spawn_id: str,
-            *,
-            chat_id: str | None,
-            dry_run: bool = False,
-        ) -> None:
+        def scheduled_begin(**kwargs: Any) -> Any:
             root = Path(os.environ["FAKE_ROOT"])
             if race == "second":
                 while not (root / "first-swept").exists():
                     time.sleep(0.01)
-            original(runtime_root, spawn_id, chat_id=chat_id, dry_run=dry_run)
-            (root / f"{race}-swept").touch()
-            while not (root / "second-swept").exists():
-                time.sleep(0.01)
+            try:
+                return original(**kwargs)
+            finally:
+                # The loser is refused and the winner holds its lock until it has seen that.
+                (root / f"{race}-swept").touch()
+                while not (root / "second-swept").exists():
+                    time.sleep(0.01)
 
-        patch.setattr(api, "sweep_before_continue", scheduled_sweep)
+        patch.setattr(api, "begin_continue", scheduled_begin)
     if sys.argv[1:2] == ["worker"]:
         if os.environ.get("FAKE_HOLD_WORKER") == "1":
             root = Path(os.environ["FAKE_ROOT"])
