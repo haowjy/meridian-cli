@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-29
+
+### Fixed
+- Older builds keep working in a runtime that holds spawn rows written by a newer Meridian.
+
 ## [0.17.4] - 2026-10-28
 
 ### Fixed
