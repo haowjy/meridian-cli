@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-29
+
+### Changed
+- Meridian pins Mars 0.26.1, which fixes an OpenCode plugin tree dropping a hook written as `[[hooks.<Event>]]`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0261).
+
 ## [0.19.0] - 2026-10-29
 
 ### Upgrade notes
