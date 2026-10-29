@@ -33,9 +33,9 @@ manually because it has no notification payload; use `meridian notify` instead.
 
 | Event | Default timeout | Fires when |
 | ----- | --------------- | ---------- |
-| `spawn.created` | 30s | A spawn record is first written, either queued or already running |
-| `spawn.started` | 30s | A spawn enters `running`, including when its initial persisted state is already `running` |
-| `spawn.finished` | 60s | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted; a later authoritative terminal write can fire it again |
+| `spawn.created` | 30s | A spawn record is first written (new spawns are created `running`) |
+| `spawn.started` | 30s | A spawn is created `running`; this fires with `spawn.created` |
+| `spawn.finished` | 60s | A terminal spawn state (`succeeded`, `failed`, `cancelled`, or `timed_out`) is persisted, once per spawn |
 | `work.created` | 30s | `meridian work start` creates a new work item |
 | `work.activated` | 30s | `work start` or `work switch` resolves an item, with or without a session, or a primary launch attaches `--work` / `--from` work |
 | `work.done` | 60s | `meridian work done`, or an update to `done`, archives a work item |

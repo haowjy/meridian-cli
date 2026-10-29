@@ -833,8 +833,8 @@ def _spawn_list(
         Parameter(
             name="--status",
             help=(
-                "Filter by status: queued, running, finalizing, succeeded, "
-                "failed, cancelled, timed_out."
+                "Filter by status: running, succeeded, failed, cancelled, timed_out "
+                "(queued and finalizing are deprecated)."
             ),
         ),
     ] = None,
@@ -900,6 +900,12 @@ def _spawn_list(
         if candidate not in _SPAWN_STATUS_VALUES:
             raise ValueError(f"Unsupported spawn status '{status}'")
         normalized_status = SpawnStatus(candidate)
+        if normalized_status in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}:
+            print(
+                f"warning: `--status {candidate}` is deprecated and will be removed in the "
+                "next minor release; new spawns go straight to running.",
+                file=sys.stderr,
+            )
     elif failed:
         normalized_statuses = (SpawnStatus.FAILED,)
     else:

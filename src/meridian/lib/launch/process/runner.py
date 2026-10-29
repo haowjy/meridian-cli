@@ -19,7 +19,6 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
@@ -816,7 +815,6 @@ def run_harness_process(
                             # `--continue` inherits it from the row.
                             goal=preview_request.goal,
                             runner_pid=os.getpid(),
-                            status=SpawnStatus.QUEUED,
                         ),
                         launch_lock=launch_lock,
                     )

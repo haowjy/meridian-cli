@@ -97,10 +97,9 @@ the harness selected for the child launch.
 State transitions with post-write observer dispatch:
 
 ```
-start()           → spawn.created (+ spawn.started when initially running)
-mark_running()    → spawn.started on queued→running
-record_exited()   → (no hook event — sets exit code only)
-mark_finalizing() → CAS running→finalizing (no event)
+start()           → spawn.created + spawn.started (rows are created `running`)
+mark_running()    → records launch facts (modes, PIDs); no status change, no event
+record_exited()   → spawn.process_exited telemetry only; the row keeps no copy
 finalize()        → spawn.finished
 cancel()          → finalize(status='cancelled')
 ```
@@ -246,7 +245,7 @@ cancelled or exited non-zero is not a success merely because a report was extrac
 A clean exit with a genuine report stays `succeeded` even when a later cleanup
 signal arrives on the live-runner path; only an abnormal exit or a non-succeeded
 `terminal_status` downgrades it. This report rule also remains in explicit lockless
-compatibility, but does not apply to dead lock-backed launches.
+compatibility ([cancel](cancel.md)), but does not apply to dead lock-backed launches.
 
 `resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
 runner path.
@@ -262,3 +261,7 @@ KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
 - `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md`
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md`
 → [platform/process_scope/.context/CONTEXT.md](../../platform/process_scope/.context/CONTEXT.md) — mechanism layer (dispatch, backends, PID reuse guard)
+
+## Cancel
+
+→ [cancel.md](cancel.md) — `SpawnApplicationService.cancel`, the one cancel lane.

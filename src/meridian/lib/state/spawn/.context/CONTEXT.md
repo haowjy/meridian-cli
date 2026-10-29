@@ -85,54 +85,41 @@ raw writes to authoritative state files at CI.
 
 ## Pure Transitions
 
-`transitions.py` functions (`apply_mark_running`, `apply_record_exited`,
-`apply_mark_finalizing`, `apply_finalize`) contain no I/O. Each takes a `SpawnRecord`
-and returns a new `SpawnRecord` with updated fields. Callers decide whether to run
-on the owner hot path or inside `write_state_locked`'s mutator lambda, then pass the
-same transition function either way.
+`transitions.py` functions (`apply_mark_running`, `apply_finalize`) contain no I/O. Each
+takes a `SpawnRecord` and returns a new `SpawnRecord` with updated fields. Callers decide
+whether to run on the owner hot path or inside `write_state_locked`'s mutator lambda, then
+pass the same transition function either way.
 
-Status transitions are validated against the allowed state machine in
-`core.spawn_lifecycle.validate_transition()`. Pass `validate_status_transition=False`
-only when the record may be in `unknown` status (legacy migration paths).
+Rows are created `running` and have one status write after that: the terminal, in the same
+write as the `terminal` facts. `apply_mark_running` only records launch facts (launch mode,
+runner and worker PIDs). `queued` and `finalizing` stay readable on rows older builds
+wrote; `validate_transition()` still accepts them.
 
 ## Harness Exit vs Runner-Exit vs Terminal Facts
 
-The spawn record carries three distinct categories of exit metadata at different
-nesting levels. Confusing them produces wrong terminal-state decisions.
+New rows carry one exit record, `terminal`. `runner_exit` and `last_attempt_exit_code` /
+`last_attempt_exited_at` are read-only legacy fields: only older builds write them, and
+cancel's convergence and `derive` still read them from such rows.
 
-### Pre-finalization harness exit: `last_attempt_exit_code` / `last_attempt_exited_at`
+### Runner terminal intent: `runner_exit: RunnerExitFacts | None` (legacy)
 
-Flat top-level fields capture the harness process exit immediately after its
-single drain. They preserve that observation across a crash before runner
-terminal intent is recorded, but carry no spawn-level terminal meaning. Written
-by `apply_record_exited()` in `transitions.py`.
-
-### Runner terminal intent: `runner_exit: RunnerExitFacts | None`
-
-Frozen sub-model holding the runner's resolved terminal outcome (`status`,
-`exit_code`, `error`, `exited_at`). Written exactly once after the harness drain
-and post-run work are complete, before `mark_finalizing()`.
-
-`runner_exit` is intent for the live runner's writer path, not authority for a dead
+`runner_exit` was intent for an older live runner's writer path, not authority for a dead
 launch. A lock-backed dead launch is claimed through `claim_dead_launch()`; the free
-runner-lifetime lock and cancel intent determine its derived outcome.
-
-**Write sequence (caller contract):**
-
-1. Resolve `terminal_facts` from run conclusion
-2. `record_runner_exit()` — persist `RunnerExitFacts` (atomic write)
-3. `complete_execution()` → `mark_finalizing()` → `finalize()`
-
-If the runner crashes before step 3, `SpawnApplicationService.finalize_dead_launch()`
-claims the free launch lock and persists the same `cancelled` or `failed`/`crashed`
-outcome whether or not step 2 completed. Writers must cover all terminal paths.
+runner-lifetime lock and cancel intent determine its derived outcome. The runner now
+resolves cancel-versus-report in memory and writes the terminal once
+(`complete_execution()` → `finalize()`). If it crashes first,
+`SpawnApplicationService.finalize_dead_launch()` claims the free launch lock and persists
+`cancelled` or `failed`/`crashed`.
 
 ### Finalized outcome: `terminal: TerminalFacts | None`
 
 Frozen sub-model holding the complete finalized state (`exit_code`,
 `finished_at`, `published_at`, `duration_secs`, token/cost metrics, `error`,
 `origin`). Written by `apply_finalize()` in `transitions.py`. Does not carry
-status; top-level `status` is the sole status authority.
+status; top-level `status` is the sole status authority. A *derived* terminal (dead launch,
+no stored terminal) takes `finished_at` from an older exit time on the row, else the newest
+mtime of the launch's `output.jsonl`/`stderr.log`, else `started_at`: never `""`, and the
+same on every read.
 
 ### PID-liveness hardening: `runner_created_at_epoch`
 
@@ -142,20 +129,10 @@ back to `started_at` heuristic when `psutil` raises.
 
 ## Terminal Write Authority
 
-Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. The
-finalize mutator checks `current.terminal.origin` against the incoming origin
-under the per-spawn lock:
-
-| Current state | Incoming origin | Decision |
-|---|---|---|
-| Not terminal | any | proceed |
-| Terminal, `reconciler` origin | authoritative origin | replace (upgrade) |
-| Terminal, any other origin | any | reject (skip) |
-
-Authoritative origins: `runner`, `launcher`, `launch_failure`, `cancel`.
-`reconciler` is a weaker origin — the reaper may write it when no runner-origin
-terminal event arrived. A subsequent authoritative write upgrades to the stronger
-origin via replace.
+`spawn_store.py:finalize_spawn()` writes a terminal only to an active row, under the
+per-spawn lock; a row that already has one declines the write. Every terminal writer holds
+the launch lock (the runner, or the claim a continue, cancel, doctor or the repair pass
+takes), except a lockless legacy row's older runner.
 
 ## Anti-Patterns
 
@@ -169,9 +146,8 @@ with a mutator. Without the lock, external writes race with the runner's hot pat
 status regressions (e.g. writing `running` after `success`).
 
 **Don't treat `last_attempt_exit_code == 0` as a spawn-success signal.** It is
-pre-finalization crash-recovery bookkeeping and can disagree with the final
-outcome when budget checks or guardrails fail. The runner's terminal intent
-lives in `runner_exit.status`, not in the harness exit code.
+legacy pre-finalization bookkeeping from older builds and can disagree with the final
+outcome. The outcome lives in `terminal` and the top-level `status`.
 
 **Don't use `durable_report` or `runner_exit` to classify a dead lock-backed
 launch.** `read_derived()` and dead-launch finalization ignore both: cancel intent

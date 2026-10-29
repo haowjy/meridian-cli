@@ -71,7 +71,7 @@ ls -la "$(meridian context kb)"
 
 Meridian derives running-spawn status on read. If a runner dies without writing an outcome, `spawn list`, `spawn show`, and `spawn wait` immediately report `failed`/`crashed`; a pending cancel request reports `cancelled`. Plain `meridian doctor` lists such spawns under `dead_spawns_unfinalized`; `meridian doctor --kill-orphans` persists the outcome and cleans up recorded process scopes.
 
-A spawn in `finalizing` status is **not stuck** — it is in the drain/report/final-status window. Give it a few seconds before treating it as stuck. If the runner's lifetime lock is freed before an outcome is written, the spawn reads as `failed`/`crashed` (or `cancelled` when cancellation was requested). Check `report.md`; it may still contain useful work, but it does not determine the outcome.
+A `running` spawn whose runner is alive is not stuck while it drains and writes its report. If the runner's lifetime lock is freed before an outcome is written, the spawn reads as `failed`/`crashed` (or `cancelled` when cancellation was requested). Check `report.md`; it may still contain useful work, but it does not determine the outcome.
 
 If a spawn seems stuck, run:
 

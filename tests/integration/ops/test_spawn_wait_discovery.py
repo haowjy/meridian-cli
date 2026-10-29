@@ -14,6 +14,7 @@ from meridian.lib.ops.spawn.models import SpawnWaitInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import LaunchMode, SpawnKind, SpawnRecord
+from tests.support import legacy_rows
 from tests.support.fakes import FakeClock
 from tests.support.resident_drain import start_row
 
@@ -208,7 +209,7 @@ def test_nested_discovery_reaches_live_child_through_archived_ancestor(
     assert archived.reclaimed
     assert spawn_store.get_spawn(root, "p2") is None
     start_row(root, "p3", HarnessId.CODEX, "p2")
-    spawn_store.mark_finalizing(root, "p3")
+    legacy_rows.mark_finalizing(root, "p3")
     owed = _spawn(
         root,
         "p-direct-owed",

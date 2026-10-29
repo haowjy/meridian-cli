@@ -523,6 +523,10 @@ class LaunchPaths:
         return self.dir / _PROCESS_SCOPES_FILENAME
 
     @property
+    def cancel(self) -> Path:
+        return self.dir / "cancel.json"
+
+    @property
     def accepted_signals(self) -> Path:
         return self.dir / "accepted-signals.json"
 

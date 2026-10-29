@@ -20,6 +20,9 @@ from typing import Final, Protocol, cast
 # ---------------------------------------------------------------------------
 
 TARGET_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGINT, signal.SIGTERM)
+# Ignored for the length of a ``mask_termination`` section. A closing terminal sends SIGHUP,
+# which would otherwise kill a runner halfway through its terminal write.
+TERMINATION_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGTERM, signal.SIGHUP)
 
 
 def signal_to_exit_code(received_signal: signal.Signals | None) -> int | None:
@@ -97,7 +100,7 @@ class SignalCoordinator:
         self._receivers: set[SignalReceiver] = set()
         self._previous_handlers: dict[signal.Signals, signal.Handlers] = {}
         self._installed_signals: set[signal.Signals] = set()
-        self._sigterm_mask_depth = 0
+        self._termination_mask_depth = 0
 
     def register_receiver(self, receiver: SignalReceiver) -> None:
         with self._lock:
@@ -110,25 +113,25 @@ class SignalCoordinator:
             self._reconcile_handlers_locked()
 
     @contextmanager
-    def mask_sigterm(self) -> Generator[None, None, None]:
-        """Ignore SIGTERM while executing a critical section."""
+    def mask_termination(self) -> Generator[None, None, None]:
+        """Ignore SIGTERM and SIGHUP while executing a critical section."""
 
         with self._lock:
-            self._sigterm_mask_depth += 1
+            self._termination_mask_depth += 1
             self._reconcile_handlers_locked()
         try:
             yield
         finally:
             with self._lock:
-                self._sigterm_mask_depth -= 1
+                self._termination_mask_depth -= 1
                 self._reconcile_handlers_locked()
 
     def _desired_signals_locked(self) -> set[signal.Signals]:
         desired: set[signal.Signals] = set()
         for receiver in self._receivers:
             desired.update(receiver.target_signals)
-        if self._sigterm_mask_depth > 0:
-            desired.update(TARGET_SIGNALS)
+        if self._termination_mask_depth > 0:
+            desired.update((*TARGET_SIGNALS, *TERMINATION_SIGNALS))
         return desired
 
     def _reconcile_handlers_locked(self) -> None:
@@ -174,7 +177,7 @@ class SignalCoordinator:
     def _on_signal(self, raw_signum: int, frame: FrameType | None) -> None:
         signum = signal.Signals(raw_signum)
         with self._lock:
-            if signum == signal.SIGTERM and self._sigterm_mask_depth > 0:
+            if signum in TERMINATION_SIGNALS and self._termination_mask_depth > 0:
                 return
             receivers = tuple(
                 receiver for receiver in self._receivers if signum in receiver.target_signals

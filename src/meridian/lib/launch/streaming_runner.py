@@ -92,6 +92,7 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
+from meridian.lib.state.spawn_status import read_cancel_intent
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 
 if TYPE_CHECKING:
@@ -254,7 +255,9 @@ def _install_signal_handlers(
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
-    return None if record is None else record.cancel_intent
+    if record is None:
+        return None
+    return read_cancel_intent(LaunchPaths.for_row(runtime_root, record), record)
 
 
 def _apply_cancel_intent_to_conclusion(
@@ -567,7 +570,7 @@ async def run_streaming_spawn(
     finally:
         if signal_cleanup is not None:
             signal_cleanup()
-        with signal_coordinator().mask_sigterm():
+        with signal_coordinator().mask_termination():
             if subscriber is not None:
                 manager.unsubscribe(spawn_id)
             for task in (completion_task, signal_task, consume_task):
@@ -1298,12 +1301,11 @@ async def execute_with_streaming(
             )
         finalized_usage = conclusion.extracted.usage if conclusion.extracted is not None else None
         terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
-        with signal_coordinator().mask_sigterm():
+        with signal_coordinator().mask_termination():
             spawn_service = build_spawn_application_service_from_roots(
                 project_root,
                 runtime_root,
                 lifecycle=lifecycle_service,
-                spawn_manager=manager,
             )
             execution_outcome = await spawn_service.complete_execution(
                 run.spawn_id,

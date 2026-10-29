@@ -1,8 +1,8 @@
 """Authoritative lifecycle-transition seam for spawn state.
 
 This module is the single service boundary for lifecycle transitions
-(``start``, ``mark_running``, ``record_exited``, ``record_runner_exit``,
-``mark_finalizing``, ``finalize``, ``cancel``) and post-write lifecycle hook dispatch.
+(``start``, ``mark_running``, ``record_exited``, ``finalize``, ``cancel``) and post-write
+lifecycle hook dispatch.
 Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
 
 Design decisions in effect:
@@ -313,7 +313,7 @@ class SpawnLifecycleService:
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.started."""
+        """Record launch facts (modes and PIDs). Rows are created ``running``; no event."""
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):
@@ -328,129 +328,20 @@ class SpawnLifecycleService:
                 runner_pid=runner_pid,
                 runner_created_at_epoch=resolved_runner_created_at_epoch,
             )
-            from meridian.lib.state.spawn.repository import Applied
-
             record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
-            if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
-                event = self._build_event("spawn.started", outcome.after)
-                self._dispatch(event)
-                self._emit_telemetry_event("spawn.started", record)
 
-    def record_exited(
-        self,
-        spawn_id: str,
-        *,
-        exit_code: int,
-        exited_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> None:
-        """Record process exit and emit spawn.process_exited telemetry."""
+    def record_exited(self, spawn_id: str, *, exit_code: int) -> None:
+        """Emit ``spawn.process_exited``. The exit code is telemetry only; the row keeps no copy."""
         with bind_lifecycle_correlation(
             self._correlation(operation="record_exited", spawn_id=spawn_id)
         ):
-            record = _spawn_store().record_spawn_exited(
-                self._runtime_root,
-                spawn_id,
-                exit_code=exit_code,
-                exited_at=exited_at,
-                clock=clock,
-            )
-            if self._owns_record(spawn_id) and record is not None:
-                self._record = record
             self._emit_telemetry_event(
                 "spawn.process_exited",
-                record,
+                _spawn_store().get_spawn(self._runtime_root, spawn_id),
                 payload={"exit_code": exit_code},
             )
-
-    def record_runner_exit(
-        self,
-        spawn_id: str,
-        *,
-        status: TerminalSpawnStatus,
-        exit_code: int,
-        error: str | None = None,
-        exited_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> bool:
-        """Persist runner-resolved terminal intent before finalization."""
-
-        with bind_lifecycle_correlation(
-            self._correlation(operation="record_runner_exit", spawn_id=spawn_id)
-        ):
-            resolved_exited_at = exited_at or _utc_now_iso(clock)
-            record = _spawn_store().record_runner_exit(
-                self._runtime_root,
-                spawn_id,
-                status=status,
-                exit_code=exit_code,
-                error=error,
-                exited_at=resolved_exited_at,
-                clock=clock,
-            )
-            if record is None:
-                return False
-            if self._owns_record(spawn_id):
-                self._record = record
-            self._emit_telemetry_event(
-                "spawn.updated",
-                record,
-                payload={
-                    "runner_exit_status": status,
-                    "runner_exit_code": exit_code,
-                    "runner_exit_error": error,
-                    "runner_exit_at": resolved_exited_at,
-                },
-            )
-            return True
-
-    def request_cancel(
-        self,
-        spawn_id: str,
-        *,
-        exit_code: int = 130,
-        error: str | None = "cancelled",
-        requested_by: Literal["user", "system"] = "user",
-        requested_at: str | None = None,
-        clock: Clock | None = None,
-    ) -> SpawnRecord | None:
-        """Persist pre-terminal spawn-level cancel intent."""
-
-        with bind_lifecycle_correlation(
-            self._correlation(operation="request_cancel", spawn_id=spawn_id)
-        ):
-            outcome = _spawn_store().record_cancel_intent(
-                self._runtime_root,
-                spawn_id,
-                exit_code=exit_code,
-                error=error,
-                requested_by=requested_by,
-                requested_at=requested_at,
-                clock=clock,
-            )
-            from meridian.lib.state.spawn.repository import Applied, Missing
-
-            if isinstance(outcome, Missing):
-                return None
-            record = outcome.after if isinstance(outcome, Applied) else outcome.snapshot
-            if isinstance(outcome, Applied):
-                self._emit_telemetry_event(
-                    "spawn.updated",
-                    record,
-                    payload={
-                        "cancel_intent": {
-                            "requested_at": record.cancel_intent.requested_at,
-                            "exit_code": record.cancel_intent.exit_code,
-                            "error": record.cancel_intent.error,
-                            "requested_by": record.cancel_intent.requested_by,
-                        }
-                        if record.cancel_intent is not None
-                        else None,
-                    },
-                )
-            return record
 
     def finalize(
         self,
@@ -504,25 +395,6 @@ class SpawnLifecycleService:
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
-
-    def mark_finalizing(self, spawn_id: str) -> bool:
-        """CAS transition running -> finalizing.  No lifecycle event dispatched."""
-        with bind_lifecycle_correlation(
-            self._correlation(operation="mark_finalizing", spawn_id=spawn_id)
-        ):
-            outcome = _spawn_store().mark_finalizing(
-                self._runtime_root,
-                spawn_id,
-            )
-            from meridian.lib.state.spawn.repository import Applied
-
-            record = _locked_mutation_snapshot(outcome)
-            if self._owns_record(spawn_id) and record is not None:
-                self._record = record
-            transitioned = isinstance(outcome, Applied)
-            if transitioned:
-                self._emit_telemetry_event("spawn.finalizing", record)
-            return transitioned
 
     def cancel(
         self,
@@ -754,12 +626,6 @@ class SpawnLifecycleService:
             reasoning_tokens=reasoning_tokens,
             cost_is_estimate=cost_is_estimate,
         )
-
-
-def _utc_now_iso(clock: Clock | None = None) -> str:
-    if clock is not None:
-        return clock.utc_now_iso()
-    return datetime.now(tz=UTC).isoformat()
 
 
 def _emit_lifecycle_event(

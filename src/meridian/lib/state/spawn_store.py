@@ -13,7 +13,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
 from uuid import uuid4
 
 import psutil
@@ -39,12 +38,6 @@ from meridian.lib.state.paths import (
     RuntimePaths,
     normalize_path_for_write,
     staged_starting_prompt,
-)
-from meridian.lib.state.spawn.model import (
-    AUTHORITATIVE_ORIGINS,
-)
-from meridian.lib.state.spawn.model import (
-    CancelIntent as CancelIntent,
 )
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
@@ -74,12 +67,8 @@ from meridian.lib.state.spawn.repository import read_state as _read_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.transitions import (
-    apply_cancel_intent,
     apply_finalize,
-    apply_mark_finalizing,
     apply_mark_running,
-    apply_record_exited,
-    apply_runner_exit,
 )
 from meridian.lib.state.spawn_aggregate import (
     delete_published_spawn,
@@ -379,7 +368,7 @@ def remove_spawn_events(
     delete_published_spawn(
         runtime_root,
         spawn_id,
-        can_delete=lambda record: record is not None and record.status == "queued",
+        can_delete=lambda record: record is not None and _is_active_spawn_status(record.status),
     )
 
 
@@ -496,100 +485,6 @@ def update_spawn(
     )
 
 
-def record_spawn_exited(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    exit_code: int,
-    exited_at: str | None = None,
-    clock: Clock | None = None,
-) -> SpawnRecord | None:
-    """Record latest drained harness-attempt exit metadata."""
-
-    resolved_clock = clock or RealClock()
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    def merge_exit(current: SpawnRecord) -> SpawnRecord:
-        return apply_record_exited(
-            current,
-            exit_code=exit_code,
-            exited_at=exited_at or resolved_clock.utc_now_iso(),
-        )
-
-    outcome = _write_state_locked(
-        paths.spawns_dir,
-        str(spawn_id),
-        merge_exit,
-        allow_terminal_overwrite=True,
-    )
-    return outcome.after if isinstance(outcome, Applied) else None
-
-
-def record_runner_exit(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    status: TerminalSpawnStatus,
-    exit_code: int,
-    error: str | None = None,
-    exited_at: str | None = None,
-    clock: Clock | None = None,
-) -> SpawnRecord | None:
-    """Record runner-resolved terminal intent before finalization."""
-
-    resolved_clock = clock or RealClock()
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_exited_at = exited_at or resolved_clock.utc_now_iso()
-
-    def merge_exit(current: SpawnRecord) -> SpawnRecord | Decline:
-        if not _is_active_spawn_status(current.status):
-            return Decline("spawn is not active")
-        return apply_runner_exit(
-            current,
-            status=status,
-            exit_code=exit_code,
-            error=error,
-            exited_at=resolved_exited_at,
-        )
-
-    outcome = _write_state_locked(
-        paths.spawns_dir,
-        str(spawn_id),
-        merge_exit,
-    )
-    return outcome.after if isinstance(outcome, Applied) else None
-
-
-def record_cancel_intent(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    exit_code: int,
-    error: str | None,
-    requested_by: str = "user",
-    requested_at: str | None = None,
-    clock: Clock | None = None,
-) -> LockedMutationResult:
-    """Return the outcome of recording a durable spawn-level cancellation request."""
-
-    if requested_by not in {"user", "system"}:
-        raise ValueError(f"cancel requested_by must be 'user' or 'system', got {requested_by!r}")
-
-    resolved_clock = clock or RealClock()
-    intent = CancelIntent(
-        requested_at=requested_at or resolved_clock.utc_now_iso(),
-        exit_code=exit_code,
-        error=error,
-        requested_by=cast("Literal['user', 'system']", requested_by),
-    )
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    def merge_intent(current: SpawnRecord) -> SpawnRecord | Decline:
-        return apply_cancel_intent(current, intent=intent)
-
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
-
-
 def finalize_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -609,21 +504,17 @@ def finalize_spawn(
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def finalize(current: SpawnRecord) -> SpawnRecord | Decline:
-        current_origin = current.terminal.origin if current.terminal is not None else None
-        can_replace_reconciliation = (
-            current_origin == "reconciler" and origin in AUTHORITATIVE_ORIGINS
-        )
-        if not _is_active_spawn_status(current.status) and not can_replace_reconciliation:
+        if not _is_active_spawn_status(current.status):
             logger.info(
-                "Finalize rejected by terminal write policy.",
+                "Finalize rejected: spawn already terminal.",
                 spawn_id=str(spawn_id),
                 current_status=current.status,
-                current_terminal_origin=current_origin,
+                current_terminal_origin=current.terminal.origin if current.terminal else None,
                 attempted_status=status,
                 attempted_origin=origin,
                 attempted_error=error,
             )
-            return Decline("terminal write policy rejected finalize")
+            return Decline("spawn is already terminal")
         published_at = resolved_clock.utc_now_iso()
         return apply_finalize(
             current,
@@ -646,22 +537,6 @@ def finalize_spawn(
     )
 
 
-def mark_finalizing(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-) -> LockedMutationResult:
-    """CAS transition running -> finalizing under the per-spawn lock."""
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    def transition(current: SpawnRecord) -> SpawnRecord | Decline:
-        if current.status != "running":
-            return Decline("spawn is not running")
-        return apply_mark_finalizing(current)
-
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
-
-
 def mark_spawn_running(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -671,7 +546,7 @@ def mark_spawn_running(
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
 ) -> LockedMutationResult:
-    """Mark a spawn running under the per-spawn lock."""
+    """Record launch facts on an active row under the per-spawn lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 

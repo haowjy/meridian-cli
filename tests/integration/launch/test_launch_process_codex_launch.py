@@ -419,7 +419,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
 
 
 @pytest.mark.slow
-def test_run_harness_process_managed_marks_running_before_attach_returns(
+def test_run_harness_process_managed_records_worker_before_attach_returns(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -452,7 +452,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     ) -> PrimaryAttachOutcome:
         _ = harness_id, launch, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
-        assert list_spawns(launch_context.runtime_root).records[0].status == "queued"
+        assert list_spawns(launch_context.runtime_root).records[0].status == "running"
         on_running(ProcessIdentity(5151, 100.0, 5151))
         running_record = list_spawns(launch_context.runtime_root).records[0]
         captured["status_seen_before_return"] = running_record.status

@@ -28,6 +28,7 @@ from meridian.lib.state.reaper_cleanup_claim import (
     claim_active_spawn_scopes,
     cleanup_claim_path,
 )
+from tests.support import legacy_rows
 from tests.support.launch_paths import launch_paths
 
 
@@ -72,7 +73,7 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
 def test_runner_exit_does_not_turn_a_crashed_launch_into_success(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    spawn_store.record_runner_exit(
+    legacy_rows.record_runner_exit(
         runtime_root,
         spawn_id,
         status="succeeded",
@@ -93,7 +94,7 @@ def test_runner_exit_does_not_turn_a_crashed_launch_into_success(tmp_path: Path)
 def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = _active_spawn(runtime_root)
-    spawn_store.record_cancel_intent(
+    legacy_rows.record_cancel_intent(
         runtime_root,
         spawn_id,
         exit_code=130,

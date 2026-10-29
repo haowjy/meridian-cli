@@ -30,7 +30,7 @@ from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
-from meridian.lib.state.spawn.repository import Applied
+from tests.support import legacy_rows
 from tests.support.launch_paths import launch_paths
 
 
@@ -202,7 +202,7 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
             prompt="finalizing",
             launch_lock=finalizing_launch,
         ).spawn_id
-        assert isinstance(spawn_store.mark_finalizing(runtime_root, finalizing_id), Applied)
+        legacy_rows.mark_finalizing(runtime_root, str(finalizing_id))
         succeeded_id = spawn_store.start_spawn(
             runtime_root,
             chat_id="c3",
@@ -375,7 +375,7 @@ def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path:
             prompt="hello",
             launch_lock=launch,
         ).spawn_id
-        spawn_store.record_spawn_exited(
+        legacy_rows.record_exited(
             runtime_root,
             spawn_id,
             exit_code=143,

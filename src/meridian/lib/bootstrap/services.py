@@ -31,7 +31,6 @@ from meridian.lib.state.project_identity import (
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.core.spawn_service import SpawnApplicationService
-    from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 @dataclass(frozen=True)
@@ -170,7 +169,6 @@ def build_spawn_application_service(
     prepared: RuntimeWriteContext,
     *,
     lifecycle: SpawnLifecycleService | None = None,
-    spawn_manager: SpawnManager | None = None,
 ) -> SpawnApplicationService:
     """Build a spawn application service directly from prepared runtime authority."""
 
@@ -181,7 +179,6 @@ def build_spawn_application_service(
         prepared.project_root,
         runtime_root,
         lifecycle=lifecycle,
-        spawn_manager=spawn_manager,
     )
 
 
@@ -203,7 +200,6 @@ def build_spawn_application_service_from_roots(
     runtime_root: Path,
     *,
     lifecycle: SpawnLifecycleService | None = None,
-    spawn_manager: SpawnManager | None = None,
 ) -> SpawnApplicationService:
     """Build a spawn application service for explicit project/runtime roots."""
 
@@ -214,11 +210,7 @@ def build_spawn_application_service_from_roots(
         runtime_root,
         lifecycle=lifecycle,
     )
-    return SpawnApplicationService(
-        runtime_root,
-        lifecycle_service,
-        spawn_manager=spawn_manager,
-    )
+    return SpawnApplicationService(runtime_root, lifecycle_service)
 
 
 def build_extension_entrypoint(

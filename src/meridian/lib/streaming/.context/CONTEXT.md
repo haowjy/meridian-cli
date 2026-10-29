@@ -317,7 +317,6 @@ the connection exposes the needed seam.
 ## Specialized Context
 
 - [Pi drain](pi-drain.md) — Pi-specific quiescence, child-wave, and cleanup behavior.
-- [Signal cancellation](signal-cancellation.md) — CLI/app cancellation dispatch and scope cleanup.
 
 ## Anti-Patterns
 

@@ -136,7 +136,7 @@ async def _execute_existing_spawn(
         return 1
 
     spawn_status: SpawnStatus = (
-        spawn_record.status if spawn_record.status != "unknown" else SpawnStatus.QUEUED
+        spawn_record.status if spawn_record.status != "unknown" else SpawnStatus.RUNNING
     )
     spawn = Spawn(
         spawn_id=SpawnId(spawn_record.id),

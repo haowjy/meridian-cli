@@ -16,7 +16,7 @@ from meridian.lib.bootstrap.services import (
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import HarnessId
@@ -104,7 +104,6 @@ async def streaming_serve(
             harness_registry=get_default_harness_registry(),
             kind="streaming",
             launch_mode="foreground",
-            initial_status=SpawnStatus.RUNNING,
             runner_pid=os.getpid(),
             launch_lock=launch_lock,
         )
@@ -264,7 +263,7 @@ async def streaming_serve(
             failure_message = str(exc)
             raise
         finally:
-            with signal_coordinator().mask_sigterm():
+            with signal_coordinator().mask_termination():
                 usage = None
                 try:
                     extraction = enrich_finalize(

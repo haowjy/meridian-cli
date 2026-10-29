@@ -12,6 +12,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
+from tests.support import legacy_rows
 from tests.support.history import warm_history_index
 from tests.support.resident_drain import start_row
 
@@ -35,7 +36,7 @@ def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
         0,
         origin="runner",
     )
-    descendant_evidence_module.spawn_store.mark_finalizing(tmp_path, SpawnId("p3"))
+    legacy_rows.mark_finalizing(tmp_path, "p3")
     warm_history_index(tmp_path)
 
     evidence = ReconciledDescendantEvidence(
@@ -217,7 +218,7 @@ def test_archived_intermediate_preserves_live_grandchild_membership(tmp_path: Pa
         apply=True,
     )
     start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
-    descendant_evidence_module.spawn_store.mark_finalizing(tmp_path, SpawnId("p3"))
+    legacy_rows.mark_finalizing(tmp_path, "p3")
     warm_history_index(tmp_path)
     evidence = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
