@@ -115,6 +115,71 @@ class PriorUsage(BaseModel):
     total_cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_is_estimate: bool = False
+
+    def plus(self, terminal: TerminalFacts | None) -> PriorUsage:
+        """These totals with one more launch's outcome added (cost estimates OR together)."""
+        if terminal is None:
+            return self
+        return PriorUsage(
+            duration_secs=self.duration_secs + (terminal.duration_secs or 0.0),
+            total_cost_usd=self.total_cost_usd + (terminal.total_cost_usd or 0.0),
+            input_tokens=self.input_tokens + (terminal.input_tokens or 0),
+            output_tokens=self.output_tokens + (terminal.output_tokens or 0),
+            cache_read_input_tokens=(
+                self.cache_read_input_tokens + (terminal.cache_read_input_tokens or 0)
+            ),
+            cache_creation_input_tokens=(
+                self.cache_creation_input_tokens + (terminal.cache_creation_input_tokens or 0)
+            ),
+            reasoning_tokens=self.reasoning_tokens + (terminal.reasoning_tokens or 0),
+            cost_is_estimate=self.cost_is_estimate or terminal.cost_is_estimate,
+        )
+
+    def totals(self, terminal: TerminalFacts | None) -> UsageTotals:
+        """What a surface shows: these totals plus the current launch, ``None`` where
+        nothing has reported that figure."""
+
+        def add(prior: float, current: float | None) -> float | None:
+            return None if current is None and not prior else prior + (current or 0)
+
+        def count(prior: int, current: int | None) -> int | None:
+            total = add(prior, current)
+            return None if total is None else int(total)
+
+        t = terminal
+        return UsageTotals(
+            duration_secs=add(self.duration_secs, t.duration_secs if t else None),
+            total_cost_usd=add(self.total_cost_usd, t.total_cost_usd if t else None),
+            input_tokens=count(self.input_tokens, t.input_tokens if t else None),
+            output_tokens=count(self.output_tokens, t.output_tokens if t else None),
+            cache_read_input_tokens=count(
+                self.cache_read_input_tokens, t.cache_read_input_tokens if t else None
+            ),
+            cache_creation_input_tokens=count(
+                self.cache_creation_input_tokens, t.cache_creation_input_tokens if t else None
+            ),
+            reasoning_tokens=count(self.reasoning_tokens, t.reasoning_tokens if t else None),
+            cost_is_estimate=self.cost_is_estimate or bool(t and t.cost_is_estimate),
+        )
+
+
+class UsageTotals(BaseModel):
+    """A spawn's usage across every launch; a figure no launch reported is ``None``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    duration_secs: float | None
+    total_cost_usd: float | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_input_tokens: int | None
+    cache_creation_input_tokens: int | None
+    reasoning_tokens: int | None
+    cost_is_estimate: bool
 
 
 class OwedLaunch(BaseModel):
@@ -181,6 +246,11 @@ class SpawnStateFields(BaseModel):
     prior_usage: PriorUsage = PriorUsage()
     owed_launches: tuple[OwedLaunch, ...] = ()
 
+    @property
+    def launch_number(self) -> int:
+        """The current launch; a v3 row (``launch`` absent) has only its first."""
+        return self.launch.n if self.launch else 1
+
     @model_validator(mode="before")
     @classmethod
     def _read_legacy_exit_pointer(cls, data: object) -> object:
@@ -205,29 +275,11 @@ class SpawnRecord(SpawnStateFields):
 
     prompt: str | None = None
 
-    def _total(self, prior: float, field: str) -> float | None:
-        """``prior_usage`` plus the current launch's ``field``; None while neither reported."""
-        current = getattr(self.terminal, field, None)
-        return None if current is None and not prior else prior + (current or 0)
-
     @property
-    def total_duration_secs(self) -> float | None:
-        """The spawn's duration across every launch, the current one included once finished."""
-        return self._total(self.prior_usage.duration_secs, "duration_secs")
-
-    @property
-    def total_cost_usd(self) -> float | None:
-        return self._total(self.prior_usage.total_cost_usd, "total_cost_usd")
-
-    @property
-    def total_input_tokens(self) -> int | None:
-        total = self._total(self.prior_usage.input_tokens, "input_tokens")
-        return None if total is None else int(total)
-
-    @property
-    def total_output_tokens(self) -> int | None:
-        total = self._total(self.prior_usage.output_tokens, "output_tokens")
-        return None if total is None else int(total)
+    def total_usage(self) -> UsageTotals:
+        """Usage across every launch, the current one included once finished. Every surface
+        reads totals, so a continue never makes a number a user sees restart."""
+        return self.prior_usage.totals(self.terminal)
 
     @property
     def has_no_session_of_its_own(self) -> bool:
@@ -284,4 +336,6 @@ __all__ = [
     "SpawnStateFields",
     "TerminalFacts",
     "TerminalSpawnStatus",
+    "UsageTotals",
+    "UsageTotals",
 ]

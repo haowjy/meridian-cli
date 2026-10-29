@@ -63,12 +63,16 @@ against a recreated inode (split-brain).
   `LaunchPaths(...)` construction, alias or `replace` copy outside `paths.py`, a `reserved`
   call outside `spawn_store`, a `preview` call outside the two dry-run entry points, and an
   import of a private `paths.py` name.
-- **Next launch**: `spawn_store.reopen_spawn(handle, ...)` is the only writer of `launch`
-  on an existing row. It needs the launch lock (`LaunchHandle`), requires K's outcome,
-  copies K's row to `launches/K/launch.json`, folds K's usage into `prior_usage`, and
-  returns the new `LaunchPaths`. It has no CLI caller yet. `start_spawn` and `reopen_spawn`
-  build per-launch fields through one builder (`_launch_fields`); add a per-launch field
-  there.
+- **Next launch**: `spawn_store.reopen_spawn(handle, runtime_root, LaunchInput)` is the only
+  writer of `launch` on an existing row. It needs the launch lock (`LaunchHandle`), requires
+  K's outcome, copies K's row to `launch_archive(root, id, K)` under the state lock, folds
+  K's usage into `prior_usage` (`PriorUsage.plus`), and returns the new `LaunchPaths`. It
+  refuses a `parent_id` different from the row's: re-parenting needs the cycle-checked
+  transaction under `spawns_flock` that is not written yet. It has no CLI caller yet.
+  `LaunchInput` (validates goal, resolves the runner's start time) feeds the one builder
+  `_launch_fields` that `start_spawn` and `reopen_spawn` share; add a per-launch field
+  there. A launch's `TerminalFacts` usage must be that launch's own (extractors subtract a
+  harness's session-cumulative totals), or the `prior_usage` fold double counts.
 - **Spawn updates**: every update to a published spawn goes through `write_state_locked()`
   (re-read under lock, pure mutator, atomic write). Never read `state.json` without
   `read_state()`; raw JSON skips validation and `SpawnRecord` reconstruction.

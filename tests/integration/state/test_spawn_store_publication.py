@@ -24,11 +24,12 @@ from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.launch_lock import acquire as acquire_lock
-from meridian.lib.state.paths import LaunchPaths, RuntimePaths, resolve_spawn_dir
+from meridian.lib.state.paths import LaunchPaths, RuntimePaths, launch_archive, resolve_spawn_dir
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, read_state, scan_spawn_ids
 from meridian.lib.state.spawn_store import (
+    LaunchInput,
     finalize_spawn,
     gc_abandoned_stages,
     get_spawn,
@@ -479,15 +480,33 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
             usage=TokenUsage(total_cost_usd=0.5, input_tokens=10, output_tokens=2),
         )
         with acquire_lock(runtime_root, "p9") as handle:
+            with pytest.raises(ValueError, match="different parent"):
+                reopen_spawn(
+                    handle,
+                    runtime_root,
+                    LaunchInput(chat_id="c1", kind="child", prompt="x", parent_id="p1"),
+                )
+            with pytest.raises(ValueError, match="--goal cannot be empty"):
+                reopen_spawn(
+                    handle,
+                    runtime_root,
+                    LaunchInput(chat_id="c1", kind="child", prompt="x", goal=" "),
+                )
+            assert not (legacy_dir / "launches").exists()  # refused before any write
             reopened = reopen_spawn(
-                handle, runtime_root, chat_id="c1", kind="child", prompt="again"
+                handle, runtime_root, LaunchInput(chat_id="c1", kind="child", prompt="again")
             )
         assert reopened.dir == legacy_dir / "launches" / "2"
-        assert json.loads((legacy_dir / "launches" / "1" / "launch.json").read_text())["v"] == 3
+        archived = launch_archive(runtime_root, "p9", 1)
+        assert json.loads(archived.read_text())["v"] == 3
         after = get_spawn(runtime_root, "p9")
         assert after is not None and after.launch == LaunchRef(n=2) and after.terminal is None
         assert after.prior_usage.duration_secs == 5.0 and after.prior_usage.total_cost_usd == 0.5
-        assert after.total_duration_secs == 5.0 and after.prompt == "again"
+        assert (
+            after.total_usage is not None
+            and after.total_usage.duration_secs == 5.0
+            and after.prompt == "again"
+        )
         assert json.loads((legacy_dir / "state.json").read_text())["v"] == 4
 
         detail = detail_from_row(

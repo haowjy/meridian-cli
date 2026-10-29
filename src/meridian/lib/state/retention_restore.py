@@ -21,7 +21,7 @@ from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.paths import LAUNCH_FILE_NAMES, launch_subdir, resolve_spawn_dir
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir, row_launch_subdir
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     ArchiveReceipt,
@@ -179,9 +179,7 @@ def _stage_record(
         }
     )
     stored = record_to_stored_state(state)
-    prompt_member = launch_subdir(state.launch.n if state.launch else None) / (
-        LAUNCH_FILE_NAMES.starting_prompt
-    )
+    prompt_member = row_launch_subdir(state.launch) / (LAUNCH_FILE_NAMES.starting_prompt)
     if prompt_member.as_posix() in record.required_files:
         stored = stored.model_copy(
             update={"prompt_length": len((stage / prompt_member).read_text())}

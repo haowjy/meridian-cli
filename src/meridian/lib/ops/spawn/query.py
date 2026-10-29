@@ -19,6 +19,8 @@ from .models import DeniedRequestOutput, SpawnDetailOutput
 _RUNNING_LOG_MESSAGE_LIMIT = 120
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
+
+
 class _PiCleanupTelemetry(NamedTuple):
     status: str | None
     phase: str | None
@@ -244,6 +246,7 @@ def detail_from_row(
     cleanup_telemetry = _pi_cleanup_telemetry(launch)
 
     terminal = row.terminal
+    usage = row.total_usage
     return SpawnDetailOutput(
         boundary_summary=run_boundary_summary(row),
         chat_id=row.entry_chat_id,
@@ -261,18 +264,16 @@ def detail_from_row(
         desc=row.desc,
         started_at=row.started_at or "",
         finished_at=terminal.finished_at if terminal is not None else None,
-        duration_secs=row.total_duration_secs,
+        duration_secs=usage.duration_secs,
         exit_code=terminal.exit_code if terminal is not None else None,
         failure_reason=terminal.error if terminal is not None else None,
-        input_tokens=row.total_input_tokens,
-        output_tokens=row.total_output_tokens,
-        cache_read_input_tokens=terminal.cache_read_input_tokens if terminal is not None else None,
-        cache_creation_input_tokens=(
-            terminal.cache_creation_input_tokens if terminal is not None else None
-        ),
-        reasoning_tokens=terminal.reasoning_tokens if terminal is not None else None,
-        cost_usd=row.total_cost_usd,
-        cost_is_estimate=terminal.cost_is_estimate if terminal is not None else False,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
+        cost_usd=usage.total_cost_usd,
+        cost_is_estimate=usage.cost_is_estimate,
         report_summary=report_summary,
         report_body=report_body,
         harness_session_id=row.harness_session_id,

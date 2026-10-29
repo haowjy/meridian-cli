@@ -734,8 +734,8 @@ def spawn_list_sync(
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
-                duration_secs=row.total_duration_secs,
-                cost_usd=row.total_cost_usd,
+                duration_secs=row.total_usage.duration_secs,
+                cost_usd=row.total_usage.total_cost_usd,
             )
         )
 
@@ -795,8 +795,8 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             desc=_spawn_display_label(row),
-            duration_secs=row.total_duration_secs,
-            cost_usd=row.total_cost_usd,
+            duration_secs=row.total_usage.duration_secs,
+            cost_usd=row.total_usage.total_cost_usd,
         )
         for row in children
     )
@@ -893,11 +893,12 @@ def spawn_stats_sync(
         acc["total"] = int(acc["total"]) + 1
         if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
-        if row.total_cost_usd is not None:
-            acc["cost_usd"] = float(acc["cost_usd"]) + row.total_cost_usd
-            total_cost_usd += row.total_cost_usd
-        if row.total_duration_secs is not None:
-            total_duration_secs += row.total_duration_secs
+        usage = row.total_usage
+        if usage.total_cost_usd is not None:
+            acc["cost_usd"] = float(acc["cost_usd"]) + usage.total_cost_usd
+            total_cost_usd += usage.total_cost_usd
+        if usage.duration_secs is not None:
+            total_duration_secs += usage.duration_secs
 
     models: dict[str, ModelStats] = {
         k: ModelStats(
@@ -921,10 +922,10 @@ def spawn_stats_sync(
                 spawn_id=s.id,
                 status=s.status,
                 model=s.model or "",
-                duration_secs=s.total_duration_secs,
-                cost_usd=s.total_cost_usd,
-                input_tokens=s.total_input_tokens,
-                output_tokens=s.total_output_tokens,
+                duration_secs=s.total_usage.duration_secs,
+                cost_usd=s.total_usage.total_cost_usd,
+                input_tokens=s.total_usage.input_tokens,
+                output_tokens=s.total_usage.output_tokens,
             )
             for s in spawns
         )

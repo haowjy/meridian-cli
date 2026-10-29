@@ -41,61 +41,62 @@ def _permission_denial_detail(tool: str, tool_input: object) -> str:
     return tool
 
 
+_USAGE_KEYS = {
+    "input_tokens": ("inputTokens", "input_tokens"),
+    "output_tokens": ("outputTokens", "output_tokens"),
+    "cache_read_input_tokens": ("cacheReadInputTokens", "cache_read_input_tokens"),
+    "cache_creation_input_tokens": ("cacheCreationInputTokens", "cache_creation_input_tokens"),
+}
+
+
+def _usage_values(rows: list[dict[str, object]]) -> dict[str, int]:
+    """Each token field summed over ``rows``; fields no row reports are left out."""
+    values: dict[str, int] = {}
+    for field, keys in _USAGE_KEYS.items():
+        known = [
+            n
+            for row in rows
+            if (n := coerce_optional_int(row.get(keys[0], row.get(keys[1])))) is not None
+        ]
+        if known:
+            values[field] = sum(known)
+    return values
+
+
+def _token_usage(values: dict[str, int], cost: float | None) -> TokenUsage:
+    return TokenUsage(
+        input_tokens=values.get("input_tokens"),
+        output_tokens=values.get("output_tokens"),
+        cache_read_input_tokens=values.get("cache_read_input_tokens"),
+        cache_creation_input_tokens=values.get("cache_creation_input_tokens"),
+        total_cost_usd=cost,
+    )
+
+
+def _price_weight(values: dict[str, int]) -> float:
+    """Tokens weighed by Anthropic's price ratios (output 5x input, cache read 0.1x, write 1.25x).
+
+    Only ratios of weights are used: it splits a session's cost between the launches in it.
+    """
+    return (
+        values.get("input_tokens", 0)
+        + 5 * values.get("output_tokens", 0)
+        + 0.1 * values.get("cache_read_input_tokens", 0)
+        + 1.25 * values.get("cache_creation_input_tokens", 0)
+    )
+
+
 class ClaudeFold(AttemptFold):
+    usage_baseline: dict[str, int] | None = None
+    cost_baseline = 0.0
+
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
         facts = self.facts
         if kind == "result":
             text = extract_text(payload.get("result"))
             if text:
                 self.set_text(text, "claude_result")
-            model_usage = payload.get("modelUsage")
-            usage: object = (
-                cast("dict[str, object]", model_usage)
-                if isinstance(model_usage, dict)
-                else payload.get("usage")
-            )
-            if isinstance(usage, dict):
-                usage = cast("dict[str, object]", usage)
-                rows = [cast("dict[str, object]", x) for x in usage.values() if isinstance(x, dict)]
-                if not rows:
-                    rows = [usage]
-                fields = {
-                    "input_tokens": ("inputTokens", "input_tokens"),
-                    "output_tokens": ("outputTokens", "output_tokens"),
-                    "cache_read_input_tokens": ("cacheReadInputTokens", "cache_read_input_tokens"),
-                    "cache_creation_input_tokens": (
-                        "cacheCreationInputTokens",
-                        "cache_creation_input_tokens",
-                    ),
-                }
-                values: dict[str, int | None] = {}
-                for field, keys in fields.items():
-                    numbers = [
-                        coerce_optional_int(row.get(keys[0], row.get(keys[1]))) for row in rows
-                    ]
-                    known = [n for n in numbers if n is not None]
-                    previous = getattr(facts.usage, field, None) if self.usage_is_specific else None
-                    values[field] = (sum(known) + (previous or 0)) if known else previous
-                cost = coerce_optional_float(payload.get("total_cost_usd"))
-                if cost is None:
-                    costs = [coerce_optional_float(row.get("costUSD")) for row in rows]
-                    known_costs = [c for c in costs if c is not None]
-                    cost = (
-                        sum(known_costs)
-                        if known_costs
-                        else (facts.usage.total_cost_usd if facts.usage else None)
-                    )
-                self.usage_is_specific = True
-                facts.usage = TokenUsage(
-                    input_tokens=values["input_tokens"],
-                    output_tokens=values["output_tokens"],
-                    cache_read_input_tokens=values["cache_read_input_tokens"],
-                    cache_creation_input_tokens=values["cache_creation_input_tokens"],
-                    total_cost_usd=cost,
-                )
-            elif (cost := coerce_optional_float(payload.get("total_cost_usd"))) is not None:
-                self.usage_is_specific = True
-                facts.usage = TokenUsage(total_cost_usd=cost)
+            self._fold_result_usage(payload)
             raw_denials = payload.get("permission_denials")
             if isinstance(raw_denials, list):
                 recorded = {denial.request_id for denial in facts.permission_denials}
@@ -126,6 +127,71 @@ class ClaudeFold(AttemptFold):
             text = extract_text(payload.get("content")) or extract_text(payload.get("message"))
             if text:
                 self.set_text(text, "claude_assistant")
+
+    def _fold_result_usage(self, payload: Mapping[str, object]) -> None:
+        """Fold one ``result`` event's usage into this launch's facts.
+
+        ``modelUsage`` and ``total_cost_usd`` are cumulative over the whole Claude session:
+        across the turns of this launch, and across earlier launches of a resumed session.
+        ``usage`` is this turn alone. So the session's usage before this launch is the
+        first result's cumulative minus its own turn, and every later result reports the
+        cumulative minus that baseline. With no ``modelUsage`` the per-turn ``usage`` adds up.
+        """
+        model_usage = payload.get("modelUsage")
+        turn = payload.get("usage")
+        turn_values = (
+            _usage_values([cast("dict[str, object]", turn)]) if isinstance(turn, dict) else {}
+        )
+        cost = coerce_optional_float(payload.get("total_cost_usd"))
+        rows = (
+            [
+                cast("dict[str, object]", row)
+                for row in cast("dict[str, object]", model_usage).values()
+                if isinstance(row, dict)
+            ]
+            if isinstance(model_usage, dict)
+            else []
+        )
+        if not rows:
+            if turn_values:
+                previous = self.facts.usage if self.usage_is_specific else None
+                self.usage_is_specific = True
+                self.facts.usage = _token_usage(
+                    {
+                        field: value + (getattr(previous, field, None) or 0)
+                        for field, value in turn_values.items()
+                    },
+                    cost,
+                )
+            elif cost is not None:
+                self.usage_is_specific = True
+                self.facts.usage = TokenUsage(total_cost_usd=cost)
+            return
+        cumulative = _usage_values(rows)
+        if cost is None:
+            costs = [coerce_optional_float(row.get("costUSD")) for row in rows]
+            cost = (
+                sum(c for c in costs if c is not None)
+                if any(c is not None for c in costs)
+                else None
+            )
+        if self.usage_baseline is None:
+            self.usage_baseline = {
+                field: max(0, value - turn_values.get(field, value))
+                for field, value in cumulative.items()
+            }
+            before = _price_weight(self.usage_baseline)
+            self.cost_baseline = (
+                cost * before / _price_weight(cumulative) if cost and before else 0.0
+            )
+        self.usage_is_specific = True
+        self.facts.usage = _token_usage(
+            {
+                field: value - self.usage_baseline.get(field, 0)
+                for field, value in cumulative.items()
+            },
+            None if cost is None else cost - self.cost_baseline,
+        )
 
 
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()

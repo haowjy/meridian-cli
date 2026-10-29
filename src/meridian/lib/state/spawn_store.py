@@ -37,6 +37,7 @@ from meridian.lib.state.launch_lock import LaunchHandle, LaunchSlot
 from meridian.lib.state.paths import (
     LaunchPaths,
     RuntimePaths,
+    launch_archive,
     normalize_path_for_write,
     staged_starting_prompt,
 )
@@ -44,7 +45,6 @@ from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     LaunchRef,
     OwedLaunch,
-    PriorUsage,
 )
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
@@ -209,6 +209,37 @@ def gc_abandoned_stages(runtime_root: Path) -> None:
 FIRST_LAUNCH = 1
 
 
+@dataclass
+class LaunchInput:
+    """What one launch of a spawn is told at start; the same for a first launch and a reopen.
+
+    Construction validates and resolves, so a bad input fails before any file is written:
+    ``goal`` is stripped (``None`` means the caller keeps the row's goal) and
+    ``runner_created_at_epoch`` is looked up from ``runner_pid`` when not given.
+    """
+
+    chat_id: str | None
+    prompt: str
+    kind: SpawnKind
+    owner_chat_id: str | None = None
+    parent_id: str | None = None
+    goal: str | None = None
+    harness_session_id: str | None = None
+    launch_mode: LaunchMode | None = None
+    worker_pid: int | None = None
+    runner_pid: int | None = None
+    runner_created_at_epoch: float | None = None
+    status: SpawnStatus = SpawnStatus.RUNNING
+
+    def __post_init__(self) -> None:
+        if self.goal is not None:
+            self.goal = self.goal.strip()
+            if not self.goal:
+                raise ValueError("--goal cannot be empty")
+        if self.runner_created_at_epoch is None:
+            self.runner_created_at_epoch = _runner_created_at_epoch_for_pid(self.runner_pid)
+
+
 class _LaunchFields(TypedDict):
     session_instance_id: str | None
     parent_history_id: UUID | None
@@ -240,57 +271,53 @@ class _LaunchFields(TypedDict):
 
 def _launch_fields(
     runtime_root: Path,
+    launch: LaunchInput,
     *,
-    chat_id: str | None,
-    owner_chat_id: str | None,
-    parent_id: str | None,
-    kind: SpawnKind,
-    forked_from_history_id: UUID | None,
     goal: str | None,
     desc: str | None,
-    prompt: str,
-    harness_session_id: str | None,
-    launch_mode: LaunchMode | None,
-    worker_pid: int | None,
-    runner_pid: int | None,
-    runner_created_at_epoch: float | None,
+    forked_from_history_id: UUID | None,
     started_at: str,
-    status: SpawnStatus,
 ) -> _LaunchFields:
     """Every field of a row that one launch owns, or derives from who starts it.
 
     The one builder behind a new spawn's first launch and a reopen's next one: a field
     added here reaches both, and the reset list cannot drift from the creation list.
     Spawn-level fields (ID, history identity, work, harness, launch policy) stay with
-    the caller.
+    the caller; ``goal``, ``desc`` and ``forked_from_history_id`` are the row's effective
+    values. A reopen overrides ``session_instance_id``: the owner chat's current one
+    belongs to the launch that just ended, not to this launch's runner.
     """
     from meridian.lib.state.session_store import chat_record
 
     paths = RuntimePaths.from_root_dir(runtime_root)
+    parent_id = launch.parent_id
     parent = _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
-    owner_chat = owner_chat_id or chat_id
+    owner_chat = launch.owner_chat_id or launch.chat_id
     owner = chat_record(runtime_root, owner_chat) if owner_chat else None
+    primary = launch.kind == "primary"
     return {
-        "session_instance_id": owner.session_instance_id if owner and kind == "primary" else None,
+        "session_instance_id": owner.session_instance_id if owner and primary else None,
         "parent_history_id": parent.history_id if parent else None,
-        "owner_history_id": owner.history_id if owner and kind != "primary" else None,
+        "owner_history_id": owner.history_id if owner and not primary else None,
         "forked_from_history_id": forked_from_history_id
-        or (owner.forked_from_history_id if owner and kind == "primary" else None),
-        "chat_id": ChatId(chat_id) if chat_id is not None else None,
-        "owner_chat_id": ChatId(owner_chat_id) if owner_chat_id is not None else None,
+        or (owner.forked_from_history_id if owner and primary else None),
+        "chat_id": ChatId(launch.chat_id) if launch.chat_id is not None else None,
+        "owner_chat_id": ChatId(launch.owner_chat_id) if launch.owner_chat_id is not None else None,
         "parent_id": parent_id,
         "originating_bash_id": os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
-        "kind": kind,
-        "display_label": derive_display_label(goal=goal, desc=desc, prompt=prompt),
+        "kind": launch.kind,
+        "display_label": derive_display_label(goal=goal, desc=desc, prompt=launch.prompt),
         "harness_session_id": (
-            HarnessSessionId(harness_session_id) if harness_session_id is not None else None
+            HarnessSessionId(launch.harness_session_id)
+            if launch.harness_session_id is not None
+            else None
         ),
-        "launch_mode": launch_mode,
-        "worker_pid": worker_pid,
-        "runner_pid": runner_pid,
-        "runner_created_at_epoch": runner_created_at_epoch,
-        "status": status,
-        "prompt": prompt,
+        "launch_mode": launch.launch_mode,
+        "worker_pid": launch.worker_pid,
+        "runner_pid": launch.runner_pid,
+        "runner_created_at_epoch": launch.runner_created_at_epoch,
+        "status": launch.status,
+        "prompt": launch.prompt,
         "started_at": started_at,
         "current_chat_id": None,
         "run_boundary": None,
@@ -349,16 +376,20 @@ def start_spawn(
         goal=goal,
         launch_policy_snapshot=launch_policy_snapshot,
     )
-    normalized_goal: str | None = None
-    if start_metadata.goal is not None:
-        normalized_goal = start_metadata.goal.strip()
-        if not normalized_goal:
-            raise ValueError("--goal cannot be empty")
-
-    resolved_runner_created_at_epoch = runner_created_at_epoch
-    if resolved_runner_created_at_epoch is None:
-        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
-
+    launch = LaunchInput(
+        chat_id=chat_id,
+        prompt=prompt,
+        kind=kind,
+        owner_chat_id=owner_chat_id,
+        parent_id=parent_id,
+        goal=start_metadata.goal,
+        harness_session_id=harness_session_id,
+        launch_mode=launch_mode,
+        worker_pid=worker_pid,
+        runner_pid=runner_pid,
+        runner_created_at_epoch=runner_created_at_epoch,
+        status=status,
+    )
     resolved_launch_policy_snapshot = (
         launch_policy_snapshot or start_metadata.launch_policy_snapshot
     )
@@ -394,7 +425,7 @@ def start_spawn(
                 if start_metadata.work_id is not None
                 else None
             ),
-            goal=normalized_goal,
+            goal=launch.goal,
             control_root=normalize_path_for_write(control_root),
             task_cwd=normalize_path_for_write(task_cwd),
             execution_cwd=normalize_path_for_write(execution_cwd),
@@ -402,21 +433,11 @@ def start_spawn(
             launch_policy_snapshot=resolved_launch_policy_snapshot,
             **_launch_fields(
                 runtime_root,
-                chat_id=chat_id,
-                owner_chat_id=owner_chat_id,
-                parent_id=parent_id,
-                kind=kind,
-                forked_from_history_id=start_metadata.forked_from_history_id,
-                goal=normalized_goal,
+                launch,
+                goal=launch.goal,
                 desc=start_metadata.desc,
-                prompt=prompt,
-                harness_session_id=harness_session_id,
-                launch_mode=launch_mode,
-                worker_pid=worker_pid,
-                runner_pid=runner_pid,
-                runner_created_at_epoch=resolved_runner_created_at_epoch,
+                forked_from_history_id=start_metadata.forked_from_history_id,
                 started_at=started,
-                status=status,
             ),
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
@@ -443,56 +464,50 @@ def start_spawn(
 def reopen_spawn(
     handle: LaunchHandle,
     runtime_root: Path,
+    launch: LaunchInput,
     *,
-    chat_id: str | None,
-    owner_chat_id: str | None = None,
-    parent_id: str | None = None,
-    kind: SpawnKind,
-    prompt: str,
-    goal: str | None = None,
-    harness_session_id: str | None = None,
-    launch_mode: LaunchMode | None = None,
-    worker_pid: int | None = None,
-    runner_pid: int | None = None,
-    runner_created_at_epoch: float | None = None,
     clock: Clock | None = None,
 ) -> LaunchPaths:
     """Start the next launch of a finished spawn under its launch lock; return its paths.
 
     ``handle`` is the proof that no runner of launch K is alive, so this is the only
     writer that may set ``launch`` on a v3 row. Order: K's row is copied to
-    ``launches/K/launch.json`` (idempotent, so a crash here repeats it), ``launches/K+1/``
-    is created with the prompt, then one ``state.json`` write turns the row into launch
+    ``launch_archive`` (idempotent, so a crash here repeats it), ``launches/K+1/`` is
+    created with the prompt, then one ``state.json`` write turns the row into launch
     K+1. K's outcome must already be written: the archive is terminal by construction.
+
+    ``launch.parent_id`` must be the row's own: moving a spawn to another parent needs
+    the ancestry check under ``spawns_flock`` that P5b's cycle transaction adds, and
+    this function does not yet take that lock.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawn_id = str(handle.spawn_id)
-    observed = _read_state(paths.spawns_dir, spawn_id)
+    observed = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
     if observed is None:
         raise ValueError(f"spawn row not found: {spawn_id}")
     if observed.terminal is None:
         raise ValueError(f"Cannot reopen {spawn_id}: its last launch has no outcome")
-    k = observed.launch.n if observed.launch else FIRST_LAUNCH
-    previous = LaunchPaths.reserved(runtime_root, handle.spawn_id, k)
-    atomic_write_text(
-        previous.row_copy, record_to_stored_state(observed).model_dump_json(indent=2) + "\n"
-    )
-    following = LaunchPaths.reserved(runtime_root, handle.spawn_id, k + 1)
-    following.dir.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(following.starting_prompt, prompt)
-
-    normalized_goal = goal.strip() if goal is not None else None
-    if goal is not None and not normalized_goal:
-        raise ValueError("--goal cannot be empty")
+    if launch.parent_id != observed.parent_id:
+        raise ValueError(
+            f"Cannot reopen {spawn_id} under a different parent: re-parenting needs "
+            "the cycle-checked transaction that is not implemented yet"
+        )
+    k = observed.launch_number
     started = (clock or RealClock()).utc_now_iso()
 
     def next_launch(current: SpawnRecord) -> SpawnRecord:
         terminal = current.terminal
-        if terminal is None or (current.launch.n if current.launch else FIRST_LAUNCH) != k:
+        if terminal is None or current.launch_number != k:
             raise ValueError(f"{spawn_id} changed under its launch lock")
-        prior = current.prior_usage
-        effective_goal = normalized_goal if normalized_goal is not None else current.goal
+        atomic_write_text(
+            launch_archive(runtime_root, handle.spawn_id, k),
+            record_to_stored_state(current).model_dump_json(indent=2) + "\n",
+        )
+        following = LaunchPaths.reserved(runtime_root, handle.spawn_id, k + 1)
+        following.dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(following.starting_prompt, launch.prompt)
+        effective_goal = launch.goal if launch.goal is not None else current.goal
         owed = current.owed_launches
         if current.launch_mode == BACKGROUND_LAUNCH_MODE and current.parent_id:
             owed = (*owed, OwedLaunch(n=k, parent_id=current.parent_id))
@@ -500,30 +515,16 @@ def reopen_spawn(
             update={
                 **_launch_fields(
                     runtime_root,
-                    chat_id=chat_id,
-                    owner_chat_id=owner_chat_id,
-                    parent_id=parent_id,
-                    kind=kind,
-                    forked_from_history_id=current.forked_from_history_id,
+                    launch,
                     goal=effective_goal,
                     desc=current.desc,
-                    prompt=prompt,
-                    harness_session_id=harness_session_id,
-                    launch_mode=launch_mode,
-                    worker_pid=worker_pid,
-                    runner_pid=runner_pid,
-                    runner_created_at_epoch=runner_created_at_epoch,
+                    forked_from_history_id=current.forked_from_history_id,
                     started_at=started,
-                    status=SpawnStatus.RUNNING,
                 ),
+                "session_instance_id": None,
                 "goal": effective_goal,
                 "launch": LaunchRef(n=k + 1),
-                "prior_usage": PriorUsage(
-                    duration_secs=prior.duration_secs + (terminal.duration_secs or 0.0),
-                    total_cost_usd=prior.total_cost_usd + (terminal.total_cost_usd or 0.0),
-                    input_tokens=prior.input_tokens + (terminal.input_tokens or 0),
-                    output_tokens=prior.output_tokens + (terminal.output_tokens or 0),
-                ),
+                "prior_usage": current.prior_usage.plus(terminal),
                 "owed_launches": owed,
             }
         )

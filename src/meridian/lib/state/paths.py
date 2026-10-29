@@ -21,7 +21,7 @@ from meridian.lib.state.project_identity import (
 from meridian.lib.state.user_paths import project_lifetime_lock_path
 
 if TYPE_CHECKING:
-    from meridian.lib.state.spawn.model import SpawnRecord
+    from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
     from meridian.lib.state.spawn.repository import StoredSpawnState
 
 
@@ -415,6 +415,22 @@ def launch_subdir(n: int | None) -> Path:
     return Path() if n is None else Path("launches") / str(n)
 
 
+def row_launch_subdir(launch: "LaunchRef | None") -> Path:
+    """``launch_subdir`` for a row's ``launch`` field (None on a v3 row)."""
+
+    return launch_subdir(launch.n if launch else None)
+
+
+def launch_archive(runtime_root: Path, spawn_id: SpawnId | str, n: int) -> Path:
+    """Launch ``n``'s finished row, copied by the holder that starts launch ``n+1``.
+
+    Spawn-level because it sits under ``launches/<n>/`` whatever version the row was
+    when launch ``n`` ran (a v3 row's launch 1 keeps its own files at the top level).
+    """
+
+    return resolve_spawn_dir(runtime_root, spawn_id) / launch_subdir(n) / "launch.json"
+
+
 @dataclass(frozen=True)
 class LaunchPaths:
     """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
@@ -460,11 +476,6 @@ class LaunchPaths:
     @property
     def dir(self) -> Path:
         return resolve_spawn_dir(self.runtime_root, self.spawn_id) / launch_subdir(self.n)
-
-    @property
-    def row_copy(self) -> Path:
-        """The finished launch's row, copied here by the holder that starts the next one."""
-        return self.dir / "launch.json"
 
     @property
     def starting_prompt(self) -> Path:

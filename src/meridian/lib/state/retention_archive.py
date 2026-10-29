@@ -37,7 +37,7 @@ from meridian.lib.state.native_snapshot import (
     complete_published_snapshot,
     read_snapshot,
 )
-from meridian.lib.state.paths import LAUNCH_FILE_NAMES, launch_subdir, resolve_spawn_dir
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir, row_launch_subdir
 from meridian.lib.state.retention_digest import (
     canonical,
     digest,
@@ -226,7 +226,7 @@ def required_members(
     The transcript and prompt belong to the current launch, so they sit in its directory
     (``launches/<n>/`` for a v4 row, the top level for a v3 row).
     """
-    sub = launch_subdir(launch.n if launch else None).as_posix()
+    sub = row_launch_subdir(launch).as_posix()
     prefix = "" if sub == "." else sub + "/"
     transcript = prefix + canonical_transcript_member(
         name.removeprefix(prefix) for name in names if name.startswith(prefix)

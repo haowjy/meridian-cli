@@ -15,7 +15,7 @@ Read this only when something looks wrong: a spawn seems stuck, expected output 
 
 ## Spawn Artifact Layout
 
-Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spawn-id>/`. Spawns created by v0.18 and later keep everything but `state.json` and `launch.lock` in `launches/<n>/` inside that directory; older spawns keep it all at the top. Use CLI output (`meridian spawn show`, `meridian spawn report show`) rather than hardcoding paths.
+Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spawn-id>/`. Spawns created by v0.18 and later keep each run's files (prompt, transcript, report, logs) in `launches/<n>/` inside that directory, and the spawn-level files (`state.json`, `launch.lock`, `scope.json`) at the top; older spawns keep a run's files at the top too. Use CLI output (`meridian spawn show`, `meridian spawn report show`) rather than hardcoding paths.
 
 | File | Contents |
 |---|---|

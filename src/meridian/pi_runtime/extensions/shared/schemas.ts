@@ -124,9 +124,19 @@ export const SpawnStateFileSchema = Type.Object({
   launch_mode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   // State v4: which launch the flat row describes. Absent on a v3 row (launch 1, top level).
   launch: Type.Optional(Type.Object({ n: Type.Number() })),
+  // State v4: durations of the launches before the current one. A spawn's duration is this plus the current launch's.
+  prior_usage: Type.Optional(Type.Object({ duration_secs: Type.Optional(Type.Number()) })),
 });
 
 export type SpawnStateFile = Static<typeof SpawnStateFileSchema>;
+
+/** The spawn's duration across every launch (the current one counts once finished); null while nothing has reported. */
+export function totalDurationSecs(row: SpawnStateFile): number | null {
+  const prior = row.prior_usage?.duration_secs ?? 0;
+  const current = row.terminal?.duration_secs;
+  if (current == null && prior === 0) return null;
+  return prior + (current ?? 0);
+}
 
 export function parseSpawnStateFile(value: unknown): SpawnStateFile | null {
   return Value.Check(SpawnStateFileSchema, value) ? value : null;
