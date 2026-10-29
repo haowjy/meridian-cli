@@ -325,9 +325,6 @@ move it into a harness wire field: Claude's peer-message envelope carries
 `decisions/primary-inject.md#d-claude-primary-inbox` — the same reason a
 bypass-mode primary holds the message for approval).
 
-`spawn inject` remains as a hidden deprecated alias for one release; it warns on
-stderr and calls the same handler.
-
 ### `--metadata` flag
 
 `_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
