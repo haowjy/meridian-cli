@@ -69,7 +69,12 @@ from meridian.lib.harness.projections.network_claude import (
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
 )
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+from meridian.lib.harness.projections.project_claude import (
+    FIRST_TURN_PATH_ENV,
+    FIRST_TURN_PLUGIN,
+    delivers_first_turn_by_mod,
+    project_claude_spec_to_cli_args,
+)
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     EventSemantics,
@@ -103,7 +108,7 @@ from meridian.lib.safety.policy import (
     NetworkPolicy,
     network_allows_local_services,
 )
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
@@ -300,7 +305,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         user_turn_content = getattr(run, "user_turn_content", None)
         plugin_names = (_BOUNDARY_PLUGIN,)
         if run.interactive:
-            plugin_names += (_IDLE_PLUGIN,)
+            plugin_names += (_IDLE_PLUGIN, FIRST_TURN_PLUGIN)
             if load_launch_config(run.control_root).harness.claude.spawn_watch.enabled:
                 plugin_names += (_SPAWN_WATCH_PLUGIN,)
         return ResolvedLaunchSpec(
@@ -341,8 +346,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        _ = system_prompt_path, env
+        _ = env
         overrides: dict[str, str] = {}
+        if delivers_first_turn_by_mod(spec):
+            overrides[FIRST_TURN_PATH_ENV] = str(
+                system_prompt_path.with_name(LAUNCH_FILE_NAMES.starting_prompt)
+            )
         if not spec.interactive:
             # Do not let a primary's inherited one-hour TTL become the spawn default.
             overrides["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"

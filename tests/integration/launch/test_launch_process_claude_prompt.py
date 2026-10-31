@@ -141,9 +141,10 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         on_child_started: Any,
         launcher_diagnostics_path: Any,
     ) -> tuple[int, int, None]:
-        _ = cwd, env, launcher_diagnostics_path
+        _ = cwd, launcher_diagnostics_path
         command = tuple(command)
         captured["command"] = command
+        captured["first_turn_path"] = env.get("_MERIDIAN_CLAUDE_FIRST_TURN_PATH")
         captured["output_log_path"] = output_log_path
         prompt_flag_index = command.index("--append-system-prompt-file")
         prompt_file_path = Path(command[prompt_flag_index + 1])
@@ -172,12 +173,13 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert "passthrough system prompt" in prompt_file_text
     # User task prompt should now be in the positional argument (user-turn channel)
     assert "primary prompt" not in prompt_file_text
-    # Verify the command includes the positional prompt argument for Claude interactive
+    # The prompt stays off the command line; the first-turn mod reads it from the file.
     command = captured.get("command")
     assert command is not None
-    assert "primary prompt" in command[-1]  # Positional arg is last
+    assert not any("primary prompt" in arg for arg in command)
     log_dir = captured["log_dir"]
     assert isinstance(log_dir, Path)
+    assert captured["first_turn_path"] == str(log_dir / "starting-prompt.md")
     starting_prompt = (log_dir / "starting-prompt.md").read_text(encoding="utf-8")
     assert "primary prompt" in starting_prompt
     assert "passthrough system prompt" not in starting_prompt

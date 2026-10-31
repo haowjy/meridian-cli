@@ -138,6 +138,13 @@ observations as transcript or final-exit proof. Exact reads and resumes still
 validate the native file. See
 [`meridian-session-boundary`](../../../claude_runtime/meridian-session-boundary/README.md).
 
+A fresh interactive Claude primary receives its starting prompt through
+[`meridian-first-turn`](../../../claude_runtime/meridian-first-turn/README.md), not argv.
+Its transcript row is `type: user` with `origin.kind: "plugin"`; Meridian's transcript
+readers match on role and text, and `meridian-idle` counts a plugin origin as injected, not a
+user return. If the mod fails to load, the prompt is lost (the TUI shows the error): no
+fallback re-adds it to argv once Meridian has dropped it.
+
 ## Terminal event classification
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
