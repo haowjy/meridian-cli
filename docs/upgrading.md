@@ -200,6 +200,16 @@ IDs count per project.
 `--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
 and works until the next minor release. Pass the ref positionally instead.
 
+## Mars 0.26.2
+
+Meridian pins `mars-agents==0.26.2`. Run `meridian mars sync` after upgrading, and
+`meridian mars --user sync` for a user root.
+
+`mars sync` and `mars upgrade` print info-level diagnostics only with `--verbose`;
+the default report keeps warnings and errors. When a sync adds or moves a Codex hook
+handler, the `codex-hooks-need-trust` warning now says to open Codex and run `/hooks`
+to review and trust it; Codex skips the handler until then.
+
 ## Mars 0.26.1
 
 Meridian pins `mars-agents==0.26.1`. Run `meridian mars sync` after upgrading, and
