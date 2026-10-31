@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-10-31
+
+### Changed
+- Meridian pins Mars 0.26.2, which hides info-level sync diagnostics unless `--verbose` and makes the Codex trust warning say to open Codex and run `/hooks`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0262).
+
 ## [0.19.1] - 2026-10-29
 
 ### Changed
