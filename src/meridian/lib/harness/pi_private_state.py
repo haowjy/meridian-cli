@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+import os
+from collections.abc import Callable, Generator, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
+import psutil
+import structlog
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
-from meridian.lib.state.json_doc import VersionedPrivateDoc
+from meridian.lib.state.json_doc import VersionedPrivateDoc, write_model
 from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.state.spawn_observations import (
     LaunchKey,
     LaunchObservations,
     read_legacy,
 )
+
+logger = structlog.get_logger()
+
+# Set by managed bash on each task's shell: the directory this task's hold files go in.
+PI_BASH_HOLD_DIR_ENV = "_MERIDIAN_PI_BASH_HOLD_DIR"
 
 _Model = TypeVar("_Model", bound=BaseModel)
 
@@ -41,6 +50,44 @@ def pi_coordination_dir(runtime_root: Path, spawn_id: str) -> Path:
     """Return one Pi parent's private coordination directory."""
 
     return runtime_root / "pi-bash" / spawn_id
+
+
+class PiBashHold(VersionedPrivateDoc):
+    """A Meridian wait or foreground spawn is running inside one managed-bash task."""
+
+    v: Literal[1]
+    owner_pid: StrictInt = Field(gt=0)
+    owner_birth_epoch: float = Field(gt=0)
+
+
+@contextmanager
+def hold_pi_bash() -> Generator[None]:
+    """Mark the calling Pi bash task as running this command until the body returns.
+
+    Managed bash names the task's hold directory in ``_MERIDIAN_PI_BASH_HOLD_DIR``; this
+    writes ``<pid>.json`` there once and removes it on exit. The extension treats the task
+    as held while any file's owner is alive, so a crash needs no cleanup. Outside a Pi bash
+    task the variable is unset and nothing is written.
+    """
+
+    hold_dir = os.environ.get(PI_BASH_HOLD_DIR_ENV)
+    if not hold_dir:
+        yield
+        return
+    pid = os.getpid()
+    path = Path(hold_dir) / f"{pid}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_model(
+            path,
+            PiBashHold(v=1, owner_pid=pid, owner_birth_epoch=psutil.Process().create_time()),
+        )
+    except OSError as exc:
+        logger.warning("Pi bash hold not written; the task may be backgrounded", error=str(exc))
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def read_pi_private_doc(
@@ -76,7 +123,7 @@ class BashEvidence(VersionedPrivateDoc):
     stderr_log_path: str
     log_bytes: StrictInt = Field(ge=0)
     timeout_min: float
-    originating_bash_id: str | None
+    originating_bash_id: str | None = None  # older builds wrote it; ignored
     notification_consumed_at_ms: float | None = None
     execution_error: str = ""
     ping_sent_at_ms: float | None = None

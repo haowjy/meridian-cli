@@ -69,6 +69,9 @@ bare path
                                       forgets its consumption
     observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
                                       read, never written
+  pi-bash/<spawn_id>/holds/<bash id>/<pid>.json
+                                    — a CLI wait or foreground spawn inside one Pi bash task,
+                                      removed on exit; owner liveness is the whole record
   pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
                                     — Pi's admission receipts and dismissals, same keys;
                                       `delivery-receipts.json` / `cleared-spawns.json` are

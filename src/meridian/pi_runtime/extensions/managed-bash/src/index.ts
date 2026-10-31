@@ -13,8 +13,11 @@ import {
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
 import { bashOutcome, describeOutcome, outcomeErrorText, outcomeIsError, type TaskOutcome } from "../../shared/task_outcome";
+import { MAX_HOLD_MIN } from "./meridian_hold";
 import {
   BashRuntime,
+  DEFAULT_TIMEOUT_MIN,
+  MAX_TIMEOUT_MIN,
   type BashExecuteResult,
   type BashListRow,
   type BashManageParams,
@@ -273,11 +276,11 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "bash",
     label: "Bash",
-    description: "Run a shell command. Meridian-managed bash supports background execution and bash_manage follow-up actions.",
-    promptSnippet: "Run shell commands; use background=true for long-running work and bash_manage to inspect it.",
+    description: `Run a shell command. A foreground command still running after timeout_min (default ${DEFAULT_TIMEOUT_MIN}, max ${MAX_TIMEOUT_MIN}) is moved to the background and a completion notice follows; fetch the result with bash_manage. Use background=true from the start for servers and other long-running work. Without timeout_min, a command running a Meridian wait or foreground spawn stays in the foreground for up to ${MAX_HOLD_MIN} minutes. bash_manage inspects background tasks.`,
+    promptSnippet: `Run shell commands; a foreground command still running after ${DEFAULT_TIMEOUT_MIN} minutes is backgrounded and a completion notice follows (fetch the result with bash_manage). Use background=true from the start for servers and long-running work.`,
     parameters: Type.Object({
       command: Type.String(),
-      timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: 59 })),
+      timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_TIMEOUT_MIN })),
       background: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params: BashParams, signal) {

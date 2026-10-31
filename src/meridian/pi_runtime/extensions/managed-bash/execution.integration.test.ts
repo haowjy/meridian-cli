@@ -163,7 +163,7 @@ describe("managed Bash execution ownership", () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-execution-recovery-"));
     vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root); vi.stubEnv("MERIDIAN_SPAWN_ID", "p900001");
     const recordsPath = path.join(root, "pi-bash", "p900001", "bash-records.json");
-    const base: BashRecord = { bash_id: "b-12345678", command: "old task", cwd: root, pid: process.pid, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "old.log"), stdout_log_path: path.join(root, "old.out"), stderr_log_path: path.join(root, "old.err"), log_bytes: 0, timeout_min: 55, originating_bash_id: null };
+    const base: BashRecord = { bash_id: "b-12345678", command: "old task", cwd: root, pid: process.pid, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "old.log"), stdout_log_path: path.join(root, "old.out"), stderr_log_path: path.join(root, "old.err"), log_bytes: 0, timeout_min: 55 };
     const terminal = { ...base, bash_id: "b-23456789", status: "exited", exit_code: 0, ended_at_ms: Date.now(), notification_consumed_at_ms: 1234 };
     await mkdir(path.dirname(recordsPath), { recursive: true });
     await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p900001", updated_at_ms: Date.now(), records: { [base.bash_id]: base, [terminal.bash_id]: terminal } }));
@@ -186,7 +186,7 @@ describe("managed Bash execution ownership", () => {
     vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root); vi.stubEnv("MERIDIAN_SPAWN_ID", "p900001");
     const recordsPath = path.join(root, "pi-bash", "p900001", "bash-records.json");
     const fault = "EIO: injected records write failure";
-    const row: BashRecord = { bash_id: "b-34567890", command: "crashed", cwd: root, pid: 4_194_000, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "c.log"), stdout_log_path: path.join(root, "c.out"), stderr_log_path: path.join(root, "c.err"), log_bytes: 0, timeout_min: 55, originating_bash_id: null, execution_error: fault };
+    const row: BashRecord = { bash_id: "b-34567890", command: "crashed", cwd: root, pid: 4_194_000, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "c.log"), stdout_log_path: path.join(root, "c.out"), stderr_log_path: path.join(root, "c.err"), log_bytes: 0, timeout_min: 55, execution_error: fault };
     await mkdir(path.dirname(recordsPath), { recursive: true });
     await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p900001", updated_at_ms: Date.now(), records: { [row.bash_id]: row }, runtime_error: fault }));
     const signals = vi.spyOn(process, "kill").mockImplementation(() => {

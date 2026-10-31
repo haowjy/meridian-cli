@@ -34,6 +34,11 @@ export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }
 
+/** Where the CLI running inside one managed-bash task writes its hold files (`<pid>.json`). */
+export function resolveBashHoldDir(bashId: string, spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "holds", bashId);
+}
+
 export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "bash-records.json");
 }

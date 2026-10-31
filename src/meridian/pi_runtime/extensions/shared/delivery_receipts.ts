@@ -1,7 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { OwnerIdentity, ownerIsAlive } from "./process_identity";
 import { readPrivateJson, writeJsonAtomic } from "./json_file";
 import {
   currentSpawnIdFromEnv,
@@ -12,12 +11,10 @@ import {
 } from "./pi_state_paths";
 import { launchKey, type DeliveryReceiptsFile, type ObservedLaunchesFile } from "./schemas";
 
-const execFileAsync = promisify(execFile);
 const ReceiptsSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), messages: Type.Record(Type.String(), Type.Array(Type.String())),
 });
-const Lease = { owner_pid: Type.Integer({ minimum: 1 }), owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
-  expires_at_epoch: Type.Number() };
+const Lease = { ...OwnerIdentity, expires_at_epoch: Type.Number() };
 const ObservedLaunchesSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), updated_at_ms: Type.Optional(Type.Number()),
   observed_launches: Type.Array(Type.String()),
@@ -110,16 +107,7 @@ export async function reservedLaunchKeys(leases: Iterable<WaitReservation>): Pro
   const result = new Set<string>();
   for (const lease of leases) {
     if (lease.expires_at_epoch <= Date.now() / 1000) continue;
-    try {
-      const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(lease.owner_pid)],
-        { timeout: 1000, env: { ...process.env, LC_ALL: "C" } });
-      const birth = Date.parse(stdout.trim()) / 1000;
-      if (!Number.isFinite(birth)) throw Error("unreadable wait owner identity");
-      if (Math.abs(birth - lease.owner_birth_epoch) > 2) continue;
-    } catch (error) {
-      if ((error as { code?: unknown }).code === 1) continue; // ps reports no matching PID
-      throw error;
-    }
+    if (!await ownerIsAlive(lease)) continue;
     for (const key of lease.launches) result.add(key);
   }
   return result;
