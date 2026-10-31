@@ -247,9 +247,7 @@ def _scan_adhoc_project_dir(
     )
     reason, source_path = _adhoc_reason(origin)
     threshold = (
-        min(retention_days, stale_retention_days)
-        if reason != "adhoc-idle"
-        else retention_days
+        min(retention_days, stale_retention_days) if reason != "adhoc-idle" else retention_days
     )
     prunable = _is_quiescent(runtime_root) and _is_stale(
         latest_activity,

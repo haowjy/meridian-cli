@@ -114,8 +114,7 @@ def test_run_primary_attach_preserves_startup_failure_cause(
             control_root=tmp_path,
             task_cwd=tmp_path,
             env={},
-            spec=ResolvedLaunchSpec(
-            ),
+            spec=ResolvedLaunchSpec(),
             process_launcher=lambda **_kwargs: (1, None),
         )
 

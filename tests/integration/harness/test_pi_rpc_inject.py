@@ -247,8 +247,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         assert outcome.status == "succeeded"
         assert "Message delivered" in capsys.readouterr().out
         assert received_messages == [
-            "[Meridian] Message with no sender identity; it has no reply "
-            "address.\n\nSECOND"
+            "[Meridian] Message with no sender identity; it has no reply address.\n\nSECOND"
         ]
     finally:
         if not launch_task.done():

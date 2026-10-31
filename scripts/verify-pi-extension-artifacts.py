@@ -44,13 +44,17 @@ def verify_local_build(project_root: Path, expected: Sequence[str]) -> None:
     """Check the checkout build output matches the extension source set."""
 
     dist_root = project_root / _EXTENSION_DIST_REL
-    actual = tuple(
-        sorted(
-            child.name
-            for child in dist_root.iterdir()
-            if child.is_dir() and (child / "index.js").is_file()
+    actual = (
+        tuple(
+            sorted(
+                child.name
+                for child in dist_root.iterdir()
+                if child.is_dir() and (child / "index.js").is_file()
+            )
         )
-    ) if dist_root.is_dir() else ()
+        if dist_root.is_dir()
+        else ()
+    )
     _assert_exact(
         expected=expected,
         actual=actual,

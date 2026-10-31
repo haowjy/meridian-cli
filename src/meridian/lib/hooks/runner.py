@@ -96,11 +96,7 @@ class ExternalHookRunner:
                 error="Hook command is required for external execution.",
             )
 
-        env = {
-            key: value
-            for key, value in self._env.items()
-            if key not in _HOOK_PAYLOAD_ENV_NAMES
-        }
+        env = {key: value for key, value in self._env.items() if key not in _HOOK_PAYLOAD_ENV_NAMES}
         env.update(context.to_env())
         env.pop("_MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()

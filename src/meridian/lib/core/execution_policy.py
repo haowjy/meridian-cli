@@ -44,9 +44,7 @@ def _empty_native_config() -> NativeConfig:
 def _freeze_json(value: object) -> object:
     if isinstance(value, Mapping):
         mapping = cast("Mapping[object, object]", value)
-        return MappingProxyType(
-            {str(key): _freeze_json(item) for key, item in mapping.items()}
-        )
+        return MappingProxyType({str(key): _freeze_json(item) for key, item in mapping.items()})
     if isinstance(value, list | tuple):
         sequence = cast("list[object] | tuple[object, ...]", value)
         return tuple(_freeze_json(item) for item in sequence)

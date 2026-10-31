@@ -56,9 +56,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
     if spec.continue_fork:
-        raise HarnessCapabilityMismatch(
-            "Cursor subprocess continue_fork is not supported for MVP."
-        )
+        raise HarnessCapabilityMismatch("Cursor subprocess continue_fork is not supported for MVP.")
 
     if spec.interactive:
         raise HarnessCapabilityMismatch(

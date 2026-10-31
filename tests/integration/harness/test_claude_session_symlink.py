@@ -1,4 +1,5 @@
 """Exact Claude source seeding is idempotent and rejects path traversal."""
+
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,10 @@ def test_exact_source_seed_is_idempotent(tmp_path: Path, same_config: bool) -> N
     target_cwd = tmp_path / "child"
     for _ in range(2):
         ensure_claude_session_accessible(
-            "session-1", target_cwd,
-            source_native_store=source, target_config_root=target_config,
+            "session-1",
+            target_cwd,
+            source_native_store=source,
+            target_config_root=target_config,
         )
     target = target_config / "projects" / project_slug(target_cwd) / native.name
     assert target.read_text() == '{"sessionId":"session-1"}\n'
@@ -30,13 +33,17 @@ def test_exact_source_seed_is_idempotent(tmp_path: Path, same_config: bool) -> N
 def test_source_id_cannot_escape_store(tmp_path: Path, session_id: str) -> None:
     with pytest.raises(NativeSessionUnavailable):
         ensure_claude_session_accessible(
-            session_id, tmp_path, source_native_store=tmp_path,
+            session_id,
+            tmp_path,
+            source_native_store=tmp_path,
         )
 
 
 @pytest.mark.parametrize("failure", ["symlink", "replace"])
 def test_symlink_publication_failure_preserves_previous_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     import os
 
@@ -58,7 +65,10 @@ def test_symlink_publication_failure_preserves_previous_target(
         monkeypatch.setattr(os, "replace", fail)
     with pytest.raises(OSError, match="publication failed"):
         ensure_claude_session_accessible(
-            "session-1", child, source_native_store=source, target_config_root=config,
+            "session-1",
+            child,
+            source_native_store=source,
+            target_config_root=config,
         )
     assert target.read_text() == "previous target\n"
     assert list(target.parent.iterdir()) == [target]

@@ -35,6 +35,7 @@ switch ($Mode) {
         Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
         Remove-Item Env:PYTESTS_LAST_FAILED -ErrorAction SilentlyContinue
         Invoke-Step uv, run, ruff, check, '.'
+        Invoke-Step uv, run, ruff, format, '--check', '.'
         Invoke-Step uv, run, --extra, dev, python, '-m', pyright, --warnings
         Invoke-Step uv, run, --extra, dev, python, '-m', meridian.dev.lints
         Push-Location (Join-Path $RootDir 'src\meridian\pi_runtime')

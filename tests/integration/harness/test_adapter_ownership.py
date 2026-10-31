@@ -91,7 +91,6 @@ def test_claude_adapter_owns_exact_project_session(
         encoding="utf-8",
     )
 
-
     adapter = ClaudeAdapter()
     assert (
         adapter.owns_untracked_session(project_root=project_root, session_ref=new_session_id)
@@ -212,7 +211,6 @@ def test_claude_adapter_uses_claude_config_dir_override(
         encoding="utf-8",
     )
 
-
     adapter = ClaudeAdapter()
     assert (
         adapter.resolve_session_file(project_root=project_root, session_id=override_session_id)
@@ -254,13 +252,23 @@ def test_claude_adapter_pins_legacy_config_root(
         )
 
     adapter = ClaudeAdapter()
-    assert adapter.resolve_session_file(
-        project_root=project_root, session_id=session_id, config_root_hint=hint_root,
-    ) == paths[0]
+    assert (
+        adapter.resolve_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            config_root_hint=hint_root,
+        )
+        == paths[0]
+    )
     paths[0].unlink()
-    assert adapter.resolve_session_file(
-        project_root=project_root, session_id=session_id, config_root_hint=hint_root,
-    ) is None
+    assert (
+        adapter.resolve_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            config_root_hint=hint_root,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -383,7 +391,6 @@ def test_codex_adapter_uses_codex_home_override(
     _write_codex_rollout(fake_home / ".codex", project_root, default_session_id)
     override_rollout = _write_codex_rollout(codex_home_override, project_root, override_session_id)
 
-
     adapter = CodexAdapter()
     assert (
         adapter.resolve_session_file(
@@ -415,9 +422,7 @@ def test_codex_materialize_rewrites_owned_rules_file_and_skips_matching_content(
     rules_path.parent.mkdir(parents=True)
     rules_path.write_text("stale user content\n", encoding="utf-8")
     unprivileged = materialize_codex_spec(
-        ResolvedLaunchSpec(
-            permission_policy=PermissionPolicy(sandbox="workspace-write")
-        ),
+        ResolvedLaunchSpec(permission_policy=PermissionPolicy(sandbox="workspace-write")),
         {"CODEX_HOME": str(codex_home)},
         tmp_path,
     )
@@ -452,9 +457,7 @@ def test_codex_materialize_rewrites_owned_rules_file_and_skips_matching_content(
 
     rules_path.write_text("stale again\n", encoding="utf-8")
 
-    def _commit_without_directory_sync(
-        path: Path, content: str, *, durable: bool = True
-    ) -> None:
+    def _commit_without_directory_sync(path: Path, content: str, *, durable: bool = True) -> None:
         assert durable is True
         path.write_text(content, encoding="utf-8")
         raise AtomicReplaceDurabilityError(path)
@@ -546,7 +549,6 @@ def test_opencode_adapter_uses_xdg_data_home_override(
         "2026-03-08T12:00:05",
     )
 
-
     adapter = OpenCodeAdapter()
     assert (
         adapter.owns_untracked_session(project_root=project_root, session_ref=override_session_id)
@@ -599,7 +601,8 @@ def test_codex_transcript_resolution_refuses_duplicate_exact_ids(
 
 
 def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -609,24 +612,31 @@ def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
     for store in (recorded_store, ambient_store):
         store.mkdir(parents=True)
         (store / f"{session_id}.jsonl").write_text(
-            json.dumps({"sessionId": session_id}) + "\n", encoding="utf-8",
+            json.dumps({"sessionId": session_id}) + "\n",
+            encoding="utf-8",
         )
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     adapter = ClaudeAdapter()
-    assert adapter.resolve_native_session_file(
-        session_id=session_id,
-        native_store=recorded_store,
-    ) == recorded_store / f"{session_id}.jsonl"
+    assert (
+        adapter.resolve_native_session_file(
+            session_id=session_id,
+            native_store=recorded_store,
+        )
+        == recorded_store / f"{session_id}.jsonl"
+    )
     (recorded_store / f"{session_id}.jsonl").unlink()
     project_root = tmp_path / "another-cwd"
     decoy = tmp_path / "ambient" / "projects" / project_slug(project_root)
     decoy.mkdir(parents=True)
     (decoy / f"{session_id}.jsonl").write_text("{}\n")
-    assert adapter.resolve_native_session_file(
-        session_id=session_id,
-        native_store=recorded_store,
-    ) is None
+    assert (
+        adapter.resolve_native_session_file(
+            session_id=session_id,
+            native_store=recorded_store,
+        )
+        is None
+    )
 
 
 def test_opencode_transcript_resolution_uses_exact_storage_store(
@@ -641,11 +651,14 @@ def test_opencode_transcript_resolution_uses_exact_storage_store(
     unrelated.write_text("{}", encoding="utf-8")
 
     adapter = OpenCodeAdapter()
-    assert adapter.resolve_session_file(
-        project_root=tmp_path,
-        session_id=session_id,
-        config_root_hint=storage_root,
-    ) == expected
+    assert (
+        adapter.resolve_session_file(
+            project_root=tmp_path,
+            session_id=session_id,
+            config_root_hint=storage_root,
+        )
+        == expected
+    )
 
     duplicate = storage_root / "session_diff" / f"{session_id}.json"
     duplicate.parent.mkdir()

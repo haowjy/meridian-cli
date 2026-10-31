@@ -51,15 +51,9 @@ def stage_notice(
     if countdown is not None:
         title += f" {countdown}"
     event = (
-        f"{countdown or 'Cache expiry warning'}: reply to keep it warm"
-        if stage == "warn"
-        else None
+        f"{countdown or 'Cache expiry warning'}: reply to keep it warm" if stage == "warn" else None
     )
-    user = (
-        f"You: {state.last_user_text}"
-        if include_messages and state.last_user_text
-        else None
-    )
+    user = f"You: {state.last_user_text}" if include_messages and state.last_user_text else None
     assistant = (
         f"Assistant: {state.last_assistant_text}"
         if include_messages and state.last_assistant_text

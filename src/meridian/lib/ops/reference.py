@@ -76,7 +76,9 @@ def _normalize_optional(value: str | None) -> str | None:
 
 
 def _resolve_untracked_reference(
-    project_root: Path, ref: str, harness_hint: str | None = None,
+    project_root: Path,
+    ref: str,
+    harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
     registry = get_default_harness_registry()
     inferred_harness = harness_hint or infer_harness_from_untracked_session_ref(
@@ -145,12 +147,13 @@ def _resolve_spawn_reference(
     # One selection, one resolution path: the continue target's session record
     # owns settings/work whether a hook, a verified exit or the entry chose it.
     target_chat_id = row.continue_chat_id
-    target = session_store.chat_record(runtime_root, target_chat_id) if (
-        target_chat_id
-    ) else None
+    target = session_store.chat_record(runtime_root, target_chat_id) if (target_chat_id) else None
     if target is not None:
         selected = _reference_from_session(
-            runtime_root, target, project_root, target.harness_session_id,
+            runtime_root,
+            target,
+            project_root,
+            target.harness_session_id,
             spawn_id=target.spawn_id,
         )
         return replace(selected, source_spawn_id=row.id, source_goal=row.goal)

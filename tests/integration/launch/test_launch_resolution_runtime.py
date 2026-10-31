@@ -187,9 +187,7 @@ def test_claude_user_allowed_domains_warns_without_changing_projection(
     )
     assert boundary.network == Hosts()
     network_line = next(
-        line
-        for line in preview.enforcement_report()
-        if line.element == "network: deny"
+        line for line in preview.enforcement_report() if line.element == "network: deny"
     )
     warning = next(warning for warning in preview.warnings if warning.code.endswith("may_widen"))
     assert (user_config / "settings.json").as_posix() in warning.message

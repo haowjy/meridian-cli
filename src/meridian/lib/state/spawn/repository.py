@@ -152,9 +152,7 @@ def read_quarantined_chat_id(report: SpawnStateQuarantineReport) -> QuarantinedC
         return QuarantinedChatIdStatus.UNREADABLE
     current_chat_id = payload.get("current_chat_id")
     return (
-        current_chat_id
-        if isinstance(current_chat_id, str)
-        else QuarantinedChatIdStatus.NO_CHAT_ID
+        current_chat_id if isinstance(current_chat_id, str) else QuarantinedChatIdStatus.NO_CHAT_ID
     )
 
 
@@ -345,9 +343,7 @@ def read_state(
     stored = _read_stored_state(spawns_dir, spawn_id)
     if stored is None:
         return None
-    prompt = (
-        read_prompt(LaunchPaths.for_row(spawns_dir.parent, stored)) if include_prompt else None
-    )
+    prompt = read_prompt(LaunchPaths.for_row(spawns_dir.parent, stored)) if include_prompt else None
     return stored_state_to_record(stored, prompt=prompt)
 
 

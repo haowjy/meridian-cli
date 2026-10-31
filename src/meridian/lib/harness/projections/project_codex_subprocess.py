@@ -93,9 +93,7 @@ def project_codex_spec_to_cli_args(
         command.extend(
             ("-c", f"{CODEX_CONFIG_REASONING_EFFORT_KEY}={json.dumps(normalized_effort)}")
         )
-    command.extend(
-        project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct)
-    )
+    command.extend(project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct))
 
     permissions, _ = compile_codex_permissions(spec)
     sandbox = project_codex_sandbox(spec, permissions)
@@ -104,8 +102,7 @@ def project_codex_spec_to_cli_args(
         command.extend(
             (
                 "-c",
-                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}="
-                f"{json.dumps(permissions.approval_policy)}",
+                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}={json.dumps(permissions.approval_policy)}",
             )
         )
     command.extend(project_codex_tool_switch_flags(permissions))

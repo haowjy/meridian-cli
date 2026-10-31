@@ -32,8 +32,7 @@ def test_sweeper_removes_orphaned_spawn_lock_classes(tmp_path: Path) -> None:
     spawn_id = "p1"
     _start_spawn(runtime_root, spawn_id)
     lock_paths = tuple(
-        runtime_root / "locks" / lock_class / f"{spawn_id}.lock"
-        for lock_class in _LOCK_CLASSES
+        runtime_root / "locks" / lock_class / f"{spawn_id}.lock" for lock_class in _LOCK_CLASSES
     )
     for lock_path in lock_paths:
         handle = acquire_file_lock(lock_path)

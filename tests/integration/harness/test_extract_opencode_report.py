@@ -54,13 +54,21 @@ def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
     from meridian.lib.launch.context import _resolve_session_continuation
     from meridian.lib.launch.request import SessionRequest, SpawnRequest
 
-    harness = type("Harness", (), {
-        "id": "opencode",
-        "capabilities": type("Capabilities", (), {
-            "supports_session_resume": True,
-            "supports_session_fork": False,
-        })(),
-    })()
+    harness = type(
+        "Harness",
+        (),
+        {
+            "id": "opencode",
+            "capabilities": type(
+                "Capabilities",
+                (),
+                {
+                    "supports_session_resume": True,
+                    "supports_session_fork": False,
+                },
+            )(),
+        },
+    )()
     request = SpawnRequest(
         prompt="fork me",
         session=SessionRequest(

@@ -73,9 +73,7 @@ def test_session_log_rejects_conflicting_selectors(
         + "\n",
         encoding="utf-8",
     )
-    payload = SessionLogInput.model_validate(
-        {"file_path": transcript.as_posix(), **selectors}
-    )
+    payload = SessionLogInput.model_validate({"file_path": transcript.as_posix(), **selectors})
 
     with pytest.raises(ValueError) as exc_info:
         session_log_sync(payload)

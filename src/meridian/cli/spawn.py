@@ -1109,11 +1109,7 @@ def _spawn_cancel(
     emit: Emitter,
     spawn_id: Annotated[
         str,
-        Parameter(
-            help=(
-                f"Spawn to cancel: {_RUNNING_REF_FORMS}; {_SELECTORS_NOTE}."
-            )
-        ),
+        Parameter(help=(f"Spawn to cancel: {_RUNNING_REF_FORMS}; {_SELECTORS_NOTE}.")),
     ],
     force: Annotated[
         bool,

@@ -155,9 +155,7 @@ def test_doctor_does_not_report_dead_launch_live_without_kill_flag(
     assert "orphan_runs" not in result.repaired
     assert result.killed_orphan_spawns == ()
     assert all(warning.code != "live_active_spawns_remain" for warning in result.warnings)
-    assert _warning_by_code(result, "dead_spawns_unfinalized").payload == {
-        "spawn_ids": [spawn_id]
-    }
+    assert _warning_by_code(result, "dead_spawns_unfinalized").payload == {"spawn_ids": [spawn_id]}
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     assert spawn_store.get_spawn(runtime_root, spawn_id).status == "running"
 
@@ -182,9 +180,7 @@ def test_lockless_v3_queued_row_not_finalized(
     from meridian.lib.ops.spawn.api import spawn_show_sync
     from meridian.lib.ops.spawn.models import SpawnShowInput
 
-    shown = spawn_show_sync(
-        SpawnShowInput(spawn_id=spawn_id, project_root=project_root.as_posix())
-    )
+    shown = spawn_show_sync(SpawnShowInput(spawn_id=spawn_id, project_root=project_root.as_posix()))
     assert is_active_spawn_status(shown.status)
 
     from meridian.lib.state.reaper import reconcile_active_spawn

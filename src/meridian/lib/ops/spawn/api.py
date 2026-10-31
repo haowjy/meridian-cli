@@ -689,9 +689,7 @@ def spawn_list_sync(
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    spawns = list(
-        reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records))
-    )
+    spawns = list(reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)))
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.

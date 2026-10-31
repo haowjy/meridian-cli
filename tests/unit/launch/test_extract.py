@@ -32,8 +32,7 @@ from meridian.lib.launch.report import ExtractedReport
             FinalizeReportKind.CONTROL_FRAME,
         ),
         (
-            '{"type":"result","is_error":true,'
-            '"terminal_reason":"aborted_streaming","result":""}',
+            '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming","result":""}',
             FinalizeReportKind.CONTROL_FRAME,
         ),
         (
@@ -55,8 +54,7 @@ from meridian.lib.launch.report import ExtractedReport
             FinalizeReportKind.DURABLE_COMPLETION,
         ),
         (
-            '{"type":"result","is_error":false,'
-            '"terminal_reason":"end_turn","result":"OK"}',
+            '{"type":"result","is_error":false,"terminal_reason":"end_turn","result":"OK"}',
             FinalizeReportKind.DURABLE_COMPLETION,
         ),
     ],

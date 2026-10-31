@@ -332,9 +332,7 @@ def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.Ses
     assert row.current_chat_id is None
     facts = [
         json.loads(line)
-        for line in launch_paths(runtime, spawn_id).runner_lifecycle
-        .read_text()
-        .splitlines()
+        for line in launch_paths(runtime, spawn_id).runner_lifecycle.read_text().splitlines()
     ]
     mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
     assert len(mismatch) == 1
@@ -561,9 +559,7 @@ def test_primary_header_mismatch_prevents_exit_attribution(
     assert row.current_chat_id is None
     facts = [
         json.loads(line)
-        for line in launch_paths(runtime, row.id).runner_lifecycle
-        .read_text()
-        .splitlines()
+        for line in launch_paths(runtime, row.id).runner_lifecycle.read_text().splitlines()
     ]
     assert any(
         fact["event"] == "entry_mismatch" and fact["expected"] != fact["observed"] for fact in facts
@@ -643,9 +639,7 @@ async def test_identity_failure_payload_is_identical_at_every_boundary(
         assert code == 1
     facts = [
         json.loads(line)
-        for line in launch_paths(ctx.runtime_root, "p42").runner_lifecycle
-        .read_text()
-        .splitlines()
+        for line in launch_paths(ctx.runtime_root, "p42").runner_lifecycle.read_text().splitlines()
     ]
     payloads = [fact for fact in facts if fact["event"] == "entry_mismatch"]
     assert len(payloads) == 1

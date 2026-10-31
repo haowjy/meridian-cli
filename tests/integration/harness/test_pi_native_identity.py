@@ -10,7 +10,9 @@ from tests.support.launch_paths import launch_paths
 
 @pytest.mark.parametrize("basename", ["unrelated.jsonl", ".jsonl"])
 def test_header_collision_ignores_basename(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, basename: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    basename: str,
 ) -> None:
     monkeypatch.setattr("meridian.lib.harness.pi_identity.uuid.uuid4", lambda: "chosen-id")
     (tmp_path / basename).write_text('{"type":"session","id":"chosen-id"}\n')
@@ -77,7 +79,8 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
 
 @pytest.mark.parametrize("header", ["", "torn", "[]", '{"type":"session"}'])
 def test_mint_warns_and_skips_unreadable_sibling_but_exact_read_refuses(
-    tmp_path: Path, header: str,
+    tmp_path: Path,
+    header: str,
 ) -> None:
     from structlog.testing import capture_logs
 

@@ -76,4 +76,3 @@ def test_guard_order_first_match(
     reason: str,
 ) -> None:
     assert decide(stage, facts, current, cfg, now_ms).reason == reason
-

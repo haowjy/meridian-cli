@@ -42,6 +42,8 @@ def test_is_process_alive_returns_false_for_pid_reuse(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "Process", lambda pid: _FakeProcess(create_time=131.0))
 
     assert liveness.is_process_alive(123, created_after_epoch=100.0) is False
+
+
 def test_process_liveness_treats_zombie_as_exited(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
     monkeypatch.setattr(
@@ -74,6 +76,8 @@ def test_real_zombie_is_not_alive() -> None:
         assert liveness.is_process_alive_with_birth(child_pid, birth) is False
     finally:
         os.waitpid(child_pid, 0)
+
+
 def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
 

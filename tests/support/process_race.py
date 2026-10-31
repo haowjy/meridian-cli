@@ -117,9 +117,7 @@ def run_spawn_race_or_skip(
             try:
                 proc.start()
             except PermissionError as exc:
-                pytest.skip(
-                    f"multiprocessing semaphore unavailable in this environment: {exc}"
-                )
+                pytest.skip(f"multiprocessing semaphore unavailable in this environment: {exc}")
 
         armed: set[int] = set()
         while len(armed) < worker_count:
@@ -176,9 +174,7 @@ def run_spawn_race_or_skip(
             error = errors.get(index)
             if exitcode != 0 or error is not None:
                 detail = error or f"exitcode={exitcode!r}"
-                failures.append(
-                    f"worker {index}: {detail} (stderr={stderrs.get(index, '')!r})"
-                )
+                failures.append(f"worker {index}: {detail} (stderr={stderrs.get(index, '')!r})")
         if failures:
             raise AssertionError("spawn race worker(s) failed:\n" + "\n".join(failures))
 

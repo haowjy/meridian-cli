@@ -87,15 +87,9 @@ def _serve_from_json(value: object) -> Serve | None:
         or not isinstance(pid, int)
         or isinstance(pid, bool)
         or pid <= 0
-        or (
-            process_created_at is not None
-            and not isinstance(process_created_at, (int, float))
-        )
+        or (process_created_at is not None and not isinstance(process_created_at, (int, float)))
         or isinstance(process_created_at, bool)
-        or (
-            isinstance(process_created_at, (int, float))
-            and process_created_at <= 0
-        )
+        or (isinstance(process_created_at, (int, float)) and process_created_at <= 0)
     ):
         return None
     created_at = float(process_created_at) if process_created_at is not None else None

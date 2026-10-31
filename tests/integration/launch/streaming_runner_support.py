@@ -368,9 +368,7 @@ class _ResidentDeadlineConnection:
         if plan is not None and plan.session_id is not None:
             self._session_id = plan.session_id
         type(self).starts += 1
-        _ResidentDeadlineConnection.resident_deadlines.append(
-            config.resident_deadline_seconds
-        )
+        _ResidentDeadlineConnection.resident_deadlines.append(config.resident_deadline_seconds)
         self._spawn_id = config.launch.spawn_id
         self.state = "connected"
 

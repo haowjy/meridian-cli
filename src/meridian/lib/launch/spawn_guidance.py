@@ -70,6 +70,7 @@ Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
+
 def _build_meridian_skills_prompt(
     *,
     profile_mode: AgentMode,
@@ -84,9 +85,7 @@ def _build_meridian_skills_prompt(
         description = skill.description
         if description.startswith("When "):
             description = "when " + description.removeprefix("When ")
-        lines.append(
-            f"- {skill.name}: {description} Read `meridian skills {skill.name}`."
-        )
+        lines.append(f"- {skill.name}: {description} Read `meridian skills {skill.name}`.")
     return "\n".join(lines)
 
 
@@ -274,9 +273,7 @@ def build_capabilities_prompt(
         )
     for name in sorted(resolved_context.extra):
         path, _ = resolved_context.extra[name]
-        other_context.append(
-            f"`{path.as_posix()}` — {name} (`${context_env_key(name)}`)"
-        )
+        other_context.append(f"`{path.as_posix()}` — {name} (`${context_env_key(name)}`)")
     if other_context:
         lines.append("- " + "; ".join(other_context) + "; inspect: `meridian context`.")
 

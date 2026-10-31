@@ -125,9 +125,7 @@ def render_root_help(*, agent_mode: bool) -> str:
 
     if not agent_mode:
         sections.append(
-            "Primary launch/resume:\n"
-            f"{_render_table(list(LAUNCH_EXAMPLES))}\n"
-            f"{LAUNCH_REF_NOTES}"
+            f"Primary launch/resume:\n{_render_table(list(LAUNCH_EXAMPLES))}\n{LAUNCH_REF_NOTES}"
         )
 
     sections.append(f"Commands:\n{_render_table(_command_rows(agent_mode=agent_mode))}")
@@ -145,7 +143,7 @@ def render_root_help(*, agent_mode: bool) -> str:
         sections.append(
             "Global harness selection: --harness (or prefix with claude/codex/cursor/opencode)\n\n"
             "Bundled package manager: meridian mars ARGS...\n\n"
-            "Run \"meridian spawn -h\" for subagent usage.\n\n"
+            'Run "meridian spawn -h" for subagent usage.\n\n'
             f"Version: {__version__}"
         )
 

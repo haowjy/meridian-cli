@@ -88,9 +88,7 @@ class ContextOutput(BaseModel):
         return ResolvedContextPaths(
             work_root=Path(self.work_resolved) if self.work_resolved is not None else None,
             work_archive=(
-                Path(self.work_archive_resolved)
-                if self.work_archive_resolved is not None
-                else None
+                Path(self.work_archive_resolved) if self.work_archive_resolved is not None else None
             ),
             work_source=ContextSourceType(self.work_source),
             kb_root=Path(self.kb_resolved) if self.kb_resolved is not None else None,
@@ -116,9 +114,7 @@ class ContextOutput(BaseModel):
             lines.append(f"  resolved: {self.work_resolved or '(unresolved)'}")
             lines.append(f"  active: {self.active_work_dir or '(none)'}")
             lines.append(f"  archive: {self.work_archive}")
-            lines.append(
-                f"  archive_resolved: {self.work_archive_resolved or '(unresolved)'}"
-            )
+            lines.append(f"  archive_resolved: {self.work_archive_resolved or '(unresolved)'}")
             lines.append("kb:")
             lines.append(f"  source: {self.kb_source}")
             lines.append(f"  path: {self.kb_path}")
@@ -545,9 +541,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         project_identity_source=authority.project_identity_source,
         work_path=context_config.work.path,
         work_resolved=(
-            resolved_paths.work_root.as_posix()
-            if resolved_paths.work_root is not None
-            else None
+            resolved_paths.work_root.as_posix() if resolved_paths.work_root is not None else None
         ),
         work_source=context_config.work.source.value,
         active_work_dir=(
@@ -564,9 +558,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         ),
         kb_path=context_config.kb.path,
         kb_resolved=(
-            resolved_paths.kb_root.as_posix()
-            if resolved_paths.kb_root is not None
-            else None
+            resolved_paths.kb_root.as_posix() if resolved_paths.kb_root is not None else None
         ),
         kb_source=context_config.kb.source.value,
         mars_root=mars_roots.primary.as_posix(),
@@ -595,9 +587,7 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
         return WorkCurrentOutput(work_dir=None)
     scope = resolve_active_work_scope(authority.project_root, runtime_root)
 
-    return WorkCurrentOutput(
-        work_dir=scope.root.as_posix() if scope is not None else None
-    )
+    return WorkCurrentOutput(work_dir=scope.root.as_posix() if scope is not None else None)
 
 
 def work_path_sync(input: WorkPathInput) -> WorkPathOutput:

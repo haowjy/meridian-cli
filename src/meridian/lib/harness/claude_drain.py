@@ -37,14 +37,18 @@ class ClaudeNativeTaskSource:
                 logger.warning(
                     "Claude background_tasks_changed missing tasks array; holding completion"
                 )
-                self._task_blockers = (DiagnosticBlocker(
-                    source="native_task", code="running",
-                    identity="Unknown background tasks (malformed snapshot)",
-                ),)
+                self._task_blockers = (
+                    DiagnosticBlocker(
+                        source="native_task",
+                        code="running",
+                        identity="Unknown background tasks (malformed snapshot)",
+                    ),
+                )
             else:
                 self._task_blockers = tuple(
                     DiagnosticBlocker(
-                        source="native_task", code="running",
+                        source="native_task",
+                        code="running",
                         identity=(
                             f"{task.get('description', 'Unnamed task')} "
                             f"({task.get('task_type', 'unknown type')})"

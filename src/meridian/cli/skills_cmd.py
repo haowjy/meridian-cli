@@ -42,10 +42,7 @@ def cmd_skills(
         skills = list_bundled_skills()
         if get_global_options().output.format == "json":
             sink.result(
-                [
-                    {"name": skill.name, "description": skill.description}
-                    for skill in skills
-                ]
+                [{"name": skill.name, "description": skill.description} for skill in skills]
             )
         else:
             sink.result("\n".join(f"{skill.name}: {skill.description}" for skill in skills))

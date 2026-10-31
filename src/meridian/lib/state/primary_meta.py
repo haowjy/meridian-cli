@@ -91,6 +91,7 @@ class PrimaryMetadata(BaseModel):
     session_dir: _OptionalText = None
     auth_policy: _OptionalText = None
 
+
 @dataclass(frozen=True)
 class PrimarySurfaceMetadata:
     """Projection for spawn list/show surfaces."""
@@ -112,10 +113,12 @@ class PrimarySurfaceMetadata:
     session_dir: str | None
     auth_policy: str | None
 
+
 def read_primary_metadata(launch: LaunchPaths) -> PrimaryMetadata | None:
     """Tolerant read with crash-only semantics. Returns None for missing/corrupt file."""
 
     return read_model(launch.primary_meta, PrimaryMetadata)
+
 
 def write_primary_metadata(
     launch: LaunchPaths,
@@ -140,6 +143,7 @@ def write_primary_metadata(
     except PublishedArtifactUnavailable:
         return False
     return True
+
 
 def read_primary_surface_metadata(launch: LaunchPaths) -> PrimarySurfaceMetadata:
     """Read projection for CLI surfaces. Returns defaults if file missing."""
@@ -182,6 +186,7 @@ def read_primary_surface_metadata(launch: LaunchPaths) -> PrimarySurfaceMetadata
         session_dir=metadata.session_dir,
         auth_policy=metadata.auth_policy,
     )
+
 
 def read_primary_harness_session_id(launch: LaunchPaths) -> str | None:
     """Read harness_session_id only. Used by session_log resolution."""

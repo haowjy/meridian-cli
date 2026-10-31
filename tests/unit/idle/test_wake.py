@@ -116,11 +116,14 @@ def test_shell_wake_certainty_follows_the_command_that_ends_the_shell(
     command: str,
     expected: ExpectedWake,
 ) -> None:
-    assert expected_wake(
-        (BackgroundTask("shell", command),),
-        now_ms=1_000,
-        default_yield_seconds=3000,
-    ) == expected
+    assert (
+        expected_wake(
+            (BackgroundTask("shell", command),),
+            now_ms=1_000,
+            default_yield_seconds=3000,
+        )
+        == expected
+    )
 
 
 def test_expected_wake_reduces_running_work() -> None:
@@ -137,6 +140,7 @@ def test_expected_wake_reduces_running_work() -> None:
         by_ms=601_000,
         maybe=True,
     )
-    assert expected_wake(
-        (BackgroundTask("watcher"),), now_ms=0, default_yield_seconds=3000
-    ) == ExpectedWake()
+    assert (
+        expected_wake((BackgroundTask("watcher"),), now_ms=0, default_yield_seconds=3000)
+        == ExpectedWake()
+    )

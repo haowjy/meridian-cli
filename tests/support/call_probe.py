@@ -45,9 +45,7 @@ class IOProbe:
 
         @wraps(target)
         def observed(*args: Any, **kwargs: Any) -> Any:
-            self._calls[name].append(
-                ProbeCall(args, dict(kwargs), frozenset(self._held_locks))
-            )
+            self._calls[name].append(ProbeCall(args, dict(kwargs), frozenset(self._held_locks)))
             return target(*args, **kwargs)
 
         self._patch_loaded_aliases(target, observed)
@@ -99,11 +97,7 @@ class IOProbe:
         return tuple(
             call
             for call in self._calls[name]
-            if (
-                bool(call.held_locks)
-                if lock_name is None
-                else lock_name in call.held_locks
-            )
+            if (bool(call.held_locks) if lock_name is None else lock_name in call.held_locks)
         )
 
     def count_under_lock(self, name: str, lock_name: str | None = None) -> int:

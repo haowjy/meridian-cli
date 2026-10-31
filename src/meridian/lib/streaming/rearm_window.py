@@ -15,8 +15,12 @@ class RearmWindow:
     """Share signal latching, persisted rearm budget, and absolute-window arithmetic."""
 
     def __init__(
-        self, *, runtime_root: Path, spawn_id: SpawnId,
-        deadline_seconds: float, rearm_budget: int | None,
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        deadline_seconds: float,
+        rearm_budget: int | None,
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id
@@ -47,6 +51,8 @@ class RearmWindow:
             return False
         self._rearm_count += 1
         spawn_store.update_spawn(
-            self._runtime_root, self._spawn_id, resident_rearm_count=self._rearm_count,
+            self._runtime_root,
+            self._spawn_id,
+            resident_rearm_count=self._rearm_count,
         )
         return True

@@ -52,9 +52,7 @@ class Sender:
     def __init__(self) -> None:
         self.notices: list[Notification] = []
 
-    def __call__(
-        self, event: HookEventName, notice: Notification
-    ) -> RouteReport:
+    def __call__(self, event: HookEventName, notice: Notification) -> RouteReport:
         _ = event
         self.notices.append(notice)
         return RouteReport(results=(RouteResult(route="test", status="sent"),))

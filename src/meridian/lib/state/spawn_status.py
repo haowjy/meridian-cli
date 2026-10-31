@@ -46,11 +46,7 @@ def legacy_runner_alive(row: SpawnRecord) -> bool:
     ):
         return True
     started_at = iso_timestamp_to_epoch(row.started_at)
-    return bool(
-        not row.runner_pid
-        and started_at is not None
-        and time.time() - started_at < 15.0
-    )
+    return bool(not row.runner_pid and started_at is not None and time.time() - started_at < 15.0)
 
 
 def read_cancel_intent(launch: LaunchPaths, row: SpawnRecord) -> CancelIntent | None:
@@ -277,9 +273,7 @@ def poll_launch(runtime_root: Path, spawn_id: str, n: int) -> LaunchPoll:
     return Running(row) if is_active_spawn_status(row.status) else Finished(row)
 
 
-async def wait_until(
-    runtime_root: Path, spawn_id: str, n: int, *, until: float
-) -> LaunchPoll:
+async def wait_until(runtime_root: Path, spawn_id: str, n: int, *, until: float) -> LaunchPoll:
     """Poll until the launch finishes, loses its runner, or ``until`` (monotonic)."""
     while True:
         poll = poll_launch(runtime_root, spawn_id, n)

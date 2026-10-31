@@ -251,9 +251,7 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
     assert state_path.is_file()
 
     rejected = json.dumps({"type": "future-codex-event"}, separators=(",", ":"))
-    assert _json_success(
-        tmp_path, env, "idle", "event", "--harness", "codex", rejected
-    ) == {}
+    assert _json_success(tmp_path, env, "idle", "event", "--harness", "codex", rejected) == {}
     assert notify_calls.read_text(encoding="utf-8").splitlines() == [payload, rejected]
 
 

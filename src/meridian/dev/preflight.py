@@ -87,6 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     python = sys.executable
     commands = (
         (python, "-m", "ruff", "check", "."),
+        (python, "-m", "ruff", "format", "--check", "."),
         (python, "-m", "pyright", "--warnings"),
         (python, "-m", "meridian.dev.lints"),
         (python, "-m", "meridian.dev.pytests"),

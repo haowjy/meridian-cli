@@ -1,4 +1,5 @@
 """Agent profile parser for `.mars/agents/*.md`."""
+
 from pathlib import Path
 from typing import Literal, cast
 
@@ -103,9 +104,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     resident_rearm_budget_value = meridian_overrides.get("resident-rearm-budget")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
-    model_invocable = (
-        model_invocable_value if isinstance(model_invocable_value, bool) else True
-    )
+    model_invocable = model_invocable_value if isinstance(model_invocable_value, bool) else True
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
         mode = "subagent"
@@ -115,9 +114,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         description=str(description_value).strip() if description_value is not None else "",
         mode=cast("AgentMode", mode),
         subagents=_normalize_string_list(frontmatter.get("subagents")),
-        meridian_capabilities=_parse_meridian_capabilities(
-            meridian_overrides.get("capabilities")
-        ),
+        meridian_capabilities=_parse_meridian_capabilities(meridian_overrides.get("capabilities")),
         model_invocable=model_invocable,
         resident_rearm_budget=(
             resident_rearm_budget_value

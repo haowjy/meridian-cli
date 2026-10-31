@@ -99,9 +99,9 @@ def test_sessions_projection_avoids_per_line_round_trips(tmp_path: Path) -> None
 
     # A statement bound is only meaningful beside the work it bounds: a
     # disabled projection would also issue no statements.
-    assert {record.chat_id for record in index.sessions()} == {
-        f"c{i + 1}" for i in range(6)
-    } | {f"L{i + 1}" for i in range(6)}
+    assert {record.chat_id for record in index.sessions()} == {f"c{i + 1}" for i in range(6)} | {
+        f"L{i + 1}" for i in range(6)
+    }
     assert index.work_chat_ids("w0") == {"c1"}
     assert statements < lines, (
         f"Sessions projection issued {statements} statements for {lines} lines; "

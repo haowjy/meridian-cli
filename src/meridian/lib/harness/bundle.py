@@ -33,6 +33,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
 BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
 
+
 class SubprocessProjector(Protocol[ProjectorSpecT]):
     """Project a resolved launch spec onto one subprocess argv."""
 

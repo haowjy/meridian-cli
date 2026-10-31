@@ -27,8 +27,7 @@ def test_opencode_reads_last_model(tmp_path: Path) -> None:
     context = NativeModelReadContext(native_store=str(db))
 
     assert (
-        read_last_executed_model("opencode", "ses-1", context=context)
-        == "deepseek/deepseek-flash"
+        read_last_executed_model("opencode", "ses-1", context=context) == "deepseek/deepseek-flash"
     )
     assert read_last_executed_model("opencode", "ses-missing", context=context) is None
 
@@ -62,9 +61,7 @@ def test_claude_reads_last_assistant_model(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    context = NativeModelReadContext(
-        project_root=str(project_root), native_store=str(project_dir)
-    )
+    context = NativeModelReadContext(project_root=str(project_root), native_store=str(project_dir))
 
     assert read_last_executed_model("claude", "ses-1", context=context) == "claude-fable-5"
     assert read_last_executed_model("claude", "ses-missing", context=context) is None
@@ -97,9 +94,7 @@ def test_codex_reads_last_model(tmp_path: Path) -> None:
 
     assert read_last_executed_model("codex", session_id, context=context) == "gpt-5.6-sol"
     assert (
-        read_last_executed_model(
-            "codex", "019fb673-854a-7b63-97b8-360bece19999", context=context
-        )
+        read_last_executed_model("codex", "019fb673-854a-7b63-97b8-360bece19999", context=context)
         is None
     )
 
@@ -148,41 +143,67 @@ def test_unknown_harness_returns_none() -> None:
 
 
 def test_recorded_model_read_does_not_fall_back_to_ambient(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     sid = "12345678-1234-4234-8234-123456789abc"
     root = tmp_path / "repo"
     for harness, env_key, suffix, filename, event in (
-        ("claude", "CLAUDE_CONFIG_DIR", Path("projects") / project_slug(root),
-         f"{sid}.jsonl", {"type": "assistant", "message": {"model": "wrong"}}),
-        ("codex", "CODEX_HOME", Path("sessions"),
-         f"rollout-2026-01-01T00-00-00-{sid}.jsonl",
-         {"type": "turn_context", "payload": {"model": "wrong"}}),
-        ("pi", "PI_CODING_AGENT_DIR", Path("sessions"),
-         f"2026-01-01T00-00-00_{sid}.jsonl", {"type": "model_change", "modelId": "wrong"}),
+        (
+            "claude",
+            "CLAUDE_CONFIG_DIR",
+            Path("projects") / project_slug(root),
+            f"{sid}.jsonl",
+            {"type": "assistant", "message": {"model": "wrong"}},
+        ),
+        (
+            "codex",
+            "CODEX_HOME",
+            Path("sessions"),
+            f"rollout-2026-01-01T00-00-00-{sid}.jsonl",
+            {"type": "turn_context", "payload": {"model": "wrong"}},
+        ),
+        (
+            "pi",
+            "PI_CODING_AGENT_DIR",
+            Path("sessions"),
+            f"2026-01-01T00-00-00_{sid}.jsonl",
+            {"type": "model_change", "modelId": "wrong"},
+        ),
     ):
         home = tmp_path / harness
         decoy = home / suffix / filename
         decoy.parent.mkdir(parents=True)
         decoy.write_text(json.dumps(event) + "\n")
         monkeypatch.setenv(env_key, str(home))
-        assert read_last_executed_model(
-            harness, sid,
-            context=NativeModelReadContext(
-                project_root=str(root), native_store=str(tmp_path / "missing"),
-            ),
-        ) is None
+        assert (
+            read_last_executed_model(
+                harness,
+                sid,
+                context=NativeModelReadContext(
+                    project_root=str(root),
+                    native_store=str(tmp_path / "missing"),
+                ),
+            )
+            is None
+        )
 
 
 @pytest.mark.parametrize("header", ["{torn header", '{"type":"session","id":"different-id"}'])
 def test_unreadable_pi_header_model_observation_is_best_effort(
-    tmp_path: Path, header: str,
+    tmp_path: Path,
+    header: str,
 ) -> None:
     sid = "12345678-1234-4234-8234-123456789abc"
     (tmp_path / f"2026-01-01T00-00-00_{sid}.jsonl").write_text(header + "\n")
-    assert read_last_executed_model(
-        "pi", sid, context=NativeModelReadContext(native_store=str(tmp_path)),
-    ) is None
+    assert (
+        read_last_executed_model(
+            "pi",
+            sid,
+            context=NativeModelReadContext(native_store=str(tmp_path)),
+        )
+        is None
+    )
 
 
 _SESSION = "ses_v2_fixture"

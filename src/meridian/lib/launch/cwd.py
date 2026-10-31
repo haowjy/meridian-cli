@@ -83,17 +83,14 @@ def _fallback_warning(message: str | None, destination: Path) -> str | None:
     if message is None:
         return None
     return (
-        f"{message} Using {destination} instead; "
-        "run 'meridian work task-dir <dir>' to update it."
+        f"{message} Using {destination} instead; run 'meridian work task-dir <dir>' to update it."
     )
 
 
 def _require_fallback_root(project_root: Path, message: str) -> Path:
     if project_root.is_dir():
         return project_root
-    raise WorkTaskDirMissing(
-        f"{message}\nNo fallback project directory exists: {project_root}"
-    )
+    raise WorkTaskDirMissing(f"{message}\nNo fallback project directory exists: {project_root}")
 
 
 def _validated_explicit_task_dir(task_dir: Path) -> Path:
@@ -250,7 +247,7 @@ def resolve_task_cwd(
     """
 
     resolved_authority_root = authority_root.resolve()
-    explicit_override = (str(explicit_task_dir).strip() if explicit_task_dir is not None else "")
+    explicit_override = str(explicit_task_dir).strip() if explicit_task_dir is not None else ""
     if explicit_override:
         selected_work_id = (
             (explicit_work_id or "").strip() or (ambient_work_id or "").strip() or None
@@ -288,9 +285,7 @@ def resolve_task_cwd(
     else:
         stale_message = None
 
-    inherited_override = (
-        str(inherited_task_dir).strip() if inherited_task_dir is not None else ""
-    )
+    inherited_override = str(inherited_task_dir).strip() if inherited_task_dir is not None else ""
     if inherited_override:
         inherited_candidate = Path(inherited_override).expanduser().resolve()
         if stale_message is None:

@@ -193,9 +193,7 @@ def test_passthrough_layers_project_inspection_but_not_mutation_or_user_scope(
 
     agents = parse_mars_passthrough(["agents", "list"], executable="/fake/mars")
     mutation = parse_mars_passthrough(["sync"], executable="/fake/mars")
-    user_agents = parse_mars_passthrough(
-        ["--user", "agents", "list"], executable="/fake/mars"
-    )
+    user_agents = parse_mars_passthrough(["--user", "agents", "list"], executable="/fake/mars")
 
     assert agents.mars_args == (
         "agents",
@@ -224,8 +222,7 @@ def test_mutation_gate_uses_meridian_project_dir_before_root_injection(
         parse_mars_passthrough(["add", "local-package"], executable="/fake/mars")
 
     assert str(exc_info.value) == (
-        "no project Mars root here; run 'meridian init --link', or use "
-        "'meridian mars --user …'"
+        "no project Mars root here; run 'meridian init --link', or use 'meridian mars --user …'"
     )
     assert not any(bare.iterdir())
 
@@ -244,9 +241,7 @@ def test_nested_mutation_gate_requires_user_scope_in_bare_directory(
     monkeypatch.setenv("MERIDIAN_HOME", user_root.parent.as_posix())
 
     with pytest.raises(ValueError, match="no project Mars root here"):
-        parse_mars_passthrough(
-            ["models", "alias", "fast", "gpt-5"], executable="/fake/mars"
-        )
+        parse_mars_passthrough(["models", "alias", "fast", "gpt-5"], executable="/fake/mars")
 
     request = parse_mars_passthrough(
         ["--user", "models", "alias", "fast", "gpt-5"], executable="/fake/mars"

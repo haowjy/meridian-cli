@@ -189,9 +189,7 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
         )
 
         live_and_stale_budget = (
-            active_spawn.stat().st_size
-            + live_cli.stat().st_size
-            + stale_recognized.stat().st_size
+            active_spawn.stat().st_size + live_cli.stat().st_size + stale_recognized.stat().st_size
         )
         run_retention_cleanup(
             telemetry_dir,

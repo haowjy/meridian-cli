@@ -93,6 +93,7 @@ class NtfyChannel:
             return f"{what}: ntfy returned HTTP {status}"
         return None
 
+
 CHANNEL = NtfyChannel()
 
 __all__ = ["CHANNEL", "NtfyChannel", "NtfyTransport"]

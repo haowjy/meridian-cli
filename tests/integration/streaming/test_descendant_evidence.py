@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 
 
 def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
@@ -197,8 +198,7 @@ def test_reconciled_descendant_evidence_treats_busy_index_as_unavailable(
     )
     assert before + descendant_evidence_module.QUERY_TIMEOUT <= deadlines[0]
     assert deadlines[0] <= (
-        descendant_evidence_module.time.monotonic()
-        + descendant_evidence_module.QUERY_TIMEOUT
+        descendant_evidence_module.time.monotonic() + descendant_evidence_module.QUERY_TIMEOUT
     )
 
 
@@ -235,6 +235,4 @@ def test_descendant_projection_stops_when_indexed_parent_edges_cycle(tmp_path: P
     start_row(tmp_path, "p1", HarnessId.PI, "p2")
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
 
-    assert HistoryIndex(tmp_path).descendant_projection(("p1",)) == (
-        ("p2", "p1", False),
-    )
+    assert HistoryIndex(tmp_path).descendant_projection(("p1",)) == (("p2", "p1", False),)

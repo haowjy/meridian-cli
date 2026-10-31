@@ -24,8 +24,8 @@ def is_bootstrap_turn_prompt(value: object) -> bool:
     if not isinstance(value, str):
         return False
     prefix = f"{BOOTSTRAP_TURN_PROMPT} (agent: "
-    return value.startswith(prefix) and value.endswith(")") and bool(
-        value[len(prefix) : -1].strip()
+    return (
+        value.startswith(prefix) and value.endswith(")") and bool(value[len(prefix) : -1].strip())
     )
 
 

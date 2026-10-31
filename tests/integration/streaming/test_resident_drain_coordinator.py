@@ -69,6 +69,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
+
     def _raise_evidence_read_failure(*_args: object, **_kwargs: object) -> None:
         raise OSError("descendant evidence unavailable")
 

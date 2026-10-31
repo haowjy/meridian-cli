@@ -98,9 +98,7 @@ def pick_port(
 
 
 def _tailscale(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["tailscale", *args], capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["tailscale", *args], capture_output=True, text=True, check=False)
 
 
 def tailscale_dns_name() -> str:
@@ -272,9 +270,7 @@ def tailscale_off(slug: str, public_port: int, *, funnel: bool) -> bool:
         return True
     if funnel and result.returncode != 0:
         try:
-            fallback = _tailscale(
-                ["serve", f"--https={public_port}", f"--set-path=/{slug}", "off"]
-            )
+            fallback = _tailscale(["serve", f"--https={public_port}", f"--set-path=/{slug}", "off"])
         except OSError as exc:
             print(str(exc), file=sys.stderr)
             return False
@@ -310,9 +306,7 @@ def _active_work_id() -> str | None:
     return ResolvedContext.from_environment().work_id or None
 
 
-def wait_for_http_server(
-    proc: subprocess.Popen[Any], port: int, *, timeout: float = 2.0
-) -> bool:
+def wait_for_http_server(proc: subprocess.Popen[Any], port: int, *, timeout: float = 2.0) -> bool:
     """Poll until the child accepts localhost TCP connections or fails."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -368,12 +362,8 @@ def start_serve(
     with lock_file(serves_lock_path()):
         _sweep_expired_locked(_now_utc())
         serves = load_serves()
-        occupied_ports = {
-            serve.local_port for serve in serves
-        } | tailscale_serve_ports()
-        if port is not None and (
-            port in occupied_ports or not local_port_available(port)
-        ):
+        occupied_ports = {serve.local_port for serve in serves} | tailscale_serve_ports()
+        if port is not None and (port in occupied_ports or not local_port_available(port)):
             raise PortInUseError(f"port {port} is already in use")
         proc: subprocess.Popen[Any] | None = None
         local_port = 0

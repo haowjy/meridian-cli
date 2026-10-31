@@ -186,8 +186,7 @@ class SpawnDrainLoop:
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
                     had_candidate = bool(
-                        coordinator is not None
-                        and coordinator.pending_outcome is not None
+                        coordinator is not None and coordinator.pending_outcome is not None
                     )
                     captured_candidate = (
                         coordinator is not None

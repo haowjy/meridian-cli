@@ -322,9 +322,7 @@ def run_mars_models_aliases(
     arguments = ["aliases", "--json"]
     if no_refresh_models:
         arguments.append("--no-refresh-models")
-    return _run_mars_model_inventory(
-        arguments, result_key="aliases", project_root=project_root
-    )
+    return _run_mars_model_inventory(arguments, result_key="aliases", project_root=project_root)
 
 
 def run_mars_models_catalog(project_root: Path | None = None) -> list[dict[str, object]] | None:

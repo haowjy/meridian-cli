@@ -178,11 +178,13 @@ def build_create_payload(
                 timeout=payload.timeout,
                 resident_rearm_budget=payload.resident_rearm_budget,
             ),
-            session=payload.session.model_copy(update={
-                "requested_harness_session_id": (
-                    (payload.session.requested_harness_session_id or "").strip() or None
-                ),
-            }),
+            session=payload.session.model_copy(
+                update={
+                    "requested_harness_session_id": (
+                        (payload.session.requested_harness_session_id or "").strip() or None
+                    ),
+                }
+            ),
             context_refs=context_refs,
             reference_files=tuple(path.as_posix() for path in launch_resolution.reference_files),
             template_vars=parsed_template_vars,
@@ -306,6 +308,8 @@ def bind_create_payload_context(
         runtime=artifacts.preview_runtime,
         harness_registry=harness_registry,
     )
+
+
 __all__ = [
     "SpawnCreateArtifacts",
     "bind_create_payload_context",

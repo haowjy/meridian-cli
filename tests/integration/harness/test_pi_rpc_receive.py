@@ -50,7 +50,8 @@ async def rpc_process(
         f"#!{sys.executable}\nimport json,os,sys,time\n"
         "if '--version' in sys.argv: print('1.1.0'); raise SystemExit\n"
         f"if '--help' in sys.argv: print({HELP!r}); raise SystemExit\n"
-        + startup + "\nfor line in sys.stdin:\n"
+        + startup
+        + "\nfor line in sys.stdin:\n"
         " command=json.loads(line)\n"
         " if command['type']=='abort': raise SystemExit\n"
         " if command['type']!='prompt': continue\n"
@@ -92,9 +93,12 @@ async def test_large_prompt_and_startup_frame_do_not_block_each_other(tmp_path: 
         "'id':command['id'],'success':True}),flush=True)"
     )
     async with rpc_process(
-        tmp_path, body, startup=startup, prompt="x" * (512 * 1024),
+        tmp_path,
+        body,
+        startup=startup,
+        prompt="x" * (512 * 1024),
         timing=PiRpcTimingPolicy(
-            prompt_ack_timeout_seconds=1, abort_grace_seconds=.05, kill_grace_seconds=.05
+            prompt_ack_timeout_seconds=1, abort_grace_seconds=0.05, kill_grace_seconds=0.05
         ),
     ) as connection:
         events = connection.events()

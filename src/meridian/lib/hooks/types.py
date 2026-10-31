@@ -32,9 +32,7 @@ class EventSpec:
 
 
 _SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(("agent", "kind"))
-_FINISHED_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(
-    ("status", "agent", "kind")
-)
+_FINISHED_SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(("status", "agent", "kind"))
 _WORK_FIELDS: frozenset[HookWhenField] = frozenset()
 
 EVENTS: dict[HookEventName, EventSpec] = {
@@ -49,6 +47,7 @@ EVENTS: dict[HookEventName, EventSpec] = {
     "notify.needs_permission": EventSpec(30, _SPAWN_FIELDS),
     "notify.manual": EventSpec(30, _SPAWN_FIELDS),
 }
+
 
 def _default_options() -> dict[str, object]:
     return {}

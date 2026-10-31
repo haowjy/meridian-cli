@@ -759,9 +759,7 @@ def update_session_harness_id(
     )
 
 
-def set_work_attachments(
-    runtime_root: Path, changes: Mapping[str, str | None]
-) -> frozenset[str]:
+def set_work_attachments(runtime_root: Path, changes: Mapping[str, str | None]) -> frozenset[str]:
     """Attach chats to a work item, or detach them with ``None``, in one batch.
 
     The one write behind an execution's attachment changing: one journal read for

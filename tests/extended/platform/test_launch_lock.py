@@ -61,17 +61,20 @@ class Runtime:
         binary = root / "claude"
         binary.write_text(
             f"#!/bin/sh\nexec {shlex.quote(sys.executable)} "
-            f"{shlex.quote(str(DRIVER))} harness \"$@\"\n"
+            f'{shlex.quote(str(DRIVER))} harness "$@"\n'
         )
         binary.chmod(0o755)
         package = Path(__file__).parents[3]
         self.env = {
-            "HOME": str(root / "user"), "USER": os.environ.get("USER", "test"),
+            "HOME": str(root / "user"),
+            "USER": os.environ.get("USER", "test"),
             "PATH": str(root) + os.pathsep + os.environ["PATH"],
             "PYTHONPATH": f"{package}:{package / 'src'}",
             "FAKE_SOCKET_ROOT": str(socket_directory().parent),
-            "FAKE_ROOT": str(root), "CLAUDE_CONFIG_DIR": str(root / "native"),
-            "MERIDIAN_HOME": str(root / "home"), "_MERIDIAN_RUNTIME_DIR": str(root / "runtime"),
+            "FAKE_ROOT": str(root),
+            "CLAUDE_CONFIG_DIR": str(root / "native"),
+            "MERIDIAN_HOME": str(root / "home"),
+            "_MERIDIAN_RUNTIME_DIR": str(root / "runtime"),
         }
         self.processes: list[subprocess.Popen[bytes]] = []
         self.logs: list[Any] = []
@@ -81,8 +84,12 @@ class Runtime:
         log = (self.root / f"cli-{len(self.processes)}.log").open("wb")
         self.logs.append(log)
         process = subprocess.Popen(
-            [sys.executable, str(DRIVER), *args], cwd=self.repo, env=self.env,
-            stdout=log, stderr=log, start_new_session=True,
+            [sys.executable, str(DRIVER), *args],
+            cwd=self.repo,
+            env=self.env,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
         )
         self.processes.append(process)
         self.groups.add(process.pid)
@@ -169,7 +176,10 @@ def runtime(tmp_path: Path) -> Iterator[Runtime]:
 
 
 def continue_args(
-    primary: bool, *, dry_run: bool = False, background: bool = False,
+    primary: bool,
+    *,
+    dry_run: bool = False,
+    background: bool = False,
 ) -> list[str]:
     args = ["--continue", "p1", "-m", "haiku", "-p", "finish"]
     if not primary:
@@ -203,7 +213,8 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
     code = process.wait(timeout=30)
     assert (orphan_gone_before_start, code) == (True, 0), (
         "old group gone before new harness start, continue exit code",
-        orphan_gone_before_start, code,
+        orphan_gone_before_start,
+        code,
     )
     assert not (runtime.root / "p1.2.writer-busy").exists()
     # The continue kept the ID: launch 1 was ended as crashed, launch 2 is the same spawn's.
@@ -217,14 +228,18 @@ def continue_orphan(runtime: Runtime, *, backend: bool, primary: bool, dry_run: 
 @pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "dry-run"])
 @pytest.mark.parametrize("backend", [False, True], ids=["stdio", "backend"])
 def test_continue_after_runner_sigkill_sweeps_orphan(
-    runtime: Runtime, primary: bool, dry_run: bool, backend: bool,
+    runtime: Runtime,
+    primary: bool,
+    dry_run: bool,
+    backend: bool,
 ) -> None:
     continue_orphan(runtime, backend=backend, primary=primary, dry_run=dry_run)
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
 def test_continue_names_non_runner_holder_of_dead_source(
-    runtime: Runtime, primary: bool,
+    runtime: Runtime,
+    primary: bool,
 ) -> None:
     # Doctor (or another continue's sweep) may hold a dead source's lock while
     # it persists the crash. The refusal must not claim the dead source runs.
@@ -232,7 +247,8 @@ def test_continue_names_non_runner_holder_of_dead_source(
     lock = runtime.root / "runtime/spawns/p1/launch.lock"
     holder = subprocess.Popen(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             "import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR); "
             "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(60)",
             str(lock),
@@ -425,7 +441,9 @@ def test_launch_lock_lifetime(runtime: Runtime, shape: str) -> None:
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["locked", "lockless"])
 def test_continue_io_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy: bool,
 ) -> None:
     from meridian.lib.launch.continue_launch import begin_continue
     from meridian.lib.state import spawn_store
@@ -437,8 +455,14 @@ def test_continue_io_bound(
     for number in range(1, 4):
         with LaunchSlot() as slot:
             spawn_store.start_spawn(
-                root, spawn_id=f"p{number}", chat_id=f"c{number}", model="test", agent="",
-                harness="claude", prompt="test", launch_lock=None if legacy else slot,
+                root,
+                spawn_id=f"p{number}",
+                chat_id=f"c{number}",
+                model="test",
+                agent="",
+                harness="claude",
+                prompt="test",
+                launch_lock=None if legacy else slot,
                 started_at="2020-01-01T00:00:00+00:00",
             )
     probe = IOProbe(monkeypatch)
@@ -450,9 +474,12 @@ def test_continue_io_bound(
             (root / "spawns" / f"p{number}").mkdir(exist_ok=True)
         before = probe.count("read")
         hold = begin_continue(
-            project_root=tmp_path, runtime_root=root,
+            project_root=tmp_path,
+            runtime_root=root,
             target=spawn_store.get_spawn(root, f"p{source}"),
-            chat_id=None, parent_id=None, caller_spawn_id=None,
+            chat_id=None,
+            parent_id=None,
+            caller_spawn_id=None,
             dry_run=False,
         )
         assert hold is not None

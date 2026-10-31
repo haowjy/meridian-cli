@@ -53,9 +53,7 @@ def test_acquire_file_lock_existing_file_mode_is_explicit(
     assert modes == [expected_mode]
 
 
-def _fork_while_release_is_paused(
-    lock_path: Path, ready_fd: int, stop_fd: int
-) -> None:
+def _fork_while_release_is_paused(lock_path: Path, ready_fd: int, stop_fd: int) -> None:
     handle = acquire_file_lock(lock_path)
     release_started = threading.Event()
     allow_release = threading.Event()
@@ -206,9 +204,7 @@ def test_unlink_validated_lock_race(tmp_path: Path) -> None:
 
 
 @posix_only
-def test_sweeper_vs_republication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sweeper_vs_republication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"
     spawn_store.start_spawn(

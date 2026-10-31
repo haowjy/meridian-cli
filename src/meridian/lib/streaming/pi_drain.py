@@ -170,9 +170,7 @@ class PiCompletionEvidence:
         self, event: RawHarnessEvent, state: CompletionState
     ) -> EvidenceEventDecision:
         profile = self._profile
-        activity = (
-            profile.note_persisted_activity(event, state) if profile is not None else None
-        )
+        activity = profile.note_persisted_activity(event, state) if profile is not None else None
         lifecycle_error = self.lifecycle_tracker.lifecycle_tracking_invalidated_error
         failure = (
             EvidenceFailure(code="pi_lifecycle_tracking_invalidated", detail=lifecycle_error)
@@ -181,13 +179,9 @@ class PiCompletionEvidence:
         )
         return EvidenceEventDecision(activity=activity, failure=failure)
 
-    async def assess(
-        self, trigger: AssessmentTrigger, state: CompletionState
-    ) -> WorkAssessment:
+    async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
         profile = self._profile
-        if trigger == "aux_wake" or (
-            trigger == "timeout" and state.phase == "stabilizing"
-        ):
+        if trigger == "aux_wake" or (trigger == "timeout" and state.phase == "stabilizing"):
             await self.quiescence_tracker.refresh_disk_state()
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
@@ -539,18 +533,14 @@ class PiDrainCoordinator:
     def pending_outcome(self) -> TerminalEventOutcome | None:
         return self._coordinator.pending_outcome
 
-    async def observe_event(
-        self, event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent | None:
+    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
         if event.raw.event_type in {"agent_start", "turn_start"}:
             self._latest_agent_attempt = None
             self._coordinator.invalidate_candidate()
         refined = self._refine_native_event(event)
         return await self._coordinator.observe_event(refined)
 
-    def _refine_native_event(
-        self, event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent:
+    def _refine_native_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent:
         if event.raw.event_type == "agent_end":
             self._latest_agent_attempt = event.semantics.terminal
             return _replace_terminal(event, None)

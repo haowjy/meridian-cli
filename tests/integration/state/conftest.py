@@ -14,6 +14,7 @@ from tests.support.launch_paths import launch_paths
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
+
 def _state_root(tmp_path: Path) -> Path:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     runtime_root.mkdir(parents=True, exist_ok=True)

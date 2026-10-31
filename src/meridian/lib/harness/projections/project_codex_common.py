@@ -71,8 +71,7 @@ class CodexSandboxProjection:
             arguments.extend(
                 (
                     "-c",
-                    f"{CODEX_CONFIG_WRITABLE_ROOTS_KEY}="
-                    f"{json.dumps(list(self.writable_roots))}",
+                    f"{CODEX_CONFIG_WRITABLE_ROOTS_KEY}={json.dumps(list(self.writable_roots))}",
                 )
             )
 
@@ -84,8 +83,7 @@ class CodexSandboxProjection:
             arguments.extend(
                 (
                     "-c",
-                    f"{CODEX_CONFIG_NETWORK_ACCESS_KEY}="
-                    f"{str(self.network_access).lower()}",
+                    f"{CODEX_CONFIG_NETWORK_ACCESS_KEY}={str(self.network_access).lower()}",
                 )
             )
         if self.network_proxy_enabled:
@@ -135,8 +133,7 @@ def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str,
         projected.extend(
             (
                 "-c",
-                f"{CODEX_CONFIG_FEATURES_PREFIX}.shell_tool="
-                f"{str(permissions.shell_tool).lower()}",
+                f"{CODEX_CONFIG_FEATURES_PREFIX}.shell_tool={str(permissions.shell_tool).lower()}",
             )
         )
     if permissions.web_search is True:

@@ -59,9 +59,7 @@ def test_local_windows_preserve_segment_ordinals_and_navigation() -> None:
     current = _entries()[1]
 
     tail = session_render.window_from_tail(current, tail=2, first_ordinal=0)
-    page = session_render.window_from_from_limit(
-        current, start_ordinal=0, limit=2, first_ordinal=0
-    )
+    page = session_render.window_from_from_limit(current, start_ordinal=0, limit=2, first_ordinal=0)
     before = session_render.window_from_before_limit(
         current, before_ordinal=2, limit=1, first_ordinal=0
     )
@@ -112,9 +110,7 @@ def test_window_validation_rejects_invalid_ordinals_and_limits() -> None:
     with pytest.raises(ValueError, match="--tail must be >= 0"):
         session_render.window_from_tail(current, tail=-1, first_ordinal=0)
     with pytest.raises(ValueError, match="--limit must be >= 0"):
-        session_render.window_from_from_limit(
-            current, start_ordinal=0, limit=-1, first_ordinal=0
-        )
+        session_render.window_from_from_limit(current, start_ordinal=0, limit=-1, first_ordinal=0)
     with pytest.raises(ValueError, match="out of range"):
         session_render.window_from_around_context(
             current, around_ordinal=4, context=0, first_ordinal=0

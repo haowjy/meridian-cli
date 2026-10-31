@@ -120,15 +120,11 @@ def _route_result(result: HookResult) -> RouteResult:
     )
 
 
-def report_from_hooks(
-    event: str, hook_results: Sequence[HookResult]
-) -> RouteReport:
+def report_from_hooks(event: str, hook_results: Sequence[HookResult]) -> RouteReport:
     """One result per route; with no route at all, ok with a warning."""
 
     results = tuple(_route_result(result) for result in hook_results)
-    warnings = tuple(
-        f"{result.route}: {result.warning}" for result in results if result.warning
-    )
+    warnings = tuple(f"{result.route}: {result.warning}" for result in results if result.warning)
     if not results:
         warnings = (_NO_ROUTE_WARNING.format(event=event),)
     return RouteReport(results=results, warnings=warnings)

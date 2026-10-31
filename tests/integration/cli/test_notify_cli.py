@@ -90,8 +90,7 @@ def test_notify_splits_a_multiline_title_before_delivery(
     monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "none")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "meridian.toml").write_text(
-        '[[hooks]]\nname = "capture"\nevent = "notify.manual"\n'
-        'command = "cat > delivered.json"\n',
+        '[[hooks]]\nname = "capture"\nevent = "notify.manual"\ncommand = "cat > delivered.json"\n',
         encoding="utf-8",
     )
 

@@ -499,11 +499,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return (
-            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()}
-            if policy is not None
-            else {}
-        )
+        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
 
     def resolve_session_file(
         self,
@@ -578,7 +574,9 @@ def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None
     candidate = _latest_pi_assistant_candidate(cast("list[object]", messages))
     if candidate is None:
         return TerminalEventOutcome(
-            status=SpawnStatus.FAILED, exit_code=1, error="pi_agent_end_missing_outcome",
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="pi_agent_end_missing_outcome",
         )
     outcome = _decode_pi_assistant_candidate(candidate)
     if outcome is None:
@@ -596,7 +594,9 @@ def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     aborted = event.payload.get("aborted")
     if not isinstance(aborted, bool):
         return TerminalEventOutcome(
-            status=SpawnStatus.FAILED, exit_code=1, error="pi_invalid_agent_settled",
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="pi_invalid_agent_settled",
         )
     if aborted:
         return TerminalEventOutcome(status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled")

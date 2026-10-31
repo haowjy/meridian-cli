@@ -412,10 +412,7 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.spawn",
         command_id="status",
-        summary=(
-            "Show spawn status, duration, and model. "
-            "Use --full to include report text."
-        ),
+        summary=("Show spawn status, duration, and model. Use --full to include report text."),
         handler="meridian.lib.ops.spawn.api:spawn_status",
         sync_handler="meridian.lib.ops.spawn.api:spawn_status_sync",
         input_type="meridian.lib.ops.spawn.api:SpawnStatusInput",
