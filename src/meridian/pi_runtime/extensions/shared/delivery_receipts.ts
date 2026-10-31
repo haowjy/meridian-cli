@@ -17,7 +17,7 @@ const ReceiptsSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), messages: Type.Record(Type.String(), Type.Array(Type.String())),
 });
 const Lease = { owner_pid: Type.Integer({ minimum: 1 }), owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
-  expires_at_epoch: Type.Number(), owner_bash_id: Type.Optional(Type.Union([Type.String(), Type.Null()])) };
+  expires_at_epoch: Type.Number() };
 const ObservedLaunchesSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), updated_at_ms: Type.Optional(Type.Number()),
   observed_launches: Type.Array(Type.String()),

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+import os
+import threading
+import time
+from collections.abc import Callable, Generator, Iterable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
+import psutil
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
-from meridian.lib.state.json_doc import VersionedPrivateDoc
+from meridian.lib.state.json_doc import VersionedPrivateDoc, write_model
 from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.state.spawn_observations import (
     LaunchKey,
@@ -41,6 +46,68 @@ def pi_coordination_dir(runtime_root: Path, spawn_id: str) -> Path:
     """Return one Pi parent's private coordination directory."""
 
     return runtime_root / "pi-bash" / spawn_id
+
+
+class PiBashHold(VersionedPrivateDoc):
+    """A Meridian wait or foreground spawn is running inside one managed-bash task."""
+
+    v: Literal[1]
+    owner_pid: StrictInt = Field(gt=0)
+    owner_birth_epoch: float = Field(gt=0)
+    expires_at_epoch: float
+
+
+_HOLD_LEASE_SECONDS = 90.0
+_HOLD_RENEW_SECONDS = 20.0
+
+
+def pi_bash_hold_path(runtime_root: Path, spawn_id: str, bash_id: str) -> Path:
+    """The hold file for one managed-bash task, in the Pi session's own folder."""
+
+    return pi_coordination_dir(runtime_root, spawn_id) / "holds" / f"{bash_id}.json"
+
+
+@contextmanager
+def hold_pi_bash(path: Path | None) -> Generator[None]:
+    """Keep ``path`` renewed while the body runs, then remove it.
+
+    The file is keyed by the managed-bash task, not by the wait's target, so it exists
+    for any wait or foreground spawn the task runs, whichever project it targets. A
+    crash leaves a file that expires on its own. ``None`` (no Pi task) writes nothing.
+    """
+
+    if path is None:
+        yield
+        return
+    pid = os.getpid()
+    birth = psutil.Process().create_time()
+    done = threading.Event()
+
+    def renew() -> None:
+        hold = PiBashHold(
+            v=1,
+            owner_pid=pid,
+            owner_birth_epoch=birth,
+            expires_at_epoch=time.time() + _HOLD_LEASE_SECONDS,
+        )
+        with suppress(OSError):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_model(path, hold)
+
+    def heartbeat() -> None:
+        while not done.wait(_HOLD_RENEW_SECONDS):
+            renew()
+
+    renew()
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
 
 
 def read_pi_private_doc(

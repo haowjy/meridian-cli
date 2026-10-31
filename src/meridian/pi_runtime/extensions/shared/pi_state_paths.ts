@@ -34,6 +34,11 @@ export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }
 
+/** Mirrors ``pi_private_state.pi_bash_hold_path``: the CLI's hold file for one bash task. */
+export function resolveBashHoldPath(bashId: string, spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "holds", `${bashId}.json`);
+}
+
 export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "bash-records.json");
 }

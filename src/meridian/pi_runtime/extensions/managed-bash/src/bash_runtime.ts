@@ -231,7 +231,7 @@ export class BashRuntime {
       // foreground spawn keeps the foreground, up to MAX_HOLD_MIN.
       const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
         const startedAtMs = exec.proposal.started_at_ms;
-        void holdsMeridianWait(this.spawnId, exec.id, startedAtMs).then((held) => {
+        void holdsMeridianWait(this.spawnId, exec.id).then((held) => {
           if (settled) return;
           if (keepsForeground(held, params.timeout_min != null, Date.now() - startedAtMs)) { timeout = arm(); return; }
           return this.publishBackground(exec).then((published) => {

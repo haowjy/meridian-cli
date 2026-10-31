@@ -55,8 +55,6 @@ class WaitLease(VersionedPrivateDoc):
     owner_pid: StrictInt = Field(gt=0)
     owner_birth_epoch: float = Field(gt=0)
     expires_at_epoch: float
-    # The managed-bash task running this wait, so Pi can keep that task in the foreground.
-    owner_bash_id: str | None = None
     launches: list[str]
 
 
@@ -208,7 +206,6 @@ def record(
                 owner_pid=os.getpid(),
                 owner_birth_epoch=psutil.Process().create_time(),
                 expires_at_epoch=now + lease_seconds,
-                owner_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
                 launches=sorted(own),
             )
         else:

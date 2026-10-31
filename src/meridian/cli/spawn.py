@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -33,6 +34,7 @@ from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.harness.pi_private_state import hold_pi_bash
 from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.launch.resolve import resolve_agent_launch_input
@@ -130,6 +132,13 @@ def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
         launcher_pid=os.getpid(),
     )
     return prepared
+
+
+def _hold_pi_bash() -> AbstractContextManager[None]:
+    """Mark the calling Pi bash task as running this command until it returns."""
+
+    caller = get_global_options().caller
+    return hold_pi_bash(caller.pi_bash_hold if caller is not None else None)
 
 
 def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
@@ -792,26 +801,27 @@ def _spawn_create(
             sink=current_output_sink(),
         )
     else:
-        result = spawn_create_sync(
-            SpawnCreateInput(
-                prompt=resolved_prompt,
-                model=model,
-                files=references,
-                context_from=fork_resolution.resolved_context_from,
-                template_vars=template_vars,
-                agent=agent_launch.agent,
-                agent_opt_out=agent_launch.agent_opt_out,
-                skills=parsed_skills,
-                desc=desc,
-                goal=resolved_goal,
-                work=work,
-                task_dir=normalized_task_dir,
-                caller_cwd=caller_cwd,
-                **shared_launch_kwargs,
-            ),
-            sink=current_output_sink(),
-            on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
-        )
+        with _hold_pi_bash():
+            result = spawn_create_sync(
+                SpawnCreateInput(
+                    prompt=resolved_prompt,
+                    model=model,
+                    files=references,
+                    context_from=fork_resolution.resolved_context_from,
+                    template_vars=template_vars,
+                    agent=agent_launch.agent,
+                    agent_opt_out=agent_launch.agent_opt_out,
+                    skills=parsed_skills,
+                    desc=desc,
+                    goal=resolved_goal,
+                    work=work,
+                    task_dir=normalized_task_dir,
+                    caller_cwd=caller_cwd,
+                    **shared_launch_kwargs,
+                ),
+                sink=current_output_sink(),
+                on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
+            )
     output_format = get_global_options().output.format
     _emit_spawn_warnings(result)
     if output_format != "json" and metadata:
@@ -1220,24 +1230,25 @@ def _spawn_wait(
 ) -> None:
     output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
-    result = spawn_wait_sync(
-        SpawnWaitInput(
-            spawn_ids=spawn_ids,
-            timeout=timeout,
-            yield_after_secs=yield_after_secs,
-            timeout_explicit=timeout is not None,
-            fail_fast=fail_fast,
-            verbose=verbose,
-            quiet=quiet,
-            include_report_body=include_report_body,
-            observe=observe,
-        ),
-        # No-arg discovery needs the caller anchor even for --no-observe; the
-        # payload flag independently controls leases and consumption.
-        ctx=resolve_cli_observer_context(observe=True),
-        sink=current_output_sink(),
-        prepared=_prepare_spawn_runtime_read(),
-    )
+    with _hold_pi_bash():
+        result = spawn_wait_sync(
+            SpawnWaitInput(
+                spawn_ids=spawn_ids,
+                timeout=timeout,
+                yield_after_secs=yield_after_secs,
+                timeout_explicit=timeout is not None,
+                fail_fast=fail_fast,
+                verbose=verbose,
+                quiet=quiet,
+                include_report_body=include_report_body,
+                observe=observe,
+            ),
+            # No-arg discovery needs the caller anchor even for --no-observe; the
+            # payload flag independently controls leases and consumption.
+            ctx=resolve_cli_observer_context(observe=True),
+            sink=current_output_sink(),
+            prepared=_prepare_spawn_runtime_read(),
+        )
     if output_format != "json" and (metadata or verbose):
         emit(result.format_text(FormatContext(verbosity=1)))
     else:
