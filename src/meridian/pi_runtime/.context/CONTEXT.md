@@ -121,10 +121,10 @@ Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
 in RPC, but its custom-panel API is a no-op. RPC task output uses required
 `ctx.ui.notify`; print mode retains text output. Tables and logs must never be
 written directly to the RPC stdout transport.
-A model's foreground `bash` is backgrounded after 4 minutes, except when the whole
-command is one `meridian spawn ...` invocation: that keeps the 55-minute limit. A
+A model's foreground `bash` is backgrounded after 4 minutes, except when the
+command contains a `meridian spawn ...` invocation: that keeps the 55-minute limit. A
 backgrounded `meridian spawn wait` consumes the child's report, and the bash
-completion notice carries no output, so the report would never reach the model.
+completion notice carries no output, so the model gets only a truncated tail, behind an extra call.
 An explicit `timeout_min` always wins.
 Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child

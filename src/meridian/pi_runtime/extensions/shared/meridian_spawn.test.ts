@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   extractSpawnIdFromLauncherLog,
-  isSingleMeridianSpawnCommand,
+  isMeridianSpawnCommand,
   isSpawnLauncherCommand,
   isSpawnWaitCommand,
 } from "./meridian_spawn";
@@ -30,32 +30,30 @@ describe("spawn command classification", () => {
   });
 });
 
-describe("isSingleMeridianSpawnCommand", () => {
-  it("matches one spawn invocation, with optional global options", () => {
+describe("isMeridianSpawnCommand", () => {
+  it("matches any command that invokes meridian spawn", () => {
     for (const command of [
       "meridian spawn wait",
-      "meridian spawn wait p12 p13",
-      "meridian spawn -a coder -p 'hi; there'",
+      "cd /x && meridian spawn wait p1",
+      "meridian spawn wait 2>&1 | tail -50",
+      "uv run meridian spawn wait",
       "/usr/local/bin/meridian spawn wait",
+      "meridian --json spawn wait",
       "meridian -C /tmp/x spawn wait",
       "meridian --format json spawn wait",
       "meridian --directory=/tmp spawn wait",
-    ]) expect(isSingleMeridianSpawnCommand(command), command).toBe(true);
+    ]) expect(isMeridianSpawnCommand(command), command).toBe(true);
   });
 
-  it("rejects anything else", () => {
-    for (const command of [
-      "sleep 270",
-      "meridian work show",
-      "meridian spawn wait && echo x",
-      "meridian spawn wait; ls",
-      "meridian spawn wait | cat",
-      "echo meridian spawn wait",
-      "meridian $(echo spawn) wait",
-      "cd x\nmeridian spawn wait",
-      "meridian 'spawn' wait",
-      "meridian --bogus spawn wait",
-      "",
-    ]) expect(isSingleMeridianSpawnCommand(command), command).toBe(false);
+  it("rejects commands without one", () => {
+    for (const command of ["sleep 270", "echo meridian", "meridianx spawn wait", "meridian work show", "meridian work; spawn", ""]) {
+      expect(isMeridianSpawnCommand(command), command).toBe(false);
+    }
+  });
+
+  it("keeps wait detection through global options", () => {
+    expect(isSpawnWaitCommand("meridian -C /x spawn wait p1")).toBe(true);
+    expect(isSpawnLauncherCommand("meridian -C /x spawn wait p1")).toBe(false);
+    expect(isSpawnLauncherCommand("meridian -C /x spawn -m foo")).toBe(true);
   });
 });

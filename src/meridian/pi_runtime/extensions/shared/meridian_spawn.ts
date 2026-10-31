@@ -1,9 +1,9 @@
-import { basename } from "node:path";
-
-import { splitShellCommands } from "./shell_split";
+// `meridian` followed by optional global options (`-C dir`, `--format json`, `--json`) then `spawn`.
+// Deliberately loose: a false match only keeps the long foreground limit.
+const MERIDIAN_SPAWN_PREFIX = String.raw`\bmeridian(?:\s+--?[\w-]+(?:=\S+)?(?:\s+[^\s-]\S*)?)*\s+spawn\b`;
 
 /** Detect `meridian spawn` CLI invocations in shell command strings. */
-export const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
+export const MERIDIAN_SPAWN_COMMAND_PATTERN = new RegExp(MERIDIAN_SPAWN_PREFIX);
 
 export function isMeridianSpawnCommand(command: string): boolean {
   return MERIDIAN_SPAWN_COMMAND_PATTERN.test(command);
@@ -11,7 +11,7 @@ export function isMeridianSpawnCommand(command: string): boolean {
 
 /** `meridian spawn wait` (including `uv run meridian spawn wait`, env prefixes). */
 export function isSpawnWaitCommand(command: string): boolean {
-  return /\bmeridian\s+spawn\s+wait\b/.test(command);
+  return new RegExp(`${MERIDIAN_SPAWN_PREFIX}\\s+wait\\b`).test(command);
 }
 
 /** Spawn launcher, not wait/list/show — matches `uv run meridian spawn -m …`. */
@@ -52,25 +52,4 @@ export function extractMeridianSpawnIdsFromText(text: string): string[] {
     }
   }
   return [...ids];
-}
-
-// `meridian` global options and whether each takes a separate value.
-const MERIDIAN_GLOBAL_OPTIONS = new Map([["-C", true], ["--directory", true], ["--format", true]]);
-
-/** True when the whole command is one `meridian spawn ...` invocation, optionally after global
- * options (`-C dir`, `--format x`). Conservative: anything the shell splitter cannot read, any
- * separator, or any quoting before the subcommand is not a match. */
-export function isSingleMeridianSpawnCommand(command: string): boolean {
-  const split = splitShellCommands(command);
-  if (!split.complete || split.commands.length !== 1) return false;
-  const words = split.commands[0].split(/\s+/);
-  if (words[0] === undefined || basename(words[0]) !== "meridian") return false;
-  for (let index = 1; index < words.length; index += 1) {
-    const word = words[index];
-    if (word === "spawn") return true;
-    if (/['"]/u.test(word)) return false;
-    if (MERIDIAN_GLOBAL_OPTIONS.get(word)) index += 1;
-    else if (!/^--[a-z-]+=/u.test(word)) return false;
-  }
-  return false;
 }

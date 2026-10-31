@@ -8,8 +8,8 @@ import meridianPermissionsExtension, {
   decideToolCall,
   type PermissionPolicy,
   type PermissionRule,
+  splitShellCommands,
 } from "./index.js";
-import { splitShellCommands } from "../../shared/shell_split";
 
 const HEADLESS_REASON = "Needs approval, and a headless spawn has no one to ask. Do not retry it.";
 

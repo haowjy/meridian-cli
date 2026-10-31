@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 
 import { classifyWorkId } from "../../shared/ids";
 import { runMeridianCommand } from "../../shared/meridian_cli";
+import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import { readPrivateJson } from "../../shared/json_file";
 import {
@@ -23,7 +24,6 @@ import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/ta
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
 import { ShellTask } from "./shell_task";
-import { isSingleMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import { waitForSpawn } from "./spawn_wait";
 
 export type BashParams = {
@@ -150,9 +150,9 @@ export const MAX_TIMEOUT_MIN = 59;
 // Fills the `timeout_min` field of a user `!`/`$` record. User commands have no auto-background
 // timer; the field only needs a value the schema accepts.
 const USER_RECORD_TIMEOUT_MIN = 55;
-// How long `bash_manage wait` blocks, and the foreground limit for `meridian spawn ...` commands:
-// a backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
-// notice carries no output, so the report would never reach the model.
+// How long `bash_manage wait` blocks, and the foreground limit for commands that invoke
+// `meridian spawn`: a backgrounded `meridian spawn wait` consumes the child's report, and the bash
+// completion notice carries no output, so the model gets only a truncated tail, behind an extra call.
 const WAIT_TIMEOUT_MIN = 55;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -198,7 +198,7 @@ export class BashRuntime {
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
     const timeoutMin = normalizeTimeoutMin(
       params.timeout_min,
-      isSingleMeridianSpawnCommand(params.command) ? WAIT_TIMEOUT_MIN : DEFAULT_TIMEOUT_MIN,
+      isMeridianSpawnCommand(params.command) ? WAIT_TIMEOUT_MIN : DEFAULT_TIMEOUT_MIN,
     );
     const launch = await this.launchRecord(params.command, timeoutMin, process.cwd(), process.env, undefined, signal);
     if (!launch) return abortedBeforeLaunch();
