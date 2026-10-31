@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-10-31
+
+### Changed
+- Pi: a foreground bash command the model runs moves to the background after 4 minutes (was 55), and a completion notice follows. A command running `meridian spawn wait` (any form, including `--no-observe` and cross-project `-C`) or a foreground `meridian spawn` (create, `--continue`, `--from`) stays in the foreground for up to 55 minutes, so the child's report still arrives as the tool result. Pass `timeout_min` (max 59) for other commands you know run long.
+
 ## [0.19.2] - 2026-10-31
 
 ### Changed
