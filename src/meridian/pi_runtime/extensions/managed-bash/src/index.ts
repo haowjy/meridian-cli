@@ -275,7 +275,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "bash",
     label: "Bash",
-    description: `Run a shell command. A foreground command still running after timeout_min (default ${DEFAULT_TIMEOUT_MIN}, max ${MAX_TIMEOUT_MIN}) is moved to the background and a completion notice follows; fetch the result with bash_manage. Use background=true from the start for servers and other long-running work. A command running a Meridian wait or foreground spawn stays in the foreground. bash_manage inspects background tasks.`,
+    description: `Run a shell command. A foreground command still running after timeout_min (default ${DEFAULT_TIMEOUT_MIN}, max ${MAX_TIMEOUT_MIN}) is moved to the background and a completion notice follows; fetch the result with bash_manage. Use background=true from the start for servers and other long-running work. Without timeout_min, a command running a Meridian wait or foreground spawn stays in the foreground for up to 55 minutes. bash_manage inspects background tasks.`,
     promptSnippet: `Run shell commands; a foreground command still running after ${DEFAULT_TIMEOUT_MIN} minutes is backgrounded and a completion notice follows (fetch the result with bash_manage). Use background=true from the start for servers and long-running work.`,
     parameters: Type.Object({
       command: Type.String(),

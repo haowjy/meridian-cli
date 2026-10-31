@@ -22,7 +22,7 @@ import {
 import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
-import { holdsMeridianWait } from "./meridian_hold";
+import { holdsMeridianWait, keepsForeground } from "./meridian_hold";
 import { ShellTask } from "./shell_task";
 import { waitForSpawn } from "./spawn_wait";
 
@@ -227,11 +227,13 @@ export class BashRuntime {
           status: "aborted", exit_code: -1,
         }))).catch((error) => finish({ kind: "error", error: errorText(error) }));
       };
-      // At each expiry a task running a Meridian wait or foreground spawn keeps the foreground.
+      // At each expiry a task without an explicit timeout_min that is running a Meridian wait or
+      // foreground spawn keeps the foreground, up to MAX_HOLD_MIN.
       const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
-        void holdsMeridianWait(this.spawnId, exec.id, this.view(exec).started_at_ms).then((held) => {
+        const startedAtMs = exec.proposal.started_at_ms;
+        void holdsMeridianWait(this.spawnId, exec.id, startedAtMs).then((held) => {
           if (settled) return;
-          if (held) { timeout = arm(); return; }
+          if (keepsForeground(held, params.timeout_min != null, Date.now() - startedAtMs)) { timeout = arm(); return; }
           return this.publishBackground(exec).then((published) => {
             if (published) finish({
               kind: "start",
