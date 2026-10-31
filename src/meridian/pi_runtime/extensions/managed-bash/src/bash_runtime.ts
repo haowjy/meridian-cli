@@ -142,10 +142,15 @@ export type BashManageResult =
   | { kind: "inspection"; bash_id: string; output: string; truncated: boolean; error?: string }
   | { kind: "error"; error: string };
 
-const DEFAULT_TIMEOUT_MIN = 55;
-// Wait as long as a foreground command may run; a short wait lets the model fetch
+// A model's foreground command that outlives this is backgrounded, so a forgotten
+// server cannot hold the turn; the model may pass timeout_min up to MAX_TIMEOUT_MIN.
+const DEFAULT_TIMEOUT_MIN = 4;
+// A human watching their own `!`/`$` command can background it with /ps:b, so it keeps
+// the long limit.
+const USER_TIMEOUT_MIN = 55;
+// Wait up to the longest a task may run; a short wait lets the model fetch
 // results around consumption, so the idle watcher announces them again.
-const WAIT_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN;
+const WAIT_TIMEOUT_MIN = 55;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -265,7 +270,7 @@ export class BashRuntime {
     const forwardOutput = (data: Buffer): void => {
       if (forwardForegroundOutput) safeOnData(options.onData, data);
     };
-    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
+    const launch = await this.launchRecord(command, USER_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
     if (!launch) return { exitCode: -1 };
     const { execution: exec, creation } = launch;
     this.hooks.onForegroundStart?.(exec.id);
@@ -312,7 +317,7 @@ export class BashRuntime {
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
-    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
+    const launch = await this.launchRecord(command, USER_TIMEOUT_MIN, cwd, env);
     if (!launch) throw new Error("Detached Bash launch was cancelled before start");
     const { execution: exec, creation } = launch;
     await creation;

@@ -273,8 +273,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "bash",
     label: "Bash",
-    description: "Run a shell command. Meridian-managed bash supports background execution and bash_manage follow-up actions.",
-    promptSnippet: "Run shell commands; use background=true for long-running work and bash_manage to inspect it.",
+    description: "Run a shell command. A foreground command still running after timeout_min (default 4, max 59) is moved to the background and its result arrives later; use background=true from the start for servers and other long-running work. bash_manage inspects background tasks.",
+    promptSnippet: "Run shell commands; a foreground command still running after 4 minutes is backgrounded and its result arrives later. Use background=true from the start for servers and long-running work.",
     parameters: Type.Object({
       command: Type.String(),
       timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: 59 })),

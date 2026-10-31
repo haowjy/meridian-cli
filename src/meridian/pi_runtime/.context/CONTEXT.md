@@ -127,8 +127,8 @@ spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
 `notification_consumed_at_ms` consumes a terminal wait or `output` result with
 available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
-unattended notice. Sending or queueing is not consumption. Wait blocks up to the
-55-minute bash timeout with no model-chosen limit: a short wait let the model
+unattended notice. Sending or queueing is not consumption. Wait blocks up to
+55 minutes (its own constant, independent of the 4-minute foreground default) with no model-chosen limit: a short wait let the model
 read results around consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
 staging leaves the result owed, even if the pending reply includes a known terminal
