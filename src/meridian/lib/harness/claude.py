@@ -2,13 +2,14 @@
 
 import json
 import secrets
-import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
+
+import structlog
 
 from meridian.lib.config.loader import load_launch_config
 from meridian.lib.core.domain import SpawnStatus
@@ -58,8 +59,10 @@ from meridian.lib.harness.claude_sessions import (
 )
 from meridian.lib.harness.claude_settings import (
     claude_network_config_warnings,
+    claude_settings_block_plugin_hooks,
     read_claude_settings_permissions,
 )
+from meridian.lib.harness.claude_version import claude_version
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -108,6 +111,8 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 
+logger = structlog.get_logger(__name__)
+
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
 _SPAWN_WATCH_PLUGIN = "meridian-spawn-watch"
@@ -120,31 +125,19 @@ _FIRST_TURN_MIN_VERSION = (2, 1, 314)
 # Modes in which Claude loads no hooks module from a plugin (probe p10394).
 _NO_MOD_FLAGS = frozenset({"--bare", "--safe-mode"})
 _NO_MOD_ENV = ("CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE")
+# Claude's own truthiness set for those switches.
+_ENV_TRUE = frozenset({"1", "true", "yes", "on"})
 
 
-def _claude_version(env: Mapping[str, str]) -> tuple[int, ...] | None:
-    try:
-        proc = subprocess.run(
-            ("claude", "--version"),
-            env=dict(env),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    token = proc.stdout.split(maxsplit=1)[0] if proc.stdout.strip() else ""
-    parts = token.split(".")
-    return tuple(int(p) for p in parts) if parts and all(p.isdigit() for p in parts) else None
-
-
-def _delivers_first_turn_by_mod(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> bool:
+def _delivers_first_turn_by_mod(
+    spec: ResolvedLaunchSpec, env: Mapping[str, str], *, hooks_blocked: bool
+) -> bool:
     """Whether the starting prompt reaches Claude through the first-turn mod, not argv.
 
     A command-line prompt is visible to ``ps`` and to ``pkill -f``. Keep it on argv
     whenever the mod will not run: not found, a mode that loads no plugin hooks module
-    (``--bare``, ``--safe-mode``, and their env switches), or a Claude too old for the API.
+    (``--bare``, ``--safe-mode``, their env switches, or settings that disable plugin hooks),
+    or a Claude too old for the API.
     """
     if not (
         spec.interactive
@@ -152,12 +145,20 @@ def _delivers_first_turn_by_mod(spec: ResolvedLaunchSpec, env: Mapping[str, str]
         and any(Path(d).name == FIRST_TURN_PLUGIN for d in spec.claude_runtime.plugin_dirs)
     ):
         return False
-    if _NO_MOD_FLAGS.intersection(spec.extra_args):
+    if hooks_blocked or _NO_MOD_FLAGS.intersection(spec.extra_args):
         return False
-    if any(env.get(name, "").strip().lower() not in ("", "0", "false") for name in _NO_MOD_ENV):
+    if any(env.get(name, "").strip().lower() in _ENV_TRUE for name in _NO_MOD_ENV):
         return False
-    version = _claude_version(env)
-    return version is not None and version >= _FIRST_TURN_MIN_VERSION
+    version = claude_version(env)
+    if version is None or version < _FIRST_TURN_MIN_VERSION:
+        logger.warning(
+            "Keeping the starting prompt on the Claude command line: claude version is "
+            "missing, unreadable or older than the first-turn mod requires",
+            version=version,
+            minimum=_FIRST_TURN_MIN_VERSION,
+        )
+        return False
+    return True
 
 
 def build_claude_adhoc_agent_json(
@@ -192,12 +193,15 @@ def bind_claude_spec(
     """Resolve settings-file allows once from the launch environment and cwd."""
 
     settings_allows = read_claude_settings_permissions(child_cwd, env)
+    hooks_blocked = claude_settings_block_plugin_hooks(child_cwd, env)
     return spec.model_copy(
         update={
             "claude_runtime": replace(
                 spec.claude_runtime,
                 settings_allows=settings_allows,
-                first_turn_by_mod=_delivers_first_turn_by_mod(spec, env),
+                first_turn_by_mod=_delivers_first_turn_by_mod(
+                    spec, env, hooks_blocked=hooks_blocked
+                ),
             )
         }
     )

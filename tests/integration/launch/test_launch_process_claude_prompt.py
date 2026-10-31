@@ -100,11 +100,19 @@ def _build_primary_launch_context(
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize(
+    ("version", "by_mod"),
+    [((2, 1, 320), True), ((2, 1, 100), False), (None, False)],
+    ids=["current", "old", "missing"],
+)
 def test_run_harness_process_writes_prompt_file_before_primary_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    version: tuple[int, int, int] | None,
+    by_mod: bool,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.setattr("meridian.lib.harness.claude.claude_version", lambda _env: version)
     project_root = tmp_path
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -173,16 +181,21 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert "passthrough system prompt" in prompt_file_text
     # User task prompt should now be in the positional argument (user-turn channel)
     assert "primary prompt" not in prompt_file_text
-    # The prompt stays off the command line; the first-turn mod reads it from the file.
     command = captured.get("command")
     assert command is not None
-    assert not any("primary prompt" in arg for arg in command)
     log_dir = captured["log_dir"]
     assert isinstance(log_dir, Path)
-    assert captured["first_turn_path"] == str(log_dir / "starting-prompt.md")
-    starting_prompt = (log_dir / "starting-prompt.md").read_text(encoding="utf-8")
-    assert "primary prompt" in starting_prompt
-    assert "passthrough system prompt" not in starting_prompt
+    if by_mod:
+        # The prompt stays off the command line; the first-turn mod reads it from the file.
+        assert not any("primary prompt" in arg for arg in command)
+        assert captured["first_turn_path"] == str(log_dir / "starting-prompt.md")
+        starting_prompt = (log_dir / "starting-prompt.md").read_text(encoding="utf-8")
+        assert "primary prompt" in starting_prompt
+        assert "passthrough system prompt" not in starting_prompt
+    else:
+        # A Claude that is old or unreadable cannot run the mod: the prompt stays on argv.
+        assert "primary prompt" in command
+        assert captured["first_turn_path"] is None
     assert not (log_dir / "prompt.md").exists()
     manifest = json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8"))
     assert manifest.pop("permission_report")

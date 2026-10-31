@@ -141,11 +141,11 @@ validate the native file. See
 An interactive Claude primary with a starting prompt (fresh, resumed or forked) receives it through
 [`meridian-first-turn`](../../../claude_runtime/meridian-first-turn/README.md), not argv,
 unless the mod will not run (`bind_claude_spec` decides once: mod not found, `--bare` /
-`--safe-mode` or their env switches, Claude older than 2.1.314; those keep the positional prompt).
+`--safe-mode` or their env switches, settings with `disableAllHooks` / `allowManagedHooksOnly` / `allowManagedModsOnly`, Claude older than 2.1.314; those keep the positional prompt).
 Its transcript row is `type: user` with `origin.kind: "plugin"`; Meridian's transcript
 readers match on role and text, and `meridian-idle` counts a plugin origin as injected, not a
-user return. If the mod is found but fails to load, the prompt is lost (the TUI shows the
-error): no fallback re-adds it to argv once Meridian has dropped it. A refused or failed
+user return. If the mod is found but fails to load, the prompt is lost (not verified
+that Claude reports an error): no fallback re-adds it to argv once Meridian has dropped it. A refused or failed
 submit puts the prompt in the composer with a toast; a delivered launch writes
 `first-turn-delivered` beside `starting-prompt.md`, which gates resubmission after a reload.
 `_MERIDIAN_CLAUDE_FIRST_TURN_PATH` is in `BLOCKED_CHILD_ENV_VARS`, so a launch never inherits it.

@@ -136,4 +136,32 @@ def read_claude_settings_permissions(
     return tuple(permission_allows)
 
 
-__all__ = ["claude_network_config_warnings", "read_claude_settings_permissions"]
+def claude_settings_block_plugin_hooks(child_cwd: Path, env: Mapping[str, str]) -> bool:
+    """Whether a settings file Claude loads stops plugin hooks modules from running.
+
+    ``disableAllHooks`` and the managed-only policies make Claude skip a plugin's hooks
+    module, so the first-turn mod would never deliver the starting prompt.
+    """
+
+    settings_dir = child_cwd / ".claude"
+    sources = (
+        resolve_claude_config_root(env, child_cwd) / "settings.json",
+        settings_dir / "settings.json",
+        settings_dir / "settings.local.json",
+    )
+    for settings_path in dict.fromkeys(sources):
+        payload = _read_settings_payload(settings_path).payload
+        if payload is not None and (
+            payload.get("disableAllHooks") is True
+            or payload.get("allowManagedHooksOnly")
+            or payload.get("allowManagedModsOnly")
+        ):
+            return True
+    return False
+
+
+__all__ = [
+    "claude_network_config_warnings",
+    "claude_settings_block_plugin_hooks",
+    "read_claude_settings_permissions",
+]

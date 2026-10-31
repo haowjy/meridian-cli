@@ -5,9 +5,10 @@ import type { EngineInterface, Register } from 'claude-code'
 // it keeps the prompt off argv (so `pkill -f <word>` elsewhere cannot match it
 // and `ps` cannot show it).
 //
-// `session.start` fires again after a reload or worker respawn, also after
-// `/clear`, so a receipt written next to the prompt file marks the launch's
-// prompt as delivered; the turn count cannot, because `/clear` empties it.
+// `session.start` fires again after a reload or worker respawn (including a reload
+// after `/clear`; `/clear` itself does not fire it), so a receipt written next to
+// the prompt file marks the launch's prompt as delivered; the turn count cannot,
+// because `/clear` empties it.
 
 const RECEIPT = 'first-turn-delivered'
 
@@ -28,7 +29,11 @@ async function submitFirstTurn($: EngineInterface): Promise<void> {
   try {
     const result = await $.prompt.submit({ text, asUser: true })
     if (result.drop === undefined) {
-      await $.fs.write(receipt, '')
+      try {
+        await $.fs.write(receipt, '')
+      } catch (err) {
+        $.ui.toast(`Meridian delivered the starting prompt, but could not record the receipt (${String(err)}); a reload may resubmit it.`, { timeoutMs: 30000 })
+      }
       return
     }
     why = `dropped: ${result.drop}`
