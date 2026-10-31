@@ -141,6 +141,7 @@ graph TB
 ```bash
 uv sync --extra dev
 uv run ruff check .
+uv run ruff format --check .
 uv run pytest-llm
 uv run --extra dev python -m pyright --warnings
 ```
