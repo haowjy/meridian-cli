@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import os
-import threading
-import time
 from collections.abc import Callable, Generator, Iterable, Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
 import psutil
+import structlog
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from meridian.lib.state.json_doc import VersionedPrivateDoc, write_model
@@ -21,6 +20,11 @@ from meridian.lib.state.spawn_observations import (
     LaunchObservations,
     read_legacy,
 )
+
+logger = structlog.get_logger()
+
+# Set by managed bash on each task's shell: the directory this task's hold files go in.
+PI_BASH_HOLD_DIR_ENV = "_MERIDIAN_PI_BASH_HOLD_DIR"
 
 _Model = TypeVar("_Model", bound=BaseModel)
 
@@ -54,60 +58,36 @@ class PiBashHold(VersionedPrivateDoc):
     v: Literal[1]
     owner_pid: StrictInt = Field(gt=0)
     owner_birth_epoch: float = Field(gt=0)
-    expires_at_epoch: float
-
-
-_HOLD_LEASE_SECONDS = 90.0
-_HOLD_RENEW_SECONDS = 20.0
-
-
-def pi_bash_hold_path(runtime_root: Path, spawn_id: str, bash_id: str) -> Path:
-    """The hold file for one managed-bash task, in the Pi session's own folder."""
-
-    return pi_coordination_dir(runtime_root, spawn_id) / "holds" / f"{bash_id}.json"
 
 
 @contextmanager
-def hold_pi_bash(path: Path | None) -> Generator[None]:
-    """Keep ``path`` renewed while the body runs, then remove it.
+def hold_pi_bash() -> Generator[None]:
+    """Mark the calling Pi bash task as running this command until the body returns.
 
-    The file is keyed by the managed-bash task, not by the wait's target, so it exists
-    for any wait or foreground spawn the task runs, whichever project it targets. A
-    crash leaves a file that expires on its own. ``None`` (no Pi task) writes nothing.
+    Managed bash names the task's hold directory in ``_MERIDIAN_PI_BASH_HOLD_DIR``; this
+    writes ``<pid>.json`` there once and removes it on exit. The extension treats the task
+    as held while any file's owner is alive, so a crash needs no cleanup. Outside a Pi bash
+    task the variable is unset and nothing is written.
     """
 
-    if path is None:
+    hold_dir = os.environ.get(PI_BASH_HOLD_DIR_ENV)
+    if not hold_dir:
         yield
         return
     pid = os.getpid()
-    birth = psutil.Process().create_time()
-    done = threading.Event()
-
-    def renew() -> None:
-        hold = PiBashHold(
-            v=1,
-            owner_pid=pid,
-            owner_birth_epoch=birth,
-            expires_at_epoch=time.time() + _HOLD_LEASE_SECONDS,
+    path = Path(hold_dir) / f"{pid}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_model(
+            path,
+            PiBashHold(v=1, owner_pid=pid, owner_birth_epoch=psutil.Process().create_time()),
         )
-        with suppress(OSError):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            write_model(path, hold)
-
-    def heartbeat() -> None:
-        while not done.wait(_HOLD_RENEW_SECONDS):
-            renew()
-
-    renew()
-    thread = threading.Thread(target=heartbeat, daemon=True)
-    thread.start()
+    except OSError as exc:
+        logger.warning("Pi bash hold not written; the task may be backgrounded", error=str(exc))
     try:
         yield
     finally:
-        done.set()
-        thread.join()
-        with suppress(OSError):
-            path.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
 
 
 def read_pi_private_doc(

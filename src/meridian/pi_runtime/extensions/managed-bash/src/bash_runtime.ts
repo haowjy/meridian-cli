@@ -8,6 +8,7 @@ import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_rec
 import { readPrivateJson } from "../../shared/json_file";
 import {
   currentSpawnIdFromEnv,
+  resolveBashHoldDir,
   resolveBashLogsDir,
   resolveBashRecordsPath,
   resolveDeliveryReceiptsPath,
@@ -22,7 +23,7 @@ import {
 import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
-import { holdsMeridianWait, keepsForeground } from "./meridian_hold";
+import { HOLD_DIR_ENV, MAX_HOLD_MIN, taskHoldsMeridianCommand } from "./meridian_hold";
 import { ShellTask } from "./shell_task";
 import { waitForSpawn } from "./spawn_wait";
 
@@ -231,9 +232,11 @@ export class BashRuntime {
       // foreground spawn keeps the foreground, up to MAX_HOLD_MIN.
       const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
         const startedAtMs = exec.proposal.started_at_ms;
-        void holdsMeridianWait(this.spawnId, exec.id).then((held) => {
+        const held = params.timeout_min == null && Date.now() - startedAtMs < MAX_HOLD_MIN * 60_000
+          ? taskHoldsMeridianCommand(this.spawnId, exec.id) : Promise.resolve(false);
+        void held.then((isHeld) => {
           if (settled) return;
-          if (keepsForeground(held, params.timeout_min != null, Date.now() - startedAtMs)) { timeout = arm(); return; }
+          if (isHeld) { timeout = arm(); return; }
           return this.publishBackground(exec).then((published) => {
             if (published) finish({
               kind: "start",
@@ -487,7 +490,7 @@ export class BashRuntime {
       return null;
     }
 
-    const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId });
+    const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId, [HOLD_DIR_ENV]: resolveBashHoldDir(bashId, this.spawnId) });
     const child = task.child;
     const exec = makeExecution({
       bash_id: bashId,

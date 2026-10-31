@@ -31,6 +31,9 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "_MERIDIAN_PI_PERMISSION_POLICY",
         # Each Pi launch derives its own delivery-parent scope from its caller.
         "_MERIDIAN_PI_OWED_PARENT_IDS",
+        # Set by the Pi managed-bash task that ran this launcher; a harness child has its own.
+        "_MERIDIAN_PI_BASH_ID",
+        "_MERIDIAN_PI_BASH_HOLD_DIR",
     }
 )
 

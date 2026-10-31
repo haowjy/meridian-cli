@@ -121,20 +121,23 @@ Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
 in RPC, but its custom-panel API is a no-op. RPC task output uses required
 `ctx.ui.notify`; print mode retains text output. Tables and logs must never be
 written directly to the RPC stdout transport.
-A model's foreground `bash` is backgrounded after 4 minutes, unless it passed no `timeout_min`
-and is then running a Meridian wait or a foreground spawn: the timer re-arms and checks again at
-the next expiry (`meridian_hold.ts`), until the task has been in the foreground 55 minutes. The
-evidence is one hold file, `pi-bash/<session spawn id>/holds/<bash id>.json` in the session's own
-folder, which the CLI keeps renewed (90-second expiry, renewed every 20 seconds) while any
-`meridian spawn wait` or foreground `meridian spawn` runs inside the task, and removes on exit.
-A crash leaves a file that expires. It is keyed by the bash task, not by the wait's target, so a
-`--no-observe` wait and a cross-project `-C` wait are held like any other: `-C` drops every
-project-scoped variable, so `_directory_env_scope` reads `_MERIDIAN_PI_STATE_DIR`,
-`MERIDIAN_SPAWN_ID` and `_MERIDIAN_PI_BASH_ID` first and hands the path to commands in
-`Caller.pi_bash_hold`. No Pi task, no file. A missing, unreadable or expired file means no wait.
-A backgrounded `meridian spawn wait` consumes the child's report, and the bash completion notice
-carries no output, so the model would get only a truncated tail, behind an extra call.
-An explicit `timeout_min` is never held: the task backgrounds at that time.
+
+A model's foreground `bash` is backgrounded after 4 minutes (or its `timeout_min`). A task that
+passed no `timeout_min` and is then running a Meridian wait or a foreground spawn re-arms the timer
+and checks again at the next expiry (`meridian_hold.ts`), until it has been in the foreground 55
+minutes. A backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
+notice carries no output, so the model would get only a truncated tail, behind an extra call.
+
+The evidence is the hold directory `pi-bash/<session spawn id>/holds/<bash id>/`. Managed bash
+puts its absolute path in `_MERIDIAN_PI_BASH_HOLD_DIR` for the task's shell; the CLI's
+`hold_pi_bash()` (around `spawn wait` and every `spawn` create, fork or continue) reads it,
+writes `<pid>.json` = `{v:1, owner_pid, owner_birth_epoch}` once, and removes it on exit. The task
+is held while any file parses and its owner is alive with the same birth time (`ps`, the check
+the wait leases use). A crash leaves a dead owner, which reads as not held, so there is no
+heartbeat or expiry. Because the variable is not project-scoped, `-C` keeps it: a `--no-observe`
+or cross-project wait is held like any other. Both variables are in `BLOCKED_CHILD_ENV_VARS`, so
+a harness child never inherits its parent's task. No Pi task, no file.
+
 Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.

@@ -313,6 +313,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier.", project_scoped=True
     ),
+    _internal_handle(
+        "_MERIDIAN_PI_BASH_HOLD_DIR",
+        "Directory where this managed-bash task's Meridian commands record a hold.",
+    ),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),
     _internal_handle(

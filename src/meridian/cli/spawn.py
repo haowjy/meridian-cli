@@ -5,7 +5,6 @@ import os
 import re
 import sys
 from collections.abc import Callable
-from contextlib import AbstractContextManager
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -132,13 +131,6 @@ def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
         launcher_pid=os.getpid(),
     )
     return prepared
-
-
-def _hold_pi_bash() -> AbstractContextManager[None]:
-    """Mark the calling Pi bash task as running this command until it returns."""
-
-    caller = get_global_options().caller
-    return hold_pi_bash(caller.pi_bash_hold if caller is not None else None)
 
 
 def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
@@ -758,50 +750,50 @@ def _spawn_create(
         raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
 
     fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
-    if fork_source_ref is not None:
-        fork_is_fresh = fork_resolution.is_fresh
-        result = spawn_fork_sync(
-            SpawnForkInput(
-                source_ref=fork_source_ref,
-                prompt=resolved_prompt,
-                model=(model or "") if fork_is_fresh else "",
-                files=references,
-                template_vars=template_vars,
-                agent=agent_launch.agent if fork_is_fresh else None,
-                agent_opt_out=agent_launch.agent_opt_out,
-                skills=parsed_skills if fork_is_fresh else (),
-                goal=resolved_goal,
-                inherit_source_skills=True if not fork_is_fresh else skills is None,
-                desc=desc,
-                work=work,
-                task_dir=normalized_task_dir,
-                caller_cwd=caller_cwd,
-                **shared_launch_kwargs,
-            ),
-            sink=current_output_sink(),
-        )
-    elif resolved_continue_from is not None:
-        result = spawn_continue_sync(
-            SpawnContinueInput(
-                spawn_id=resolved_continue_from,
-                prompt=resolved_prompt,
-                model=model,
-                files=references,
-                template_vars=template_vars,
-                agent=agent_launch.agent,
-                agent_opt_out=agent_launch.agent_opt_out,
-                skills=parsed_skills,
-                goal=resolved_goal,
-                desc=desc,
-                work=work,
-                task_dir=normalized_task_dir,
-                caller_cwd=caller_cwd,
-                **shared_launch_kwargs,
-            ),
-            sink=current_output_sink(),
-        )
-    else:
-        with _hold_pi_bash():
+    with hold_pi_bash():
+        if fork_source_ref is not None:
+            fork_is_fresh = fork_resolution.is_fresh
+            result = spawn_fork_sync(
+                SpawnForkInput(
+                    source_ref=fork_source_ref,
+                    prompt=resolved_prompt,
+                    model=(model or "") if fork_is_fresh else "",
+                    files=references,
+                    template_vars=template_vars,
+                    agent=agent_launch.agent if fork_is_fresh else None,
+                    agent_opt_out=agent_launch.agent_opt_out,
+                    skills=parsed_skills if fork_is_fresh else (),
+                    goal=resolved_goal,
+                    inherit_source_skills=True if not fork_is_fresh else skills is None,
+                    desc=desc,
+                    work=work,
+                    task_dir=normalized_task_dir,
+                    caller_cwd=caller_cwd,
+                    **shared_launch_kwargs,
+                ),
+                sink=current_output_sink(),
+            )
+        elif resolved_continue_from is not None:
+            result = spawn_continue_sync(
+                SpawnContinueInput(
+                    spawn_id=resolved_continue_from,
+                    prompt=resolved_prompt,
+                    model=model,
+                    files=references,
+                    template_vars=template_vars,
+                    agent=agent_launch.agent,
+                    agent_opt_out=agent_launch.agent_opt_out,
+                    skills=parsed_skills,
+                    goal=resolved_goal,
+                    desc=desc,
+                    work=work,
+                    task_dir=normalized_task_dir,
+                    caller_cwd=caller_cwd,
+                    **shared_launch_kwargs,
+                ),
+                sink=current_output_sink(),
+            )
+        else:
             result = spawn_create_sync(
                 SpawnCreateInput(
                     prompt=resolved_prompt,
@@ -1230,7 +1222,7 @@ def _spawn_wait(
 ) -> None:
     output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
-    with _hold_pi_bash():
+    with hold_pi_bash():
         result = spawn_wait_sync(
             SpawnWaitInput(
                 spawn_ids=spawn_ids,

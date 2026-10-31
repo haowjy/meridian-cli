@@ -79,7 +79,6 @@ from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.logging import warning_cache_scope
-from meridian.lib.harness.pi_private_state import pi_bash_hold_path
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.telemetry import emit_telemetry
@@ -1028,8 +1027,7 @@ def _directory_env_scope(
     when the inherited ``MERIDIAN_PROJECT_DIR`` is that same project. The caller's
     spawn, chat, work and task-dir name things in its own project, and no command,
     ops layer or child launched from here may read them as the target's. The dropped
-    caller is yielded as a :class:`Caller` so a message frame can still name its sender and a
-    wait can still hold its Pi bash task.
+    caller is yielded as a :class:`Caller` so a message frame can still name its sender.
     """
 
     other_project = (
@@ -1038,17 +1036,10 @@ def _directory_env_scope(
     dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
     caller_spawn = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
     caller_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
-    pi_state_dir = os.environ.get("_MERIDIAN_PI_STATE_DIR", "").strip()
-    pi_bash_id = os.environ.get("_MERIDIAN_PI_BASH_ID", "").strip()
     caller = (
         Caller(
             spawn_id=caller_spawn,
             project_root=Path(caller_root) if other_project else None,
-            pi_bash_hold=(
-                pi_bash_hold_path(Path(pi_state_dir), caller_spawn, pi_bash_id)
-                if pi_state_dir and pi_bash_id
-                else None
-            ),
         )
         if caller_spawn
         else None

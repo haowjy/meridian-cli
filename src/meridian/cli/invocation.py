@@ -38,8 +38,6 @@ class Caller(BaseModel):
     spawn_id: str
     project_root: Path | None
     """The caller's project, set only when it is not the target's: the reply needs ``-C``."""
-    pi_bash_hold: Path | None = None
-    """Hold file of the managed-bash task running this command, when the caller is Pi's."""
 
 
 class GlobalOptions(BaseModel):
