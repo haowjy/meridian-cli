@@ -149,6 +149,13 @@ sessions load only session-boundary.
   messaging socket at SessionStart.
 - **meridian-idle**, interactive primaries: idle push and cache warning; core
   (`meridian idle`) makes every decision.
+- **meridian-first-turn**, interactive primaries: submits the starting prompt
+  (`starting-prompt.md`, named by `_MERIDIAN_CLAUDE_FIRST_TURN_PATH`) as the first
+  user turn, so it is not on the `claude` command line, where `ps` shows it and a
+  `pkill -f <word>` elsewhere can kill the session. A launch keeps the positional
+  argument when the mod will not run: it was not found, the passthrough args hold
+  `--bare` or `--safe-mode`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE` is set,
+  or Claude is older than 2.1.314.
 - **meridian-spawn-watch**, interactive primaries when
   `harness.claude.spawn_watch.enabled` is true (default): when the lead goes
   idle it runs `meridian spawn collect`, submits the owed background-child

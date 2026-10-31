@@ -34,7 +34,12 @@ which flags exist, which are mutually exclusive, what goes in env vs argv.
 **Don't call projectors directly from outside the adapter layer.** They are called
 by `adapter.resolve_launch_spec()` — that's the only intended callsite.
 
-**An interactive starting prompt is argv's last item, after `--`.** Claude's
+**An interactive starting prompt is argv's last item, after `--`.** Exception: a
+Claude primary whose `meridian-first-turn` mod will run gets no positional prompt; the
+mod submits `starting-prompt.md` (named by `_MERIDIAN_CLAUDE_FIRST_TURN_PATH`) as the
+first turn, so the prompt is off the command line (`claude_runtime.first_turn_by_mod`,
+decided once in `bind_claude_spec`).
+Claude's
 `--add-dir <directories...>` is variadic: with no terminator it swallows a trailing
 positional prompt, and the TUI opens with an empty composer. Claude and Pi end with
 `-- <prompt>`; the bare OpenCode TUI takes `--prompt <prompt>`. Pass every prompt

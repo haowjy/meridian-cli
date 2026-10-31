@@ -300,6 +300,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON", "Claude boundary hook interpreter."
     ),
+    _internal_handle(
+        "_MERIDIAN_CLAUDE_FIRST_TURN_PATH",
+        "File holding the Claude primary's first user turn.",
+        project_scoped=True,
+    ),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle(
