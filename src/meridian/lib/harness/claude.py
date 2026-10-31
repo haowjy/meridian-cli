@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -70,9 +71,6 @@ from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
 )
 from meridian.lib.harness.projections.project_claude import (
-    FIRST_TURN_PATH_ENV,
-    FIRST_TURN_PLUGIN,
-    delivers_first_turn_by_mod,
     project_claude_spec_to_cli_args,
 )
 from meridian.lib.harness.semantics import (
@@ -113,6 +111,53 @@ from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 _BOUNDARY_PLUGIN = "meridian-session-boundary"
 _IDLE_PLUGIN = "meridian-idle"
 _SPAWN_WATCH_PLUGIN = "meridian-spawn-watch"
+FIRST_TURN_PLUGIN = "meridian-first-turn"
+FIRST_TURN_PATH_ENV = "_MERIDIAN_CLAUDE_FIRST_TURN_PATH"
+# Oldest Claude build verified to run a hooks-module mod that calls
+# ``$.prompt.submit({asUser})`` from ``session.start``; the mods API has no
+# per-feature version record, so this is the build the types were generated from.
+_FIRST_TURN_MIN_VERSION = (2, 1, 314)
+# Modes in which Claude loads no hooks module from a plugin (probe p10394).
+_NO_MOD_FLAGS = frozenset({"--bare", "--safe-mode"})
+_NO_MOD_ENV = ("CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE")
+
+
+def _claude_version(env: Mapping[str, str]) -> tuple[int, ...] | None:
+    try:
+        proc = subprocess.run(
+            ("claude", "--version"),
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    token = proc.stdout.split(maxsplit=1)[0] if proc.stdout.strip() else ""
+    parts = token.split(".")
+    return tuple(int(p) for p in parts) if parts and all(p.isdigit() for p in parts) else None
+
+
+def _delivers_first_turn_by_mod(spec: ResolvedLaunchSpec, env: Mapping[str, str]) -> bool:
+    """Whether the starting prompt reaches Claude through the first-turn mod, not argv.
+
+    A command-line prompt is visible to ``ps`` and to ``pkill -f``. Keep it on argv
+    whenever the mod will not run: not found, a mode that loads no plugin hooks module
+    (``--bare``, ``--safe-mode``, and their env switches), or a Claude too old for the API.
+    """
+    if not (
+        spec.interactive
+        and spec.user_turn_content
+        and any(Path(d).name == FIRST_TURN_PLUGIN for d in spec.claude_runtime.plugin_dirs)
+    ):
+        return False
+    if _NO_MOD_FLAGS.intersection(spec.extra_args):
+        return False
+    if any(env.get(name, "").strip().lower() not in ("", "0", "false") for name in _NO_MOD_ENV):
+        return False
+    version = _claude_version(env)
+    return version is not None and version >= _FIRST_TURN_MIN_VERSION
 
 
 def build_claude_adhoc_agent_json(
@@ -152,6 +197,7 @@ def bind_claude_spec(
             "claude_runtime": replace(
                 spec.claude_runtime,
                 settings_allows=settings_allows,
+                first_turn_by_mod=_delivers_first_turn_by_mod(spec, env),
             )
         }
     )
@@ -348,7 +394,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> dict[str, str]:
         _ = env
         overrides: dict[str, str] = {}
-        if delivers_first_turn_by_mod(spec):
+        if spec.claude_runtime.first_turn_by_mod:
             overrides[FIRST_TURN_PATH_ENV] = str(
                 system_prompt_path.with_name(LAUNCH_FILE_NAMES.starting_prompt)
             )

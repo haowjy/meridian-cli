@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from pathlib import Path
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -20,24 +19,6 @@ from meridian.lib.harness.projections.permissions_claude import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
-
-FIRST_TURN_PATH_ENV = "_MERIDIAN_CLAUDE_FIRST_TURN_PATH"
-FIRST_TURN_PLUGIN = "meridian-first-turn"
-
-
-def delivers_first_turn_by_mod(spec: ResolvedLaunchSpec) -> bool:
-    """Whether the starting prompt reaches Claude through the first-turn mod, not argv.
-
-    A command-line prompt is visible to ``ps`` and to ``pkill -f``. A resume or fork
-    keeps the positional prompt: the mod submits only into a session with no turns.
-    A launch whose mod was not found keeps it too.
-    """
-    return bool(
-        spec.interactive
-        and spec.user_turn_content
-        and not spec.continue_session_id
-        and any(Path(d).name == FIRST_TURN_PLUGIN for d in spec.claude_runtime.plugin_dirs)
-    )
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
@@ -223,7 +204,7 @@ def project_claude_spec_to_cli_args(
     # USER_TASK_PROMPT and TASK_CONTEXT go to the user-turn channel instead of
     # --append-system-prompt (spec S-2a): through the first-turn mod when it is
     # loaded, else as the positional argument.
-    if spec.interactive and spec.user_turn_content and not delivers_first_turn_by_mod(spec):
+    if spec.interactive and spec.user_turn_content and not spec.claude_runtime.first_turn_by_mod:
         command.extend(("--", check_prompt_argument(spec.user_turn_content)))
 
     return command
