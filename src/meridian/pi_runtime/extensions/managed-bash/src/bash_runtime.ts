@@ -233,7 +233,7 @@ export class BashRuntime {
       const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
         const startedAtMs = exec.proposal.started_at_ms;
         const held = params.timeout_min == null && Date.now() - startedAtMs < MAX_HOLD_MIN * 60_000
-          ? taskHoldsMeridianCommand(this.spawnId, exec.id) : Promise.resolve(false);
+          ? taskHoldsMeridianCommand(this.spawnId, exec.id).catch(() => false) : Promise.resolve(false);
         void held.then((isHeld) => {
           if (settled) return;
           if (isHeld) { timeout = arm(); return; }
@@ -382,7 +382,6 @@ export class BashRuntime {
         stderr_log_path: record.stderr_log_path,
         log_bytes: record.log_bytes,
         timeout_min: record.timeout_min,
-        originating_bash_id: record.originating_bash_id,
         execution_error: record.execution_error,
       }));
   }
@@ -508,7 +507,6 @@ export class BashRuntime {
       stderr_log_path: logPaths.stderr,
       log_bytes: 0,
       timeout_min: timeoutMin,
-      originating_bash_id: process.env._MERIDIAN_PI_BASH_ID || null,
       ping_sent_at_ms: null,
     }, task);
     this.executions.set(bashId, exec);
@@ -567,6 +565,8 @@ export class BashRuntime {
     exitCode: number | null,
   ): Promise<void> {
     this.clearPing(exec);
+    // No holder outlives the task's process group, so its hold directory is garbage now.
+    await rm(resolveBashHoldDir(exec.id, this.spawnId), { recursive: true, force: true });
     const endedAt = Date.now();
     // The row keeps its running status and the task its handle until this write lands, so no
     // observer can see, wait on, or consume an unpublished result.

@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { Value } from "typebox/value";
-import { BashHoldSchema, ownerIsAlive } from "../../shared/delivery_receipts";
+import { BashHoldSchema, ownerIsAlive } from "../../shared/process_identity";
 import { readPrivateJson } from "../../shared/json_file";
 import { resolveBashHoldDir } from "../../shared/pi_state_paths";
 
@@ -14,7 +14,8 @@ export const HOLD_DIR_ENV = "_MERIDIAN_PI_BASH_HOLD_DIR";
  * True while a CLI process inside this task is running a `meridian spawn wait` or a foreground
  * `meridian spawn`: some file in the task's hold directory names an owner that is still alive.
  * A backgrounded wait would consume the child's report while the bash completion notice carries
- * no output. A missing directory, an unparseable file, or a dead owner means "not held"; a
+ * no output. A missing directory, an unparseable file, a dead owner, or a check that cannot be made (the caller
+ * treats a rejection as not held) means "not held"; a
  * crashed holder therefore needs no cleanup. `ps` runs only when a file exists.
  */
 export async function taskHoldsMeridianCommand(sessionSpawnId: string, bashId: string): Promise<boolean> {

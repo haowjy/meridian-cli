@@ -28,7 +28,7 @@ it.each((["output", "wait"] as const).flatMap((action) =>
     exit_code: variant === "nonzero" ? 2 : hasFault ? -1 : variant === "unknown_exit" ? null : 0,
     is_background: true, is_tracked: true, started_at_ms: 1, ended_at_ms: 2,
     log_path: log, stdout_log_path: log, stderr_log_path: log, log_bytes: 0, timeout_min: 55,
-    originating_bash_id: null,
+   
     ...(variant === "fault" ? { execution_error: "EIO: failed publication" } : {}),
     ...(variant === "empty_fault" ? { execution_error: "" } : {}),
   };
@@ -77,7 +77,7 @@ it("inspects /ps:logs after cold recovery without acknowledging the result", asy
   const record: BashRecord = {
     bash_id: "b-00000002", command: "cold fixture", cwd: root, pid: null, status: "exited", exit_code: 0,
     is_background: true, is_tracked: true, started_at_ms: 1, ended_at_ms: 2, log_path: log,
-    stdout_log_path: log, stderr_log_path: log, log_bytes: 11, timeout_min: 55, originating_bash_id: null,
+    stdout_log_path: log, stderr_log_path: log, log_bytes: 11, timeout_min: 55,
   };
   const recordsPath = path.join(dir, "bash-records.json");
   await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p9001", updated_at_ms: 1, records: { [record.bash_id]: record } }));

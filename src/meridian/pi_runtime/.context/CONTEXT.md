@@ -133,14 +133,14 @@ puts its absolute path in `_MERIDIAN_PI_BASH_HOLD_DIR` for the task's shell; the
 `hold_pi_bash()` (around `spawn wait` and every `spawn` create, fork or continue) reads it,
 writes `<pid>.json` = `{v:1, owner_pid, owner_birth_epoch}` once, and removes it on exit. The task
 is held while any file parses and its owner is alive with the same birth time (`ps`, the check
-the wait leases use). A crash leaves a dead owner, which reads as not held, so there is no
-heartbeat or expiry. Because the variable is not project-scoped, `-C` keeps it: a `--no-observe`
+the wait leases use). A crash leaves a dead owner, and a failed check (`ps` errors) also reads as not held, so there is no
+heartbeat or expiry. Managed bash removes the hold directory when it marks the task terminal. Because the variable is not project-scoped, `-C` keeps it: a `--no-observe`
 or cross-project wait is held like any other. Both variables are in `BLOCKED_CHILD_ENV_VARS`, so
 a harness child never inherits its parent's task. No Pi task, no file.
 
-Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
-durable record retains the enclosing originating Bash ID. Canonical child
-spawn rows carry parent/origin membership; no origin sidecar is produced.
+Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID` to the task's own CLI
+(the spawn store records it as the child row's `originating_bash_id`); the bash record keeps
+no origin. Canonical child spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
 `notification_consumed_at_ms` consumes a terminal wait or `output` result with
 available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an

@@ -1,7 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { OwnerIdentity, ownerIsAlive } from "./process_identity";
 import { readPrivateJson, writeJsonAtomic } from "./json_file";
 import {
   currentSpawnIdFromEnv,
@@ -12,14 +11,10 @@ import {
 } from "./pi_state_paths";
 import { launchKey, type DeliveryReceiptsFile, type ObservedLaunchesFile } from "./schemas";
 
-const execFileAsync = promisify(execFile);
 const ReceiptsSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), messages: Type.Record(Type.String(), Type.Array(Type.String())),
 });
-const Lease = { owner_pid: Type.Integer({ minimum: 1 }), owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
-  expires_at_epoch: Type.Number() };
-/** A hold file: the CLI process running a wait or foreground spawn inside one bash task. */
-export const BashHoldSchema = Type.Object({ v: Type.Literal(1), owner_pid: Lease.owner_pid, owner_birth_epoch: Lease.owner_birth_epoch });
+const Lease = { ...OwnerIdentity, expires_at_epoch: Type.Number() };
 const ObservedLaunchesSchema = Type.Object({
   v: Type.Literal(1), spawn_id: Type.String(), updated_at_ms: Type.Optional(Type.Number()),
   observed_launches: Type.Array(Type.String()),
@@ -106,20 +101,6 @@ export async function readLegacyObservations(spawnId: string): Promise<ObservedL
 /** Older builds' receipts (``delivery-receipts.json``): bare IDs, read-only. */
 export async function readLegacyDeliveryReceipts(spawnId: string): Promise<DeliveryReceiptsFile> {
   return readDeliveryReceipts(spawnId, resolveLegacyDeliveryReceiptsPath(spawnId));
-}
-
-/** Whether the process named by an owner identity is still the one that wrote it (PID and birth time). */
-export async function ownerIsAlive(owner: { owner_pid: number; owner_birth_epoch: number }): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(owner.owner_pid)],
-      { timeout: 1000, env: { ...process.env, LC_ALL: "C" } });
-    const birth = Date.parse(stdout.trim()) / 1000;
-    if (!Number.isFinite(birth)) throw Error("unreadable wait owner identity");
-    return Math.abs(birth - owner.owner_birth_epoch) <= 2;
-  } catch (error) {
-    if ((error as { code?: unknown }).code === 1) return false; // ps reports no matching PID
-    throw error;
-  }
 }
 
 export async function reservedLaunchKeys(leases: Iterable<WaitReservation>): Promise<Set<string>> {

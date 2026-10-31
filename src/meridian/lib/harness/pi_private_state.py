@@ -123,7 +123,7 @@ class BashEvidence(VersionedPrivateDoc):
     stderr_log_path: str
     log_bytes: StrictInt = Field(ge=0)
     timeout_min: float
-    originating_bash_id: str | None
+    originating_bash_id: str | None = None  # older builds wrote it; ignored
     notification_consumed_at_ms: float | None = None
     execution_error: str = ""
     ping_sent_at_ms: float | None = None
