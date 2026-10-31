@@ -1,9 +1,5 @@
-// `meridian` followed by optional global options (`-C dir`, `--format json`, `--json`) then `spawn`.
-// Deliberately loose: a false match only keeps the long foreground limit.
-const MERIDIAN_SPAWN_PREFIX = String.raw`\bmeridian(?:\s+--?[\w-]+(?:=\S+)?(?:\s+[^\s-]\S*)?)*\s+spawn\b`;
-
 /** Detect `meridian spawn` CLI invocations in shell command strings. */
-export const MERIDIAN_SPAWN_COMMAND_PATTERN = new RegExp(MERIDIAN_SPAWN_PREFIX);
+export const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
 
 export function isMeridianSpawnCommand(command: string): boolean {
   return MERIDIAN_SPAWN_COMMAND_PATTERN.test(command);
@@ -11,7 +7,7 @@ export function isMeridianSpawnCommand(command: string): boolean {
 
 /** `meridian spawn wait` (including `uv run meridian spawn wait`, env prefixes). */
 export function isSpawnWaitCommand(command: string): boolean {
-  return new RegExp(`${MERIDIAN_SPAWN_PREFIX}\\s+wait\\b`).test(command);
+  return /\bmeridian\s+spawn\s+wait\b/.test(command);
 }
 
 /** Spawn launcher, not wait/list/show — matches `uv run meridian spawn -m …`. */

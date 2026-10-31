@@ -4,7 +4,6 @@ import { StringDecoder } from "node:string_decoder";
 
 import { classifyWorkId } from "../../shared/ids";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import { readPrivateJson } from "../../shared/json_file";
 import {
@@ -23,6 +22,7 @@ import {
 import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
+import { holdsMeridianWait } from "./meridian_hold";
 import { ShellTask } from "./shell_task";
 import { waitForSpawn } from "./spawn_wait";
 
@@ -150,9 +150,7 @@ export const MAX_TIMEOUT_MIN = 59;
 // Fills the `timeout_min` field of a user `!`/`$` record. User commands have no auto-background
 // timer; the field only needs a value the schema accepts.
 const USER_RECORD_TIMEOUT_MIN = 55;
-// How long `bash_manage wait` blocks, and the foreground limit for commands that invoke
-// `meridian spawn`: a backgrounded `meridian spawn wait` consumes the child's report, and the bash
-// completion notice carries no output, so the model gets only a truncated tail, behind an extra call.
+// How long `bash_manage wait` blocks.
 const WAIT_TIMEOUT_MIN = 55;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -196,10 +194,7 @@ export class BashRuntime {
   }
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
-    const timeoutMin = normalizeTimeoutMin(
-      params.timeout_min,
-      isMeridianSpawnCommand(params.command) ? WAIT_TIMEOUT_MIN : DEFAULT_TIMEOUT_MIN,
-    );
+    const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
     const launch = await this.launchRecord(params.command, timeoutMin, process.cwd(), process.env, undefined, signal);
     if (!launch) return abortedBeforeLaunch();
     const { execution: exec, creation } = launch;
@@ -232,16 +227,22 @@ export class BashRuntime {
           status: "aborted", exit_code: -1,
         }))).catch((error) => finish({ kind: "error", error: errorText(error) }));
       };
-      const timeout = setTimeout(() => {
-        void this.publishBackground(exec).then((published) => {
-          if (published) finish({
-            kind: "start",
-            bash_id: exec.id,
-            status: "backgrounded",
-            message: `Command exceeded timeout_min=${timeoutMin} and was moved to the background as ${exec.id}. It is still running; a completion notice will follow. Get its result with bash_manage (action='wait' or 'output', bash_id='${exec.id}'). Do not run the command again.`,
+      // At each expiry a task running a Meridian wait or foreground spawn keeps the foreground.
+      const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
+        void holdsMeridianWait(this.spawnId, exec.id, this.view(exec).started_at_ms).then((held) => {
+          if (settled) return;
+          if (held) { timeout = arm(); return; }
+          return this.publishBackground(exec).then((published) => {
+            if (published) finish({
+              kind: "start",
+              bash_id: exec.id,
+              status: "backgrounded",
+              message: `Command exceeded timeout_min=${timeoutMin} and was moved to the background as ${exec.id}. It is still running; a completion notice will follow. Get its result with bash_manage (action='wait' or 'output', bash_id='${exec.id}'). Do not run the command again.`,
+            });
           });
-        }, (error) => finish({ kind: "error", error: errorText(error) }));
+        }).catch((error) => finish({ kind: "error", error: errorText(error) }));
       }, timeoutMin * 60_000);
+      let timeout = arm();
 
       if (signal?.aborted) {
         abort();

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   extractSpawnIdFromLauncherLog,
-  isMeridianSpawnCommand,
   isSpawnLauncherCommand,
   isSpawnWaitCommand,
 } from "./meridian_spawn";
@@ -27,33 +26,5 @@ describe("spawn command classification", () => {
     const log = "Background spawn submitted.\nSpawn id: p2538\n";
     expect(extractSpawnIdFromLauncherLog(log)).toBe("p2538");
     expect(extractSpawnIdFromLauncherLog("launched p2538\n")).toBe(null);
-  });
-});
-
-describe("isMeridianSpawnCommand", () => {
-  it("matches any command that invokes meridian spawn", () => {
-    for (const command of [
-      "meridian spawn wait",
-      "cd /x && meridian spawn wait p1",
-      "meridian spawn wait 2>&1 | tail -50",
-      "uv run meridian spawn wait",
-      "/usr/local/bin/meridian spawn wait",
-      "meridian --json spawn wait",
-      "meridian -C /tmp/x spawn wait",
-      "meridian --format json spawn wait",
-      "meridian --directory=/tmp spawn wait",
-    ]) expect(isMeridianSpawnCommand(command), command).toBe(true);
-  });
-
-  it("rejects commands without one", () => {
-    for (const command of ["sleep 270", "echo meridian", "meridianx spawn wait", "meridian work show", "meridian work; spawn", ""]) {
-      expect(isMeridianSpawnCommand(command), command).toBe(false);
-    }
-  });
-
-  it("keeps wait detection through global options", () => {
-    expect(isSpawnWaitCommand("meridian -C /x spawn wait p1")).toBe(true);
-    expect(isSpawnLauncherCommand("meridian -C /x spawn wait p1")).toBe(false);
-    expect(isSpawnLauncherCommand("meridian -C /x spawn -m foo")).toBe(true);
   });
 });

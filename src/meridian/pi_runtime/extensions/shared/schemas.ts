@@ -113,6 +113,7 @@ export type ObservedLaunchesFile = {
     owner_pid: number;
     owner_birth_epoch: number;
     expires_at_epoch: number;
+    owner_bash_id?: string | null;
     launches: string[];
   }>;
 };
