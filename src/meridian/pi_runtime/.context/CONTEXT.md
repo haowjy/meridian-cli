@@ -121,6 +121,11 @@ Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
 in RPC, but its custom-panel API is a no-op. RPC task output uses required
 `ctx.ui.notify`; print mode retains text output. Tables and logs must never be
 written directly to the RPC stdout transport.
+A model's foreground `bash` is backgrounded after 4 minutes, except when the whole
+command is one `meridian spawn ...` invocation: that keeps the 55-minute limit. A
+backgrounded `meridian spawn wait` consumes the child's report, and the bash
+completion notice carries no output, so the report would never reach the model.
+An explicit `timeout_min` always wins.
 Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.
@@ -128,8 +133,9 @@ Terminal tracked background Bash rows are durable result obligations. Their pers
 `notification_consumed_at_ms` consumes a terminal wait or `output` result with
 available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
 unattended notice. Sending or queueing is not consumption. Wait blocks up to
-55 minutes (its own constant, independent of the 4-minute foreground default) with no model-chosen limit: a short wait let the model
-read results around consumption and receive the same completion again. The
+55 minutes (its own constant, independent of the 4-minute foreground default)
+with no model-chosen limit: a short wait let the model read results around
+consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
 staging leaves the result owed, even if the pending reply includes a known terminal
 status. Once acknowledgement has staged, a successful write returns its result;

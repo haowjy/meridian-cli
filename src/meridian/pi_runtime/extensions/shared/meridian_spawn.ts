@@ -1,3 +1,7 @@
+import { basename } from "node:path";
+
+import { splitShellCommands } from "./shell_split";
+
 /** Detect `meridian spawn` CLI invocations in shell command strings. */
 export const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
 
@@ -48,4 +52,25 @@ export function extractMeridianSpawnIdsFromText(text: string): string[] {
     }
   }
   return [...ids];
+}
+
+// `meridian` global options and whether each takes a separate value.
+const MERIDIAN_GLOBAL_OPTIONS = new Map([["-C", true], ["--directory", true], ["--format", true]]);
+
+/** True when the whole command is one `meridian spawn ...` invocation, optionally after global
+ * options (`-C dir`, `--format x`). Conservative: anything the shell splitter cannot read, any
+ * separator, or any quoting before the subcommand is not a match. */
+export function isSingleMeridianSpawnCommand(command: string): boolean {
+  const split = splitShellCommands(command);
+  if (!split.complete || split.commands.length !== 1) return false;
+  const words = split.commands[0].split(/\s+/);
+  if (words[0] === undefined || basename(words[0]) !== "meridian") return false;
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index];
+    if (word === "spawn") return true;
+    if (/['"]/u.test(word)) return false;
+    if (MERIDIAN_GLOBAL_OPTIONS.get(word)) index += 1;
+    else if (!/^--[a-z-]+=/u.test(word)) return false;
+  }
+  return false;
 }

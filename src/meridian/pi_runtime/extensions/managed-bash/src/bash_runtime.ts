@@ -23,6 +23,7 @@ import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/ta
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
 import { ShellTask } from "./shell_task";
+import { isSingleMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import { waitForSpawn } from "./spawn_wait";
 
 export type BashParams = {
@@ -144,14 +145,15 @@ export type BashManageResult =
 
 // A model's foreground command that outlives this is backgrounded, so a forgotten
 // server cannot hold the turn; the model may pass timeout_min up to MAX_TIMEOUT_MIN.
-const DEFAULT_TIMEOUT_MIN = 4;
-// A human watching their own `!`/`$` command can background it with /ps:b, so it keeps
-// the long limit.
-const USER_TIMEOUT_MIN = 55;
-// Wait up to the longest a task may run; a short wait lets the model fetch
-// results around consumption, so the idle watcher announces them again.
+export const DEFAULT_TIMEOUT_MIN = 4;
+export const MAX_TIMEOUT_MIN = 59;
+// Fills the `timeout_min` field of a user `!`/`$` record. User commands have no auto-background
+// timer; the field only needs a value the schema accepts.
+const USER_RECORD_TIMEOUT_MIN = 55;
+// How long `bash_manage wait` blocks, and the foreground limit for `meridian spawn ...` commands:
+// a backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
+// notice carries no output, so the report would never reach the model.
 const WAIT_TIMEOUT_MIN = 55;
-const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
 const TASK_PING_INTERVAL_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS";
@@ -194,7 +196,10 @@ export class BashRuntime {
   }
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
-    const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
+    const timeoutMin = normalizeTimeoutMin(
+      params.timeout_min,
+      isSingleMeridianSpawnCommand(params.command) ? WAIT_TIMEOUT_MIN : DEFAULT_TIMEOUT_MIN,
+    );
     const launch = await this.launchRecord(params.command, timeoutMin, process.cwd(), process.env, undefined, signal);
     if (!launch) return abortedBeforeLaunch();
     const { execution: exec, creation } = launch;
@@ -233,7 +238,7 @@ export class BashRuntime {
             kind: "start",
             bash_id: exec.id,
             status: "backgrounded",
-            message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
+            message: `Command exceeded timeout_min=${timeoutMin} and was moved to the background as ${exec.id}. It is still running; a completion notice will follow. Get its result with bash_manage (action='wait' or 'output', bash_id='${exec.id}'). Do not run the command again.`,
           });
         }, (error) => finish({ kind: "error", error: errorText(error) }));
       }, timeoutMin * 60_000);
@@ -270,7 +275,7 @@ export class BashRuntime {
     const forwardOutput = (data: Buffer): void => {
       if (forwardForegroundOutput) safeOnData(options.onData, data);
     };
-    const launch = await this.launchRecord(command, USER_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
+    const launch = await this.launchRecord(command, USER_RECORD_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
     if (!launch) return { exitCode: -1 };
     const { execution: exec, creation } = launch;
     this.hooks.onForegroundStart?.(exec.id);
@@ -317,7 +322,7 @@ export class BashRuntime {
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
-    const launch = await this.launchRecord(command, USER_TIMEOUT_MIN, cwd, env);
+    const launch = await this.launchRecord(command, USER_RECORD_TIMEOUT_MIN, cwd, env);
     if (!launch) throw new Error("Detached Bash launch was cancelled before start");
     const { execution: exec, creation } = launch;
     await creation;
