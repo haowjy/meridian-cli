@@ -13,9 +13,7 @@ from meridian.lib.markdown.types import ExtractedDocument
 
 FindingSeverity = Literal["error", "warning"]
 GraphEdgeKind = Literal["link", "image", "wikilink"]
-FindingCategory = Literal[
-    "broken_link", "read_error", "flag_block", "conflict_marker"
-]
+FindingCategory = Literal["broken_link", "read_error", "flag_block", "conflict_marker"]
 
 
 @dataclass

@@ -13,9 +13,7 @@ from tests.support.git import is_git_env_key
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PI_DIST_ROOT = PACKAGE_ROOT / "src" / "meridian" / "pi_runtime" / "dist"
-PI_DIST_BUILD_COMMAND = (
-    "cd src/meridian/pi_runtime && pnpm install && pnpm run build:extensions"
-)
+PI_DIST_BUILD_COMMAND = "cd src/meridian/pi_runtime && pnpm install && pnpm run build:extensions"
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 requires_pi_dist = pytest.mark.requires_pi_dist
 
@@ -27,9 +25,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: full CLI invocation")
     config.addinivalue_line("markers", "contract: parity/drift checks")
     config.addinivalue_line("markers", "slow: takes >1s")
-    config.addinivalue_line(
-        "markers", "requires_pi_dist: test requires built Pi extension bundles"
-    )
+    config.addinivalue_line("markers", "requires_pi_dist: test requires built Pi extension bundles")
     if config.getoption("--runner-history") == "off":
         blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
         existing = os.environ.get("PYTHONPATH")
@@ -86,19 +82,21 @@ def _isolate_control_sockets() -> Iterator[Path]:
         yield production_root
 
 
-_NATIVE_STORE_ENV = frozenset({
-    "CODEX_HOME",
-    "CLAUDE_CONFIG_DIR",
-    "OPENCODE_HOME",
-    "OPENCODE_DB",
-    "OPENCODE_CONFIG",
-    "OPENCODE_CONFIG_DIR",
-    "PI_CODING_AGENT_DIR",
-    "PI_CODING_AGENT_SESSION_DIR",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_STATE_HOME",
-})
+_NATIVE_STORE_ENV = frozenset(
+    {
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "OPENCODE_HOME",
+        "OPENCODE_DB",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CONFIG_DIR",
+        "PI_CODING_AGENT_DIR",
+        "PI_CODING_AGENT_SESSION_DIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+    }
+)
 
 
 @pytest.fixture(autouse=True)

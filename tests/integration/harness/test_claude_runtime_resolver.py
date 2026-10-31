@@ -25,7 +25,8 @@ def test_resolution_preserves_plugin_selection_and_warnings(tmp_path: Path) -> N
     _write_manifest(installed / "meridian-idle")
     resolution = resolve_claude_runtime(
         plugin_names=(boundary, "meridian-idle", "not-installed"),
-        package_runtime_root=package, install_root=installed,
+        package_runtime_root=package,
+        install_root=installed,
     )
     assert resolution.plugin_dirs == (str(cached), str(installed / "meridian-idle"))
     assert len(resolution.warnings) == 1

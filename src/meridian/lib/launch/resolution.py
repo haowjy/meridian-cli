@@ -85,9 +85,7 @@ def resolve_launch_inputs(
                 break
             warn_missing_work_item(candidate)
 
-    effective_work_id = (
-        normalized_explicit_work_id or normalized_ambient_work_id or context_work_id
-    )
+    effective_work_id = normalized_explicit_work_id or normalized_ambient_work_id or context_work_id
     task_explicit_work_id = normalized_explicit_work_id
     task_ambient_work_id = normalized_ambient_work_id
     if context_work_id is not None:

@@ -22,9 +22,7 @@ def _route_label(channel: str, transports: tuple[str, ...]) -> str:
     return f"{channel} ({', '.join(transports)})"
 
 
-def _render_report(
-    report: RouteReport, label: SessionLabel, *, json_mode: bool = False
-) -> None:
+def _render_report(report: RouteReport, label: SessionLabel, *, json_mode: bool = False) -> None:
     sink = current_output_sink()
     for warning in report.warnings:
         sink.warning(warning)
@@ -47,9 +45,7 @@ def _render_report(
         sink.result("Nothing delivered.")
         return
     sent = ", ".join(
-        _route_label(result.route, result.transports)
-        for result in report.results
-        if result.ok
+        _route_label(result.route, result.transports) for result in report.results if result.ok
     )
     if sent:
         sink.result(f"Notification sent via {sent}.")

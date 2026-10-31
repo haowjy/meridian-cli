@@ -1332,9 +1332,7 @@ class SpawnSubagentsOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        return "\n".join(
-            f"{agent.name}\t{agent.scope or 'unknown'}" for agent in self.agents
-        )
+        return "\n".join(f"{agent.name}\t{agent.scope or 'unknown'}" for agent in self.agents)
 
 
 class SpawnContinueInput(SpawnLaunchOptions):
@@ -1577,9 +1575,7 @@ class SpawnWaitMultiOutput(BaseModel):
         # Sparse spawn details.
         wire["spawns"] = [_spawn_wire(spawn) for spawn in self.spawns]
         wire["owed_spawns"] = [_spawn_wire(spawn) for spawn in self.owed_spawns]
-        wire["since_started_spawns"] = [
-            _spawn_wire(spawn) for spawn in self.since_started_spawns
-        ]
+        wire["since_started_spawns"] = [_spawn_wire(spawn) for spawn in self.since_started_spawns]
         return wire
 
     def to_cli_output(

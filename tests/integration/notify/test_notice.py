@@ -40,6 +40,4 @@ def test_manual_notification_refuses_what_no_route_could_send(
     attachments = (tmp_path / attachment,) if attachment else ()
 
     with pytest.raises(ValueError, match=error):
-        manual_notification(
-            title, None, SessionLabel(), priority=priority, attachments=attachments
-        )
+        manual_notification(title, None, SessionLabel(), priority=priority, attachments=attachments)

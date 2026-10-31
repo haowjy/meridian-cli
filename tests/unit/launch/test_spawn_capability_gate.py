@@ -114,9 +114,7 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         spawn_usage_contract="spawn contract",
         bundle_inventory_prompt=INVENTORY,
     )
-    reviewer_skills = next(
-        block for block in reviewer_blocks if block.name == "meridian-skills"
-    )
+    reviewer_skills = next(block for block in reviewer_blocks if block.name == "meridian-skills")
     assert "meridian skills sessions__meridian" in reviewer_skills.content
     assert "meridian skills escalation__meridian" not in reviewer_skills.content
     assert "meridian skills handoff__meridian" not in reviewer_skills.content
@@ -191,9 +189,7 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
     assert (
         adapter.shell_network_guidance(
             sandbox="workspace-write",
-            network=Allow(
-                deny=frozenset((Host("localhost"), Host("127.0.0.1")))
-            ),
+            network=Allow(deny=frozenset((Host("localhost"), Host("127.0.0.1")))),
             native_config={},
         )
         is None

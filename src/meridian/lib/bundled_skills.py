@@ -102,9 +102,7 @@ def list_bundled_skills() -> tuple[BundledSkill, ...]:
             continue
         skill_file = skill_dir.joinpath("SKILL.md")
         if not skill_file.is_file():
-            raise RuntimeError(
-                f"bundled skill {skill_dir.name!r} is missing SKILL.md"
-            )
+            raise RuntimeError(f"bundled skill {skill_dir.name!r} is missing SKILL.md")
         skills.append(
             _parse_skill_metadata(
                 skill_file.read_text(encoding="utf-8"),
@@ -288,4 +286,3 @@ __all__ = [
     "read_bundled_skill_resource",
     "report_provide_refusal",
 ]
-

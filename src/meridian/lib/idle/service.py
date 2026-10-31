@@ -53,9 +53,7 @@ logger = logging.getLogger(__name__)
 class NotifySender(Protocol):
     """Emits a notification as its hook event; a seam for tests."""
 
-    def __call__(
-        self, event: HookEventName, notification: Notification
-    ) -> RouteReport: ...
+    def __call__(self, event: HookEventName, notification: Notification) -> RouteReport: ...
 
 
 def _recorded_native_store(
@@ -260,9 +258,7 @@ def _persisted_schedule(value: Schedule) -> IdleSchedule:
 
 
 def _close_open_stretch(state: IdleState, *, returned_at_ms: int) -> IdleState:
-    return state.model_copy(
-        update={"stretch_open": False, "push_owed_since_ms": returned_at_ms}
-    )
+    return state.model_copy(update={"stretch_open": False, "push_owed_since_ms": returned_at_ms})
 
 
 class IdleService:
@@ -350,8 +346,10 @@ class IdleService:
         )
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
-            kept_input = input_count if input_count is not None else (
-                current.last_input_count if current is not None else None
+            kept_input = (
+                input_count
+                if input_count is not None
+                else (current.last_input_count if current is not None else None)
             )
             if (
                 implies_return
@@ -558,9 +556,7 @@ class IdleService:
         for warning in report.warnings:
             logger.warning("permission notification delivery warning: %s", warning)
 
-    def _emit(
-        self, event: HookEventName, notification: Notification
-    ) -> RouteReport:
+    def _emit(self, event: HookEventName, notification: Notification) -> RouteReport:
         return emit(event, notification, project_root=self.project_root, env=self.env)
 
     def _notify_config(self) -> NotifyConfig:

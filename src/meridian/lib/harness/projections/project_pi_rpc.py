@@ -111,8 +111,7 @@ def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
 
 def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
     if any(
-        _has_flag(passthrough_tail, alias)
-        for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
+        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
     ):
         raise ValueError(
             "Pi harness owns extension loading for RPC launches; "

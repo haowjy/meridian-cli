@@ -272,19 +272,13 @@ def _work_task_dir(
     emit: Emitter,
     task_dir: Annotated[
         str | None,
-        Parameter(
-            help=(
-                "Directory to set as task_dir. Omit to print resolved task_dir."
-            )
-        ),
+        Parameter(help=("Directory to set as task_dir. Omit to print resolved task_dir.")),
     ] = None,
     clear: Annotated[
         bool,
         Parameter(
             name="--clear",
-            help=(
-                "Unset task_dir for the active work item (reverts to project root)."
-            ),
+            help=("Unset task_dir for the active work item (reverts to project root)."),
         ),
     ] = False,
 ) -> None:

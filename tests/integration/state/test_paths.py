@@ -42,6 +42,8 @@ def test_state_root_paths_repo_meridian_stays_runtime_root_local(
     assert paths.work_dir == runtime_root / "work"
     assert paths.work_archive_dir == runtime_root / "archive" / "work"
     assert paths.kb_dir == runtime_root / "kb"
+
+
 def test_resolve_project_paths_merges_context_config_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

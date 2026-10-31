@@ -184,8 +184,7 @@ def test_spawn_rejects_subcommand_shaped_prompts_and_suggests_transposition(
 
     assert unknown.returncode != 0
     assert (
-        "unknown spawn subcommand 'list-agents'\n"
-        "To force a literal one-word prompt, use --prompt."
+        "unknown spawn subcommand 'list-agents'\nTo force a literal one-word prompt, use --prompt."
     ) in unknown.stderr
     assert typo.returncode != 0
     assert "did you mean 'meridian spawn wait'?" in typo.stderr

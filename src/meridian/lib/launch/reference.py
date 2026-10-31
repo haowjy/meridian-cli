@@ -433,9 +433,7 @@ def _resolve_reference_path(
             resolved.relative_to(kb_root)
         except ValueError as exc:
             raise ValueError(
-                "kb: path escapes KB directory.\n"
-                f"  Resolved: {resolved}\n"
-                f"  KB root:  {kb_root}"
+                f"kb: path escapes KB directory.\n  Resolved: {resolved}\n  KB root:  {kb_root}"
             ) from exc
         return resolved
     if raw_text.startswith("@"):

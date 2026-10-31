@@ -31,19 +31,24 @@ def resolve_claude_runtime(
         package_dir = (package_root / name).resolve()
         install_dir = (installed_root / name).resolve()
         directory = next(
-            (path for path in (package_dir, install_dir)
-             if (path / ".claude-plugin" / "plugin.json").is_file()),
+            (
+                path
+                for path in (package_dir, install_dir)
+                if (path / ".claude-plugin" / "plugin.json").is_file()
+            ),
             None,
         )
         if directory is not None:
             directories.append(str(directory))
         else:
-            warnings.append(CompositionWarning(
-                code="claude_runtime_missing",
-                message=(
-                    f"Meridian's Claude plugin {name!r} was not found; "
-                    "its observations and features will be unavailable for this launch."
-                ),
-                detail={"package_dir": str(package_dir), "install_dir": str(install_dir)},
-            ))
+            warnings.append(
+                CompositionWarning(
+                    code="claude_runtime_missing",
+                    message=(
+                        f"Meridian's Claude plugin {name!r} was not found; "
+                        "its observations and features will be unavailable for this launch."
+                    ),
+                    detail={"package_dir": str(package_dir), "install_dir": str(install_dir)},
+                )
+            )
     return ClaudeRuntimeResolution(plugin_dirs=tuple(directories), warnings=tuple(warnings))

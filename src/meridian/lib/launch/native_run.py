@@ -154,22 +154,30 @@ class NativeRun:
         root = self.attempt.runtime_root
         target = session_store.chat_record(root, chat_id)
         held = target is not None and session_store.is_session_lease_owner_alive(
-            root, chat_id, session_instance_id=target.session_instance_id,
+            root,
+            chat_id,
+            session_instance_id=target.session_instance_id,
         )
         other = session_identity.live_observer_for_chat(
-            root, chat_id, records=spawn_store.list_spawns(root).records,
+            root,
+            chat_id,
+            records=spawn_store.list_spawns(root).records,
             excluding_spawn_id=str(self.attempt.spawn_id),
         )
         if held or other is not None:
             logger.warning(
                 "Observed current chat overlaps live ownership",
-                chat_id=chat_id, spawn_id=str(self.attempt.spawn_id),
+                chat_id=chat_id,
+                spawn_id=str(self.attempt.spawn_id),
                 other_spawn_id=other or (target.spawn_id if target is not None else None),
             )
 
     @contextmanager
     def observing(
-        self, adapter: SubprocessHarness, *, child_env: Mapping[str, str],
+        self,
+        adapter: SubprocessHarness,
+        *,
+        child_env: Mapping[str, str],
     ) -> Generator[Callable[[int], None], None, None]:
         """Own native observation lexically; yield ``start(pid)`` for on-running.
 
@@ -337,9 +345,11 @@ def conclude_native_run(
             error = post.entry_error
             if error is None and post.entry_observed is not None:
                 observed = post.entry_observed.fields()
-                if (run.entry.session_id is None
-                        and observed.harness == run.entry.harness
-                        and observed.native_store == run.entry.native_store):
+                if (
+                    run.entry.session_id is None
+                    and observed.harness == run.entry.harness
+                    and observed.native_store == run.entry.native_store
+                ):
                     # A native fork may allocate its ID inside the harness. An owned
                     # startup receipt can complete that entry, never change its namespace.
                     run.observe(post.entry_observed.session_id)

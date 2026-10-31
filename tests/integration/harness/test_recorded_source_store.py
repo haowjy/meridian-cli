@@ -61,10 +61,13 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
 def test_relative_codex_home_uses_child_cwd(tmp_path: Path) -> None:
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
     env = {"CODEX_HOME": "relative-home"}
-    assert adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
-        spawn_id=SpawnId("p1"), operation="resume", interactive=False) == str(
-        tmp_path / "relative-home" / "sessions"
-    )
+    assert adapter.native_store_for_launch(
+        child_env=env,
+        child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"),
+        operation="resume",
+        interactive=False,
+    ) == str(tmp_path / "relative-home" / "sessions")
     assert env["CODEX_HOME"] == "relative-home"
 
 
@@ -76,8 +79,13 @@ def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filena
     for path in (selected, default):
         write_opencode_db_session(db_path=path, session_id=SID, messages=[])
     env = {"OPENCODE_HOME": str(default.parent), "OPENCODE_DB": str(selected)}
-    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
-        spawn_id=SpawnId("p1"), operation="resume", interactive=False)
+    store = adapter.native_store_for_launch(
+        child_env=env,
+        child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"),
+        operation="resume",
+        interactive=False,
+    )
     assert store == str(selected)
     assert (
         adapter.resolve_native_session_file(
@@ -105,11 +113,16 @@ def test_codex_symlink_store_remains_reopenable(tmp_path: Path) -> None:
     real_store.mkdir()
     (home / "sessions").symlink_to(real_store, target_is_directory=True)
     (real_store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text(
-            json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
-        )
+        json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
+    )
     env = {"CODEX_HOME": str(home)}
-    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
-        spawn_id=SpawnId("p1"), operation="resume", interactive=False)
+    store = adapter.native_store_for_launch(
+        child_env=env,
+        child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"),
+        operation="resume",
+        interactive=False,
+    )
     session = SessionRequest(
         requested_harness_session_id=SID, source_native_store=store, continue_source_tracked=True
     )
@@ -131,8 +144,8 @@ def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path)
     sibling = tmp_path / "sessions"
     sibling.mkdir()
     (sibling / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text(
-            json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
-        )
+        json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
+    )
     session = SessionRequest(
         requested_harness_session_id=SID,
         source_native_store=str(tmp_path / "different-store"),
@@ -152,7 +165,9 @@ def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path)
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
 @pytest.mark.parametrize("content", ["", "{", "{}\n", "wrong-id"])
 def test_exact_sources_refuse_invalid_headers(
-    tmp_path: Path, harness: HarnessId, content: str,
+    tmp_path: Path,
+    harness: HarnessId,
+    content: str,
 ) -> None:
     import json
 
@@ -162,35 +177,46 @@ def test_exact_sources_refuse_invalid_headers(
     store = tmp_path / "sessions"
     store.mkdir()
     native = store / (
-        f"{SID}.jsonl" if harness == HarnessId.CLAUDE
+        f"{SID}.jsonl"
+        if harness == HarnessId.CLAUDE
         else f"rollout-2026-01-01T00-00-00-{SID}.jsonl"
     )
     mismatch = content == "wrong-id"
     if mismatch:
-        content = json.dumps(
-            {"sessionId": "other"} if harness == HarnessId.CLAUDE
-            else {"type": "session_meta", "payload": {"id": "other"}}
-        ) + "\n"
+        content = (
+            json.dumps(
+                {"sessionId": "other"}
+                if harness == HarnessId.CLAUDE
+                else {"type": "session_meta", "payload": {"id": "other"}}
+            )
+            + "\n"
+        )
     native.write_text(content)
     adapter = HarnessRegistry.with_defaults().get(harness)
     error = NativeEntryMismatch if mismatch else NativeSessionUnavailable
     with pytest.raises(error):
         adapter.resolve_native_session_file(
-             session_id=SID, native_store=store,
+            session_id=SID,
+            native_store=store,
         )
     with pytest.raises(error):
         if harness == HarnessId.CLAUDE:
             ensure_claude_session_accessible(
-                SID, tmp_path / "child", source_native_store=store,
+                SID,
+                tmp_path / "child",
+                source_native_store=store,
                 target_config_root=tmp_path / "target",
             )
         else:
             adapter.finalize_native_identity(
                 LaunchIntent("resume", SID),
-                child_env={}, child_cwd=tmp_path,
+                child_env={},
+                child_cwd=tmp_path,
                 session=SessionRequest(
-                    requested_harness_session_id=SID, source_native_store=str(store),
+                    requested_harness_session_id=SID,
+                    source_native_store=str(store),
                     continue_source_tracked=True,
                 ),
-                spawn_id=SpawnId("p1"), interactive=False,
+                spawn_id=SpawnId("p1"),
+                interactive=False,
             )

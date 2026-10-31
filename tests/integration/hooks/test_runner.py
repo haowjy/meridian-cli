@@ -130,8 +130,7 @@ def test_external_runner_times_out_sleeping_hook(tmp_path: Path) -> None:
 
     script = tmp_path / "sleep_forever.py"
     script.write_text(
-        "import time\n"
-        "time.sleep(30)\n",
+        "import time\ntime.sleep(30)\n",
         encoding="utf-8",
     )
 

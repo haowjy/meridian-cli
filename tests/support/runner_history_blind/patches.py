@@ -24,11 +24,7 @@ def _is_runner_history(path: object) -> bool:
         and parts[-1] == "history.jsonl"
         and (
             parts[-3] in {"spawns", "artifacts"}
-            or (
-                len(parts) >= 4
-                and parts[-4] == "spawns"
-                and parts[-2].startswith("attempt-")
-            )
+            or (len(parts) >= 4 and parts[-4] == "spawns" and parts[-2].startswith("attempt-"))
         )
     )
 

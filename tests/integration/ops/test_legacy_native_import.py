@@ -645,7 +645,7 @@ def test_torn_batch_recovers_only_uncommitted_bindings(
         append(root, {first.chat_id: [first]})
         tail = second.model_dump_json(exclude_none=True)
         with (root / "sessions.jsonl").open("ab") as handle:
-            handle.write(tail[:len(tail) // 2].encode())
+            handle.write(tail[: len(tail) // 2].encode())
         raise OSError("interrupted append")
 
     monkeypatch.setattr(session_binding, "append_chat_rows", torn_append)

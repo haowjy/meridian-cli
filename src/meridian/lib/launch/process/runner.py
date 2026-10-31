@@ -838,20 +838,22 @@ def run_harness_process(
                 launch_lock=hold.slot,
             )
         with (
-            nullcontext(hold.slot) if hold is not None else LaunchSlot()
-        ) as launch_lock, fail_unstarted_launch(), session_scope(
-            runtime_root=runtime_root,
-            metadata=session_metadata,
-            request=preview_request.session,
-            chat_id=resume_chat_id,
-            control_root=str(control_root),
-            task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
-            execution_cwd=str(execution_cwd),
-            kind="primary",
-            spawn_id=str(reserved_spawn_id),
-            startup_attempt_id=startup_attempt_id,
-            launch_slot=launch_lock,
-        ) as managed:
+            nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock,
+            fail_unstarted_launch(),
+            session_scope(
+                runtime_root=runtime_root,
+                metadata=session_metadata,
+                request=preview_request.session,
+                chat_id=resume_chat_id,
+                control_root=str(control_root),
+                task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
+                execution_cwd=str(execution_cwd),
+                kind="primary",
+                spawn_id=str(reserved_spawn_id),
+                startup_attempt_id=startup_attempt_id,
+                launch_slot=launch_lock,
+            ) as managed,
+        ):
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(
                 project_root=config_root,

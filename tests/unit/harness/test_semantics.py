@@ -43,7 +43,6 @@ def test_connection_closed_outcome_uses_preformatted_message() -> None:
     )
 
     assert outcome.error == (
-        "Codex app-server exited with code 23.\n\n"
-        "Codex app-server stderr:\nfatal vendor detail"
+        "Codex app-server exited with code 23.\n\nCodex app-server stderr:\nfatal vendor detail"
     )
     assert outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE

@@ -189,9 +189,7 @@ def test_incremental_replay_waits_for_partial_line_then_resumes(tmp_path: Path) 
         "c5",
     ]
     with sqlite3.connect(index.path) as db:
-        cursor = db.execute(
-            "SELECT extent FROM cursors WHERE source = 'sessions'"
-        ).fetchone()
+        cursor = db.execute("SELECT extent FROM cursors WHERE source = 'sessions'").fetchone()
     assert cursor == (sessions_path.stat().st_size,)
 
 

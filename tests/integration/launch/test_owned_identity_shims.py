@@ -229,8 +229,8 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
     assert row.run_boundary.status == "mismatch"
     facts = [
         json.loads(line)
-        for line in launch_paths(root / ".meridian", row.id).runner_lifecycle
-        .read_text()
+        for line in launch_paths(root / ".meridian", row.id)
+        .runner_lifecycle.read_text()
         .splitlines()
     ]
     assert [fact["reason"] for fact in facts if fact["event"] == "entry_mismatch"] == [

@@ -438,9 +438,7 @@ async def test_v2_reported_work_is_bounded_and_keeps_agents(tmp_path: Path) -> N
 _CHILD_ID = "ses_v2_fixture_child"
 
 
-def _surfaced_request(
-    status: str, request_id: str, session_id: str = _CHILD_ID
-) -> RawHarnessEvent:
+def _surfaced_request(status: str, request_id: str, session_id: str = _CHILD_ID) -> RawHarnessEvent:
     """A permission request as the managed primary's broker surfaces it to the sensor."""
 
     transition = PermissionTransition(

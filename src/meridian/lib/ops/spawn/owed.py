@@ -364,9 +364,7 @@ def collect_owed_sync(
     return _EMPTY
 
 
-def _record_best_effort(
-    runtime_root: Path, caller_spawn_id: str | None, **changes: Any
-) -> bool:
+def _record_best_effort(runtime_root: Path, caller_spawn_id: str | None, **changes: Any) -> bool:
     """Write to the caller's ledger; whether it was written.
 
     Consumption writes may fail: that costs a repeated delivery, never a lost one. The
@@ -487,9 +485,7 @@ def ack_owed_sync(
     if runtime_root is None:
         raise ValueError("Project has no runtime state")
     acked = tuple(
-        dict.fromkeys(
-            spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip()
-        )
+        dict.fromkeys(spawn_id.strip() for spawn_id in payload.spawn_ids if spawn_id.strip())
     )
     recorded_ids = {
         spawn_id for spawn_id, ns in delivered_launches(runtime_root, parent_spawn_id).items() if ns

@@ -1193,7 +1193,9 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
             telemetry_mode=(
                 StartupTelemetryMode.NONE
                 if launch_dry_run
-                else descriptor.telemetry_mode if descriptor is not None else None
+                else descriptor.telemetry_mode
+                if descriptor is not None
+                else None
             ),
             startup_class=startup_class,
             project_root=project_root,

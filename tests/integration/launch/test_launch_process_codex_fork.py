@@ -325,8 +325,8 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     assert row.run_boundary.status == "mismatch"
     facts = [
         json.loads(line)
-        for line in launch_paths(launch_context.runtime_root, row.id).runner_lifecycle
-        .read_text()
+        for line in launch_paths(launch_context.runtime_root, row.id)
+        .runner_lifecycle.read_text()
         .splitlines()
     ]
     mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
@@ -363,8 +363,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         harness=HarnessId.CODEX,
         execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
         prompt_surface_inventory_prompt=(
-            "# Meridian Agents\n\n## Subagent\n"
-            "- `meridian spawn -a reviewer`: Review.\n"
+            "# Meridian Agents\n\n## Subagent\n- `meridian spawn -a reviewer`: Review.\n"
         ),
     )
     sid = "12345678-1234-4234-8234-123456789abc"
@@ -482,9 +481,7 @@ def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
     row = list_spawns(ctx.runtime_root).records[0]
     facts = [
         json.loads(line)
-        for line in launch_paths(ctx.runtime_root, row.id).runner_lifecycle
-        .read_text()
-        .splitlines()
+        for line in launch_paths(ctx.runtime_root, row.id).runner_lifecycle.read_text().splitlines()
     ]
     mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
     assert len(mismatch) == 1 and mismatch[0]["phase"] == "pre_exec"

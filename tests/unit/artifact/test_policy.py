@@ -51,9 +51,7 @@ def test_slug_derivation_sanitizes_and_resolves_collisions() -> None:
     assert service.derive_slug(Path("/tmp/My  Report!!"), None, set(), 50000) == "my-report"
     assert service.derive_slug(Path("/tmp/report"), None, {"report"}, 51234) == "report-51234"
     assert (
-        service.derive_slug(
-            Path("/tmp/report"), None, {"report", "report-51234"}, 51234
-        )
+        service.derive_slug(Path("/tmp/report"), None, {"report", "report-51234"}, 51234)
         == "report-51234-2"
     )
     with pytest.raises(service.ArtifactError):

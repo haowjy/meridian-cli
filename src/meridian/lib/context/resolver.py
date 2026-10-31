@@ -202,9 +202,7 @@ def render_context_lines(
     else:
         lines.append("work: (no active work item — run 'meridian work start')")
 
-    archive_resolved = (
-        resolved.work_archive.as_posix() if resolved.work_archive is not None else ""
-    )
+    archive_resolved = resolved.work_archive.as_posix() if resolved.work_archive is not None else ""
     if archive_resolved:
         archive_env_key = context_env_key("work_archive")
         if os.getenv(archive_env_key, "") == archive_resolved:

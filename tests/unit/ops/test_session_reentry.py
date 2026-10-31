@@ -13,6 +13,6 @@ from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, decide_reent
     ids=["missing-session", "live-session", "stopped-session"],
 )
 def test_decide_reentry(live: bool, has_harness_session: bool, expected: object) -> None:
-    assert decide_reentry(
-        chat_id="c1", live=live, has_harness_session=has_harness_session
-    ) == expected
+    assert (
+        decide_reentry(chat_id="c1", live=live, has_harness_session=has_harness_session) == expected
+    )

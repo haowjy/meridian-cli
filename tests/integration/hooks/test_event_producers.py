@@ -175,9 +175,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
             project_root=str(project_root),
         )
     )
-    assert (
-        session_store.get_session_active_work_id(work_runtime_root, "c9004") == renamed.new_name
-    )
+    assert session_store.get_session_active_work_id(work_runtime_root, "c9004") == renamed.new_name
     assert activation_count() == activations_before_rename
 
     work_done_sync(WorkDoneInput(work_id=renamed.new_name, project_root=str(project_root)))
@@ -232,10 +230,7 @@ def test_every_accepted_hook_event_reaches_the_dispatcher_from_a_producer(
         activate_work_fn=activate_work,
     )
     assert primary_work_id == renamed.new_name
-    assert (
-        session_store.get_session_active_work_id(work_runtime_root, "c9013")
-        == renamed.new_name
-    )
+    assert session_store.get_session_active_work_id(work_runtime_root, "c9013") == renamed.new_name
 
     activations_before_child = activation_count()
     with _session_execution_context(

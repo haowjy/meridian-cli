@@ -37,8 +37,7 @@ class NotifyOptions(BaseModel):
         from meridian.lib.notify.channels import normalize_channel_name
 
         return tuple(
-            normalize_channel_name(channel, aliases=("push", "email"))
-            for channel in value
+            normalize_channel_name(channel, aliases=("push", "email")) for channel in value
         )
 
 
@@ -98,9 +97,7 @@ class NotifyHook:
             warning=diagnostic if report.ok else None,
             error=None if report.ok else diagnostic,
             duration_ms=int((time.monotonic() - start) * 1000),
-            details={
-                "transports": tuple(result.channel for result in report.results if result.ok)
-            },
+            details={"transports": tuple(result.channel for result in report.results if result.ok)},
         )
 
     def _skipped(self, context: HookContext, config: Hook, reason: str) -> HookResult:

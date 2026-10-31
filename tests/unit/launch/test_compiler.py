@@ -261,5 +261,3 @@ def test_resident_rearm_budget_resolves_cli_env_profile_config_precedence() -> N
     assert env_wins.execution_policy.resident_rearm_budget == 2
     assert cli_wins.execution_policy.resident_rearm_budget == 1
     assert ResolvedExecutionPolicy().resident_rearm_budget is None
-
-

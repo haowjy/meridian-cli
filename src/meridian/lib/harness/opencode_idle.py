@@ -444,10 +444,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         inbox_item = _v2_inbox_item(event)
         if inbox_item is not None:
             inbox_id, item_type = inbox_item
-            if (
-                item_type == "user"
-                and inbox_id not in self._seen_user_inbox_ids
-            ):
+            if item_type == "user" and inbox_id not in self._seen_user_inbox_ids:
                 self._seen_user_inbox_ids.add(inbox_id)
                 self._pending_user_inbox_ids.add(inbox_id)
                 # Enqueue is the earliest reliable proof of a real user return.

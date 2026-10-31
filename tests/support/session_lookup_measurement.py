@@ -142,7 +142,7 @@ def main() -> None:
                 result=str(result)[:500],
                 module=s.__file__,
                 exceptions=0,
-            policy_errors=len(result.errors) if operation == "archive" else 0,
+                policy_errors=len(result.errors) if operation == "archive" else 0,
             )
         ),
         flush=True,

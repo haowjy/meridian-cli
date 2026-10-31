@@ -122,16 +122,14 @@ async def test_claude_primary_posts_to_published_inbox(
     )
 
     try:
-        await spawn_message.send_message(
-            "p1", "Reply exactly ACK", sender_spawn_id="p2"
-        )
+        await spawn_message.send_message("p1", "Reply exactly ACK", sender_spawn_id="p2")
     finally:
         server.close()
         receiver.join(timeout=2)
 
     assert not receiver.is_alive()
     framed = (
-        '[Meridian] Message from spawn p2 (chat c1). To answer, run '
+        "[Meridian] Message from spawn p2 (chat c1). To answer, run "
         '`meridian spawn message c1 --message "..."`.\n\nReply exactly ACK'
     )
     assert received == [

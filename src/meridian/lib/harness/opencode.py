@@ -170,9 +170,7 @@ def bind_opencode_spec(
     _ = child_cwd
     return spec.model_copy(
         update={
-            "opencode_version": resolve_opencode_version(
-                env.get(OPENCODE_VERSION_ENV), env=env
-            )
+            "opencode_version": resolve_opencode_version(env.get(OPENCODE_VERSION_ENV), env=env)
         }
     )
 
@@ -196,8 +194,7 @@ def project_opencode_primary_preview(
         )
     else:
         probe_step = (
-            "GET /config/providers and /config; "
-            "validate availability and the effective model.",
+            "GET /config/providers and /config; validate availability and the effective model.",
         )
         attach_command = build_opencode_attach_command(
             spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
@@ -207,9 +204,7 @@ def project_opencode_primary_preview(
         (
             "Keep the existing native session's committed model; "
             + (
-                "select Meridian's agent on it."
-                if spec.agent_name
-                else "keep its committed agent."
+                "select Meridian's agent on it." if spec.agent_name else "keep its committed agent."
             ),
         )
         if continuing
@@ -227,8 +222,7 @@ def project_opencode_primary_preview(
         attach_command=attach_command,
         steps=(
             *steps,
-            "Preserve inherited configuration; the bound config selects Meridian's "
-            "policy agent.",
+            "Preserve inherited configuration; the bound config selects Meridian's policy agent.",
             "Launch, inspections and bootstrap share one startup deadline.",
             "Native configuration and actual message model are unavailable in dry-run.",
             "Fail on rejected configuration; no black-box fallback.",

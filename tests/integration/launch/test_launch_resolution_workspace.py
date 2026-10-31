@@ -316,9 +316,7 @@ def test_opencode_workspace_projection_merges_parent_env(
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
     if parent_env_present:
         assert payload["instructions"] == ["/tmp/system.md"]
-        assert payload["permission"] == {
-            "external_directory": {"/existing/*": "ask"}
-        }
+        assert payload["permission"] == {"external_directory": {"/existing/*": "ask"}}
     assert "workspace_opencode_parent_env_suppressed" not in warning_codes
 
 

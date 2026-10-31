@@ -265,9 +265,7 @@ def test_spawn_status_json_contract(
 
     payload = _run_json(project_root, env, "spawn", "status", "p1")
 
-    assert {"spawn_id", "status", "model", "harness", "report_summary"} <= (
-        payload.keys()
-    )
+    assert {"spawn_id", "status", "model", "harness", "report_summary"} <= (payload.keys())
     _assert_noisy_keys_absent(payload)
 
 
@@ -388,9 +386,7 @@ def test_spawn_collect_and_ack_json_contract(
 
     fetched_text = _run_text(project_root, env, "spawn", "wait", "--no-observe")
     assert fetched_text == (
-        "p3 failed (exit 1)\n"
-        "Worker: claude-haiku-5-5 (claude)\n"
-        "meridian spawn show p3"
+        "p3 failed (exit 1)\nWorker: claude-haiku-5-5 (claude)\nmeridian spawn show p3"
     )
 
     fetched_json = _run_json(
@@ -403,9 +399,7 @@ def test_spawn_collect_and_ack_json_contract(
     )
     assert fetched_json["spawns"] == []
     assert fetched_json["since_started_spawns"] == []
-    assert fetched_json["owed_spawns"][0]["report_summary"] == (
-        "Another delivered child report."
-    )
+    assert fetched_json["owed_spawns"][0]["report_summary"] == ("Another delivered child report.")
     assert "report_body" not in fetched_json
     assert "report_body" not in fetched_json["owed_spawns"][0]
     assert fetched_json["total_runs"] == 0
@@ -469,10 +463,10 @@ def test_hooks_run_json_contract(
     project_root, env, _ = cli_project
     with (project_root / "meridian.toml").open("a", encoding="utf-8") as config:
         config.write(
-        "[[hooks]]\n"
-        'name = "projection-test"\n'
-        'event = "spawn.finished"\n'
-        'command = "printf hook-output; printf hook-error >&2"\n'
+            "[[hooks]]\n"
+            'name = "projection-test"\n'
+            'event = "spawn.finished"\n'
+            'command = "printf hook-output; printf hook-error >&2"\n'
         )
 
     payload = _run_json(project_root, env, "hooks", "run", "projection-test")

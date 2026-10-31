@@ -292,6 +292,4 @@ async def streaming_serve(
             )
             if not finalize_outcome.wrote:
                 print(f"Finalize skipped for spawn {spawn_id} (already terminal or missing)")
-            print(
-                f"Stopped spawn {spawn_id} (status={outcome_status}, exit={outcome_exit_code})"
-            )
+            print(f"Stopped spawn {spawn_id} (status={outcome_status}, exit={outcome_exit_code})")

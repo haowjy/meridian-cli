@@ -80,9 +80,7 @@ class FakeBundleResult:
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
-    network: NetworkPolicy | SandboxDerivedNetwork = field(
-        default_factory=SandboxDerivedNetwork
-    )
+    network: NetworkPolicy | SandboxDerivedNetwork = field(default_factory=SandboxDerivedNetwork)
     agent_source_path: str | None = None
     provider_constraint: str | None = None
     selection_report: dict[str, object] | None = None

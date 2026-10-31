@@ -38,6 +38,7 @@ from tests.support.launch_paths import launch_paths
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
+
 @dataclass
 class _LifecycleRecorder:
     calls: list[str] = field(default_factory=list)

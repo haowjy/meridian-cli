@@ -441,9 +441,7 @@ _INLINE_FILE_REFS_WARNING_MESSAGE = (
 # belongs to this execution, so bind pins it in the spawn scope that every later
 # link publish reads. Anything else — the item's checkout, the project root — is
 # recomputed from the work store, so it is never pinned and follows `work task-dir`.
-_PINNED_TASK_DIR_SOURCES = frozenset(
-    {"explicit-task-dir", "inherited-task-dir", "ambient-cwd"}
-)
+_PINNED_TASK_DIR_SOURCES = frozenset({"explicit-task-dir", "inherited-task-dir", "ambient-cwd"})
 
 
 def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> CompositionWarning | None:
@@ -1012,9 +1010,7 @@ def _build_shared_composition(
     return build_guidance_blocks(
         profile=policy.profile,
         loaded_skills=frozenset(
-            skill.name
-            for skill in policy.resolved_skills.loaded_skills
-            if skill.content.strip()
+            skill.name for skill in policy.resolved_skills.loaded_skills if skill.content.strip()
         ),
         spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
@@ -1123,9 +1119,7 @@ def _resolve_primary_projection(
     # every resume. So the primary's goal is a block of its system prompt.
     goal_block = _goal_block(request)
     shared_blocks = _build_shared_composition(policy=policy)
-    guidance_blocks = (
-        (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
-    )
+    guidance_blocks = (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",

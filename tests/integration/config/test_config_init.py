@@ -102,9 +102,7 @@ def test_config_init_after_adhoc_use_starts_clean_and_reports_old_root(
     committed_identity = resolve_project_identity(project_root)
     committed_root = user_state_root / "projects" / str(committed_identity.id)
 
-    assert result.note == (
-        f"earlier ad-hoc state at {old_root.as_posix()} is not carried over"
-    )
+    assert result.note == (f"earlier ad-hoc state at {old_root.as_posix()} is not carried over")
     assert result.format_text().endswith(f"note: {result.note}")
     assert committed_identity.tier == "committed"
     assert committed_identity.id != adhoc_identity.id

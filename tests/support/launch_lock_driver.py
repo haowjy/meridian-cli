@@ -62,10 +62,19 @@ def fake_harness() -> None:
     code = os.waitstatus_to_exitcode(status)
     if code != 0:
         sys.exit(code)
-    print(json.dumps({
-        "type": "result", "subtype": "success", "is_error": False,
-        "result": "OK", "session_id": session, "num_turns": 1,
-    }), flush=True)
+    print(
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "OK",
+                "session_id": session,
+                "num_turns": 1,
+            }
+        ),
+        flush=True,
+    )
 
 
 def main() -> None:
@@ -82,11 +91,21 @@ def main() -> None:
     patch = pytest.MonkeyPatch()
     patch.setattr(control_socket, "_POSIX_SOCKET_ROOT", Path(os.environ["FAKE_SOCKET_ROOT"]))
     stub_bundle_request_and_resolve(patch, model="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    patch.setattr(execute, "_build_background_worker_command", lambda **kw: (
-        sys.executable, __file__, "worker", "--spawn-id", str(kw["spawn_id"]),
-        "--project-root", str(kw["project_paths"].project_root),
-        "--runtime-root", str(kw["runtime_root"]),
-    ))
+    patch.setattr(
+        execute,
+        "_build_background_worker_command",
+        lambda **kw: (
+            sys.executable,
+            __file__,
+            "worker",
+            "--spawn-id",
+            str(kw["spawn_id"]),
+            "--project-root",
+            str(kw["project_paths"].project_root),
+            "--runtime-root",
+            str(kw["runtime_root"]),
+        ),
+    )
     race = os.environ.get("FAKE_RACE")
     if race:
         from meridian.lib.ops.spawn import api

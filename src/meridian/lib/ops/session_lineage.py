@@ -37,4 +37,3 @@ def session_lineage_sync(payload: SessionLineageInput) -> SessionLineageOutput:
             for child, kind, parent in edges
         ),
     )
-

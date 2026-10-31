@@ -234,9 +234,7 @@ def _session_metadata(subject: Located | None) -> list[str]:
     return lines
 
 
-def _session_scope(
-    subject: Located | None, ref: str
-) -> tuple[str | None, str | None, str | None]:
+def _session_scope(subject: Located | None, ref: str) -> tuple[str | None, str | None, str | None]:
     """Return (exact_chat_id, owner_chat_id, parent_spawn_id) for export grouping."""
 
     if subject is None:

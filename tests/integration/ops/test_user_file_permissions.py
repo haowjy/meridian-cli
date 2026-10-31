@@ -20,7 +20,7 @@ def _mode(path: Path) -> int:
 @pytest.mark.skipif(IS_WINDOWS, reason="POSIX file modes are not enforced on Windows")
 def test_agent_copy_scaffold_preserves_mars_toml_mode(tmp_path: Path) -> None:
     mars_toml = tmp_path / "mars.toml"
-    mars_toml.write_text('[settings]\n', encoding="utf-8")
+    mars_toml.write_text("[settings]\n", encoding="utf-8")
     mars_toml.chmod(0o644)
 
     assert maybe_scaffold_claude_agent_copy(tmp_path, ["claude"]) is True

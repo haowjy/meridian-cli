@@ -85,6 +85,7 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
             "OPENCODE_CONFIG_CONTENT",
         )
 
+
 def project_opencode_spec_to_serve_command(
     spec: ResolvedLaunchSpec,
     *,
@@ -114,7 +115,9 @@ def project_opencode_spec_to_serve_command(
 
 
 def project_opencode_model(
-    model: str | None, *, id_field: Literal["id", "modelID"],
+    model: str | None,
+    *,
+    id_field: Literal["id", "modelID"],
 ) -> dict[str, str] | None:
     """Project the provider-qualified selection to OpenCode's endpoint-specific model ref."""
     if model is None:

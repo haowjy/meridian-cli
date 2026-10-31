@@ -72,12 +72,7 @@ def resolve_pi_extension_target_root(
 ) -> Path:
     """Legacy per-launch materialization dir (dev/tests only — not hot path)."""
 
-    return (
-        resolve_pi_agent_dir(env=env)
-        / "extensions"
-        / _MERIDIAN_EXTENSION_NAMESPACE
-        / launch_id
-    )
+    return resolve_pi_agent_dir(env=env) / "extensions" / _MERIDIAN_EXTENSION_NAMESPACE / launch_id
 
 
 def _env_strip(key: str) -> str:

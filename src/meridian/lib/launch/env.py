@@ -73,11 +73,7 @@ def apply_pi_bind_time_env(
         and timeout_seconds > 0
     ):
         env[_PI_CHILD_WAVE_TIMEOUT_MS_ENV] = str(max(1, int(timeout_seconds * 1000)))
-    if (
-        interval_seconds is not None
-        and math.isfinite(interval_seconds)
-        and interval_seconds > 0
-    ):
+    if interval_seconds is not None and math.isfinite(interval_seconds) and interval_seconds > 0:
         env[_PI_TASK_PING_INTERVAL_MS_ENV] = str(max(1, int(interval_seconds * 1000)))
     if reset_on_activity is not None:
         env[_PI_TASK_PING_RESET_ON_ACTIVITY_ENV] = "true" if reset_on_activity else "false"
@@ -117,8 +113,7 @@ def inherit_child_env(
     inherited = {
         key: value
         for key, value in base_env.items()
-        if key.upper() not in blocked_keys
-        and not key.upper().startswith("MERIDIAN_SECRET_")
+        if key.upper() not in blocked_keys and not key.upper().startswith("MERIDIAN_SECRET_")
     }
     if env_overrides is not None:
         inherited.update(env_overrides)

@@ -112,8 +112,10 @@ def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
         _fail(str(exc))
     if target.chat_id is not None and not target.occupant:
         owner = read_derived(runtime_root, target.spawn_id)
-        if owner is None or not is_active_spawn_status(owner.status) or (
-            owner.current_chat_id not in (None, target.chat_id)
+        if (
+            owner is None
+            or not is_active_spawn_status(owner.status)
+            or (owner.current_chat_id not in (None, target.chat_id))
         ):
             _fail(f"chat {target.chat_id} has no running session")
     return str(target.spawn_id)

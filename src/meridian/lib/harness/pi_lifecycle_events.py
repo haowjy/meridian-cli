@@ -9,12 +9,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
-PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
-    "meridian.quiescence.",
-)
-PI_LIFECYCLE_EVENT_ALLOWLIST: Final[frozenset[str]] = frozenset(
-    {"meridian.quiescence.ready"}
-)
+PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = ("meridian.quiescence.",)
+PI_LIFECYCLE_EVENT_ALLOWLIST: Final[frozenset[str]] = frozenset({"meridian.quiescence.ready"})
 PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _REDACTED_ARG_VALUE: Final[str] = "<redacted>"
 _SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
@@ -95,15 +91,12 @@ def pi_lifecycle_event_label_candidates(event: RawHarnessEvent) -> tuple[str, ..
     return tuple(candidates)
 
 
-
 def unsupported_pi_schema_version_error(
     labels: set[str],
     payload: dict[str, object],
 ) -> str | None:
     canonical_lifecycle_labels = {
-        label
-        for label in labels
-        if label.startswith(PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES)
+        label for label in labels if label.startswith(PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES)
     }
     if not canonical_lifecycle_labels:
         return None
@@ -115,10 +108,7 @@ def unsupported_pi_schema_version_error(
     if schema_version is None:
         return "pi_lifecycle_tracking_invalidated:unsupported_schema_version:unknown"
     if schema_version != PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION:
-        return (
-            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:"
-            f"{schema_version}"
-        )
+        return f"pi_lifecycle_tracking_invalidated:unsupported_schema_version:{schema_version}"
     return None
 
 

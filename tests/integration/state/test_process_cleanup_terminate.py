@@ -208,9 +208,7 @@ def test_terminate_recorded_spawn_scopes_does_not_run_legacy_worker_fallback(
             False,
         ),
         (
-            lambda: type(
-                "LiveProc", (), {"create_time": lambda self: 1_000_000.1}
-            )(),
+            lambda: type("LiveProc", (), {"create_time": lambda self: 1_000_000.1})(),
             1_000_000.0,
             True,
         ),
@@ -246,9 +244,7 @@ def test_session_lease_cleanup_uses_birth_checked_os_liveness(
         reason: str,
     ) -> CleanupResult:
         terminated.append(candidate.release_id)
-        return _cleanup_result(
-            candidate.scope_id, candidate.root_pid, reason, grace_seconds
-        )
+        return _cleanup_result(candidate.scope_id, candidate.root_pid, reason, grace_seconds)
 
     monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope_sync)
 

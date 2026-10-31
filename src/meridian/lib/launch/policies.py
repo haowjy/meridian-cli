@@ -733,9 +733,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         network_explicit = snapshot.field_provenance.get("network_source") == (
             ProvenanceLevel.CLI.value
         )
-        recompute_network = network_given or (
-            "sandbox" in changed and not network_explicit
-        )
+        recompute_network = network_given or ("sandbox" in changed and not network_explicit)
         bundle = bundle_adapter.request_and_resolve(
             bundle_adapter.BundleRequest(
                 agent=None,

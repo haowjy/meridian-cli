@@ -662,9 +662,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             nonlocal publication_failures
             current_id = json.loads(text).get("current_chat_id")
             current = (
-                session_store.chat_record(context.runtime_root, current_id)
-                if current_id
-                else None
+                session_store.chat_record(context.runtime_root, current_id) if current_id else None
             )
             sid = current.harness_session_id if current is not None else None
             if sid == "unpersisted" and publication_failures == 0:

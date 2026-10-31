@@ -181,6 +181,7 @@ def test_cleanup_failure_keeps_only_unresolved_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
+
     def fail(claimed: ProcessScopeSnapshot, **_kwargs) -> CleanupResult:
         result = _cleanup_result(claimed)
         return CleanupResult(**{**result.__dict__, "skip_reason": "termination_exception"})

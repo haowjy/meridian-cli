@@ -17,17 +17,12 @@ def test_hooks_run_creates_no_state_in_unmaterialized_adhoc_place(
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.toml").write_text(
-        "[[hooks]]\n"
-        'name = "manual-test"\n'
-        'event = "spawn.finished"\n'
-        'command = "true"\n',
+        '[[hooks]]\nname = "manual-test"\nevent = "spawn.finished"\ncommand = "true"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
 
-    result = hooks_run_sync(
-        HookRunInput(name="manual-test", project_root=project_root.as_posix())
-    )
+    result = hooks_run_sync(HookRunInput(name="manual-test", project_root=project_root.as_posix()))
 
     assert result.result.success
     assert "identity_created" not in result.model_dump()
@@ -56,10 +51,7 @@ async def test_mcp_hooks_run_is_read_only_and_omits_identity_created(
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.toml").write_text(
-        "[[hooks]]\n"
-        'name = "manual-test"\n'
-        'event = "spawn.finished"\n'
-        'command = "true"\n',
+        '[[hooks]]\nname = "manual-test"\nevent = "spawn.finished"\ncommand = "true"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
@@ -103,9 +95,7 @@ def test_hooks_run_uses_one_same_spec_registration_but_requires_event_for_differ
 
     monkeypatch.setattr(BUILTIN_HOOKS["git-autosync"], "execute", execute)
 
-    result = hooks_run_sync(
-        HookRunInput(name="same-spec", project_root=project_root.as_posix())
-    )
+    result = hooks_run_sync(HookRunInput(name="same-spec", project_root=project_root.as_posix()))
 
     assert result.result.success
     assert calls == ["work.done"]
@@ -134,6 +124,4 @@ def test_hooks_run_uses_one_same_spec_registration_but_requires_event_for_differ
     )
 
     with pytest.raises(ValueError, match="pass --event"):
-        hooks_run_sync(
-            HookRunInput(name="different", project_root=project_root.as_posix())
-        )
+        hooks_run_sync(HookRunInput(name="different", project_root=project_root.as_posix()))

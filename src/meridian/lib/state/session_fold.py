@@ -600,9 +600,7 @@ def project_session_generation(
     if project_session_event(rows, event):
         if isinstance(event, SessionStartEvent):
             rows[chat_id] = rows[chat_id].model_copy(
-                update={
-                    field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS
-                }
+                update={field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS}
             )
         changed.append((chat_id, generation))
         current = rows[chat_id]

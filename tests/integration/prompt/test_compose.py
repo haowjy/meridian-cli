@@ -122,5 +122,3 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
     # A single-file reference is inlined instead of rendered as a tree
     assert single_file.as_posix() in composed
     assert "File content here" in composed
-
-

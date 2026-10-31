@@ -357,12 +357,8 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("session", "archive"),
         "Archive retained history.",
     ),
-    _write_runtime(
-        ("session", "import"), "Import history ZIP."
-    ),
-    _write_runtime(
-        ("session", "restore"), "Restore inert history."
-    ),
+    _write_runtime(("session", "import"), "Import history ZIP."),
+    _write_runtime(("session", "restore"), "Restore inert history."),
     _write_runtime(
         ("session", "index"),
         "Inspect or rebuild history index.",
@@ -370,9 +366,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(("work",), "Show work dashboard."),
     _read_runtime(("work", "list"), "List work items."),
     _read_runtime(("work", "show"), "Show work item."),
-    _read_runtime(
-        ("work", "sessions"), "Show sessions for work."
-    ),
+    _read_runtime(("work", "sessions"), "Show sessions for work."),
     _read_runtime(("work", "current"), "Show current work."),
     _write_runtime(
         ("work", "path"),
@@ -383,9 +377,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("work", "start"),
         "Start work item.",
     ),
-    _write_runtime(
-        ("work", "switch"), "Switch current work."
-    ),
+    _write_runtime(("work", "switch"), "Switch current work."),
     _write_runtime(("work", "done"), "Mark work done."),
     _write_runtime(("work", "reopen"), "Reopen work item."),
     _write_runtime(("work", "update"), "Update work item."),
@@ -396,9 +388,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("work", "task-dir"),
         "Print or set the active work item's source-code edit directory.",
     ),
-    _read_rootless(
-        ("config", "show"), "Show resolved config."
-    ),
+    _read_rootless(("config", "show"), "Show resolved config."),
     _read_rootless(("config", "get"), "Get config value."),
     _write_project(
         ("config", "init"),
@@ -409,9 +399,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("config", "set"),
         "Set config value.",
     ),
-    _author_project(
-        ("config", "reset"), "Reset config value."
-    ),
+    _author_project(("config", "reset"), "Reset config value."),
     _read_project(("context",), "Show context paths."),
     _read_rootless(
         ("doctor",),
@@ -433,9 +421,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _read_runtime(("ext", "run"), "Run extension command."),
     _read_project(("hooks", "list"), "List hooks."),
-    _read_project(
-        ("hooks", "check"), "Check hook configuration."
-    ),
+    _read_project(("hooks", "check"), "Check hook configuration."),
     _read_project(("hooks", "run"), "Run hooks."),
     _read_runtime(
         ("task-dir",),

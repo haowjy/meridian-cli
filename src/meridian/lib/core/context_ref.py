@@ -51,6 +51,7 @@ class SessionContextRef(BaseModel):
 
 type ContextRef = SpawnContextRef | SessionContextRef
 
+
 def resolved_context_ref_value(ref: ContextRef) -> str:
     """Return the external resolved reference value for operation output."""
 

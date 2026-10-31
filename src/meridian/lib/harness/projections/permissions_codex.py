@@ -421,9 +421,7 @@ def _codex_report(
             ReportLine(
                 network_element,
                 "partial" if enforced else "unsupported",
-                (
-                    "sandbox is left to Codex, so Meridian does not project network_access"
-                ),
+                ("sandbox is left to Codex, so Meridian does not project network_access"),
             )
         )
     if permissions.approval_policy is not None:

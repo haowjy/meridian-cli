@@ -56,9 +56,7 @@ class Sender:
         self.ok = ok
         self.notices: list[Notification] = []
 
-    def __call__(
-        self, event: HookEventName, notice: Notification
-    ) -> RouteReport:
+    def __call__(self, event: HookEventName, notice: Notification) -> RouteReport:
         _ = event
         self.notices.append(notice)
         status = "sent" if self.ok else "failed"

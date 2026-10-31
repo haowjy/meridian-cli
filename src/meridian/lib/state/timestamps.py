@@ -25,6 +25,6 @@ def iso_timestamp_to_epoch(timestamp: str | None) -> float | None:
 def epoch_to_iso_timestamp(epoch: float) -> str:
     """Format epoch seconds the way state files persist timestamps."""
 
-    return datetime.fromtimestamp(epoch, UTC).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
+    return (
+        datetime.fromtimestamp(epoch, UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     )

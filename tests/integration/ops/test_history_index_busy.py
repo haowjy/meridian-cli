@@ -129,11 +129,14 @@ def test_query_projects_committed_sessions_without_waiting_for_writer(tmp_path: 
 
     with _held_source(root, source, release_after_secs=None):
         with index.query() as db:
-            assert db.execute(
-                sql_select(history_index.SESSIONS.c.chat).where(
-                    history_index.SESSIONS.c.chat == event.chat_id
-                )
-            ).scalar_one() == event.chat_id
+            assert (
+                db.execute(
+                    sql_select(history_index.SESSIONS.c.chat).where(
+                        history_index.SESSIONS.c.chat == event.chat_id
+                    )
+                ).scalar_one()
+                == event.chat_id
+            )
         assert marker_path.exists()
         assert not index.failure_path.exists()
 

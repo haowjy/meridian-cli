@@ -109,9 +109,7 @@ class ConflictRecord(BaseModel):
         return bool(value)
 
     @model_serializer(mode="wrap", when_used="json")
-    def _serialize_document(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, object]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         document = json_object(handler(self)) or {}
         document.pop("event_name", None)
         document.pop("spawn_id", None)
@@ -162,9 +160,10 @@ class SyncRootStatus:
 def has_autosync_state(sync_root: Path, *, runtime_root: Path) -> bool:
     """Return whether autosync artifacts exist for the sync root."""
 
-    return conflict_dir(sync_root, runtime_root=runtime_root).exists() or state_file(
-        sync_root, runtime_root=runtime_root
-    ).exists()
+    return (
+        conflict_dir(sync_root, runtime_root=runtime_root).exists()
+        or state_file(sync_root, runtime_root=runtime_root).exists()
+    )
 
 
 def _autosync_root(sync_root: Path, runtime_root: Path) -> Path:
@@ -373,9 +372,7 @@ def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> 
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
-        target = _find_conflict_file(
-            sync_root, conflict_id, runtime_root=runtime_root
-        )
+        target = _find_conflict_file(sync_root, conflict_id, runtime_root=runtime_root)
     except OSError:
         return False
     if target is None:
