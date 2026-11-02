@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -52,7 +52,7 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
-from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
+from meridian.lib.ops.mars import mars_list_agents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
     OperationRuntime,
@@ -1104,36 +1104,37 @@ def spawn_subagents_sync(
         prepared=prepared,
     )
     spawn_id = str(runtime_context(ctx).spawn_id or "").strip() or None
-    agent: str | None = None
-    if spawn_id is not None and runtime_root is not None:
-        row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-        agent = (row.agent or "").strip() or None if row is not None else None
+    row = (
+        read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+        if spawn_id is not None and runtime_root is not None
+        else None
+    )
+    agent = ((row.agent or "").strip() or None) if row is not None else None
+    harness = (row.harness or "").strip() if row is not None else ""
 
-    if agent is not None:
-        # Resolved current agent → its declared subagents verbatim.
-        # An empty allow-list is a LEAF agent (spawns nothing), not "spawn anything".
-        # None means mars could not resolve the profile → treat as empty.
-        declared = mars_agent_subagents(project_root, agent)
-        names = declared if declared is not None else ()
-        inventory = (
-            {entry.name: entry for entry in mars_list_subagents(project_root)} if names else {}
+    catalog = mars_list_agents(project_root)
+    caller = next((entry for entry in catalog if entry.name == agent), None)
+    # The caller's `subagents:` list is advisory: the default view, with `--all` showing
+    # what lies outside it.
+    declared = frozenset(caller.subagents) if caller is not None else frozenset[str]()
+    agents = tuple(
+        SpawnSubagentEntry(
+            name=entry.name,
+            scope=entry.scope,
+            description=entry.description,
+            mode=entry.mode,
+            model_invocable=entry.model_invocable,
+            # A fanout agent is native too, but Meridian stays its route.
+            native=harness in entry.native_harnesses and not entry.fanout,
+            declared=agent is None or entry.name in declared,
         )
-        agents = tuple(
-            SpawnSubagentEntry(
-                name=name,
-                scope=inventory[name].scope if name in inventory else None,
-            )
-            for name in sorted(set(names))
-        )
-    else:
-        # No current agent (no spawn context / record has no agent) → orchestrator
-        # view: list all subagent-mode agents.
-        agents = tuple(
-            SpawnSubagentEntry(name=entry.name, scope=entry.scope)
-            for entry in mars_list_subagents(project_root)
-        )
-
-    return SpawnSubagentsOutput(agents=agents)
+        for entry in catalog
+        if payload.all or (entry.name in declared and entry.model_invocable)
+    )
+    empty: Literal["no_current_agent", "no_declared_agents"] | None = None
+    if not agents and not payload.all:
+        empty = "no_current_agent" if agent is None else "no_declared_agents"
+    return SpawnSubagentsOutput(agents=agents, empty=empty)
 
 
 async def spawn_subagents(

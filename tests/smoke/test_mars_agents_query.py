@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.ops import mars as mars_module
-from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
+from meridian.lib.ops.mars import mars_list_agents
 
 pytestmark = pytest.mark.slow
 
@@ -75,6 +75,6 @@ def test_mars_query_commands_accepted_by_real_mars(
     _run_mars(executable, "add", package_root.as_posix(), cwd=project_root)
     _run_mars(executable, "sync", cwd=project_root)
 
-    assert mars_agent_subagents(project_root, _LEAD) == (_CHILD,)
-    listed = {entry.name: entry for entry in mars_list_subagents(project_root)}
+    listed = {entry.name: entry for entry in mars_list_agents(project_root)}
+    assert listed[_LEAD].subagents == (_CHILD,)
     assert listed[_CHILD].scope == "root"

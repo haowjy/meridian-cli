@@ -1311,25 +1311,58 @@ class SpawnSubagentsInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_root: str | None = None
+    # Every installed agent, hidden ones included, not just the caller's `subagents:` list.
+    all: bool = False
 
 
 class SpawnSubagentEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    scope: Literal["root", "fallback"] | None = None
+    scope: Literal["root", "fallback"] = "root"
+    description: str = ""
+    mode: Literal["primary", "subagent"] = "subagent"
+    model_invocable: bool = True
+    # Installed natively into the current session's harness and not a fanout agent:
+    # spawn it with the harness's own agent tool rather than `meridian spawn`.
+    native: bool = False
+    # False only under `--all`, for an agent outside the caller's `subagents:` list.
+    declared: bool = True
 
 
 class SpawnSubagentsOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     agents: tuple[SpawnSubagentEntry, ...]
+    # Why the default view is empty, so the caller learns `--all` instead of seeing nothing.
+    empty: Literal["no_current_agent", "no_declared_agents"] | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        return "\n".join(
-            f"{agent.name}\t{agent.scope or 'unknown'}" for agent in self.agents
-        )
+        if self.empty == "no_current_agent":
+            return (
+                "No calling agent to filter by; run `meridian spawn subagents --all` "
+                "to list every installed agent."
+            )
+        if self.empty == "no_declared_agents":
+            return (
+                "Your `subagents:` list names no agent to offer; run "
+                "`meridian spawn subagents --all` to list every installed agent."
+            )
+        lines: list[str] = []
+        for agent in self.agents:
+            markers: list[str] = []
+            if agent.mode == "primary":
+                markers.append("primary")
+            if agent.native:
+                markers.append("native: use your harness's agent tool")
+            if not agent.model_invocable:
+                markers.append("model-invocable: false; spawn only when asked")
+            if not agent.declared:
+                markers.append("outside your subagents list")
+            label = f"{agent.name} ({'; '.join(markers)})" if markers else agent.name
+            lines.append(f"- {label}: {agent.description}" if agent.description else f"- {label}")
+        return "\n".join(lines)
 
 
 class SpawnContinueInput(SpawnLaunchOptions):

@@ -1290,10 +1290,22 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
         return None
 
 
-def _spawn_subagents(emit: Emitter) -> None:
+def _spawn_subagents(
+    emit: Emitter,
+    all_agents: Annotated[
+        bool,
+        Parameter(
+            name="--all",
+            help=(
+                "List every installed agent, including model-invocable: false ones and "
+                "agents outside your subagents list."
+            ),
+        ),
+    ] = False,
+) -> None:
     emit(
         spawn_subagents_sync(
-            SpawnSubagentsInput(),
+            SpawnSubagentsInput(all=all_agents),
             ctx=resolve_cli_observer_context(observe=True),
             sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),

@@ -329,7 +329,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _read_runtime(
         ("spawn", "subagents"),
-        "List subagents the current agent may spawn.",
+        "List the agents to delegate to; `--all` for every installed agent.",
     ),
     _read_runtime(("spawn", "stats"), "Show spawn stats."),
     _read_runtime(("spawn", "report", "show"), "Show a spawn report."),
