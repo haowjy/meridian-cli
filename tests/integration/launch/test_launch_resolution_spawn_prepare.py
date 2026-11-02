@@ -24,13 +24,6 @@ from tests.support.launch import build_launch_context, stub_bundle_request_and_r
 
 pytestmark = pytest.mark.slow
 
-_BUNDLE_INVENTORY = (
-    "# Meridian Agents\n\n"
-    "## Subagent\n"
-    "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
-    "- `meridian spawn -a reviewer`: Review.\n"
-)
-
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
@@ -49,11 +42,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         monkeypatch,
         model="google/gemini-2.5-pro",
         harness=HarnessId.OPENCODE,
-        prompt_surface_inventory_prompt=(
-            "# Meridian Agents\n\n"
-            "## Subagent\n"
-            "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
-        ),
     )
     write_agent(
         tmp_path,
@@ -100,8 +88,8 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     ]
     assert f"# Reference: {file_ref.as_posix()}" in preview.binding.run_params.prompt
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.binding.run_params.prompt
-    assert "# Meridian Agents" not in preview.binding.run_params.prompt
-    assert "# Meridian Agents" in preview.projected_content.system_prompt
+    assert "# Meridian spawn rules" not in preview.binding.run_params.prompt
+    assert "# Meridian spawn rules" in preview.projected_content.system_prompt
 
 
 def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edits(
@@ -162,7 +150,6 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
         monkeypatch,
         model=model,
         harness=expected_harness,
-        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     write_agent(
         tmp_path,
@@ -193,12 +180,9 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
 
     assert preview.projected_content is not None
     inventory_channel = preview.projected_content.system_prompt
-    assert "# Meridian Agents" in inventory_channel
-    assert "## Subagent" in inventory_channel
-    assert "`meridian spawn -a dev-orchestrator`" in inventory_channel
-    assert "`meridian spawn -a reviewer`" in inventory_channel
-    assert "# Meridian Agents" not in preview.projected_content.user_turn_content
-    assert "# Meridian Agents" not in preview.binding.run_params.prompt
+    assert "# Meridian spawn rules" in inventory_channel
+    assert "# Meridian spawn rules" not in preview.projected_content.user_turn_content
+    assert "# Meridian spawn rules" not in preview.binding.run_params.prompt
 
 
 def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
@@ -210,7 +194,6 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
         monkeypatch,
         model="gpt-5.4",
         harness=HarnessId.CODEX,
-        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     agents_dir = tmp_path / ".mars" / "agents"
     agents_dir.mkdir(parents=True)
@@ -257,7 +240,7 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
 
     assert preview.projected_content is not None
     system_prompt = preview.projected_content.system_prompt
-    assert "# Meridian Agents" not in system_prompt
+    assert "# Meridian spawn rules" not in system_prompt
     assert "# Meridian spawn rules" not in system_prompt
 
 
@@ -277,7 +260,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
                 body="Use verification checklist.",
             ),
         ),
-        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     write_agent(
         tmp_path,
@@ -315,10 +297,7 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     assert preview.resolved_request.skill_paths
 
     assert projected.system_prompt.count("# Skill: /verification") == 1
-    assert "# Meridian Agents" in projected.system_prompt
-    assert "## Subagent" in projected.system_prompt
-    assert "`meridian spawn -a dev-orchestrator`" in projected.system_prompt
-    assert "`meridian spawn -a reviewer`" in projected.system_prompt
+    assert "# Meridian spawn rules" in projected.system_prompt
     assert "# Report" in projected.system_prompt
     assert "final assistant message must be the run report" in projected.system_prompt
 
@@ -332,11 +311,11 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     assert "complete the task" in projected.user_turn_content
     assert f"# Reference: {file_ref.as_posix()}" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
-    assert "# Meridian Agents" not in projected.user_turn_content
+    assert "# Meridian spawn rules" not in projected.user_turn_content
 
     assert preview.binding.run_params.prompt == projected.user_turn_content
     assert "# Skill:" not in preview.binding.run_params.prompt
-    assert "# Meridian Agents" not in preview.binding.run_params.prompt
+    assert "# Meridian spawn rules" not in preview.binding.run_params.prompt
 
 
 def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
@@ -355,7 +334,6 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
                 body="Use verification checklist.",
             ),
         ),
-        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     write_agent(
         tmp_path,
@@ -402,7 +380,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert preview.binding.run_params.continue_harness_session_id == harness_session_id
     assert preview.binding.run_params.continue_fork is True
     assert projected.system_prompt.count("# Skill: /verification") == 1
-    assert "# Meridian Agents" in projected.system_prompt
+    assert "# Meridian spawn rules" in projected.system_prompt
     assert "# Report" in projected.system_prompt
     assert projected.system_prompt.count("# Meridian spawn rules") == 1
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
@@ -413,7 +391,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
 
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
-    assert "# Meridian Agents" not in projected.user_turn_content
+    assert "# Meridian spawn rules" not in projected.user_turn_content
 
 
 def test_spawn_prepare_headless_deny_error_names_denied_harness(

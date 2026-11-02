@@ -44,7 +44,7 @@ writes, and dry-run binds never materialize them.
 ### PreparedLaunchSurface
 
 The in-memory boundary between preparation and binding. Carries: resolved request,
-harness, composition warnings, loaded references, agent inventory prompt, capability
+harness, composition warnings, loaded references, capability
 guidance, alias catalog, model selection context. Deliberately excludes spawn IDs,
 report paths, env, argv, and permission outputs — everything that varies per bind.
 
@@ -119,7 +119,7 @@ rewriting the source snapshot.
 
 Replay preserves non-routing policy: agent/profile, skills and loaded content, the
 available-skills listing (names, descriptions and paths, never bodies), execution
-policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory prompt, env
+policy, `tool_rules` and `platform_tool_rules`, terminal surface, env
 and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot and ignored
 because it contains permission names, not MCP configuration. Exact continue permits an
 explicit model override with a cache/cost warning; it still rejects agent, skills,
@@ -289,21 +289,24 @@ and spawned-cache overrides, Pi's runtime policy, and OpenCode's prompt, model
 and workspace grants (see the
 harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
 
-### Agent Inventory Prompt
+### Agent Catalog
 
-Agent inventory is bundle-only. Mars renders harness-aware inventory in the
-launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
-native-agent sections, model metadata). Meridian passes that content through verbatim;
-producer guidance belongs to Mars rather than string-matched patches in the consumer.
-There is no Python fallback inventory renderer.
+No agent list enters the prompt. A spawn-capable agent's capabilities block points at
+`meridian spawn subagents`, which reads the catalog live from `mars agents list`, so a
+long session sees agents installed after it launched and the prompt pays nothing for
+the catalog. Meridian ignores the launch bundle's `prompt_surface.inventory_prompt`;
+a snapshot an older build wrote with `bundle_inventory_prompt` loads with the field
+dropped.
 
-`model_invocable` filtering happens in mars at inventory render time. Catalog
-scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
-listing and explicit `-a <name>` resolution are unaffected.
+The default view is the caller's `subagents:` list, which is advisory: nothing stops
+`meridian spawn -a` outside it, and `--all` lists every installed agent, marking the
+ones outside the list. Mars reports the routing facts per agent: `model-invocable:
+false` agents stay out of the default view, an agent native to the session's harness
+is marked for the harness's own agent tool, and a fanout agent stays on Meridian even
+where it is native. Catalog scanning (`scan_agent_profiles()`, `load_agent_profile()`)
+stays neutral, so explicit `-a <name>` resolution is unaffected.
 
-Resume and snapshot replay carry `bundle_inventory_prompt` on
-`LaunchPolicySnapshot` so inventory survives without re-calling mars. The same
-snapshot carries `available_skills` (names, descriptions, paths) so the
+Snapshot replay carries `available_skills` (names, descriptions, paths) so the
 `# Available Skills` listing recomposes instead of disappearing on continue.
 
 ### Spawn CWD and Directory Contracts
@@ -377,12 +380,15 @@ overrides it. The work item's own goal is neither text nor user turn: the block
 carries a pointer, "run `meridian work show`", and that command resolves the session's
 current work item itself, so the prompt holds no goal that could be edited
 mid-conversation and no ID that could go stale. The block names
-`$MERIDIAN_ACTIVE_WORK_DIR` and `$MERIDIAN_TASK_DIR` for the links it names. Its run-ID row
-names `$MERIDIAN_SPAWN_ID` and points at `meridian task-dir --json`, which prints it as
-`spawn_id`: a restricted shell cannot expand the variable, and `meridian spawn list` lists runs
-without saying which one is the caller's. The notification
-row is present only for a `mode: primary` profile; delegation rows remain gated by
-spawn capability. The source line names the actual control root as shell cwd and gives
+`$MERIDIAN_ACTIVE_WORK_DIR` and `$MERIDIAN_TASK_DIR` for the links it names. A primary's
+chat-ID row names its spawn ID as `$MERIDIAN_SPAWN_ID` and points at `meridian task-dir
+--json`, which prints it as `spawn_id`: a restricted shell cannot expand the variable, and
+`meridian spawn list` lists spawns without saying which one is the caller's. A spawn gets
+the literal ID in its `# Meridian spawn` block instead. Capabilities a bundled
+`*__meridian` skill covers (work items, past sessions, notify, messaging, Markdown and
+Mermaid validation) are named only in the `# Meridian skills` list, and delegation rows
+remain gated by spawn capability. The agent catalog is not in the prompt: the delegation
+row points at `meridian spawn subagents`, which reads it live. The source line names the actual control root as shell cwd and gives
 the absolute task directory; when they match it collapses to one shorter line, and a
 primary's checkout is always the second form because its link never equals the
 control root.
@@ -791,11 +797,12 @@ be normalized by the harness fold; a subscriber backlog cannot hide a breach.
 per-conversation values may stay in. Every execution has its own chat and so its own
 two links — `sessions/<chat>/work` and `sessions/<chat>/task` (`session_links.py`) —
 and their paths are per-launch for a spawn and per-conversation for a primary. So a
-spawn's run ID, its launching chat, and those two links go in the first user turn
+spawn's spawn ID, its launching chat, and those two links go in the first user turn
 (`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
 byte-identical system bytes. A primary's own chat ID and its two links stay in the
-capability block, because a `--continue` replays no user turn. A primary gets no run-ID
-line: it exists so a caller can find and wait on a spawn, and a primary's handle is its chat ID. Bind also pins a
+capability block, because a `--continue` replays no user turn. A primary gets no
+spawn-ID line of its own: that line exists so a caller can find and wait on a spawn, and a
+primary's handle is its chat ID. Bind also pins a
 checkout no store can recompute — this run's `--task-dir`, a launch from outside the
 project, or the pin its launcher passed on (read from the launcher's spawn scope, never
 from `MERIDIAN_TASK_DIR`) — in the execution's spawn scope before it publishes the
@@ -808,7 +815,7 @@ conversation inherits the goal from its row (`SpawnRecord.goal`), the way a cont
 spawn does. The work item's own goal is a pointer instead — `meridian work show`
 resolves the current item, so neither the text nor an ID that could go stale enters
 the prompt. An exact continue recomposes the system prompt from the launch snapshot
-(profile, loaded and available skills, inventory, execution policy, tools); within one
+(profile, loaded and available skills, execution policy, tools); within one
 Meridian version identical inputs produce identical bytes, so a fresh launch shares
 the cached prefix with its siblings and a continue keeps the conversation's. Only a
 real identity change — a new goal, surface, or config — may change them. Foreground

@@ -51,8 +51,8 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `description` | str | `""` | One-line description shown in `mars list` |
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
 | `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor`, or `pi` |
-| `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping and which lead-only Meridian guidance the prompt carries; see [`mode`](#mode) |
-| `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
+| `mode` | str | `subagent` | `primary` or `subagent` — marks leads in `meridian spawn subagents` and decides which lead-only Meridian guidance the prompt carries; see [`mode`](#mode) |
+| `model-invocable` | bool | `true` | `false` hides the agent from `meridian spawn subagents` unless `--all` is given; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
 | `tools` | map | — | Per-tool rules: `bash: allow`, `edit: deny`, or `web: ask`. A map containing `'*': deny` is an allowlist. A scoped key such as `bash(rg *)` limits a rule to matching calls. MCP rules use `mcp(server)` or `mcp(server/tool)`. What each harness enforces: [Permissions by harness](#permissions-by-harness) |
 | `sandbox` | str | — | `default`, `read-only`, `workspace-write`, or `danger-full-access`. Harness support differs: [Permissions by harness](#permissions-by-harness) |
@@ -66,10 +66,9 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 
 ## `mode`
 
-Controls whether the agent is listed under `## Primary` or `## Subagent` in the
-startup system prompt's [agent inventory](#agent-inventory-in-the-system-prompt).
-Primary-mode profiles also receive the lead-only bundled skill triggers and the
-`meridian notify` capability, including when launched as a spawn; see
+Marks a lead. `meridian spawn subagents` tags primary-mode agents `(primary)`; see
+[Which agents a caller sees](#which-agents-a-caller-sees). Primary-mode profiles also
+receive the lead-only bundled skill triggers, including when launched as a spawn; see
 [Skills](#skills-and-skill-variants).
 
 ```yaml
@@ -370,28 +369,29 @@ variants (`variants/<harness>/<model>/`) are not supported.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 
-## Agent inventory in the system prompt
+## Which agents a caller sees
 
 A spawn-capable agent (one with a non-empty `subagents:` list and no
-`harness-overrides.meridian-cli.capabilities.spawn: false`) has Mars's `# Meridian Agents`
-inventory in its system prompt, grouped by `mode`. It lists only the agents named in the
-profile's `subagents:` list; agents native to the harness get their own section. The example is
-abridged:
+`harness-overrides.meridian-cli.capabilities.spawn: false`) is told to run
+`meridian spawn subagents` before delegating. The command reads the installed agents
+live, so a long session sees agents added after it started. By default it lists the
+agents in the caller's `subagents:` list, one line each with its description:
 
 ```
-# Meridian Agents
-
-## Subagent
-- `meridian spawn -a coder`: Implementation tasks | Model: gpt55 | Declared backups: gpt55, codex
-- `meridian spawn -a reviewer`: Adversarial review | Model: gpt-5.4
-
-## Primary
-- `meridian spawn -a design-lead`: Heavy design with research and adversarial review | Model: claude-opus-4-6
+- coder: Implementation tasks
+- design-lead (primary; native: use your harness's agent tool): Heavy design with research
+- reviewer: Adversarial review
 ```
 
-Each line gives the spawn command, the description, the default model, the declared
-backup models, and the model guide when the profile has one. Profiles with
-`model-invocable: false` are left out.
+Markers say how to treat an agent: `primary` for a lead, `native` for one installed into
+the session's harness that should go through the harness's own agent tool (a
+`[settings.meridian.fanout]` agent stays on `meridian spawn` even where it is native).
+Profiles with `model-invocable: false` are left out of the default list.
+
+The `subagents:` list is advisory: `meridian spawn -a NAME` launches any installed agent.
+`meridian spawn subagents --all` lists every installed agent, including
+`model-invocable: false` ones, and marks those outside the caller's list. Called with no
+agent session, the command lists nothing by default and points at `--all`.
 
 `meridian mars list` is a separate catalog of installed agents, skills, and bootstrap
 docs, showing names and descriptions (`--json` for structured output).

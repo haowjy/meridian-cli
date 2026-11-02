@@ -45,6 +45,12 @@ class MarsAgentEntry(BaseModel):
     name: str
     scope: Literal["root", "fallback"] = "root"
     source_path: str | None = None
+    description: str = ""
+    mode: Literal["primary", "subagent"] | None = None
+    # Routing facts Mars reports; an older Mars omits them, which reads as "no restriction".
+    model_invocable: bool = True
+    native_harnesses: tuple[str, ...] = ()
+    fanout: bool = False
 
 
 def resolve_mars_executable() -> str | None:
@@ -251,13 +257,10 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
     return subagents
 
 
-def mars_list_subagents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
-    """List subagent-mode profiles via ``mars agents list``.
+def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
+    """List every installed agent profile via ``mars agents list``.
 
-    The ``--mode`` filter is an argument of the parent ``mars agents`` command,
-    not of the ``list`` subcommand, so we list everything and filter on each
-    entry's ``mode`` client-side. Returns ``()`` on any failure (graceful
-    degradation).
+    Returns ``()`` on any failure (graceful degradation).
     """
 
     executable = resolve_mars_executable()
@@ -322,7 +325,14 @@ def mars_list_subagents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         if not isinstance(row_obj, dict):
             continue
         row = cast("dict[str, object]", row_obj)
-        if row.get("mode") != "subagent":
+        # Mars prints an omitted `mode:` as "", which profile parsing reads as subagent.
+        raw_mode = row.get("mode")
+        mode: Literal["primary", "subagent"]
+        if raw_mode == "primary":
+            mode = "primary"
+        elif raw_mode in ("subagent", "", None):
+            mode = "subagent"
+        else:
             continue
         name = row.get("name")
         if not isinstance(name, str):
@@ -335,6 +345,13 @@ def mars_list_subagents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
             "fallback" if row.get("scope") == "fallback" else "root"
         )
         source_path = row.get("source_path")
+        description = row.get("description")
+        native_raw = row.get("native-harnesses")
+        native_harnesses = (
+            tuple(item for item in cast("list[object]", native_raw) if isinstance(item, str))
+            if isinstance(native_raw, list)
+            else ()
+        )
         entries.append(
             MarsAgentEntry(
                 name=normalized,
@@ -342,6 +359,11 @@ def mars_list_subagents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
                 source_path=source_path.strip()
                 if isinstance(source_path, str) and source_path.strip()
                 else None,
+                description=description.strip() if isinstance(description, str) else "",
+                mode=mode,
+                model_invocable=row.get("model-invocable") is not False,
+                native_harnesses=native_harnesses,
+                fanout=row.get("fanout") is True,
             )
         )
     return tuple(sorted(entries, key=lambda entry: entry.name))
@@ -391,6 +413,6 @@ __all__ = [
     "check_upgrade_availability",
     "format_upgrade_availability",
     "mars_agent_subagents",
-    "mars_list_subagents",
+    "mars_list_agents",
     "resolve_mars_executable",
 ]

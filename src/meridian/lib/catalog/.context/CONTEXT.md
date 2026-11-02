@@ -83,7 +83,7 @@ diagnostic display — do not use it for routing decisions.
 ### AgentProfile.model_invocable
 
 `AgentProfile.model_invocable: bool = True` — controls whether an agent appears in
-the model-facing inventory prompt. Rules:
+the default `meridian spawn subagents` listing. Rules:
 
 - **Default is `True`** — profiles that omit `model-invocable` are visible to models.
   This preserves backward compatibility for all existing profiles.
@@ -93,8 +93,9 @@ the model-facing inventory prompt. Rules:
   `load_agent_profile()` or `scan_agent_profiles()`. Those remain neutral scanners
   that return all profiles regardless of this field.
 - **Visibility filtering is the caller's responsibility.** The catalog layer does not
-  filter. Mars renders harness-aware agent inventory in the launch-bundle
-  `prompt_surface.inventory_prompt`; meridian consumes that string verbatim.
+  filter. `meridian spawn subagents` filters on the `model-invocable` that
+  `mars agents list` reports; see the launch
+  [Agent Catalog](../../launch/.context/CONTEXT.md#agent-catalog).
 
 Do not add `model_invocable` checks to catalog scanning or loading functions —
 consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)

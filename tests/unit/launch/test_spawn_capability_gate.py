@@ -1,4 +1,4 @@
-"""Functional core for spawn capability inventory and snapshot replay."""
+"""Functional core for spawn capability guidance and snapshot replay."""
 
 from __future__ import annotations
 
@@ -25,16 +25,6 @@ from meridian.lib.launch.spawn_guidance import (
 from meridian.lib.safety.policy import Allow, Host, Hosts
 
 CONTRACT_MARKER = "# Meridian spawn rules"
-INVENTORY = """\
-# Meridian Agents
-
-Write prompts to `$(meridian work path prompts/<name>.md)`.
-Use `--bg` + `meridian spawn wait` for parallel work.
-Declared backups are automatic fallback candidates, not native fanout.
-
-## Subagent
-- tech-lead
-- explorer"""
 
 
 def _profile(
@@ -56,24 +46,21 @@ def _profile(
     )
 
 
-def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
+def test_capable_profile_gets_spawn_contract() -> None:
     blocks = build_guidance_blocks(
         profile=_profile(),
         loaded_skills=frozenset(("notify__meridian",)),
         spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
-        bundle_inventory_prompt=INVENTORY,
         harness_guidance="Host network hint",
     )
 
     assert [block.name for block in blocks] == [
-        "inventory",
         "meridian-skills",
         "capabilities",
         "spawn-prompting",
         "spawn-contract",
         "harness-guidance",
     ]
-    assert blocks[0].content == INVENTORY
     contract = next(block for block in blocks if block.name == "spawn-contract")
     assert contract.content.count(CONTRACT_MARKER) == 1
     assert "run_in_background" in contract.content
@@ -98,12 +85,11 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
     assert "choose its checkout with `--task-dir`" in capabilities
     assert "override its model with `-m`" in capabilities
     assert "meridian mars models prompting" in capabilities
-    assert "meridian notify" in capabilities
-    assert "meridian mermaid check" in capabilities
     assert "Every command has `-h`" in capabilities
-    assert "`meridian session search`" in capabilities
-    assert "`meridian kg graph`" in capabilities
     assert "`meridian qi graph`" in capabilities
+    # Capabilities a bundled skill covers are named once, in the skills list.
+    for covered in ("meridian notify", "meridian mermaid", "meridian session", "meridian kg"):
+        assert covered not in capabilities
     meridian_skills = next(block for block in blocks if block.name == "meridian-skills")
     assert "Read `meridian skills escalation__meridian`" in meridian_skills.content
     assert "Read `meridian skills handoff__meridian`" in meridian_skills.content
@@ -112,7 +98,6 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         profile=_profile(mode="subagent"),
         loaded_skills=frozenset(),
         spawn_usage_contract="spawn contract",
-        bundle_inventory_prompt=INVENTORY,
     )
     reviewer_skills = next(
         block for block in reviewer_blocks if block.name == "meridian-skills"
@@ -136,7 +121,6 @@ def test_capable_profile_gets_inventory_and_spawn_contract() -> None:
         profile=None,
         loaded_skills=frozenset(),
         spawn_usage_contract="",
-        bundle_inventory_prompt=None,
     )
     leaf_skills = next(block for block in leaf_blocks if block.name == "meridian-skills")
     assert "meridian skills sessions__meridian" in leaf_skills.content
@@ -229,7 +213,7 @@ def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> No
         assert has_spawn_capability(profile) is expected
 
 
-def test_snapshot_preserves_profile_and_raw_inventory() -> None:
+def test_snapshot_preserves_profile() -> None:
     profile = _profile()
     snapshot = build_launch_policy_snapshot(
         SpawnRequest(
@@ -238,7 +222,6 @@ def test_snapshot_preserves_profile_and_raw_inventory() -> None:
             harness="claude",
             agent=profile.name,
         ),
-        bundle_inventory_prompt=INVENTORY,
         profile=profile,
         skill_delivery="inline",
     )
@@ -247,8 +230,6 @@ def test_snapshot_preserves_profile_and_raw_inventory() -> None:
         project_root=Path("/tmp/project"),
     )
 
-    assert snapshot.bundle_inventory_prompt == INVENTORY
-    assert CONTRACT_MARKER not in (snapshot.bundle_inventory_prompt or "")
     assert reconstructed is not None
     assert reconstructed.subagents == profile.subagents
     assert reconstructed.meridian_capabilities == profile.meridian_capabilities

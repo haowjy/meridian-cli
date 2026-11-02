@@ -22,20 +22,22 @@ NAME` prints the installed file without overlays; the dry run shows the launch.
 
 ## What a Caller Sees
 
-A caller routes from an inventory in its own prompt, one line per agent it may spawn:
+A caller routes from `meridian spawn subagents`, which prints one line per agent in its
+own `subagents:` list:
 
 ```
-- `meridian spawn -a reviewer`: DESCRIPTION | Model: DEFAULT | Declared backups: ALIASES
+- reviewer: DESCRIPTION
+- design-lead (primary; native: use your harness's agent tool): DESCRIPTION
 ```
 
 The description is the only text a caller routes on: say what work the agent does and
 when to pick it over its neighbors, and name the skills a caller can attach for focus
-("Attach skills for focus: ..."). The model already sits beside it, so an agent whose
-name or description advertises its model gets picked for the model; describe the work.
+("Attach skills for focus: ..."). Describe the work, not the model: an agent whose name
+or description advertises its model gets picked for the model.
 
-A caller's inventory lists only the agents in its own `subagents:`.
-`model-invocable: false` keeps an agent out of every inventory while `-a NAME` still
-launches it.
+The `subagents:` list is advisory: `meridian spawn subagents --all` shows every installed
+agent and marks those outside it. `model-invocable: false` keeps an agent out of the
+default view (`--all` shows it, marked) while `-a NAME` still launches it.
 
 ## What Meridian Adds
 
@@ -47,14 +49,13 @@ what that holds; a primary is told it is talking to the user.
 
 Two fields change that guidance:
 
-- A non-empty `subagents:` makes the agent spawn-capable: it gets the inventory,
-  briefing guidance, the rules for launching and collecting spawns, and permission to
-  run `meridian spawn`. The list scopes the inventory; it does not yet stop the agent
-  from launching an unlisted agent by name.
+- A non-empty `subagents:` makes the agent spawn-capable: it gets the pointer to
+  `meridian spawn subagents`, briefing guidance, the rules for launching and collecting
+  spawns, and permission to run `meridian spawn`. The list scopes that command's default
+  view; it does not stop the agent from launching an unlisted agent by name.
 - `mode: primary` marks a lead. The triggers for Meridian's lead-only skills, such as
-  handoff and notification, and the `meridian notify` capability reach only
-  primary-mode profiles, also when one runs as a spawn. Leave workers on the default
-  `subagent`, so they report to their caller instead.
+  handoff and notification, reach only primary-mode profiles, also when one runs as a
+  spawn. Leave workers on the default `subagent`, so they report to their caller instead.
 
 Bodies and skills don't restate any of this. They say what to delegate, what to pass,
 and what the report holds when it differs from the default; Meridian supplies the how,

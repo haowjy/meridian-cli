@@ -35,9 +35,8 @@ meridian -a AGENT \
 
 Write every reference as its concrete value because the user's new terminal does not
 inherit this session's shell variables. Include `--work` when attached, `--task-dir`
-for a worktree or sibling checkout, the brief's absolute path, and your run ID
+for a worktree or sibling checkout, the brief's absolute path, and your spawn ID
 as `--from`: `meridian task-dir --json` prints it as `spawn_id` (a restricted shell can't expand
-`$MERIDIAN_SPAWN_ID`, and the capabilities block is a launch snapshot that names the previous
-run after `--continue`). A spawn ID resolves
+`$MERIDIAN_SPAWN_ID`). A spawn ID resolves
 to this run's current chat, so it still points at this conversation after a `/clear`; a
 chat ID would seed the new lead with that chat's transcript from before the `/clear`.

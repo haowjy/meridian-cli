@@ -11,7 +11,7 @@ import pytest
 
 from meridian.lib.catalog.mars_roots import MarsRoots
 from meridian.lib.ops import mars as mars_module
-from meridian.lib.ops.mars import MarsAgentEntry, mars_agent_subagents, mars_list_subagents
+from meridian.lib.ops.mars import MarsAgentEntry, mars_agent_subagents, mars_list_agents
 
 pytestmark = pytest.mark.slow
 
@@ -121,7 +121,7 @@ def test_mars_agent_subagents_failure_returns_none(
     assert caplog.records
 
 
-def test_mars_list_subagents_parses_list_envelope(
+def test_mars_list_agents_parses_list_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     recorded: dict[str, object] = {}
@@ -138,11 +138,15 @@ def test_mars_list_subagents_parses_list_envelope(
                             "mode": "subagent",
                             "scope": "fallback",
                             "source_path": "/fake/user-mars/.mars/agents/reviewer.md",
+                            "description": "  Reviews the change.  ",
+                            "model-invocable": False,
+                            "native-harnesses": ["claude"],
+                            "fanout": True,
                         },
                         {"name": "coder", "mode": "subagent", "scope": "root"},
                         {"name": "coder", "mode": "subagent"},
                         {"name": "tech-lead", "mode": "primary"},
-                        {"name": "no-mode"},
+                        {"name": "no-mode", "mode": ""},
                     ]
                 }
             )
@@ -151,20 +155,27 @@ def test_mars_list_subagents_parses_list_envelope(
     _patch_mars_binary(monkeypatch)
     monkeypatch.setattr(mars_module.subprocess, "run", fake_run)
 
-    result = mars_list_subagents(_PROJECT_ROOT)
+    result = mars_list_agents(_PROJECT_ROOT)
 
-    # Only subagent-mode entries survive the client-side filter; primary and
-    # mode-less entries are dropped.
+    # Every mode is listed. Mars prints an omitted `mode:` as "", which defaults to
+    # subagent like profile parsing. Rows from an older Mars lack the routing fields
+    # and read as model-invocable, not native, not fanout.
     assert result == (
-        MarsAgentEntry(name="coder", scope="root"),
+        MarsAgentEntry(name="coder", scope="root", mode="subagent"),
+        MarsAgentEntry(name="no-mode", scope="root", mode="subagent"),
         MarsAgentEntry(
             name="reviewer",
             scope="fallback",
             source_path="/fake/user-mars/.mars/agents/reviewer.md",
+            description="Reviews the change.",
+            mode="subagent",
+            model_invocable=False,
+            native_harnesses=("claude",),
+            fanout=True,
         ),
+        MarsAgentEntry(name="tech-lead", scope="root", mode="primary"),
     )
-    # The ``--mode`` filter is NOT passed to ``agents list`` (it belongs to the
-    # parent ``mars agents`` command); filtering happens client-side.
+    # No ``--mode`` filter: callers need every mode, so the full list is read.
     assert recorded["command"] == [
         _FAKE_MARS,
         "agents",
@@ -191,7 +202,7 @@ def test_mars_list_subagents_parses_list_envelope(
         (json.dumps([]), 0),
     ],
 )
-def test_mars_list_subagents_failure_returns_empty(
+def test_mars_list_agents_failure_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     stdout: str,
@@ -204,7 +215,7 @@ def test_mars_list_subagents_failure_returns_empty(
     monkeypatch.setattr(mars_module.subprocess, "run", fake_run)
 
     with caplog.at_level(logging.WARNING, logger="meridian.lib.ops.mars"):
-        result = mars_list_subagents(_PROJECT_ROOT)
+        result = mars_list_agents(_PROJECT_ROOT)
 
     assert result == ()
     assert caplog.records
