@@ -2,13 +2,34 @@ name: PR body
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 concurrency:
   group: pr-body-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  # A minor or major label on a PR to main cuts its own release on merge, so it belongs only
+  # on a release branch's PR. Runs on drafts too, so the mistake shows before review.
+  release-branch:
+    if: github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Minor and major releases come from a release branch
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [[ "${HEAD_REF}" == release/* ]]; then
+            exit 0
+          fi
+          if jq -e 'any(.[]; . == "release:minor" or . == "release:major")' <<<"${LABELS_JSON}" > /dev/null; then
+            echo "::error::release:minor and release:major cut their own release on merge, so only a release branch's PR to main carries them. Point this PR at the open release/vX.Y.0 branch (create it from main if none is open) and drop the label: https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch"
+            exit 1
+          fi
+
   changelog-section:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
