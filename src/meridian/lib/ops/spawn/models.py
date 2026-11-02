@@ -1319,9 +1319,9 @@ class SpawnSubagentEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    scope: Literal["root", "fallback"] | None = None
+    scope: Literal["root", "fallback"] = "root"
     description: str = ""
-    mode: Literal["primary", "subagent"] | None = None
+    mode: Literal["primary", "subagent"] = "subagent"
     model_invocable: bool = True
     # Installed natively into the current session's harness and not a fanout agent:
     # spawn it with the harness's own agent tool rather than `meridian spawn`.

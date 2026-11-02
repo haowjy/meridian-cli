@@ -46,10 +46,13 @@ class MarsAgentEntry(BaseModel):
     scope: Literal["root", "fallback"] = "root"
     source_path: str | None = None
     description: str = ""
-    mode: Literal["primary", "subagent"] | None = None
-    # Routing facts Mars reports; an older Mars omits them, which reads as "no restriction".
+    mode: Literal["primary", "subagent"] = "subagent"
+    # The profile's advisory `subagents:` list.
+    subagents: tuple[str, ...] = ()
     model_invocable: bool = True
+    # Harnesses the last sync installed the agent into natively.
     native_harnesses: tuple[str, ...] = ()
+    # Named in `[settings.meridian.fanout]`: Meridian launches it even where native.
     fanout: bool = False
 
 
@@ -165,112 +168,21 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     )
 
 
-def _sorted_unique_strings(values: object) -> tuple[str, ...] | None:
-    if not isinstance(values, list):
-        return None
-    names: list[str] = []
-    seen: set[str] = set()
-    for item in cast("list[object]", values):
-        if not isinstance(item, str):
-            continue
-        normalized = item.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        names.append(normalized)
-    return tuple(sorted(names))
-
-
-def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...] | None:
-    """Return declared subagent allow-list for *agent_name* via ``mars agents show``.
-
-    Returns ``None`` when mars is missing, the agent is unknown, the call fails, or
-    JSON is malformed. An agent that exists with an empty ``subagents`` list returns
-    ``()`` so callers can distinguish "no restriction declared" from "could not resolve".
-    """
-
-    executable = resolve_mars_executable()
-    if executable is None:
-        return None
-
-    try:
-        mars_roots = _prepare_mars_roots(project_root, executable=executable)
-    except RuntimeError:
-        return None
-
-    command = [
-        executable,
-        "agents",
-        "show",
-        agent_name,
-        "--json",
-        "--root",
-        mars_roots.primary.as_posix(),
-    ]
-    command.extend(mars_fallback_args(mars_roots, executable=executable))
-
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-        _logger.warning(
-            "mars agents show failed for %r: %s",
-            agent_name,
-            exc,
-        )
-        return None
-
-    if result.returncode != 0:
-        _logger.warning(
-            "mars agents show failed for %r: exit code %s",
-            agent_name,
-            result.returncode,
-        )
-        return None
-
-    try:
-        payload = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError) as exc:
-        _logger.warning(
-            "mars agents show returned malformed JSON for %r: %s",
-            agent_name,
-            exc,
-        )
-        return None
-
-    if not isinstance(payload, dict):
-        _logger.warning(
-            "mars agents show returned unexpected JSON for %r: expected object, got %s",
-            agent_name,
-            type(payload).__name__,
-        )
-        return None
-
-    subagents = _sorted_unique_strings(cast("dict[str, object]", payload).get("subagents"))
-    if subagents is None:
-        return ()
-    return subagents
-
-
 def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
     """List every installed agent profile via ``mars agents list``.
 
-    Returns ``()`` on any failure (graceful degradation).
+    Raises ``ValueError`` when Mars cannot answer: the listing is the caller's whole
+    result, so an empty answer would be a wrong one.
     """
 
     executable = resolve_mars_executable()
     if executable is None:
-        return ()
+        raise ValueError("mars agents list failed: mars is not installed")
 
     try:
         mars_roots = _prepare_mars_roots(project_root, executable=executable)
-    except RuntimeError:
-        return ()
+    except RuntimeError as exc:
+        raise ValueError(f"mars agents list failed: {exc}") from exc
 
     command = [
         executable,
@@ -291,33 +203,20 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
             timeout=60,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-        _logger.warning("mars agents list failed: %s", exc)
-        return ()
-
+        raise ValueError(f"mars agents list failed: {exc}") from exc
     if result.returncode != 0:
-        _logger.warning(
-            "mars agents list failed: exit code %s (%s)",
-            result.returncode,
-            (result.stderr or "").strip(),
-        )
-        return ()
+        detail = (result.stderr or "").strip() or f"exit code {result.returncode}"
+        raise ValueError(f"mars agents list failed: {detail}")
 
     try:
         payload = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError) as exc:
-        _logger.warning("mars agents list returned malformed JSON: %s", exc)
-        return ()
-
-    if not isinstance(payload, dict):
-        _logger.warning(
-            "mars agents list returned unexpected JSON: expected object, got %s",
-            type(payload).__name__,
-        )
-        return ()
-
-    agents_raw = cast("dict[str, object]", payload).get("agents")
+        raise ValueError(f"mars agents list returned malformed JSON: {exc}") from exc
+    agents_raw = (
+        cast("dict[str, object]", payload).get("agents") if isinstance(payload, dict) else None
+    )
     if not isinstance(agents_raw, list):
-        return ()
+        raise ValueError("mars agents list returned no `agents` array")
 
     entries: list[MarsAgentEntry] = []
     seen: set[str] = set()
@@ -325,48 +224,35 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         if not isinstance(row_obj, dict):
             continue
         row = cast("dict[str, object]", row_obj)
-        # Mars prints an omitted `mode:` as "", which profile parsing reads as subagent.
-        raw_mode = row.get("mode")
-        mode: Literal["primary", "subagent"]
-        if raw_mode == "primary":
-            mode = "primary"
-        elif raw_mode in ("subagent", "", None):
-            mode = "subagent"
-        else:
-            continue
         name = row.get("name")
-        if not isinstance(name, str):
+        if not isinstance(name, str) or not name.strip() or name.strip() in seen:
             continue
         normalized = name.strip()
-        if not normalized or normalized in seen:
-            continue
         seen.add(normalized)
-        scope: Literal["root", "fallback"] = (
-            "fallback" if row.get("scope") == "fallback" else "root"
-        )
         source_path = row.get("source_path")
         description = row.get("description")
-        native_raw = row.get("native-harnesses")
-        native_harnesses = (
-            tuple(item for item in cast("list[object]", native_raw) if isinstance(item, str))
-            if isinstance(native_raw, list)
-            else ()
-        )
         entries.append(
             MarsAgentEntry(
                 name=normalized,
-                scope=scope,
+                scope="fallback" if row.get("scope") == "fallback" else "root",
                 source_path=source_path.strip()
                 if isinstance(source_path, str) and source_path.strip()
                 else None,
                 description=description.strip() if isinstance(description, str) else "",
-                mode=mode,
+                mode="primary" if row.get("mode") == "primary" else "subagent",
+                subagents=_string_tuple(row.get("subagents")),
                 model_invocable=row.get("model-invocable") is not False,
-                native_harnesses=native_harnesses,
+                native_harnesses=_string_tuple(row.get("native-harnesses")),
                 fanout=row.get("fanout") is True,
             )
         )
     return tuple(sorted(entries, key=lambda entry: entry.name))
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item.strip() for item in cast("list[object]", value) if isinstance(item, str))
 
 
 def format_upgrade_availability(
@@ -412,7 +298,6 @@ __all__ = [
     "UpgradeAvailability",
     "check_upgrade_availability",
     "format_upgrade_availability",
-    "mars_agent_subagents",
     "mars_list_agents",
     "resolve_mars_executable",
 ]

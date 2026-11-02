@@ -43,6 +43,10 @@ _CATALOG = (
 _DECLARED = ("coder", "manual", "planner", "reviewer")
 
 
+def _lead(subagents: tuple[str, ...]) -> MarsAgentEntry:
+    return MarsAgentEntry(name="tech-lead", mode="primary", subagents=subagents)
+
+
 def _seed_project(tmp_path: Path) -> Path:
     project_root = tmp_path / "repo"
     project_root.mkdir(parents=True)
@@ -73,19 +77,12 @@ def _seed_spawn(
 def _patch_mars(
     monkeypatch: pytest.MonkeyPatch,
     project_root: Path,
-    *,
-    declared: tuple[str, ...] | None = _DECLARED,
+    catalog: tuple[MarsAgentEntry, ...] = (*_CATALOG, _lead(_DECLARED)),
 ) -> None:
-    def fake_agent_subagents(root: Path, agent_name: str) -> tuple[str, ...] | None:
-        assert root == project_root
-        assert agent_name == "tech-lead"
-        return declared
-
     def fake_list_agents(root: Path) -> tuple[MarsAgentEntry, ...]:
         assert root == project_root
-        return _CATALOG
+        return catalog
 
-    monkeypatch.setattr("meridian.lib.ops.spawn.api.mars_agent_subagents", fake_agent_subagents)
     monkeypatch.setattr("meridian.lib.ops.spawn.api.mars_list_agents", fake_list_agents)
 
 
@@ -128,6 +125,7 @@ def test_spawn_subagents_all_marks_hidden_and_undeclared_agents(
         "- planner (primary): Plans.",
         "- prober (outside your subagents list)",
         "- reviewer (native: use your harness's agent tool): Reviews the change.",
+        "- tech-lead (primary; outside your subagents list)",
     ]
 
 
@@ -138,55 +136,43 @@ def test_spawn_subagents_empty_allow_list_is_leaf_agent(
     project_root = _seed_project(tmp_path)
     _seed_spawn(project_root, spawn_id="p2", agent="tech-lead")
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p2")
-    _patch_mars(monkeypatch, project_root, declared=())
-
-    def fail_list_agents(root: Path) -> tuple[MarsAgentEntry, ...]:
-        raise AssertionError(f"mars_list_agents should not run: {root}")
-
-    monkeypatch.setattr("meridian.lib.ops.spawn.api.mars_list_agents", fail_list_agents)
+    _patch_mars(monkeypatch, project_root, (*_CATALOG, _lead(())))
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
     assert output.agents == ()
+    assert output.empty == "no_declared_agents"
     assert "meridian spawn subagents --all" in output.format_text()
 
 
-def test_spawn_subagents_unresolved_agent_returns_empty(
+def test_spawn_subagents_uninstalled_caller_lists_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _seed_project(tmp_path)
     _seed_spawn(project_root, spawn_id="p3", agent="tech-lead")
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p3")
-    _patch_mars(monkeypatch, project_root, declared=None)
-
-    def fail_list_agents(root: Path) -> tuple[MarsAgentEntry, ...]:
-        raise AssertionError(f"mars_list_agents should not run: {root}")
-
-    monkeypatch.setattr("meridian.lib.ops.spawn.api.mars_list_agents", fail_list_agents)
+    _patch_mars(monkeypatch, project_root, _CATALOG)
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
-    assert output.agents == ()
     assert output.empty == "no_declared_agents"
 
 
-def test_spawn_subagents_ignores_a_spawn_id_from_another_project(
+def test_spawn_subagents_reports_a_mars_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Under `-C`, the target's p1 is not the caller's p1.
     project_root = _seed_project(tmp_path)
-    _seed_spawn(project_root, spawn_id="p1", agent="tech-lead")
-    caller_project = tmp_path / "caller"
-    caller_project.mkdir()
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p1")
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", caller_project.as_posix())
-    _patch_mars(monkeypatch, project_root)
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
 
-    output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
+    def failing_list_agents(root: Path) -> tuple[MarsAgentEntry, ...]:
+        raise ValueError("mars agents list failed: boom")
 
-    assert output.empty == "no_current_agent"
+    monkeypatch.setattr("meridian.lib.ops.spawn.api.mars_list_agents", failing_list_agents)
+
+    with pytest.raises(ValueError, match="boom"):
+        spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
 
 def test_spawn_subagents_without_calling_agent_points_to_all(
@@ -205,5 +191,5 @@ def test_spawn_subagents_without_calling_agent_points_to_all(
     assert default.agents == ()
     assert "meridian spawn subagents --all" in default.format_text()
     # With no caller there is no list to be outside of.
-    assert tuple(entry.name for entry in every.agents) == tuple(e.name for e in _CATALOG)
+    assert tuple(entry.name for entry in every.agents) == (*(e.name for e in _CATALOG), "tech-lead")
     assert "outside your subagents list" not in every.format_text()
