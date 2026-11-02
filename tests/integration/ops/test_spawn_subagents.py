@@ -148,6 +148,7 @@ def test_spawn_subagents_empty_allow_list_is_leaf_agent(
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
     assert output.agents == ()
+    assert "meridian spawn subagents --all" in output.format_text()
 
 
 def test_spawn_subagents_unresolved_agent_returns_empty(
@@ -167,6 +168,25 @@ def test_spawn_subagents_unresolved_agent_returns_empty(
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
     assert output.agents == ()
+    assert output.empty == "no_declared_agents"
+
+
+def test_spawn_subagents_ignores_a_spawn_id_from_another_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Under `-C`, the target's p1 is not the caller's p1.
+    project_root = _seed_project(tmp_path)
+    _seed_spawn(project_root, spawn_id="p1", agent="tech-lead")
+    caller_project = tmp_path / "caller"
+    caller_project.mkdir()
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p1")
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", caller_project.as_posix())
+    _patch_mars(monkeypatch, project_root)
+
+    output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
+
+    assert output.empty == "no_current_agent"
 
 
 def test_spawn_subagents_without_calling_agent_points_to_all(

@@ -1,5 +1,5 @@
 # qa-validated: test-suite-redesign
-"""Spawn prepare surface tests: reference routing, channel manifests, and inventory placement."""
+"""Spawn prepare surface tests: reference routing, channel manifests, and spawn-rule placement."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edi
         ("codex", "gpt-5.4"),
     ],
 )
-def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_prompt(
+def test_spawn_prepare_system_field_harnesses_route_spawn_rules_to_system_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: str,
@@ -160,7 +160,7 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     )
 
     preview = build_launch_context(
-        spawn_id=f"dry-run-{harness}-spawn-prepare-no-inventory",
+        spawn_id=f"dry-run-{harness}-spawn-prepare-spawn-rules",
         request=SpawnRequest(
             prompt="task prompt",
             model=model,
@@ -179,8 +179,8 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     )
 
     assert preview.projected_content is not None
-    inventory_channel = preview.projected_content.system_prompt
-    assert "# Meridian spawn rules" in inventory_channel
+    system_channel = preview.projected_content.system_prompt
+    assert "# Meridian spawn rules" in system_channel
     assert "# Meridian spawn rules" not in preview.projected_content.user_turn_content
     assert "# Meridian spawn rules" not in preview.binding.run_params.prompt
 
@@ -244,7 +244,7 @@ def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
     assert "# Meridian spawn rules" not in system_prompt
 
 
-def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
+def test_spawn_prepare_claude_projects_skills_and_report_to_system_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

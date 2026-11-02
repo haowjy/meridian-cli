@@ -70,7 +70,6 @@ def test_capable_profile_gets_spawn_contract() -> None:
     assert placeholder.content == ""
     capabilities = build_capabilities_prompt(
         spawn_capable=True,
-        profile_mode="primary",
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
@@ -109,7 +108,6 @@ def test_capable_profile_gets_spawn_contract() -> None:
     assert "meridian skills work__meridian" not in reviewer_skills.content
     reviewer_capabilities = build_capabilities_prompt(
         spawn_capable=True,
-        profile_mode="subagent",
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
@@ -127,7 +125,6 @@ def test_capable_profile_gets_spawn_contract() -> None:
     assert "meridian skills escalation__meridian" not in leaf_skills.content
     leaf_capabilities = build_capabilities_prompt(
         spawn_capable=False,
-        profile_mode="subagent",
         project_root=Path("/tmp/project"),
         control_root=Path("/tmp/project"),
         task_dir=Path("/tmp/checkout"),
@@ -200,7 +197,7 @@ def test_claude_linux_sandbox_network_guidance(monkeypatch: pytest.MonkeyPatch) 
     )
 
 
-def test_spawn_capability_requires_inventory_and_honors_explicit_disable() -> None:
+def test_spawn_capability_requires_subagents_and_honors_explicit_disable() -> None:
     cases = (
         (_profile(), True),
         (_profile(subagents=()), False),

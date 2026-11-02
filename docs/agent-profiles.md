@@ -274,8 +274,7 @@ set `metadata.mode: primary`; its trigger then appears only when the agent profi
 `mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
 messaging, work-item, privilege-escalation, and prompt-authoring guidance use this
 lead-only gate, while session mining and Markdown validation remain visible to every
-profile. The capabilities block likewise
-shows `meridian notify` only to primary-mode profiles. Bundled skills are named
+profile. Bundled skills are named
 `escalation__meridian`, `handoff__meridian`, `md-validation__meridian`,
 `messaging__meridian`, `notify__meridian`, `prompt-authoring__meridian`,
 `sessions__meridian`, and `work__meridian`.

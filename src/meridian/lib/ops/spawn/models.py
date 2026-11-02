@@ -1334,14 +1334,20 @@ class SpawnSubagentsOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     agents: tuple[SpawnSubagentEntry, ...]
-    no_current_agent: bool = False
+    # Why the default view is empty, so the caller learns `--all` instead of seeing nothing.
+    empty: Literal["no_current_agent", "no_declared_agents"] | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        if self.no_current_agent:
+        if self.empty == "no_current_agent":
             return (
                 "No calling agent to filter by; run `meridian spawn subagents --all` "
                 "to list every installed agent."
+            )
+        if self.empty == "no_declared_agents":
+            return (
+                "Your `subagents:` list names no agent to offer; run "
+                "`meridian spawn subagents --all` to list every installed agent."
             )
         lines: list[str] = []
         for agent in self.agents:

@@ -387,7 +387,9 @@ chat-ID row names its spawn ID as `$MERIDIAN_SPAWN_ID` and points at `meridian t
 the literal ID in its `# Meridian spawn` block instead. Capabilities a bundled
 `*__meridian` skill covers (work items, past sessions, notify, messaging, Markdown and
 Mermaid validation) are named only in the `# Meridian skills` list, and delegation rows
-remain gated by spawn capability. The agent catalog is not in the prompt: the delegation
+remain gated by spawn capability. Work items and notify are lead-only skills, so a
+subagent-mode profile gets no pointer to `meridian work` beyond `meridian work show`
+and its work link: leads own work items. The agent catalog is not in the prompt: the delegation
 row points at `meridian spawn subagents`, which reads it live. The source line names the actual control root as shell cwd and gives
 the absolute task directory; when they match it collapses to one shorter line, and a
 primary's checkout is always the second form because its link never equals the
@@ -754,8 +756,8 @@ Wheel metadata builds the `# Meridian skills` trigger block. A skill already loa
 by the Mars launch bundle has no trigger line, in either delivery mode: it is read
 from the bundle's copy, so a trigger could only point at a different copy. Otherwise,
 optional `metadata.mode` frontmatter gates the trigger on the resolved profile's
-declared mode, independent of whether the launch is a primary session or a spawn. The
-notify capability line uses the same mode gate. `meridian skills NAME` renders the
+declared mode, independent of whether the launch is a primary session or a spawn.
+`meridian skills NAME` renders the
 selected copy under the same activation header injected skills get
 (`render_skill_block()`).
 

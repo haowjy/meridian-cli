@@ -41,9 +41,10 @@ default view (`--all` shows it, marked) while `-a NAME` still launches it.
 
 ## What Meridian Adds
 
-Every launch gets Meridian's capabilities block (the work item, the source checkout
-versus the work directory, past sessions, the knowledge base and other context roots)
-and trigger lines for Meridian's own skills, read with `meridian skills NAME`.
+Every launch gets Meridian's capabilities block (the work item's pointer, the source
+checkout versus the work directory, the knowledge base and other context roots) and
+trigger lines for Meridian's own skills, read with `meridian skills NAME`; commands a
+skill covers, such as past sessions and notify, are named only in its trigger.
 A spawn is told its final message is the report its caller reads, with a default list of
 what that holds; a primary is told it is talking to the user.
 

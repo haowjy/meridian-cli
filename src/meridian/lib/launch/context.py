@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from pydantic import ValidationError
 
-from meridian.lib.catalog.agent import AgentMode
 from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
@@ -300,7 +299,6 @@ class PreparedLaunchSurface:
     runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tool_rules: tuple[ToolRule, ...]
     has_spawn_capability: bool
-    profile_mode: AgentMode
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -842,7 +840,6 @@ def _reproject_capabilities_at_bind(
     chat_id: str | None,
     launch_facts: str,
     spawn_capable: bool,
-    profile_mode: AgentMode,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Render the capability block with bound paths and re-project prompt channels.
@@ -862,7 +859,6 @@ def _reproject_capabilities_at_bind(
 
     capabilities = build_capabilities_prompt(
         spawn_capable=spawn_capable,
-        profile_mode=profile_mode,
         project_root=project_root,
         control_root=control_root,
         task_dir=task_dir,
@@ -1486,7 +1482,6 @@ def prepare_launch_surface(
         ),
         profile_tool_rules=profile_tool_rules,
         has_spawn_capability=has_spawn_capability(profile),
-        profile_mode=profile.mode if profile is not None else "subagent",
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1800,7 +1795,6 @@ def bind_launch_context(
         chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,
-        profile_mode=prepared.profile_mode,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     conversation_intent = resolved_request.session.conversation_intent

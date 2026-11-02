@@ -21,10 +21,9 @@ from meridian.lib.launch.composition import (
 )
 
 # Capabilities a bundled `*__meridian` skill covers are named only in the
-# `# Meridian skills` list, so each appears once.
-_GENERAL_CAPABILITIES: tuple[tuple[AgentMode | None, str], ...] = (
-    (None, "- Project guidance graph: `meridian qi graph`."),
-)
+# `# Meridian skills` list, so each appears once. Lead-only skills (work items,
+# notify) leave subagents without those pointers on purpose.
+_GENERAL_CAPABILITIES = ("- Project guidance graph: `meridian qi graph`.",)
 
 _SPAWN_CAPABILITIES = (
     "- Delegate to an `@agent`: `meridian spawn`; write the brief under the work directory's "
@@ -77,7 +76,7 @@ def _build_meridian_skills_prompt(
 
 
 def _work_link_line(work_link: Path) -> str:
-    """The one work-link wording, for a primary's prompt and a spawn's run block."""
+    """The one work-link wording, for a primary's prompt and a spawn's `# Meridian spawn` block."""
 
     return (
         f"- `{work_link.as_posix()}` — work directory "
@@ -104,7 +103,6 @@ def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
-    profile_mode: AgentMode,
     project_root: Path,
     control_root: Path,
     task_dir: Path,
@@ -153,11 +151,7 @@ def build_capabilities_prompt(
     ]
     if spawn_capable:
         lines.append(_SPAWN_CAPABILITIES)
-    lines.extend(
-        capability
-        for required_mode, capability in _GENERAL_CAPABILITIES
-        if required_mode is None or required_mode == profile_mode
-    )
+    lines.extend(_GENERAL_CAPABILITIES)
 
     if work_link is not None:
         # A per-chat link outlives the launch and follows `work start`,
@@ -341,10 +335,9 @@ def build_guidance_blocks(
     """Build all system-prompt guidance blocks.
 
     Spawn-gated (only when has_spawn_capability): spawn capabilities,
-    prompting judgment, and the spawn behavior contract. Profile-mode gates apply to
-    bundled skill triggers and individual general capabilities. Context paths are always
-    present. The empty capability block is filled at bind, after its directory and run
-    identity facts are known.
+    prompting judgment, and the spawn behavior contract. The profile-mode gate applies to
+    bundled skill triggers. Context paths are always present. The empty capability block
+    is filled at bind, after its directory and spawn identity facts are known.
     """
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)

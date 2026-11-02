@@ -1103,7 +1103,16 @@ def spawn_subagents_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    spawn_id = str(runtime_context(ctx).spawn_id or "").strip() or None
+    caller = runtime_context(ctx)
+    spawn_id = str(caller.spawn_id or "").strip() or None
+    # Spawn IDs count per project: under `-C`, the target's spawn with the caller's ID
+    # is a stranger, whose agent and harness would filter and mark the wrong list.
+    if caller.project_root is not None and (
+        caller.runtime_root is None
+        or runtime_root is None
+        or caller.runtime_root.resolve() != runtime_root.resolve()
+    ):
+        spawn_id = None
     agent: str | None = None
     harness = ""
     if spawn_id is not None and runtime_root is not None:
@@ -1114,7 +1123,7 @@ def spawn_subagents_sync(
 
     if agent is None and not payload.all:
         # Nothing to filter by; listing everything here would give the default two meanings.
-        return SpawnSubagentsOutput(agents=(), no_current_agent=True)
+        return SpawnSubagentsOutput(agents=(), empty="no_current_agent")
 
     declared_names: frozenset[str] = frozenset()
     if agent is not None:
@@ -1124,7 +1133,7 @@ def spawn_subagents_sync(
         # profile, which reads the same.
         declared_names = frozenset(mars_agent_subagents(project_root, agent) or ())
         if not declared_names and not payload.all:
-            return SpawnSubagentsOutput(agents=())
+            return SpawnSubagentsOutput(agents=(), empty="no_declared_agents")
 
     catalog = {entry.name: entry for entry in mars_list_agents(project_root)}
     names = sorted(set(catalog) | declared_names) if payload.all else sorted(declared_names)
@@ -1146,7 +1155,10 @@ def spawn_subagents_sync(
             )
         )
 
-    return SpawnSubagentsOutput(agents=tuple(agents))
+    return SpawnSubagentsOutput(
+        agents=tuple(agents),
+        empty=None if agents or payload.all else "no_declared_agents",
+    )
 
 
 async def spawn_subagents(
