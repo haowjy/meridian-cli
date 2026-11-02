@@ -213,6 +213,19 @@ IDs count per project.
 
 `--spawn-id` on `spawn message` was removed in v0.20.0; pass the ref positionally instead.
 
+## Mars 0.27.0
+
+Meridian pins `mars-agents==0.27.0`. Run `meridian mars sync` after upgrading, and
+`meridian mars --user sync` for a user root.
+
+The launch bundle no longer carries an agent list: `prompt_surface.inventory_prompt`
+and the `# Meridian Agents` block in `system_instruction` are gone. Agents run
+`meridian spawn subagents` instead, which reads `mars agents list --json`. Its rows now
+report `subagents`, `model-invocable`, `native-harnesses` and `fanout`; an agent without
+`mode` reports `subagent` instead of `""`; and the `mars agents` table gains an `M-INV`
+column before SCOPE, so a script that reads the table by column position must shift by
+one.
+
 ## Mars 0.26.1
 
 Meridian pins `mars-agents==0.26.1`. Run `meridian mars sync` after upgrading, and
