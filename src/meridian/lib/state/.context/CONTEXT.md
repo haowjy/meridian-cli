@@ -544,7 +544,8 @@ Read-only projected status is not authorization to terminate a scope.
 
 
 A chat keeps one `(harness, native_store, harness_session_id)` binding across
-starts and updates. `update_session_harness_id` atomically returns
+starts and updates; the only thing that changes a recorded store is a `relocate` row
+(see Relocate rows). `update_session_harness_id` atomically returns
 `BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
 `native_binding.bind`; callers mirror its accepted ID, not their candidate.
 `session_fold.py` owns event models and replay; `by_native_key(records)`

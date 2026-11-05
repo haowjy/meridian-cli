@@ -176,6 +176,37 @@ A ref that names nothing fails with a not-found error (`Chat 'c99999' not found`
 rather than resuming. Chat refs are `c<digits>`; any other value is treated as a native
 session ID. `@latest`, `@last-failed` and `@last-completed` also work with `--continue`.
 
+## A moved project directory or Claude store
+
+After `mv ~/repos/tether ~/repos/muxen`, `meridian --continue c419` from `muxen` used to
+end with `native_binding_conflict` and `Session resume failed`: Claude's transcripts live
+in a folder named after the project path, and Meridian refuses to continue a chat in a
+different store. Now `--continue` stops before launch, names the old and new paths, and
+prints the fix; on a terminal it asks whether to relocate this chat, every chat under the
+old path, or neither:
+
+```bash
+meridian session relocate --from ~/repos/tether --to ~/repos/muxen   # every chat under the old path
+meridian session relocate c419                                        # one chat (also works while the old path exists)
+meridian session relocate c419 --dry-run                              # print the plan, change nothing
+```
+
+Relocate rewrites Meridian's recorded paths and the harness's own record of the
+directory (Claude: links to the transcript; OpenCode: the session's directory; Pi: the
+transcript header). It refuses chats that are running. If the output reports a refused
+harness change, follow the way out it prints. `spawn --continue`, `session log` and
+`session export` print the same command when the recorded directory is gone.
+
+A project without `[project] id` in `meridian.toml` gets a new identity when its path
+changes, so its chats are not found at all (`Chat 'c419' not found`); relocate does not
+re-home them yet. Set `[project] id` to keep state across moves.
+
+If the project did not move but a Claude transcript file is missing from its recorded
+store, `--continue` searches the recorded config root for that exact session ID. One
+distinct file is linked back and resumed; several files, or a match only in another
+config root, are listed and refused. Pick one with `meridian session relocate cN --native
+PATH`.
+
 ## Spawn shows as `finalizing`
 
 New spawns never show `finalizing`; they go from `running` straight to their outcome. You can still see it on a spawn an older build wrote, or in the output of `spawn cancel` when a cancellation did not finish within about 6 seconds because the runner's process is stuck. In both cases, if the runner has died the status reads as crashed or cancelled (see below); otherwise run `meridian doctor`.
