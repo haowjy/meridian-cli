@@ -203,9 +203,12 @@ def _old_spellings(old: Path) -> tuple[str, ...]:
     return tuple(dict.fromkeys((typed, canonical)))
 
 
-def _load_chats(runtime_root: Path, chat: str | None) -> dict[str, list[SessionRecord]]:
-    """Live generations, oldest first, per chat: every chat, or the named one together
-    with the chats sharing its native session."""
+def _load_chats(
+    runtime_root: Path, chat: str | None, named: Sequence[SessionRecord] = ()
+) -> dict[str, list[SessionRecord]]:
+    """Live generations, oldest first, per chat: every chat, or the named one (whose
+    generations the caller already read) together with the chats sharing its native
+    session."""
     if chat is None:
         by_chat: dict[str, list[SessionRecord]] = defaultdict(list)
         for generation in _live(
@@ -215,7 +218,7 @@ def _load_chats(runtime_root: Path, chat: str | None) -> dict[str, list[SessionR
         ):
             by_chat[generation.chat_id].append(generation)
         return by_chat
-    by_chat = {chat: _live(session_store.chat_generations(runtime_root, chat))}
+    by_chat = {chat: _live(named)}
     if not by_chat[chat]:
         raise ValueError(f"Chat {chat} not found.")
     key = chat_key(by_chat[chat]).complete()
@@ -266,11 +269,13 @@ def _plan_native(
 ) -> NativeRelocation | None:
     adapter = adapter_for(generations[-1].harness)
     cwd_from = harness_cwd(generations)
-    cwd_to = move(str(cwd_from)) if cwd_from is not None else None
+    if adapter is None or cwd_from is None:
+        return None
+    cwd_to = move(str(cwd_from))
     if cwd_to is None and native is not None:
         # A transcript choice with no directory move: the miss-path refusal's way out.
-        cwd_to = None if cwd_from is None else str(cwd_from)
-    if adapter is None or cwd_from is None or cwd_to is None:
+        cwd_to = str(cwd_from)
+    if cwd_to is None:
         return None
     return adapter.plan_native_relocate(
         chat_key(generations), cwd_from=cwd_from, cwd_to=Path(cwd_to), native=native
@@ -284,9 +289,10 @@ def _build_plan(
     move: _Move,
     *,
     chat: str | None,
+    generations: Sequence[SessionRecord],
     native: Path | None,
 ) -> _Plan:
-    by_chat = _load_chats(runtime_root, chat)
+    by_chat = _load_chats(runtime_root, chat, generations)
     scan = spawn_store.list_spawns(runtime_root)
     terminal = tuple(
         row
@@ -463,7 +469,28 @@ def _write_other_records(
         work_repository.move_work_item_paths(state_dir, work_id, move)
 
 
-def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutput:
+@dataclass(frozen=True)
+class _Request:
+    """A validated relocate: what moves where, and the chat's generations when it names one."""
+
+    chat: str | None
+    project_root: Path
+    runtime_root: Path
+    state_dir: Path
+    old: Path
+    new: Path
+    native: Path | None
+    generations: Sequence[SessionRecord]
+
+    @property
+    def command(self) -> str:
+        return (
+            f"meridian session relocate {self.chat} " if self.chat else "meridian session relocate "
+        )
+
+
+def _resolve(payload: SessionRelocateInput) -> _Request:
+    """Validate the input and settle ``old`` and ``new``, reading the chat once."""
     chat = payload.ref.strip() if payload.ref else None
     if chat is not None and not is_chat_id(chat):
         raise ValueError(f"'{chat}' is not a chat id (c123).")
@@ -488,13 +515,13 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
     if not is_same_project(new, project_root):
         raise ValueError(f"--to {new} belongs to a different project than {project_root}.")
 
+    generations = session_store.chat_generations(runtime_root, chat) if chat else ()
+    if chat is not None and not generations:
+        raise ValueError(f"Chat {chat} not found.")
     if payload.from_root:
         old = Path(os.path.abspath(os.path.expanduser(payload.from_root)))
     else:
         assert chat is not None
-        generations = session_store.chat_generations(runtime_root, chat)
-        if not generations:
-            raise ValueError(f"Chat {chat} not found.")
         # `--native` alone picks a transcript for the chat where it is: re-store it in
         # place and move no path.
         moved_from = None if payload.native else moved_root(runtime_root, generations, target=new)
@@ -508,71 +535,16 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
             f"{old} still exists, so the chats under it belong to a live checkout. "
             "Relocate one chat with `meridian session relocate c123` instead."
         )
-
-    move = _Move(_old_spellings(old), str(new), must_exist=chat is not None)
     native = Path(payload.native).expanduser() if payload.native else None
-    plan = _build_plan(runtime_root, state_dir, project_root, move, chat=chat, native=native)
-    if native is not None:
-        refused = [c.native.refusal for c in plan.chats if c.native and c.native.refusal]
-        if refused:
-            raise ValueError(f"Refusing --native: {refused[0]}")
-        if not any(c.native is not None for c in plan.chats):
-            raise ValueError("--native has nothing to apply: the chat's harness directory stays.")
+    return _Request(chat, project_root, runtime_root, state_dir, old, new, native, generations)
 
-    prefix = f"meridian session relocate {chat} " if chat else "meridian session relocate "
-    rerun = f"{prefix}--from {shlex.quote(str(old))} --to {shlex.quote(str(new))}"
-    reverse = f"{prefix}--from {shlex.quote(str(new))} --to {shlex.quote(str(old))}"
-    undo = (
-        None
-        if old == new
-        else (
-            reverse
-            if chat and old.is_dir()
-            else f"move {shlex.quote(str(old))} back, then {reverse}"
-        )
-    )
 
-    already_at = None
-    if chat is not None and payload.from_root is None:
-        # Bare form: `old` is where the harness's own record says the chat was, which
-        # after a full relocate is the stale original. Say where Meridian's records are.
-        newest = session_store.chat_generations(runtime_root, chat)[-1]
-        here = next((p for p in (newest.task_cwd, newest.control_root) if p), None)
-        already_at = here if here and Path(here).is_relative_to(new) else None
-
-    def output(refusals: Mapping[NativeKeyFields, str | None]) -> SessionRelocateOutput:
-        return SessionRelocateOutput(
-            dry_run=payload.dry_run,
-            old=str(old),
-            new=str(new),
-            chats=tuple(
-                ChatChange(
-                    chat_id=c.chat_id,
-                    harness=c.harness,
-                    fields=c.fields,
-                    harness_change=c.native.change if c.native and not c.native.refusal else None,
-                    refusal=(c.native.refusal or refusals.get(c.native.identity))
-                    if c.native
-                    else None,
-                )
-                for c in plan.chats
-            ),
-            spawns=tuple(row.id for row in plan.spawns),
-            pins=plan.pins,
-            links=plan.links,
-            work_items=plan.items,
-            notes=(
-                ("Git keeps its own worktree paths: run `git worktree repair`.",)
-                if plan.worktrees
-                else ()
-            ),
-            undo=undo,
-            already_at=already_at,
-        )
-
-    if payload.dry_run or not (plan.chats or plan.spawns or plan.pins or plan.links or plan.items):
-        return output({})
-
+def _apply(
+    request: _Request, plan: _Plan, move: _Move, rerun: str
+) -> dict[NativeKeyFields, str | None]:
+    """Take the chat locks, change each harness, journal the chats, then write the other
+    records. The harness's refusals, per native key."""
+    runtime_root = request.runtime_root
     paths = RuntimePaths.from_root_dir(runtime_root)
     with ExitStack() as stack:
         stack.enter_context(
@@ -596,8 +568,92 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         rows = _journal_rows(plan, move, refusals)
         if rows:
             session_store.append_chat_rows(runtime_root, rows)
-    _write_other_records(runtime_root, state_dir, project_root, move, plan)
-    return output(refusals)
+    _write_other_records(runtime_root, request.state_dir, request.project_root, move, plan)
+    return refusals
+
+
+def _output(
+    request: _Request,
+    plan: _Plan,
+    refusals: Mapping[NativeKeyFields, str | None],
+    *,
+    dry_run: bool,
+    bare: bool,
+) -> SessionRelocateOutput:
+    old, new = request.old, request.new
+    reverse = f"{request.command}--from {shlex.quote(str(new))} --to {shlex.quote(str(old))}"
+    undo = (
+        None
+        if old == new
+        else (
+            reverse
+            if request.chat and old.is_dir()
+            else f"move {shlex.quote(str(old))} back, then {reverse}"
+        )
+    )
+    already_at = None
+    if request.chat is not None and bare:
+        # Bare form: `old` is where the harness's own record says the chat was, which
+        # after a full relocate is the stale original. Say where Meridian's records are.
+        newest = request.generations[-1]
+        here = next((p for p in (newest.task_cwd, newest.control_root) if p), None)
+        already_at = here if here and Path(here).resolve().is_relative_to(new) else None
+    return SessionRelocateOutput(
+        dry_run=dry_run,
+        old=str(old),
+        new=str(new),
+        chats=tuple(
+            ChatChange(
+                chat_id=c.chat_id,
+                harness=c.harness,
+                fields=c.fields,
+                harness_change=c.native.change if c.native and not c.native.refusal else None,
+                refusal=(c.native.refusal or refusals.get(c.native.identity)) if c.native else None,
+            )
+            for c in plan.chats
+        ),
+        spawns=tuple(row.id for row in plan.spawns),
+        pins=plan.pins,
+        links=plan.links,
+        work_items=plan.items,
+        notes=(
+            ("Git keeps its own worktree paths: run `git worktree repair`.",)
+            if plan.worktrees
+            else ()
+        ),
+        undo=undo,
+        already_at=already_at,
+    )
+
+
+def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutput:
+    request = _resolve(payload)
+    old, new, native = request.old, request.new, request.native
+    move = _Move(_old_spellings(old), str(new), must_exist=request.chat is not None)
+    plan = _build_plan(
+        request.runtime_root,
+        request.state_dir,
+        request.project_root,
+        move,
+        chat=request.chat,
+        generations=request.generations,
+        native=native,
+    )
+    if native is not None:
+        refused = [c.native.refusal for c in plan.chats if c.native and c.native.refusal]
+        if refused:
+            raise ValueError(f"Refusing --native: {refused[0]}")
+        if not any(c.native is not None for c in plan.chats):
+            raise ValueError("--native has nothing to apply: the chat's harness directory stays.")
+
+    bare = payload.from_root is None
+    if payload.dry_run or not (plan.chats or plan.spawns or plan.pins or plan.links or plan.items):
+        return _output(request, plan, {}, dry_run=payload.dry_run, bare=bare)
+    rerun = f"{request.command}--from {shlex.quote(str(old))} --to {shlex.quote(str(new))}"
+    if payload.native:
+        rerun += f" --native {shlex.quote(payload.native)}"
+    refusals = _apply(request, plan, move, rerun)
+    return _output(request, plan, refusals, dry_run=False, bare=bare)
 
 
 session_relocate = async_from_sync(session_relocate_sync)
