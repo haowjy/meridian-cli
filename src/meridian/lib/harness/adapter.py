@@ -314,6 +314,8 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         started_at_epoch: float | None,
     ) -> PostExit: ...
 
+    def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None: ...
+
     def native_observation_reader(
         self,
         *,
@@ -619,6 +621,15 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         started_at_epoch: float | None,
     ) -> PostExit:
         return PostExit()
+
+    def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None:
+        """Whether the native session ``key`` gained a user-visible turn since launch.
+
+        Only picks the exit message of an interactive resume, so it must never raise:
+        ``None`` means no reliable signal (the default).
+        """
+        _ = key, started_at_epoch
+        return None
 
     def native_observation_reader(
         self,

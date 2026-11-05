@@ -165,7 +165,7 @@ def run_primary_launch(
             raise ValueError("--model requires a non-empty model id or alias.")
     model = model or ""
 
-    def _result_message(*, exit_code: int) -> str:
+    def _result_message(*, exit_code: int, turn_observed: bool | None) -> str:
         if dry_run:
             if resume_target is not None:
                 return "Resume dry-run."
@@ -174,6 +174,8 @@ def run_primary_launch(
             return "Launch dry-run."
         if exit_code == 0:
             if resume_target is not None:
+                if turn_observed is False:
+                    return "Session ended without a new turn."
                 return "Session resumed."
             if selected_fork_target is not None:
                 return "Session forked."
@@ -491,7 +493,9 @@ def run_primary_launch(
             if not dry_run and launch_result.primary_spawn_id and row
             else None
         ),
-        message=_result_message(exit_code=launch_result.exit_code),
+        message=_result_message(
+            exit_code=launch_result.exit_code, turn_observed=launch_result.turn_observed
+        ),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
         permission_report=launch_result.permission_report if dry_run else (),

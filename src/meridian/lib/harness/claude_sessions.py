@@ -358,6 +358,35 @@ def _find_tui_trampoline_successor_session_id(
     return candidate_session_id
 
 
+def claude_turn_since(native_store: str, session_id: str, since_epoch: float) -> bool | None:
+    """Whether the session transcript holds an assistant entry stamped at or after ``since_epoch``.
+
+    File size and mtime do not tell: Claude appends bookkeeping entries and records
+    ``/exit`` as user entries on every close, so only an assistant entry marks a turn.
+    ``None`` when the transcript can't be read: the answer only picks a message, so it
+    must never fail the exit.
+    """
+    if Path(session_id).name != session_id or ".." in session_id:
+        return None
+    # Path built from the already-validated store: re-validating the file header here
+    # could raise and fail an exit that only needs a message.
+    try:
+        with (Path(native_store) / f"{session_id}.jsonl").open("rb") as handle:
+            for line in handle:
+                if b'"type":"assistant"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    stamp = datetime.fromisoformat(entry["timestamp"]).timestamp()
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if entry.get("type") == "assistant" and stamp >= since_epoch:
+                    return True
+    except OSError:
+        return None
+    return False
+
+
 def reconcile_tui_trampoline_session_id(
     *,
     project_root: Path,

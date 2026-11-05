@@ -61,6 +61,11 @@ class NativeRun:
         """Identity failure from the joined observer, if any."""
         return self._observation_error
 
+    @property
+    def current_key(self) -> NativeKey | None:
+        """Last session published from boundary observations (``/clear``, ``/resume``)."""
+        return self._current_key
+
     def observe(self, session_id: str) -> None:
         """Only first owned signals can contradict pre-exec facts."""
         with self._lock:
@@ -305,6 +310,7 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
+    turn_observed: bool | None = None
 
 
 def conclude_native_run(
@@ -323,6 +329,7 @@ def conclude_native_run(
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
     prior_error_phase: str = "post_exit",
+    probe_turn: bool = False,
 ) -> NativeRunOutcome:
     """Conclude once per turn, after its child, teardown and observer joined."""
     error = prior_error or run.observation_error
@@ -403,4 +410,24 @@ def conclude_native_run(
         )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
-    return NativeRunOutcome(error, boundary, run.entry.session_id)
+    turn_observed = None
+    if probe_turn and error is None and started and started_at_epoch is not None:
+        turn_observed = _turn_since_launch(run, adapter, post, started_at_epoch)
+    return NativeRunOutcome(error, boundary, run.entry.session_id, turn_observed)
+
+
+def _turn_since_launch(
+    run: NativeRun, adapter: SubprocessHarness, post: PostExit, started_at_epoch: float
+) -> bool | None:
+    """Probe the entry session, and only when the conversation never moved. ``/clear``,
+    ``/resume`` and a trampoline rotate it, and after two rotations the last session can be
+    empty while the middle one held the turns, so any move answers None ("Session resumed.")."""
+    if run.identity is None or run.identity.operation != "resume":
+        return None
+    entry = run.entry.complete()
+    if entry is None or post.trampoline_successor_id:
+        return None
+    current = run.current_key
+    if current is not None and current != entry:
+        return None
+    return adapter.turn_since(entry, started_at_epoch=started_at_epoch)

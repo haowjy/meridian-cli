@@ -255,6 +255,7 @@ def launch_primary(
         continue_chat_id=outcome.chat_id,
         primary_spawn_id=outcome.primary_spawn_id,
         warning=warning,
+        turn_observed=outcome.turn_observed,
         launcher_diagnostics_path=outcome.launcher_diagnostics_path,
     )
 

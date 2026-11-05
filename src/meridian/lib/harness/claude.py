@@ -16,6 +16,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
@@ -49,6 +50,7 @@ from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
+    claude_turn_since,
     ensure_claude_session_accessible,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
@@ -527,6 +529,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return PostExit(
             trampoline_successor_id=successor if successor != entry.session_id else None,
         )
+
+    def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None:
+        return claude_turn_since(key.native_store, key.session_id, started_at_epoch)
 
     def native_observation_reader(
         self,

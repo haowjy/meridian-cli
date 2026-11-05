@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import NativeSessionUnavailable, Operation
+from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
@@ -47,6 +47,7 @@ from meridian.lib.harness.opencode_idle import (
     primary_idle_sensor,
 )
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
+from meridian.lib.harness.opencode_snapshot import opencode_turn_since
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_storage_root,
@@ -495,6 +496,12 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
+
+    def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None:
+        store = Path(key.native_store)
+        if not store.is_file():
+            return None
+        return opencode_turn_since(store, started_at_epoch)
 
     def resolve_native_session_file(
         self,
