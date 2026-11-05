@@ -54,7 +54,7 @@ from meridian.lib.launch.request import SessionRequest, cross_harness_continue_e
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
-from meridian.lib.ops.relocate_hint import copy_checkout_note, relocate_hint
+from meridian.lib.ops.relocate_gate import copy_checkout_note, relocate_hint
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     inspect_runtime_authority_for_read,

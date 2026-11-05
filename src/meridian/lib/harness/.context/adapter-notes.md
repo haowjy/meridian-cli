@@ -102,15 +102,15 @@ for all harnesses; it always comes from the recorded chat, never config hints.
 before argv projection, so the bound key, env and argv agree. A resume into its own
 chat whose child store differs from the recorded one raises
 `NativeSessionUnavailable(reason="store_moved")` with both stores and the adapter's
-`classify_store_move()` kind, before any lock; `bind_entry` would refuse it later
-anyway. When the adapter returns no kind (the launch could not pin the recorded
+`classify_store_move()` result, before any lock; `bind_entry` would refuse it later
+anyway. When the adapter returns None (the launch could not pin the recorded
 store), it raises `missing` instead, as a fork that leaves its source store does.
-A resume into a fresh chat has no recorded store and is exempt. Every harness's `plan_native_relocate` retargets the directory it records itself, never
-`new_root`: Claude's child runs at the chat's control root, so its new store comes from
-`resume_store` at that root rebased from the old one (`native_cwd` plus
-`state.paths.rebase_path`), with the recorded config root pinned. A harness whose own
-directory is not under the old roots (a worktree moved, the project did not) returns None:
-no change and no refusal. Claude then links `<id>.jsonl` and `<id>/` into it
+A resume into a fresh chat has no recorded store and is exempt. `session relocate` owns where the harness's directory goes: it reads `native_cwd`,
+rebases it once (`state.paths.rebase_path`), and hands `plan_native_relocate` the
+finished `cwd_from`/`cwd_to`; a harness whose own directory does not move (a worktree
+moved, the project did not) is never asked. Claude's new store comes from `resume_store`
+at `cwd_to`, with the recorded config root pinned. Apply compares the harness's current
+value with the plan (`cwd_to` done, `cwd_from` change, anything else refused). Claude then links `<id>.jsonl` and `<id>/` into it
 (`claude_sessions.link_claude_session`). It only creates links: a target that exists and
 differs is a refusal, never replaced, and the originals are never moved or deleted. The runner binds
 nonempty identities as `assigned` before exec. `observe_after_exit()` returns

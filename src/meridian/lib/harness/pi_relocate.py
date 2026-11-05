@@ -23,7 +23,6 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
 from meridian.lib.harness.pi_identity import read_header, resolve_session_file
-from meridian.lib.state.paths import rebase_path
 
 _HEADER_VERSION = 3
 
@@ -39,14 +38,10 @@ def pi_native_cwd(identity: NativeKeyFields) -> Path | None:
 
 
 def plan_pi_relocate(
-    identity: NativeKeyFields, *, old_roots: Sequence[Path], new_root: Path
+    identity: NativeKeyFields, *, cwd_from: Path, cwd_to: Path
 ) -> NativeRelocation | None:
-    """None when the header's own cwd is not under ``old_roots``: it did not move."""
-
     def plan(change: str, source: Path | None, refusal: str | None = None) -> NativeRelocation:
-        return NativeRelocation(
-            identity, tuple(old_roots), new_root, change, source=source, refusal=refusal
-        )
+        return NativeRelocation(identity, cwd_from, cwd_to, change, source=source, refusal=refusal)
 
     try:
         found = _header_for(identity)
@@ -61,25 +56,18 @@ def plan_pi_relocate(
             path,
             f"{path}: unsupported Pi header version {header.get('version')!r}",
         )
-    cwd = header.get("cwd")
-    if not isinstance(cwd, str) or not cwd:
-        return plan("Pi header cwd", path, f"{path}: header has no cwd")
-    target = _retarget(cwd, old_roots, new_root)
-    if target is None:
-        return None
-    return plan(f"Pi header cwd {cwd} -> {target} in {path}", path)
+    return plan(f"Pi header cwd {cwd_from} -> {cwd_to} in {path}", path)
 
 
 def apply_pi_relocations(
     plans: Sequence[NativeRelocation],
 ) -> tuple[NativeRelocationResult, ...]:
-    return tuple(NativeRelocationResult(plan, plan.refusal or _apply_one(plan)) for plan in plans)
+    return tuple(NativeRelocationResult(plan, _apply_one(plan)) for plan in plans)
 
 
 def _apply_one(plan: NativeRelocation) -> str | None:
     path = plan.source
-    if path is None:
-        return "no Pi transcript was planned"
+    assert path is not None  # a plan without a refusal names the transcript
     try:
         # Validate the file as it is now, not as it was at plan time.
         with path.open("rb") as handle:
@@ -94,22 +82,18 @@ def _apply_one(plan: NativeRelocation) -> str | None:
             or header.get("id") != plan.identity.session_id
             or header.get("version") != _HEADER_VERSION
             or not isinstance(cwd, str)
+            or Path(cwd) not in (plan.cwd_from, plan.cwd_to)
         ):
             return f"{path}: header changed since the plan"
-        target = _retarget(cwd, plan.old_roots, plan.new_root)
-        if target is None:
-            return None  # already done, or not under the old root
-        header["cwd"] = str(target)
+        if Path(cwd) == plan.cwd_to:
+            return None  # already done
+        header["cwd"] = str(plan.cwd_to)
         newline = b"\n" if first.endswith(b"\n") else b""
         line = json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode() + newline
         _replace_first_line(path, skip=len(first), line=line)
     except (OSError, ValueError) as exc:
         return f"{path}: {exc}"
     return None
-
-
-def _retarget(cwd: str, old_roots: Sequence[Path], new_root: Path) -> str | None:
-    return rebase_path(cwd, [str(root) for root in old_roots], str(new_root))
 
 
 def _replace_first_line(path: Path, *, skip: int, line: bytes) -> None:

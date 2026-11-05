@@ -219,6 +219,19 @@ class Replacement(BaseModel):
     new: str
 
 
+class PathMove(Replacement):
+    """A directory prefix a relocate moved: ``old`` and its other spellings (``also``,
+    e.g. the resolved form) become ``new``. ``keep`` lists recorded paths under it that
+    stayed because they name a checkout nested inside the old directory."""
+
+    also: tuple[str, ...] = ()
+    keep: tuple[str, ...] = ()
+
+    @property
+    def olds(self) -> tuple[str, ...]:
+        return (self.old, *self.also)
+
+
 class SessionRelocateEvent(BaseModel):
     """A chat's recorded paths moved (``meridian session relocate``).
 
@@ -235,7 +248,7 @@ class SessionRelocateEvent(BaseModel):
     event: Literal["relocate"] = "relocate"
     chat_id: PersistedChatId
     relocated_at: str
-    paths: Replacement | None = None
+    paths: PathMove | None = None
     native_store: Replacement | None = None
 
 
@@ -435,7 +448,11 @@ def _relocated(record: SessionRecord, event: SessionRelocateEvent) -> SessionRec
     if event.paths is not None:
         for name in ("control_root", "task_cwd", "execution_cwd"):
             value: str | None = getattr(record, name)
-            rebased = rebase_path(value, (event.paths.old,), event.paths.new) if value else None
+            rebased = (
+                rebase_path(value, event.paths.olds, event.paths.new)
+                if value and value not in event.paths.keep
+                else None
+            )
             if rebased is not None:
                 updates[name] = rebased
     if event.native_store is not None:

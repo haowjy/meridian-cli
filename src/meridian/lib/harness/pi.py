@@ -312,13 +312,13 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         identity: NativeKeyFields,
         *,
-        old_roots: Sequence[Path],
-        new_root: Path,
+        cwd_from: Path,
+        cwd_to: Path,
         native: Path | None = None,
-        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
-        _ = native, recorded_roots  # the --native form is deferred for this harness
-        return plan_pi_relocate(identity, old_roots=old_roots, new_root=new_root)
+        if native is not None:  # the --native form is deferred for this harness
+            return self.refuse_native(identity, cwd_from, cwd_to)
+        return plan_pi_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to)
 
     def apply_native_relocations(
         self,

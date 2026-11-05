@@ -73,11 +73,18 @@ class NativeKeyFields:
 
 @dataclass(frozen=True)
 class NativeStoreMove:
-    """A resume would run in ``attempted`` while the chat is recorded in ``recorded``."""
+    """A resume would run in ``attempted`` while the chat is recorded in ``recorded``.
+
+    ``fix`` is the adapter's line for a ``config_root`` difference: how the user makes
+    the resume find the recorded store without moving the chat. ``also_moved`` says the
+    project directory moved as well, so that fix alone is not enough.
+    """
 
     recorded: str
     attempted: str
     kind: StoreMoveKind
+    fix: str | None = None
+    also_moved: bool = False
 
     def render(self) -> dict[str, str]:
         return {"recorded": self.recorded, "attempted": self.attempted, "kind": self.kind}

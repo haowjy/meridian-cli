@@ -32,7 +32,6 @@ from meridian.lib.core.native_identity import (
     NativeStoreMove,
     Operation,
     PostExit,
-    StoreMoveKind,
 )
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
@@ -252,28 +251,21 @@ RecordConfigDirFn = Callable[[str], None]
 
 
 @dataclass(frozen=True)
-class NativeLocation:
-    """One native file found for an exact session ID by the miss-path search."""
-
-    native_store: Path
-    file: Path
-    same_root: bool  # under the recorded store's config root
-
-
-@dataclass(frozen=True)
 class NativeRelocation:
     """What relocate changes in a harness's own state for one chat.
 
-    ``change`` states it in one line for the plan output. ``source`` is the native
-    file the change acts on, chosen at plan time so apply and ``--dry-run`` name the
-    same file. ``native_store`` is the chat's new store when the move changes it
-    (Claude). A change the harness can't make is a plan with ``refusal`` set, not an
-    exception.
+    ``cwd_from`` is the directory the harness records for the chat and ``cwd_to`` the
+    one relocate decided it moves to; the ops layer owns that rule, the harness only
+    changes its own state. ``change`` states it in one line for the plan output.
+    ``source`` is the native file the change acts on, chosen at plan time so apply and
+    ``--dry-run`` name the same file. ``native_store`` is the chat's new store when the
+    move changes it (Claude). A change the harness can't make is a plan with
+    ``refusal`` set, not an exception.
     """
 
     identity: NativeKeyFields
-    old_roots: tuple[Path, ...]
-    new_root: Path
+    cwd_from: Path
+    cwd_to: Path
     change: str
     source: Path | None = None
     native_store: str | None = None
@@ -470,15 +462,9 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         native_store: Path,
     ) -> Path | None: ...
 
-    def resume_store(
-        self,
-        recorded_store: str,
-        *,
-        child_env: Mapping[str, str],
-        child_cwd: Path,
-    ) -> str: ...
+    continues_in_source_store: ClassVar[frozenset[Operation]]
 
-    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind | None: ...
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None: ...
 
     def native_cwd(
         self,
@@ -491,24 +477,15 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         identity: NativeKeyFields,
         *,
-        old_roots: Sequence[Path],
-        new_root: Path,
+        cwd_from: Path,
+        cwd_to: Path,
         native: Path | None = None,
-        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None: ...
 
     def apply_native_relocations(
         self,
         plans: Sequence[NativeRelocation],
     ) -> tuple[NativeRelocationResult, ...]: ...
-
-    def locate_native_session(
-        self,
-        *,
-        session_id: str,
-        recorded_store: Path,
-        child_env: Mapping[str, str],
-    ) -> tuple[NativeLocation, ...]: ...
 
     def resolve_session_file(
         self,
@@ -628,16 +605,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             and store != source_store
             and (resumes_chat or op in self.continues_in_source_store)
         ):
-            kind = (
+            move = (
                 self.classify_store_move(recorded=source_store, attempted=store)
                 if resumes_chat
                 else None
             )
-            if kind is None:
+            if move is None:
                 raise NativeSessionUnavailable(ref, "missing")
-            raise NativeSessionUnavailable(
-                ref, "store_moved", store_move=NativeStoreMove(source_store, store, kind)
-            )
+            raise NativeSessionUnavailable(ref, "store_moved", store_move=move)
         source: Path | None = None
         if op != "create" and (source_store is not None or self.resolves_untracked_source):
             lookup = source_store or self._store(
@@ -920,10 +895,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         # No adapter's resume store depends on the spawn or on interactivity.
         return self._store(env, child_cwd, SpawnId(""), "resume", False)
 
-    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind | None:
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
         """Why a resume's store differs from the recorded one; only the adapter knows
-        its store layout. None when the difference is no move: the launch could not pin
-        the recorded store, and the resume reports the transcript as missing."""
+        its store layout, and so how to fix a config-root difference (``fix``). None when
+        the difference is no move: the launch could not pin the recorded store, and the
+        resume reports the transcript as missing."""
         _ = recorded, attempted
         return None
 
@@ -946,43 +922,32 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         identity: NativeKeyFields,
         *,
-        old_roots: Sequence[Path],
-        new_root: Path,
+        cwd_from: Path,
+        cwd_to: Path,
         native: Path | None = None,
-        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
         """What relocate changes in this harness's own state for one chat, or None.
 
-        ``old_roots`` are the spellings of the directory that moved to ``new_root``. The
-        harness retargets the directory it records itself, not ``new_root``, and returns
-        None when that directory is not under ``old_roots`` (a worktree moved, the
-        chat's directory did not). ``native`` is the user's ``--native`` file, used in
-        place of a search; ``recorded_roots`` are the chat's control roots, newest
-        first, as for ``native_cwd``."""
-        _ = identity, old_roots, new_root, native, recorded_roots
-        return None
+        Called only when the harness's own directory (``native_cwd``) is ``cwd_from`` and
+        relocate decided it becomes ``cwd_to``. ``native`` is the user's ``--native``
+        file; a harness that can't use one refuses it rather than ignoring it."""
+        return self.refuse_native(identity, cwd_from, cwd_to) if native is not None else None
+
+    def refuse_native(
+        self, identity: NativeKeyFields, cwd_from: Path, cwd_to: Path
+    ) -> NativeRelocation:
+        return NativeRelocation(
+            identity, cwd_from, cwd_to, "", refusal=f"--native is not supported for {self.id}"
+        )
 
     def apply_native_relocations(
         self,
         plans: Sequence[NativeRelocation],
     ) -> tuple[NativeRelocationResult, ...]:
-        """Apply every plan for this harness in one call; idempotent. A failure is a
-        result with a refusal, per plan. The default has nothing to change."""
-        return tuple(NativeRelocationResult(plan, plan.refusal) for plan in plans)
-
-    def locate_native_session(
-        self,
-        *,
-        session_id: str,
-        recorded_store: Path,
-        child_env: Mapping[str, str],
-    ) -> tuple[NativeLocation, ...]:
-        """Distinct native files for this exact ID, found when the recorded file is
-        missing: under the recorded store's root, and under the root ``child_env``
-        resolves to when that differs. Candidates that fail validation are skipped, not
-        raised; results are deduplicated by real file. The default does not search."""
-        _ = session_id, recorded_store, child_env
-        return ()
+        """Apply every plan for this harness in one call; idempotent. Receives only
+        plans without a refusal. A failure is a result with a refusal, per plan. The
+        default has nothing to change."""
+        return tuple(NativeRelocationResult(plan) for plan in plans)
 
     def resolve_session_file(
         self,

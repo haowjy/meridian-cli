@@ -19,7 +19,6 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.types import HarnessId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -42,9 +41,13 @@ from meridian.lib.launch.process.terminal_ownership import (
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
-from meridian.lib.ops.relocate_hint import copy_checkout_note, relocate_hint, with_relocate_hint
+from meridian.lib.ops.relocate_gate import (
+    copy_checkout_note,
+    needs_relocate,
+    relocate_hint,
+    with_relocate_hint,
+)
 from meridian.lib.ops.run_boundary import run_boundary_summary
-from meridian.lib.ops.session_relocate import needs_relocate
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
@@ -141,15 +144,12 @@ def _refuse_if_harness_directory_gone(
         return
     runtime_root = resolve_project_runtime_root(project_root)
     generations = session_store.chat_generations(runtime_root, chat_id)
-    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(harness_id))
-    need = needs_relocate(
-        generations, adapter, control_root=project_root, child_env=dict(os.environ)
-    )
-    if need is None or need.missing_dir is None:
+    gone = needs_relocate(generations)
+    if gone is None:
         return
     hint = relocate_hint(runtime_root=runtime_root, chat_id=chat_id, target=project_root)
     raise ValueError(
-        f"{ref}: {harness_id} records the directory {need.missing_dir}, which no longer exists."
+        f"{ref}: {harness_id} records the directory {gone}, which no longer exists."
         + (f"\n{hint}" if hint else "")
     )
 

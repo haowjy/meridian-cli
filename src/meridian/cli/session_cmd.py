@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 def _hint_gone_directory(file_path: str | None) -> Generator[None]:
     """A transcript read that finds its recorded path missing says how to relocate."""
     from meridian.lib.core.native_identity import NativeSessionUnavailable
-    from meridian.lib.ops.relocate_hint import with_read_hint
+    from meridian.lib.ops.relocate_gate import with_read_hint
 
     try:
         yield

@@ -36,7 +36,6 @@ from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResul
 from meridian.lib.harness.connections.opencode_http import find_free_port
 from meridian.lib.harness.opencode_transcript import connect_readonly
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
-from meridian.lib.state.paths import rebase_path
 
 _SERVE_READY_SECONDS = 30.0
 _MOVE_APPLIED_SECONDS = 15.0
@@ -52,21 +51,16 @@ def opencode_native_cwd(identity: NativeKeyFields) -> Path | None:
 
 
 def plan_opencode_relocate(
-    identity: NativeKeyFields, *, old_roots: Sequence[Path], new_root: Path
+    identity: NativeKeyFields, *, cwd_from: Path, cwd_to: Path
 ) -> NativeRelocation | None:
-    """None when the session's own directory is not under ``old_roots``: it did not move."""
-    db = Path(identity.native_store) if identity.native_store else None
-    current = opencode_native_cwd(identity)
-    if db is None or current is None:
+    if not identity.native_store:
         return None
-    target = _retarget(current, old_roots, new_root)
-    if target is None:
-        return None
+    db = Path(identity.native_store)
     return NativeRelocation(
         identity,
-        tuple(old_roots),
-        new_root,
-        f"OpenCode session directory {current} -> {target} (POST /api/session/<id>/move in {db})",
+        cwd_from,
+        cwd_to,
+        f"OpenCode session directory {cwd_from} -> {cwd_to} (POST /api/session/<id>/move in {db})",
         source=db,
     )
 
@@ -77,22 +71,21 @@ def apply_opencode_relocations(
     refusals: dict[int, str | None] = {}
     by_db: dict[Path, list[tuple[int, NativeRelocation]]] = defaultdict(list)
     for index, plan in enumerate(plans):
-        if plan.refusal or plan.source is None or plan.identity.session_id is None:
-            refusals[index] = plan.refusal or "no OpenCode session was planned"
-        else:
-            by_db[plan.source].append((index, plan))
+        assert plan.source is not None  # a plan without a refusal names the DB
+        by_db[plan.source].append((index, plan))
     for db, entries in by_db.items():
         moves: dict[str, Path] = {}
         for index, plan in entries:
             session_id = plan.identity.session_id or ""
             current = _read_directory(db, session_id)
-            target = None if current is None else _retarget(current, plan.old_roots, plan.new_root)
             if current is None:
                 refusals[index] = f"{db}: session {session_id} has no directory record"
-            elif target is None:
-                refusals[index] = None  # already done, or not under the old root
+            elif current == plan.cwd_to:
+                refusals[index] = None  # already done
+            elif current == plan.cwd_from:
+                moves[session_id] = plan.cwd_to
             else:
-                moves[session_id] = target
+                refusals[index] = f"{db}: session {session_id} changed since the plan"
         failures = _move_sessions(db, moves) if moves else {}
         for index, plan in entries:
             session_id = plan.identity.session_id or ""
@@ -101,39 +94,61 @@ def apply_opencode_relocations(
     return tuple(NativeRelocationResult(plan, refusals[i]) for i, plan in enumerate(plans))
 
 
-def _retarget(current: Path, old_roots: Sequence[Path], new_root: Path) -> Path | None:
-    moved = rebase_path(str(current), [str(root) for root in old_roots], str(new_root))
-    return None if moved is None else Path(moved)
-
-
-@contextlib.contextmanager
-def _exit_on_termination() -> Generator[None]:
-    """Turn SIGTERM and SIGHUP into an exit so the ``finally`` that reaps the serve runs.
+class _Termination:
+    """SIGTERM and SIGHUP as an exit, so the ``finally`` that reaps the serve runs.
 
     The serve has its own session, so a closed terminal never reaches it; Python's
-    default handlers exit without unwinding. Only the main thread can install them.
+    default handlers exit without unwinding. Inside ``held()`` a signal waits until the
+    block ends: no exit may cut the serve's start or its stop short. A signal the
+    process inherited as ignored (``nohup``) stays ignored. Only the main thread can
+    install handlers.
     """
 
-    def stop(signum: int, _frame: FrameType | None) -> None:
-        raise SystemExit(128 + signum)
+    def __init__(self) -> None:
+        self._held = False
+        self._pending: int | None = None
 
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGHUP)}
-    try:
-        yield
-    finally:
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
+    def _handle(self, signum: int, _frame: FrameType | None) -> None:
+        if self._held:
+            self._pending = signum
+        else:
+            raise SystemExit(128 + signum)
+
+    @contextlib.contextmanager
+    def installed(self) -> Generator[None]:
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        previous = {
+            sig: signal.signal(sig, self._handle)
+            for sig in (signal.SIGTERM, signal.SIGHUP)
+            if signal.getsignal(sig) is not signal.SIG_IGN
+        }
+        try:
+            yield
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+    @contextlib.contextmanager
+    def held(self) -> Generator[None]:
+        self._held = True
+        try:
+            yield
+        finally:
+            self._held = False
+            if self._pending is not None:
+                raise SystemExit(128 + self._pending)
 
 
 def _move_sessions(db: Path, moves: dict[str, Path]) -> dict[str, str]:
     """Move each session through one serve on ``db``; returns a refusal per failure."""
-    with tempfile.TemporaryFile() as out, _exit_on_termination():
+    termination = _Termination()
+    with tempfile.TemporaryFile() as out, termination.installed():
         process: subprocess.Popen[bytes] | None = None
         try:
-            process = _start_serve(db, find_free_port(), out)
+            with termination.held():  # no gap between the fork and owning the group
+                process = _start_serve(db, find_free_port(), out)
             base_url, auth = _await_ready(process, out)
             failures: dict[str, str] = {}
             for session_id, target in moves.items():
@@ -147,7 +162,8 @@ def _move_sessions(db: Path, moves: dict[str, Path]) -> dict[str, str]:
             return dict.fromkeys(moves, f"{db}: {exc}")
         finally:
             if process is not None:
-                _stop_group(process)
+                with termination.held():
+                    _stop_group(process)
 
 
 def _start_serve(db: Path, port: int, out: IO[bytes]) -> subprocess.Popen[bytes]:

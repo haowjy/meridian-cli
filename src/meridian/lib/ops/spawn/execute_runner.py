@@ -39,7 +39,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.ops.relocate_hint import with_relocate_hint
+from meridian.lib.ops.relocate_gate import with_relocate_hint
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths

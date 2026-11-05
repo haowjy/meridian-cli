@@ -22,9 +22,9 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
+    NativeStoreMove,
     Operation,
     PostExit,
-    StoreMoveKind,
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -35,7 +35,6 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
-    NativeLocation,
     NativeRelocation,
     NativeRelocationResult,
     RecordConfigDirFn,
@@ -122,7 +121,7 @@ from meridian.lib.safety.policy import (
     NetworkPolicy,
     network_allows_local_services,
 )
-from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths, rebase_path
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 
 logger = structlog.get_logger(__name__)
 
@@ -350,10 +349,18 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ).resolve()
         )
 
-    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind | None:
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
         # A store is <config root>/projects/<slug(control_root)>.
-        same_root = Path(recorded).parent.parent == Path(attempted).parent.parent
-        return "project_moved" if same_root else "config_root"
+        root = Path(recorded).parent.parent
+        if root == Path(attempted).parent.parent:
+            return NativeStoreMove(recorded, attempted, "project_moved")
+        return NativeStoreMove(
+            recorded,
+            attempted,
+            "config_root",
+            fix=f"is recorded under the Claude config root {root}: set CLAUDE_CONFIG_DIR={root}",
+            also_moved=Path(recorded).name != Path(attempted).name,
+        )
 
     def native_cwd(
         self,
@@ -373,46 +380,20 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             return None
         return claude_transcript_first_cwd(store / f"{identity.session_id}.jsonl")
 
-    def locate_native_session(
-        self,
-        *,
-        session_id: str,
-        recorded_store: Path,
-        child_env: Mapping[str, str],
-    ) -> tuple[NativeLocation, ...]:
-        recorded_root = recorded_store.parent.parent
-        roots = (recorded_root, resolve_claude_config_root(child_env, Path.cwd()))
-        return tuple(
-            NativeLocation(file.parent, file, same_root=root == recorded_root)
-            for root, file in locate_claude_session_files(session_id, roots)
-        )
-
     def plan_native_relocate(
         self,
         identity: NativeKeyFields,
         *,
-        old_roots: Sequence[Path],
-        new_root: Path,
+        cwd_from: Path,
+        cwd_to: Path,
         native: Path | None = None,
-        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
         if identity.native_store is None or identity.session_id is None:
             return None
         recorded, session_id = Path(identity.native_store), identity.session_id
-        # The child runs at the chat's control root, so the store follows that root
-        # only when it is the directory that moved (not a worktree inside the project).
-        current = self.native_cwd(identity, recorded_roots=recorded_roots)
-        child_cwd = (
-            rebase_path(str(current), [str(root) for root in old_roots], str(new_root))
-            if current is not None
-            else None
-        )
-        if child_cwd is None:
-            return None
-        old_roots = tuple(old_roots)
 
         def refuse(reason: str) -> NativeRelocation:
-            return NativeRelocation(identity, old_roots, new_root, "", refusal=reason)
+            return NativeRelocation(identity, cwd_from, cwd_to, "", refusal=reason)
 
         if native is not None:
             if native.parent.parent.name != "projects":
@@ -428,27 +409,30 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             source = None
         env = {"CLAUDE_CONFIG_DIR": str(config_root)}
         # The store the next launch computes from the moved root, not a restated formula.
-        new_store = Path(self.resume_store(str(recorded), child_env=env, child_cwd=Path(child_cwd)))
+        new_store = Path(self.resume_store(str(recorded), child_env=env, child_cwd=cwd_to))
         if source is None:
             candidates = (recorded / f"{session_id}.jsonl", new_store / f"{session_id}.jsonl")
             source = next((c.resolve() for c in candidates if c.is_file()), None)
         if source is None:
-            found = self.locate_native_session(
-                session_id=session_id, recorded_store=recorded, child_env=env
+            # The miss path: the transcript under the recorded config root, and under the
+            # root the child env resolves to when that differs.
+            recorded_root = recorded.parent.parent
+            found = locate_claude_session_files(
+                session_id, (recorded_root, resolve_claude_config_root(env, Path.cwd()))
             )
-            if len(found) > 1 or any(not location.same_root for location in found):
-                listing = ", ".join(str(location.file) for location in found)
+            if len(found) > 1 or any(root != recorded_root for root, _ in found):
+                listing = ", ".join(str(file) for _, file in found)
                 return refuse(
                     f"{session_id} is not in {recorded}, but exists at {listing}; "
                     "pick one with --native"
                 )
-            source = found[0].file if found else None
+            source = found[0][1] if found else None
         store_change = f"native store {recorded} -> {new_store}"
         if source is None:
             return NativeRelocation(
                 identity,
-                old_roots,
-                new_root,
+                cwd_from,
+                cwd_to,
                 f"{store_change} (transcript not found anywhere)",
                 native_store=str(new_store),
             )
@@ -465,8 +449,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             change += f"; continue with CLAUDE_CONFIG_DIR={config_root}"
         return NativeRelocation(
             identity,
-            old_roots,
-            new_root,
+            cwd_from,
+            cwd_to,
             change,
             source=source if links else None,
             native_store=str(new_store),
@@ -475,13 +459,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def apply_native_relocations(
         self, plans: Sequence[NativeRelocation]
     ) -> tuple[NativeRelocationResult, ...]:
-        results: list[NativeRelocationResult] = []
-        for plan in plans:
-            refusal = plan.refusal
-            if refusal is None and plan.source is not None and plan.native_store is not None:
-                refusal = link_claude_session(plan.source, Path(plan.native_store))
-            results.append(NativeRelocationResult(plan, refusal))
-        return tuple(results)
+        return tuple(
+            NativeRelocationResult(
+                plan,
+                link_claude_session(plan.source, Path(plan.native_store))
+                if plan.source is not None and plan.native_store is not None
+                else None,
+            )
+            for plan in plans
+        )
 
     def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
         return (
