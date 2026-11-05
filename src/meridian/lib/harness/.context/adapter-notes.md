@@ -106,7 +106,8 @@ chat whose child store differs from the recorded one raises
 anyway. When the adapter returns None (the launch could not pin the recorded
 store), it raises `missing` instead, as a fork that leaves its source store does.
 A resume into a fresh chat has no recorded store and is exempt. A tracked resume whose recorded file is missing asks `locate_native_session()` for other files with the ID in the recorded config root; the one distinct hit becomes `NativeIdentity.located_from` and Claude links it back at prelaunch. `tui_recovers_directory` marks the harnesses (Pi, OpenCode) whose own TUI handles a gone directory, so a refused relocate still offers "launch anyway". `session relocate` owns where the harness's directory goes: it reads `native_cwd`,
-rebases it once (`state.paths.rebase_path`), and hands `plan_native_relocate` the
+rebases it once (`state.paths.rebase_path`), and hands `plan_native_relocate` (a final template that refuses `--native` unless
+`native_transcript_choice` is set, then calls the harness's `_plan_native_relocate`) the
 finished `cwd_from`/`cwd_to`; a harness whose own directory does not move (a worktree
 moved, the project did not) is never asked. Claude's new store is the store a resume
 would use at `cwd_to`, with the recorded config root pinned. Apply compares the harness's current

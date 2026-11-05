@@ -560,6 +560,8 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
     tui_recovers_directory: ClassVar[bool] = False
+    # Relocate accepts the user's own transcript file (`--native`) for this harness.
+    native_transcript_choice: ClassVar[bool] = False
     resolves_untracked_source: ClassVar[bool] = False
 
     @final
@@ -963,15 +965,25 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
         Called only when the harness's own directory (``native_cwd``) is ``cwd_from`` and
         relocate decided it becomes ``cwd_to``. ``native`` is the user's ``--native``
-        file; a harness that can't use one refuses it rather than ignoring it."""
-        return self.refuse_native(identity, cwd_from, cwd_to) if native is not None else None
+        file: refused here unless ``native_transcript_choice`` says the harness can use
+        one, so a harness never ignores it. Override ``_plan_native_relocate``, not this.
+        """
+        if native is not None and not self.native_transcript_choice:
+            return NativeRelocation(
+                identity, cwd_from, cwd_to, "", refusal=f"--native is not supported for {self.id}"
+            )
+        return self._plan_native_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to, native=native)
 
-    def refuse_native(
-        self, identity: NativeKeyFields, cwd_from: Path, cwd_to: Path
-    ) -> NativeRelocation:
-        return NativeRelocation(
-            identity, cwd_from, cwd_to, "", refusal=f"--native is not supported for {self.id}"
-        )
+    def _plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None,
+    ) -> NativeRelocation | None:
+        _ = identity, cwd_from, cwd_to, native
+        return None
 
     def apply_native_relocations(
         self,

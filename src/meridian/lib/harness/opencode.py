@@ -570,16 +570,15 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = recorded_roots
         return opencode_native_cwd(identity)
 
-    def plan_native_relocate(
+    def _plan_native_relocate(
         self,
         identity: NativeKeyFields,
         *,
         cwd_from: Path,
         cwd_to: Path,
-        native: Path | None = None,
+        native: Path | None,
     ) -> NativeRelocation | None:
-        if native is not None:  # the --native form is deferred for this harness
-            return self.refuse_native(identity, cwd_from, cwd_to)
+        _ = native  # refused by plan_native_relocate: no transcript choice here
         return plan_opencode_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to)
 
     def apply_native_relocations(

@@ -236,6 +236,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ["--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"]
     )
     resolves_untracked_source = True
+    native_transcript_choice = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
@@ -384,13 +385,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             return None
         return claude_transcript_first_cwd(store / f"{identity.session_id}.jsonl")
 
-    def plan_native_relocate(
+    def _plan_native_relocate(
         self,
         identity: NativeKeyFields,
         *,
         cwd_from: Path,
         cwd_to: Path,
-        native: Path | None = None,
+        native: Path | None,
     ) -> NativeRelocation | None:
         if identity.native_store is None or identity.session_id is None:
             return None
