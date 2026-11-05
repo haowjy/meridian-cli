@@ -189,6 +189,7 @@ def test_native_ids_covers_model_fields_and_raw_legacy_rows(tmp_path: Path) -> N
         "SessionStopEvent": set(),
         "SessionUpdateEvent": {"harness_session_id"},
         "SessionHistoricalEvent": set(),
+        "SessionRelocateEvent": set(),
         "SessionModelSelectionEvent": {"harness_session_id"},
         "SessionModelObservationEvent": {"harness_session_id"},
         "SessionRecord": {"harness_session_id"},
