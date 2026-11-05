@@ -121,6 +121,7 @@ class ProcessOutcome(BaseModel):
     primary_started_epoch: float
     primary_started_local_iso: str | None
     resolved_harness_session_id: str
+    turn_observed: bool | None = None
     launcher_diagnostics_path: Path | None = None
 
 
@@ -755,6 +756,7 @@ def run_harness_process(
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
     native_run: NativeRun | None = None
+    turn_observed: bool | None = None
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 
@@ -1145,6 +1147,7 @@ def run_harness_process(
                         )
                         identity_error = outcome.error
                         resolved_harness_session_id = outcome.harness_session_id or ""
+                        turn_observed = outcome.turn_observed
                     elif identity_error is not None and lifecycle is not None:
                         record_identity_failure(
                             identity_error, phase="pre_exec", lifecycle=lifecycle
@@ -1209,6 +1212,7 @@ def run_harness_process(
         primary_started_epoch=primary_started_epoch,
         primary_started_local_iso=primary_started_local_iso,
         resolved_harness_session_id=resolved_harness_session_id,
+        turn_observed=turn_observed,
         launcher_diagnostics_path=launcher_diagnostics_path,
     )
 

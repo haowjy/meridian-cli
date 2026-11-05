@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import NativeSessionUnavailable, Operation
+from meridian.lib.core.native_identity import (
+    NativeIdentity,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+    Operation,
+    PostExit,
+)
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
@@ -47,6 +53,7 @@ from meridian.lib.harness.opencode_idle import (
     primary_idle_sensor,
 )
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
+from meridian.lib.harness.opencode_snapshot import opencode_turn_since
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_storage_root,
@@ -495,6 +502,26 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
+
+    def observe_after_exit(
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit:
+        _ = child_env, child_cwd, pid
+        if identity.operation != "resume" or not entry.session_id or started_at_epoch is None:
+            return PostExit()
+        store = Path(identity.native_store)
+        if not store.is_file():
+            return PostExit()
+        return PostExit(
+            turn_observed=opencode_turn_since(store, entry.session_id, started_at_epoch)
+        )
 
     def resolve_native_session_file(
         self,

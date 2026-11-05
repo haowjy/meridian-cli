@@ -305,6 +305,7 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
+    turn_observed: bool | None
 
 
 def conclude_native_run(
@@ -403,4 +404,4 @@ def conclude_native_run(
         )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
-    return NativeRunOutcome(error, boundary, run.entry.session_id)
+    return NativeRunOutcome(error, boundary, run.entry.session_id, post.turn_observed)

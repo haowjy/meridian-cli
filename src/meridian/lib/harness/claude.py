@@ -49,6 +49,7 @@ from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
+    claude_turn_since,
     ensure_claude_session_accessible,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
@@ -518,6 +519,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         started_at_epoch: float | None,
     ) -> PostExit:
         _ = child_env, pid
+        turn_observed = None
+        if identity.operation == "resume" and entry.session_id and started_at_epoch is not None:
+            transcript = self.resolve_native_session_file(
+                session_id=entry.session_id, native_store=Path(identity.native_store)
+            )
+            if transcript is not None:
+                turn_observed = claude_turn_since(transcript, started_at_epoch)
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",
@@ -526,6 +534,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return PostExit(
             trampoline_successor_id=successor if successor != entry.session_id else None,
+            turn_observed=turn_observed,
         )
 
     def native_observation_reader(

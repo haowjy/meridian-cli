@@ -358,6 +358,26 @@ def _find_tui_trampoline_successor_session_id(
     return candidate_session_id
 
 
+def claude_turn_since(transcript_path: Path, since_epoch: float) -> bool:
+    """Whether the transcript holds an assistant entry stamped at or after ``since_epoch``.
+
+    File size and mtime do not tell: Claude appends bookkeeping entries and records
+    ``/exit`` as user entries on every close, so only an assistant entry marks a turn.
+    """
+    with transcript_path.open("rb") as handle:
+        for line in handle:
+            if b'"type":"assistant"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+                stamp = datetime.fromisoformat(entry["timestamp"]).timestamp()
+            except (ValueError, KeyError, TypeError):
+                continue
+            if entry.get("type") == "assistant" and stamp >= since_epoch:
+                return True
+    return False
+
+
 def reconcile_tui_trampoline_session_id(
     *,
     project_root: Path,

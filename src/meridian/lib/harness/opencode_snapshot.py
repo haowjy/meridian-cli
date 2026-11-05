@@ -61,6 +61,22 @@ def opencode_session_witnesses(
         return _session_witnesses(connection, session_ids)
 
 
+def opencode_turn_since(db_path: Path, session_id: str, since_epoch: float) -> bool | None:
+    """Whether the session gained a user or assistant message at or after ``since_epoch``.
+
+    ``None`` for the 1.x schema, whose message timestamps are unverified.
+    """
+    with closing(connect_readonly(db_path)) as connection:
+        if db_schema(connection) != "sqlite_v2":
+            return None
+        row = connection.execute(
+            "SELECT 1 FROM session_message WHERE session_id=? AND type IN ('user','assistant') "
+            "AND time_created>=? LIMIT 1",
+            (session_id, int(since_epoch * 1000)),
+        ).fetchone()
+        return row is not None
+
+
 @contextmanager
 def read_opencode_snapshot(
     db_path: Path, session_id: str
