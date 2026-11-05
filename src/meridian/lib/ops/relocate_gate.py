@@ -45,7 +45,7 @@ def chat_key(generations: Sequence[SessionRecord]) -> NativeKeyFields:
     return generations[-1].key_fields() if generations else NativeKeyFields()
 
 
-def control_roots(generations: Sequence[SessionRecord]) -> tuple[Path, ...]:
+def _control_roots(generations: Sequence[SessionRecord]) -> tuple[Path, ...]:
     """The chat's control roots, newest first."""
     return tuple(Path(g.control_root) for g in reversed(generations) if g.control_root)
 
@@ -56,7 +56,7 @@ def harness_cwd(generations: Sequence[SessionRecord], *, skip: Path | None = Non
     adapter = adapter_for(generations[-1].harness) if generations else None
     if adapter is None:
         return None
-    roots = tuple(root for root in control_roots(generations) if root != skip)
+    roots = tuple(root for root in _control_roots(generations) if root != skip)
     return adapter.native_cwd(chat_key(generations), recorded_roots=roots)
 
 
@@ -111,25 +111,43 @@ def moved_root(
 ) -> Path | None:
     """The directory this chat moved from to ``target``: relocate's default ``--from``.
 
-    The harness's own record wins, then each generation newest first, by ``task_cwd``,
-    ``execution_cwd``, ``control_root``, then the newest relocate row's ``old`` (a rerun
-    after every record moved). Any recorded path equal to ``target`` is skipped: a
-    ``--continue`` from the new directory, by a build without the gate, appended a start
-    that records it.
+    Candidates are the harness's own record, then the recorded ``control_root``s, newest
+    first. ``task_cwd`` and ``execution_cwd`` are never candidates: a worktree chat pins
+    them elsewhere on purpose, and a worktree that itself moved needs an explicit
+    ``--from``. A candidate equal to ``target`` is skipped (a ``--continue`` from the new
+    directory, by a build without the gate, appended a start that records it), and so is
+    one a relocate row already moved to a directory holding ``target``: that move is
+    applied, and a stale harness record still naming it is not a new one.
     """
-    recorded = harness_cwd(generations, skip=target)
-    if recorded is not None and recorded != target:
-        return recorded
-    for generation in reversed(generations):
-        # Legacy rows carry no control_root.
-        for field in (generation.task_cwd, generation.execution_cwd, generation.control_root):
-            if field and Path(field) != target:
-                return Path(field)
-    if generations:
-        for row in reversed(session_store.chat_rows(runtime_root, generations[-1].chat_id)):
-            if isinstance(row, SessionRelocateEvent) and row.paths is not None:
-                return Path(row.paths.old) if Path(row.paths.old) != target else None
+    moves = (
+        [
+            row.paths
+            for row in session_store.chat_rows(runtime_root, generations[-1].chat_id)
+            if isinstance(row, SessionRelocateEvent) and row.paths is not None
+        ]
+        if generations
+        else []
+    )
+    applied = [move for move in moves if target.is_relative_to(move.new)]
+    candidates = (
+        harness_cwd(generations, skip=target),
+        *_control_roots(generations),
+    )
+    for candidate in candidates:
+        if candidate is None or candidate == target:
+            continue
+        if any(rebase_path(str(candidate), move.olds, move.new) is not None for move in applied):
+            continue
+        return candidate
     return None
+
+
+def _recorded_dir(generations: Sequence[SessionRecord]) -> Path | None:
+    """The newest directory the chat's own records name: its ``task_cwd``, else its
+    ``control_root``. What a read hint tests for existence, not the harness's record."""
+    newest = generations[-1]
+    path = newest.task_cwd or newest.control_root
+    return Path(path) if path else None
 
 
 def relocate_hint(
@@ -159,9 +177,9 @@ def relocate_hint(
         if not store_move.also_moved:
             return "\n".join(lines)
         lines.append("The project directory moved as well:")
-    old = moved_root(runtime_root, generations, target=target)
-    if only_if_gone and (old is None or old.exists()):
+    if only_if_gone and ((recorded := _recorded_dir(generations)) is None or recorded.exists()):
         return None
+    old = moved_root(runtime_root, generations, target=target)
     if old is None:
         lines.append(f"meridian session relocate {chat_id}")
     elif old.exists():
@@ -178,31 +196,30 @@ def relocate_hint(
 
 
 def copy_checkout_note(
-    *,
-    runtime_root: Path,
-    chat_id: str | None,
-    task_dir: str | None,
-    project_root: Path,
+    *, runtime_root: Path, chat_id: str | None, project_root: Path
 ) -> str | None:
-    """The note for a continue that resumes in another checkout of the project.
+    """The note for a continue run from a second checkout of the project.
 
     A harness that resumes in the directory the chat recorded runs a continue from a
     copy in the original while it still exists; one that resumes in its source store is
-    covered by its store check. No note when the resume directory is the project root or
-    under it. Print only: the user may well want the original.
+    covered by its store check. Only an unpinned chat qualifies (``task_cwd`` is its
+    ``control_root``): a worktree chat resumes in its worktree on purpose, and relocating
+    it would pull it out. Print only: the user may well want the original.
     """
-    if chat_id is None or not task_dir or not Path(task_dir).is_dir():
+    if chat_id is None:
         return None
     generations = session_store.chat_generations(runtime_root, chat_id)
     adapter = adapter_for(generations[-1].harness) if generations else None
-    if (
-        adapter is None
-        or "resume" not in adapter.continues_in_source_store
-        or Path(task_dir).resolve().is_relative_to(project_root)
-    ):
+    if adapter is None or "resume" not in adapter.continues_in_source_store:
+        return None
+    newest = generations[-1]
+    if not newest.control_root or newest.task_cwd not in (None, "", newest.control_root):
+        return None
+    recorded = Path(newest.control_root)
+    if not recorded.is_dir() or recorded.resolve() == project_root.resolve():
         return None
     return (
-        f"{chat_id} resumes in {task_dir} (recorded); you're in {project_root}. "
+        f"{chat_id} resumes in {recorded} (recorded); you're in {project_root}. "
         f"To move it here: meridian session relocate {chat_id}"
     )
 

@@ -79,16 +79,22 @@ def _offer(stop: RelocateStop, *, relocated: bool) -> bool:
         return True
 
     old = moved_root(runtime_root, generations, target=stop.project_root)
-    if old is None:
+    if old is None and not adapter.tui_recovers_directory:
         raise stop.error
     here = stop.project_root
     print(stop.error, file=sys.stderr)
-    options = {"1": f"Relocate this session (meridian session relocate {stop.chat_id})"}
-    if not old.exists():
-        options["2"] = f"Relocate all sessions under {old} (to {here})"
+    options: dict[str, str] = {}
+    if old is not None:
+        options["1"] = f"Relocate this session (meridian session relocate {stop.chat_id})"
+        if not old.exists():
+            options["2"] = f"Relocate all sessions under {old} (to {here})"
     options["3"] = "Don't relocate (exit)"
+    if adapter.tui_recovers_directory:
+        options["4"] = f"Launch anyway ({adapter.id} asks for the directory)"
     choice = _ask(options)
-    if choice not in ("1", "2"):
+    if choice == "4":
+        return True
+    if old is None or choice not in ("1", "2"):
         raise SystemExit(1)
     result = session_relocate_sync(
         SessionRelocateInput(

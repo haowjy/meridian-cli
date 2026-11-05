@@ -174,6 +174,8 @@ def _stop_on_store_moved(project_root: Path, chat_id: str | None) -> Generator[N
             exc, runtime_root=runtime_root, chat_id=chat_id, target=project_root
         )
         if chat_id is None or exc.store_move is None or exc.store_move.kind != "project_moved":
+            if hinted is exc:
+                raise
             raise hinted from exc
         generations = session_store.chat_generations(runtime_root, chat_id)
         raise RelocateStop(
@@ -400,7 +402,6 @@ def run_primary_launch(
                 copy_checkout_note(
                     runtime_root=resolve_project_runtime_root(project_root),
                     chat_id=continue_chat_id,
-                    task_dir=launch_task_dir,
                     project_root=project_root,
                 ),
             )

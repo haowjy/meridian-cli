@@ -495,10 +495,11 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         generations = session_store.chat_generations(runtime_root, chat)
         if not generations:
             raise ValueError(f"Chat {chat} not found.")
-        moved_from = moved_root(runtime_root, generations, target=new)
+        # `--native` alone picks a transcript for the chat where it is: re-store it in
+        # place and move no path.
+        moved_from = None if payload.native else moved_root(runtime_root, generations, target=new)
         if moved_from is None and payload.native is None:
             raise ValueError(f"Cannot tell where {chat} moved from; pass --from.")
-        # Nothing moved and a transcript was chosen: re-store the chat in place.
         old = moved_from or new
     if old == new and payload.native is None:
         raise ValueError(f"--from and --to are both {new}.")

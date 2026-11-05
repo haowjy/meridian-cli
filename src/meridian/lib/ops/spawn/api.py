@@ -2576,7 +2576,6 @@ def spawn_continue_sync(
         copy_checkout_note(
             runtime_root=runtime_root,
             chat_id=resolved_reference.source_chat_id,
-            task_dir=create_input.task_dir,
             project_root=project_root,
         ),
     )
