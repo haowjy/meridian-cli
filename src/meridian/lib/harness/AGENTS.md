@@ -40,8 +40,9 @@ a spec field in neither fails startup.
 - **Native identity is planned, not discovered.** A chat binds one immutable
   `(harness, native_store, id)`. `plan_native_identity()` picks operation and source;
   `finalize_native_identity()` pins store/ID against the final child env before argv
-  projection; `observe_after_exit()` returns `PostExit` and never binds or persists (its `turn_observed`
-  says whether a resumed session gained a turn; `None` = no reliable signal: Codex, Pi, OpenCode 1.x);
+  projection; `observe_after_exit()` returns `PostExit` and never binds or persists; `turn_since()` is
+  a separate probe, run only for interactive primaries on the session current at exit (`None` = no
+  reliable signal: Codex, Pi, OpenCode 1.x);
   `launch/native_run.py` owns ordering and attribution. Source store always comes from
   the recorded chat (`SessionRequest.source_native_store`), never config hints. Cwd,
   timestamps, logs, and newest-file or prefix scans never establish chat identity.

@@ -16,6 +16,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
@@ -519,13 +520,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         started_at_epoch: float | None,
     ) -> PostExit:
         _ = child_env, pid
-        turn_observed = None
-        if identity.operation == "resume" and entry.session_id and started_at_epoch is not None:
-            transcript = self.resolve_native_session_file(
-                session_id=entry.session_id, native_store=Path(identity.native_store)
-            )
-            if transcript is not None:
-                turn_observed = claude_turn_since(transcript, started_at_epoch)
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",
@@ -534,8 +528,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return PostExit(
             trampoline_successor_id=successor if successor != entry.session_id else None,
-            turn_observed=turn_observed,
         )
+
+    def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None:
+        return claude_turn_since(key.native_store, key.session_id, started_at_epoch)
 
     def native_observation_reader(
         self,

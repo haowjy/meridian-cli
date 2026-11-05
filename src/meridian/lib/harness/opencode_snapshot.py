@@ -61,8 +61,12 @@ def opencode_session_witnesses(
         return _session_witnesses(connection, session_ids)
 
 
-def opencode_turn_since(db_path: Path, session_id: str, since_epoch: float) -> bool | None:
-    """Whether the session gained a user or assistant message at or after ``since_epoch``.
+def opencode_turn_since(db_path: Path, since_epoch: float) -> bool | None:
+    """Whether any session in the store gained a user or assistant message since ``since_epoch``.
+
+    Not filtered by session: OpenCode's session list lets the user move to another
+    session mid-run and no boundary observer reports it. A concurrent OpenCode instance
+    can only turn ``False`` into ``True``, which keeps the harmless "Session resumed.".
 
     ``None`` for the 1.x schema, whose message timestamps are unverified, and when the
     database can't be read: the answer only picks a message, so it must never fail the exit.
@@ -72,9 +76,9 @@ def opencode_turn_since(db_path: Path, session_id: str, since_epoch: float) -> b
             if db_schema(connection) != "sqlite_v2":
                 return None
             row = connection.execute(
-                "SELECT 1 FROM session_message WHERE session_id=? "
-                "AND type IN ('user','assistant') AND time_created>=? LIMIT 1",
-                (session_id, int(since_epoch * 1000)),
+                "SELECT 1 FROM session_message "
+                "WHERE type IN ('user','assistant') AND time_created>=? LIMIT 1",
+                (int(since_epoch * 1000),),
             ).fetchone()
             return row is not None
     except (OSError, sqlite3.Error):

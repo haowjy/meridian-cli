@@ -166,5 +166,3 @@ class PostExit:
     entry_observed: NativeKey | None = None
     exit: NativeKey | None = None
     trampoline_successor_id: str | None = None
-    turn_observed: bool | None = None
-    """Whether the native session gained a turn since launch; ``None`` = adapter has no signal."""

@@ -1144,6 +1144,7 @@ def run_harness_process(
                             facts=facts,
                             connection_session_id=None,
                             lifecycle=lifecycle,
+                            probe_turn=True,
                         )
                         identity_error = outcome.error
                         resolved_harness_session_id = outcome.harness_session_id or ""
