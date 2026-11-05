@@ -336,6 +336,24 @@ discovery stays in ops and artifact presence checking stays in the store.
   references use their recorded harness; native-file discovery cannot replace it. A chat
   transcript reads only its bound native key; missing identity or transcript is typed
   unavailable, and runner output or primary metadata cannot repair it.
+- `session_relocate.py` (`meridian session relocate`) is the only code that changes a
+  chat's recorded paths after a move: it appends the `relocate` journal rows, rewrites
+  spawn rows, work items and `task` links, and hands each harness its finished
+  `cwd_from -> cwd_to` change through `apply_native_relocations`.
+  `relocate_gate.py` holds the read-only questions the launch and read paths ask
+  (`needs_relocate`, `moved_root`, `relocate_hint`). Two rules there are easy to undo:
+  - `moved_root` (the old directory) takes candidates only from the harness's own
+    record and the recorded `control_root`, never `task_cwd`/`execution_cwd`. A
+    worktree chat records its worktree there on purpose, so treating it as the old
+    directory pulled such chats out of their worktree.
+  - A hint or prompt offers a runnable relocate command only when both ends are known:
+    the old directory from `moved_root`, the new one being the invocation's project
+    root. Otherwise it names the gone directory with a `--to <where it is now>`
+    placeholder, or prints nothing. A bare `relocate cN` with no known old directory
+    can only refuse.
+
+  Rationale: KB `decisions/native-session-identity.md`, "Paths move only through
+  `relocate`".
 
 ## Spawn preparation policy
 

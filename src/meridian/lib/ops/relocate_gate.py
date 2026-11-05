@@ -139,7 +139,7 @@ def moved_root(
     first. ``task_cwd`` and ``execution_cwd`` are never candidates, and neither is the
     directory a worktree chat is pinned to, which the harness records too: ``target`` is
     the invocation's project root, never where a worktree went, so a worktree that itself
-    moved needs an explicit ``--from`` and ``--to`` (DIVERGENCE 009). A candidate equal to
+    moved needs an explicit ``--from`` and ``--to``. A candidate equal to
     ``target`` is skipped (a ``--continue`` from the new
     directory, by a build without the gate, appended a start that records it), and so is
     one a relocate row already moved to a directory holding ``target``: that move is
