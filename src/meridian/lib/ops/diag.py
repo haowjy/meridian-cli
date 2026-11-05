@@ -320,6 +320,12 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
     # (reaper → managed_primary → connections.base) races with the main-thread
     # harness bootstrap, causing a _ModuleLock deadlock on Python 3.13+.
     import meridian.lib.state.reaper  # noqa: F401  # pyright: ignore[reportUnusedImport]  # Import triggers reaper registration.
+    # The same race exists for the harness package: its init imports claude, which
+    # imports adapter, which imports the package. The thread's legacy-store imports
+    # enter that cycle from `meridian.lib.harness`, the main thread from
+    # `meridian.lib.harness.adapter` (via `relocate_gate`), and one fails with
+    # "partially initialized module". A launch needs the package anyway.
+    import meridian.lib.harness  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     def _run_repairs() -> None:
         from contextlib import suppress
