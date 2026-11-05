@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -29,6 +29,8 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     HarnessPrelaunchState,
     NativePrimaryRuntimeMetadata,
+    NativeRelocation,
+    NativeRelocationResult,
     RecordConfigDirFn,
     SessionRequest,
     SpawnParams,
@@ -52,6 +54,11 @@ from meridian.lib.harness.pi_paths import (
     pi_meridian_state_dir_env_override,
     resolve_pi_agent_dir,
     resolve_pi_spawn_session_root,
+)
+from meridian.lib.harness.pi_relocate import (
+    apply_pi_relocations,
+    pi_native_cwd,
+    plan_pi_relocate,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
@@ -291,6 +298,32 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        _ = recorded_roots
+        return pi_native_cwd(identity)
+
+    def plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        old_root: Path,
+        new_root: Path,
+        native: Path | None = None,
+    ) -> NativeRelocation | None:
+        _ = native  # the --native form is deferred for this harness
+        return plan_pi_relocate(identity, old_root=old_root, new_root=new_root)
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]:
+        return apply_pi_relocations(plans)
 
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
