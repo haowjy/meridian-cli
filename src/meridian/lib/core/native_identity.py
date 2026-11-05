@@ -8,9 +8,8 @@ Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
 UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file", "store_moved"]
 # Why a resume's store differs from the recorded one, as the harness adapter reads it:
-# the project directory moved, the harness's config root changed, or the launch
-# can't pin the recorded store at all.
-StoreMoveKind = Literal["project_moved", "config_root", "unpinnable"]
+# the project directory moved, or the harness's config root changed.
+StoreMoveKind = Literal["project_moved", "config_root"]
 MismatchReason = Literal["key", "fork_reused_source", "source_changed", "fork_parent"]
 
 

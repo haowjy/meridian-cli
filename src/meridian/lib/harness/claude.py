@@ -341,7 +341,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ).resolve()
         )
 
-    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind:
+    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind | None:
         # A store is <config root>/projects/<slug(control_root)>.
         same_root = Path(recorded).parent.parent == Path(attempted).parent.parent
         return "project_moved" if same_root else "config_root"
