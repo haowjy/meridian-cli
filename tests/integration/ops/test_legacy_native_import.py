@@ -516,6 +516,8 @@ def test_imported_chat_native_log_and_continue_projection(
     log = session_log_sync(SessionLogInput(ref="c1", project_root=str(root)))
     assert log.session_id == sid
     assert any(message.content == "native hello" for message in log.messages)
+    # Claude runs in its child's config root; resuming under another one is a store move.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
     prepend_fake_executables(monkeypatch, root / "bin", harness)
     stub_bundle_request_and_resolve(
         monkeypatch,

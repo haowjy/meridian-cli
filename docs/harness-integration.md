@@ -65,6 +65,10 @@ Implement the primitives rather than overriding `plan_native_identity()` or
 | `continues_in_source_store` | Declare operations that retain the source namespace |
 | `resolves_untracked_source` | Declare whether raw resume references can be resolved |
 | `resolve_native_session_file()` | Resolve and validate the exact ID within its recorded store |
+| `classify_store_move()` | Say why a resume's store differs from the recorded one: `project_moved`, `config_root`, or the default `unpinnable` |
+| `native_cwd()` | Return the directory the harness itself records for the session, or `None` |
+| `plan_native_relocate()`, `apply_native_relocations()` | Plan and apply what `session relocate` changes in the harness's own state; defaults change nothing |
+| `locate_native_session()` | Find files for an exact ID when the recorded one is missing; the default does not search |
 | `observe_after_exit()` | Return `PostExit` evidence; do not bind or persist it |
 
 Launch owns entry binding, exit allocation, and invocation attribution. Transcript

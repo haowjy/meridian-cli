@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -28,8 +29,10 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
+    NativeStoreMove,
     Operation,
     PostExit,
+    StoreMoveKind,
 )
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
@@ -51,7 +54,7 @@ from meridian.lib.launch.launch_types import (
     SpecT,
     TerminalSurfaceMode,
 )
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.safety.policy import NetworkPolicy
 from meridian.lib.state.paths import LaunchPaths
 
@@ -248,6 +251,40 @@ class NativePrimaryRuntimeMetadata(BaseModel):
 RecordConfigDirFn = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class NativeLocation:
+    """One native file found for an exact session ID by the miss-path search."""
+
+    native_store: Path
+    file: Path
+    same_root: bool  # under the recorded store's config root
+
+
+@dataclass(frozen=True)
+class NativeRelocation:
+    """What relocate changes in a harness's own state for one chat.
+
+    ``change`` states it in one line for the plan output. ``native_store`` is the
+    chat's new store when the move changes it (Claude). A change the harness can't
+    make is a plan with ``refusal`` set, not an exception.
+    """
+
+    identity: NativeKeyFields
+    old_root: Path
+    new_root: Path
+    change: str
+    native_store: str | None = None
+    refusal: str | None = None
+
+
+@dataclass(frozen=True)
+class NativeRelocationResult:
+    """The outcome of one applied plan; ``refusal`` is None when it took effect."""
+
+    plan: NativeRelocation
+    refusal: str | None = None
+
+
 @runtime_checkable
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
@@ -430,6 +467,43 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         native_store: Path,
     ) -> Path | None: ...
 
+    def resume_store(
+        self,
+        recorded_store: str,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> str: ...
+
+    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind: ...
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None: ...
+
+    def plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        old_root: Path,
+        new_root: Path,
+    ) -> NativeRelocation | None: ...
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]: ...
+
+    def locate_native_session(
+        self,
+        *,
+        session_id: str,
+        recorded_store: Path,
+    ) -> tuple[NativeLocation, ...]: ...
+
     def resolve_session_file(
         self,
         *,
@@ -539,10 +613,24 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             source_store = session.source_native_store
             if source_store is None and session.continue_source_tracked:
                 raise NativeSessionUnavailable(ref, "unbound")
-            if source_store is not None and op in self.continues_in_source_store:
-                self.pin_native_store(child_env, source_store)
-                if self._store(child_env, child_cwd, spawn_id, op, interactive) != source_store:
-                    raise NativeSessionUnavailable(ref, "missing")
+            if source_store is not None:
+                if op in self.continues_in_source_store:
+                    self.pin_native_store(child_env, source_store)
+                # A resume into its own chat must run in the recorded store: bind_entry
+                # refuses any other, later and untyped. A resume landing in a fresh chat
+                # has no recorded store to keep.
+                resumes_chat = op == "resume" and _resumes_source_chat(session)
+                if resumes_chat or op in self.continues_in_source_store:
+                    attempted = self._store(child_env, child_cwd, spawn_id, op, interactive)
+                    if attempted != source_store and not resumes_chat:
+                        raise NativeSessionUnavailable(ref, "missing")
+                    if attempted != source_store:
+                        kind = self.classify_store_move(recorded=source_store, attempted=attempted)
+                        raise NativeSessionUnavailable(
+                            ref,
+                            "store_moved",
+                            store_move=NativeStoreMove(source_store, attempted, kind),
+                        )
             if source_store is not None or self.resolves_untracked_source:
                 lookup = source_store or self._store(
                     child_env, child_cwd, spawn_id, "resume", interactive
@@ -809,6 +897,73 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> Path | None:
         return None
 
+    @final
+    def resume_store(
+        self,
+        recorded_store: str,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> str:
+        """The store a resume of a chat recorded in ``recorded_store`` would use."""
+        env = dict(child_env)
+        if "resume" in self.continues_in_source_store:
+            self.pin_native_store(env, recorded_store)
+        # No adapter's resume store depends on the spawn or on interactivity.
+        return self._store(env, child_cwd, SpawnId(""), "resume", False)
+
+    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind:
+        """Why a resume's store differs from the recorded one; only the adapter knows
+        its store layout. The default: the launch could not pin the recorded store."""
+        _ = recorded, attempted
+        return "unpinnable"
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        """The directory this harness resumes the session in, from its own record.
+
+        ``recorded_roots`` are the chat's generation control roots, newest first, for a
+        harness that can only confirm a recorded root against its own state. None when
+        the harness keeps no such record or the record is absent.
+        """
+        _ = identity, recorded_roots
+        return None
+
+    def plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        old_root: Path,
+        new_root: Path,
+    ) -> NativeRelocation | None:
+        """What relocate changes in this harness's own state for one chat, or None."""
+        _ = identity, old_root, new_root
+        return None
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]:
+        """Apply every plan for this harness in one call; idempotent. A failure is a
+        result with a refusal, per plan. The default has nothing to change."""
+        return tuple(NativeRelocationResult(plan, plan.refusal) for plan in plans)
+
+    def locate_native_session(
+        self,
+        *,
+        session_id: str,
+        recorded_store: Path,
+    ) -> tuple[NativeLocation, ...]:
+        """Distinct native files for this exact ID, found when the recorded file is
+        missing. Candidates that fail validation are skipped, not raised; results are
+        deduplicated by real file. The default does not search."""
+        _ = session_id, recorded_store
+        return ()
+
     def resolve_session_file(
         self,
         *,
@@ -818,3 +973,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> Path | None:
         _ = project_root, session_id, config_root_hint
         return None
+
+
+def _resumes_source_chat(session: SessionRequest) -> bool:
+    return bool(session.continue_chat_id) and is_exact_continue_session(session)

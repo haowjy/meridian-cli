@@ -316,6 +316,18 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
         surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     OpDeclaration(
+        extension_id="meridian.session",
+        command_id="relocate",
+        summary="Point a moved chat's recorded paths at its new directory.",
+        handler="meridian.lib.ops.session_relocate:session_relocate",
+        sync_handler="meridian.lib.ops.session_relocate:session_relocate_sync",
+        input_type="meridian.lib.ops.session_relocate:SessionRelocateInput",
+        output_type="meridian.lib.ops.session_relocate:SessionRelocateOutput",
+        cli_group="session",
+        cli_name="relocate",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    OpDeclaration(
         extension_id="meridian.spawn",
         command_id="subagents",
         summary="List subagents the current agent may spawn.",

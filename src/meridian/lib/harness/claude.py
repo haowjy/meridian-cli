@@ -3,7 +3,7 @@
 import json
 import secrets
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
@@ -22,6 +22,7 @@ from meridian.lib.core.native_identity import (
     NativeSessionUnavailable,
     Operation,
     PostExit,
+    StoreMoveKind,
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -51,6 +52,7 @@ from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     claude_turn_since,
+    claude_transcript_first_cwd,
     ensure_claude_session_accessible,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
@@ -338,6 +340,29 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 / project_slug(child_cwd)
             ).resolve()
         )
+
+    def classify_store_move(self, *, recorded: str, attempted: str) -> StoreMoveKind:
+        # A store is <config root>/projects/<slug(control_root)>.
+        same_root = Path(recorded).parent.parent == Path(attempted).parent.parent
+        return "project_moved" if same_root else "config_root"
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        if identity.native_store is None:
+            return None
+        store = Path(identity.native_store)
+        # Compare forward: a slug can't be reversed (`my_app`, `my.app` and `my-app`
+        # share one), so only a recorded root whose slug names the store is trusted.
+        for root in recorded_roots:
+            if project_slug(root) == store.name:
+                return root
+        if identity.session_id is None:
+            return None
+        return claude_transcript_first_cwd(store / f"{identity.session_id}.jsonl")
 
     def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
         return (

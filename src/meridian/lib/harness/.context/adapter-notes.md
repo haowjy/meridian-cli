@@ -99,7 +99,11 @@ Numeric cost coercion rejects boolean, nonfinite, and unrepresentable values.
 source. `SessionRequest.source_native_store` is the sole source-namespace carrier
 for all harnesses; it always comes from the recorded chat, never config hints.
 `finalize_native_identity()` pins store/ID against the final child env
-before argv projection, so the bound key, env and argv agree. The runner binds
+before argv projection, so the bound key, env and argv agree. A resume into its own
+chat whose child store differs from the recorded one raises
+`NativeSessionUnavailable(reason="store_moved")` with both stores and the adapter's
+`classify_store_move()`, before any lock; `bind_entry` would refuse it later anyway.
+A resume into a fresh chat has no recorded store and is exempt. The runner binds
 nonempty identities as `assigned` before exec. `observe_after_exit()` returns
 `PostExit`: typed entry errors, owned entry/exit keys, and separate diagnostics.
 It never binds or persists. `launch/native_run.py` owns the observation order,

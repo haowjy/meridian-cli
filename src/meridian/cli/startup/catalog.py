@@ -354,6 +354,10 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Repair stored session metadata from explicit harness-session detection.",
     ),
     _write_runtime(
+        ("session", "relocate"),
+        "Point a moved chat's recorded paths at its new directory.",
+    ),
+    _write_runtime(
         ("session", "archive"),
         "Archive retained history.",
     ),

@@ -22,6 +22,7 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.platform import IS_WINDOWS, get_home_path
 from meridian.lib.platform.atomic import atomic_replace
+from meridian.lib.utils.json_shapes import loads_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,24 @@ def resolve_claude_native_session_file(
         return None
     validate_claude_session_file(candidate, normalized_session_id)
     return candidate
+
+
+def claude_transcript_first_cwd(path: Path) -> Path | None:
+    """The directory Claude started the session in: the first row carrying ``cwd``.
+
+    Later rows follow the agent into subfolders and ``/tmp``, so only the first is the
+    session's root. Torn or foreign rows are skipped.
+    """
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                row = loads_json_object(line)
+                cwd = row.get("cwd") if row is not None else None
+                if isinstance(cwd, str) and cwd:
+                    return Path(cwd)
+    except (OSError, UnicodeError):
+        return None
+    return None
 
 
 def project_slug(project_root: Path) -> str:

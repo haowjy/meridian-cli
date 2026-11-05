@@ -424,6 +424,45 @@ def _session_repair(
     )
 
 
+def _session_relocate(
+    emit: Emitter,
+    ref: Annotated[
+        str | None,
+        Parameter(help="Chat id (c123) to relocate alone; omit with --from to relocate all."),
+    ] = None,
+    from_root: Annotated[
+        str | None,
+        Parameter(name="--from", help="The directory the chats were recorded in."),
+    ] = None,
+    to_root: Annotated[
+        str | None,
+        Parameter(name="--to", help="The directory they live in now."),
+    ] = None,
+    native: Annotated[
+        str | None,
+        Parameter(name="--native", help="Claude only: the transcript file to continue."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        Parameter(name="--dry-run", help="Print the plan and change nothing."),
+    ] = False,
+) -> None:
+    from meridian.lib.ops.session_relocate import SessionRelocateInput, session_relocate_sync
+
+    emit(
+        session_relocate_sync(
+            SessionRelocateInput(
+                ref=ref,
+                from_root=from_root,
+                to_root=to_root,
+                native=native,
+                dry_run=dry_run,
+                project_root=cli_project_root_posix(),
+            )
+        )
+    )
+
+
 def _session_archive(
     emit: Emitter,
     refs: Annotated[tuple[str, ...], Parameter(help="History IDs, spawn IDs, or chat IDs.")] = (),
@@ -524,6 +563,7 @@ def register_session_commands(app: App) -> None:
         "meridian.session.export": lambda: partial(_session_export, emit),
         "meridian.session.search": lambda: partial(_session_search, emit),
         "meridian.session.repair": lambda: partial(_session_repair, emit),
+        "meridian.session.relocate": lambda: partial(_session_relocate, emit),
     }
     register_extension_cli_group(
         app,

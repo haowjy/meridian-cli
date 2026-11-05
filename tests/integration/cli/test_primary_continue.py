@@ -823,8 +823,12 @@ def test_complete_claude_key_projects_exact_resume_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stub_bundle_request_and_resolve(monkeypatch, model="sonnet", harness=HarnessId.CLAUDE)
+    from meridian.lib.harness.claude_sessions import project_slug
+
     runtime_root = _state_root(tmp_path)
-    native_store = runtime_root / "native-claude" / "projects"
+    # The store the resumed child runs in: a resume refuses any other.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    native_store = tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
     native_store.mkdir(parents=True, exist_ok=True)
     native_id = "claude-session-42"
     (native_store / f"{native_id}.jsonl").write_text(
