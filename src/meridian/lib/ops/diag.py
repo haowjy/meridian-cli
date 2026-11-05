@@ -316,17 +316,15 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
 
     import threading
 
-    # The same race exists for the harness package: its init imports claude, which
-    # imports adapter, which imports the package. The thread's legacy-store imports
-    # enter that cycle from `meridian.lib.harness`, the main thread from
-    # `meridian.lib.harness.adapter` (via `relocate_gate`), and one fails with
-    # "partially initialized module". A launch needs the package anyway.
-    import meridian.lib.harness  # pyright: ignore[reportUnusedImport]
-
-    # Eagerly import reaper before spawning the thread — its transitive chain
-    # (reaper → managed_primary → connections.base) races with the main-thread
-    # harness bootstrap, causing a _ModuleLock deadlock on Python 3.13+.
-    import meridian.lib.state.reaper  # noqa: F401  # pyright: ignore[reportUnusedImport]  # Import triggers reaper registration.
+    # The repair thread imports nothing for the first time: a module it imports first
+    # races the main thread's harness bootstrap over import locks (a deadlock on 3.13+, or
+    # "partially initialized module" through the harness package's import cycle).
+    from meridian.lib.ops.legacy_native_import import (
+        bind_late_legacy_sessions,
+        configured_archive_destination,
+        recover_legacy_pi_sessions,
+    )
+    from meridian.lib.state.reaper import recover_crashed_launches
 
     def _run_repairs() -> None:
         from contextlib import suppress
@@ -334,18 +332,11 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
         # A newer build's session rows make these repairs refuse; that is expected
         # in a mixed-build runtime, so it goes to the debug log, not the user.
         with suppress(Exception):
-            from meridian.lib.ops.legacy_native_import import bind_late_legacy_sessions
-
             try:
                 bind_late_legacy_sessions(runtime_root)
             except UnsupportedSessionFormat as exc:
                 logger.debug("legacy_late_bind_skipped", error=str(exc))
         with suppress(Exception):
-            from meridian.lib.ops.legacy_native_import import (
-                configured_archive_destination,
-                recover_legacy_pi_sessions,
-            )
-
             try:
                 recover_legacy_pi_sessions(
                     runtime_root, archive_destination=configured_archive_destination(project_root)
@@ -362,8 +353,6 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
             if repair_orphans:
-                from meridian.lib.state.reaper import recover_crashed_launches
-
                 recovered = recover_crashed_launches(project_root, runtime_root)
                 _capture_orphan_primaries(
                     project_root,
