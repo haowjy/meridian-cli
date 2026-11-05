@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-11-05
+
+### Fixed
+- `meridian --continue` on a Claude or OpenCode session that ends without a new turn says "Session ended without a new turn." instead of "Session resumed.". The spawn status stays `succeeded`.
+
 ## [0.19.3] - 2026-10-31
 
 ### Changed
