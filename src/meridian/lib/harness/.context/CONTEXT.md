@@ -130,10 +130,12 @@ evidence only.
 The facts hook observes owned live session IDs. Identity is never discovered: there is
 no artifact-identity or filesystem-discovery fallback. The one search is the Claude
 miss path: a tracked `--continue` whose recorded file is absent looks for the recorded
-ID within the recorded config root (`locate_claude_session_files`), validates each
-header, and links one distinct file back into the recorded store. Nothing is recorded
-in Meridian's state, and several distinct files refuse. Relocate uses the same locator
-for its source file.
+ID within the recorded config root (the adapter seam `locate_native_session`; Claude
+implements it with `locate_claude_session_files`), validates each header, and links one
+distinct file back into the recorded store (`NativeIdentity.located_from` carries where
+it was found). Nothing is recorded
+in Meridian's state, and several distinct files refuse. Relocate calls `locate_claude_session_files`
+itself for its source file.
 
 ### Primary inbox injection
 

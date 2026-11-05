@@ -211,7 +211,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session repair REF` | Read-only: for an unbound chat (`c123`, its spawn `p123`, a raw harness session ID, or `@latest`/`@last-failed`/`@last-completed`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
 | `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
 | `meridian session relocate --from OLD --to NEW [--dry-run]` | After a project directory moved (`OLD` no longer exists): rewrite every chat's recorded paths under `OLD` to `NEW`, plus spawn rows, work items and `task` links, and update each harness's own record of the directory. Refused while `OLD` exists |
-| `meridian session relocate CHAT [--from OLD] [--to DIR] [--native PATH] [--dry-run]` | Move one chat (and chats sharing its native session) to `DIR`, default the current project; `OLD` defaults to where the chat is recorded. Works while `OLD` still exists. `--native` (Claude only) picks the transcript file to link |
+| `meridian session relocate CHAT [--from OLD] [--to DIR] [--native PATH] [--dry-run]` | Move one chat (and chats sharing its native session) to `DIR`, default the current project; `OLD` defaults to where the chat is recorded. Works while `OLD` still exists. `--native` (Claude only) picks the transcript file to link, and needs no directory move (it re-links in place) |
 
 Archive destinations can also come from configuration. Automation is off by
 default; active records and dependencies cannot be reclaimed. Published ZIPs

@@ -183,7 +183,10 @@ end with `native_binding_conflict` and `Session resume failed`: Claude's transcr
 in a folder named after the project path, and Meridian refuses to continue a chat in a
 different store. Now `--continue` stops before launch, names the old and new paths, and
 prints the fix; on a terminal it asks whether to relocate this chat, every chat under the
-old path, or neither:
+old path (offered only when the old path no longer exists), or neither. With `--dry-run`,
+`--no-input` or no terminal it prints the refusal and the command instead of asking.
+After a relocate, if the harness refused its part, Pi and OpenCode offer to launch anyway,
+since their own TUI asks for the directory:
 
 ```bash
 meridian session relocate --from ~/repos/tether --to ~/repos/muxen   # every chat under the old path
@@ -205,7 +208,7 @@ If the project did not move but a Claude transcript file is missing from its rec
 store, `--continue` searches the recorded config root for that exact session ID. One
 distinct file is linked back and resumed; several files, or a match only in another
 config root, are listed and refused. Pick one with `meridian session relocate cN --native
-PATH`.
+PATH`; with no directory move, that re-links the chat in place.
 
 ## Spawn shows as `finalizing`
 
