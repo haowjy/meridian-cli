@@ -17,8 +17,8 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
-    NativeKey,
     NativeIdentityError,
+    NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
@@ -55,9 +55,9 @@ from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
-    claude_turn_since,
     claude_session_links,
     claude_transcript_first_cwd,
+    claude_turn_since,
     ensure_claude_session_accessible,
     link_claude_session,
     locate_claude_session_files,
