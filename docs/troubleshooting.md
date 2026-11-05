@@ -204,8 +204,11 @@ they read the transcript as usual.
 
 `relocate cN` finds where the chat moved from in the harness's own record, then the chat's
 recorded `control_root`. A chat pinned to a worktree (its `task_cwd` differs from its
-`control_root`) never has its worktree guessed as the old path: if the worktree itself
-moved, pass `--from`. For Codex, OpenCode and Pi, continuing from a second checkout while
+`control_root`) never has its worktree guessed as the old path, since the target is always
+the project root you run from, not where a worktree went. If the worktree itself moved,
+Meridian says so and prints `meridian session relocate cN --from OLD --to <where it is now>`
+for you to fill in; it prints a runnable command, or offers a prompt choice, only when it
+knows both ends. For Codex, OpenCode and Pi, continuing from a second checkout while
 the recorded one still exists prints a note ("resumes in X (recorded); you're in Y"), and
 only for a chat not pinned to a worktree.
 

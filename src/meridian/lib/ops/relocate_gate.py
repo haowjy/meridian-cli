@@ -25,7 +25,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_store
 from meridian.lib.state.paths import rebase_path
-from meridian.lib.state.session_fold import SessionRecord, SessionRelocateEvent
+from meridian.lib.state.session_fold import PathMove, SessionRecord, SessionRelocateEvent
 
 
 def adapter_for(harness: str) -> SubprocessHarness | None:
@@ -68,8 +68,30 @@ def needs_relocate(generations: Sequence[SessionRecord]) -> Path | None:
     return resumes_in if resumes_in is not None and not resumes_in.is_dir() else None
 
 
+def _relocations(runtime_root: Path, chat_id: str) -> list[PathMove]:
+    """The directory moves the chat's relocate rows recorded, oldest first."""
+    return [
+        row.paths
+        for row in session_store.chat_rows(runtime_root, chat_id)
+        if isinstance(row, SessionRelocateEvent) and row.paths is not None
+    ]
+
+
+def _pinned_dir(generations: Sequence[SessionRecord]) -> Path | None:
+    """The directory the chat is pinned to on purpose (a worktree: newest ``task_cwd``
+    differs from its ``control_root``), or None for an unpinned chat."""
+    newest = generations[-1]
+    if newest.task_cwd and newest.control_root and newest.task_cwd != newest.control_root:
+        return Path(newest.task_cwd)
+    return None
+
+
 def refused_relocation(
-    runtime_root: Path, generations: Sequence[SessionRecord], *, target: Path
+    runtime_root: Path,
+    generations: Sequence[SessionRecord],
+    *,
+    target: Path,
+    moves: Sequence[PathMove] | None = None,
 ) -> str | None:
     """The gate's other state: the chat's newest relocate already moved it to ``target``,
     yet the harness still records that relocate's old directory.
@@ -77,13 +99,11 @@ def refused_relocation(
     Relocate writes the chat's Meridian paths even when the harness refuses its own
     change, so callers show this instead of offering relocate again, which would loop.
     None when no such relocate exists or the harness no longer records its old place.
+    ``moves`` are the chat's relocations when the caller already read them.
     """
     chat_id = generations[-1].chat_id
-    moves = [
-        row.paths
-        for row in session_store.chat_rows(runtime_root, chat_id)
-        if isinstance(row, SessionRelocateEvent) and row.paths is not None
-    ]
+    if moves is None:
+        moves = _relocations(runtime_root, chat_id)
     adapter = adapter_for(generations[-1].harness)
     if adapter is None or not moves or not target.is_relative_to(moves[-1].new):
         return None
@@ -107,34 +127,36 @@ def refused_relocation(
 
 
 def moved_root(
-    runtime_root: Path, generations: Sequence[SessionRecord], *, target: Path
+    runtime_root: Path,
+    generations: Sequence[SessionRecord],
+    *,
+    target: Path,
+    moves: Sequence[PathMove] | None = None,
 ) -> Path | None:
     """The directory this chat moved from to ``target``: relocate's default ``--from``.
 
     Candidates are the harness's own record, then the recorded ``control_root``s, newest
-    first. ``task_cwd`` and ``execution_cwd`` are never candidates: a worktree chat pins
-    them elsewhere on purpose, and a worktree that itself moved needs an explicit
-    ``--from``. A candidate equal to ``target`` is skipped (a ``--continue`` from the new
+    first. ``task_cwd`` and ``execution_cwd`` are never candidates, and neither is the
+    directory a worktree chat is pinned to, which the harness records too: ``target`` is
+    the invocation's project root, never where a worktree went, so a worktree that itself
+    moved needs an explicit ``--from`` and ``--to`` (DIVERGENCE 009). A candidate equal to
+    ``target`` is skipped (a ``--continue`` from the new
     directory, by a build without the gate, appended a start that records it), and so is
     one a relocate row already moved to a directory holding ``target``: that move is
     applied, and a stale harness record still naming it is not a new one.
     """
-    moves = (
-        [
-            row.paths
-            for row in session_store.chat_rows(runtime_root, generations[-1].chat_id)
-            if isinstance(row, SessionRelocateEvent) and row.paths is not None
-        ]
-        if generations
-        else []
-    )
+    if not generations:
+        return None
+    if moves is None:
+        moves = _relocations(runtime_root, generations[-1].chat_id)
     applied = [move for move in moves if target.is_relative_to(move.new)]
+    pinned = _pinned_dir(generations)
     candidates = (
         harness_cwd(generations, skip=target),
         *_control_roots(generations),
     )
     for candidate in candidates:
-        if candidate is None or candidate == target:
+        if candidate is None or candidate in (target, pinned):
             continue
         if any(rebase_path(str(candidate), move.olds, move.new) is not None for move in applied):
             continue
@@ -148,6 +170,14 @@ def _recorded_dir(generations: Sequence[SessionRecord]) -> Path | None:
     newest = generations[-1]
     path = newest.task_cwd or newest.control_root
     return Path(path) if path else None
+
+
+def _gone_dir(generations: Sequence[SessionRecord]) -> Path | None:
+    """A directory the chat records, the harness's first, that no longer exists."""
+    return next(
+        (d for d in (harness_cwd(generations), _recorded_dir(generations)) if d and not d.exists()),
+        None,
+    )
 
 
 def relocate_hint(
@@ -168,8 +198,11 @@ def relocate_hint(
     generations = session_store.chat_generations(runtime_root, chat_id)
     if not generations:
         return None
+    moves = _relocations(runtime_root, chat_id)
     # Already relocated, harness refused: relocating again would loop.
-    if (refused := refused_relocation(runtime_root, generations, target=target)) is not None:
+    if (
+        refused := refused_relocation(runtime_root, generations, target=target, moves=moves)
+    ) is not None:
         return refused
     lines: list[str] = []
     if store_move is not None and store_move.fix is not None:
@@ -179,20 +212,26 @@ def relocate_hint(
         lines.append("The project directory moved as well:")
     if only_if_gone and ((recorded := _recorded_dir(generations)) is None or recorded.exists()):
         return None
-    old = moved_root(runtime_root, generations, target=target)
-    if old is None:
-        lines.append(f"meridian session relocate {chat_id}")
-    elif old.exists():
+    old = moved_root(runtime_root, generations, target=target, moves=moves)
+    if old is not None and old.exists():
         lines.append(
             f"{chat_id} is recorded in {old}, you're in {target}: continue from there, or "
             f"run `meridian session relocate {chat_id}` to move it here."
         )
-    else:
+    elif old is not None:
         lines.append(
             f"{old} is gone: meridian session relocate --from {shlex.quote(str(old))} "
             f"--to {shlex.quote(str(target))}"
         )
-    return "\n".join(lines)
+    elif (gone := _gone_dir(generations)) is not None:
+        # Only one end is known, so print the explicit form with a blank for the other.
+        lines.append(
+            f"{chat_id}'s directory {gone} is gone; if it moved: meridian session "
+            f"relocate {chat_id} --from {shlex.quote(str(gone))} --to <where it is now>"
+        )
+    elif store_move is not None and store_move.fix is not None:
+        lines.pop()  # the header promised a move this hint cannot name
+    return "\n".join(lines) or None
 
 
 def copy_checkout_note(
@@ -213,7 +252,7 @@ def copy_checkout_note(
     if adapter is None or "resume" not in adapter.continues_in_source_store:
         return None
     newest = generations[-1]
-    if not newest.control_root or newest.task_cwd not in (None, "", newest.control_root):
+    if not newest.control_root or _pinned_dir(generations) is not None:
         return None
     recorded = Path(newest.control_root)
     if not recorded.is_dir() or recorded.resolve() == project_root.resolve():
