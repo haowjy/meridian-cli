@@ -21,7 +21,7 @@ from meridian.lib.core.native_identity import (
     NativeSessionUnavailable,
 )
 from meridian.lib.platform import IS_WINDOWS, get_home_path
-from meridian.lib.platform.atomic import atomic_replace
+from meridian.lib.platform.atomic import atomic_replace, atomic_symlink
 from meridian.lib.utils.json_shapes import loads_json_object
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,8 @@ def claude_session_links(
     A transcript and its ``<id>/`` sidecar folder both link, so sidecars stay in one
     place. A target that already holds a different file is a refusal, never replaced:
     it may carry turns the source lacks, and ``ensure_claude_session_accessible`` would
-    overwrite it. A target that already is the source needs nothing.
+    overwrite it. A target that already is the source needs nothing. A dangling symlink
+    (a link into a folder that has since gone) holds no turns and is replaced.
     """
     items = [source]
     sidecar = source.with_suffix("")
@@ -132,8 +133,8 @@ def claude_session_links(
     pending: list[tuple[Path, Path]] = []
     for item in items:
         target = target_store / item.name
-        if target.is_symlink() or target.exists():
-            if target.exists() and target.samefile(item):
+        if target.exists():
+            if target.samefile(item):
                 continue
             return (), f"{target} already exists and is not {item}"
         pending.append((item, target))
@@ -152,7 +153,10 @@ def link_claude_session(source: Path, target_store: Path) -> str | None:
         target_store.mkdir(parents=True, exist_ok=True)
     for item, target in pending:
         try:
-            target.symlink_to(item)
+            if target.is_symlink():
+                atomic_symlink(target, item)
+            else:
+                target.symlink_to(item)
         except FileExistsError:
             return f"{target} was created while linking; rerun relocate"
     return None

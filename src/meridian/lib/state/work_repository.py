@@ -459,12 +459,11 @@ def move_work_item_paths(
     runtime_root: Path,
     work_id: str,
     move: Callable[[str], str | None],
-) -> bool:
+) -> None:
     """Rewrite the paths ``work_item_paths`` names, active or archived item alike.
 
     ``move`` returns the new path, or None to leave one alone. The write republishes
-    the item's ``task`` link, so the link follows the new ``task_dir``. Idempotent:
-    returns whether anything changed.
+    the item's ``task`` link, so the link follows the new ``task_dir``. Idempotent.
     """
 
     def moved(path: str | None) -> str | None:
@@ -474,7 +473,7 @@ def move_work_item_paths(
         _paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> _MutationResult[bool]:
+    ) -> _MutationResult[None]:
         warn_both_locations(work_id, active_dir, archived_dir)
         work_dir = active_dir or archived_dir
         if work_dir is None:
@@ -492,10 +491,10 @@ def move_work_item_paths(
             }
         )
         if updated == current:
-            return _MutationResult(False)
-        return _MutationResult(True, (work_dir, updated))
+            return _MutationResult(None)
+        return _MutationResult(None, (work_dir, updated))
 
-    return write_state_locked(runtime_root, work_id, mutate)
+    write_state_locked(runtime_root, work_id, mutate)
 
 
 def archive_work_item(

@@ -185,8 +185,8 @@ different store. Now `--continue` stops before launch, names the old and new pat
 prints the fix; on a terminal it asks whether to relocate this chat, every chat under the
 old path (offered only when the old path no longer exists), or neither. With `--dry-run`,
 `--no-input` or no terminal it prints the refusal and the command instead of asking.
-After a relocate, if the harness refused its part, Pi and OpenCode offer to launch anyway,
-since their own TUI asks for the directory:
+Pi and OpenCode also offer "Launch anyway" in that first prompt, and again after a
+relocate whose harness part was refused: their own TUI asks for the directory.
 
 ```bash
 meridian session relocate --from ~/repos/tether --to ~/repos/muxen   # every chat under the old path
@@ -197,8 +197,17 @@ meridian session relocate c419 --dry-run                              # print th
 Relocate rewrites Meridian's recorded paths and the harness's own record of the
 directory (Claude: links to the transcript; OpenCode: the session's directory; Pi: the
 transcript header). It refuses chats that are running. If the output reports a refused
-harness change, follow the way out it prints. `spawn --continue`, `session log` and
-`session export` print the same command when the recorded directory is gone.
+harness change, follow the way out it prints. `spawn --continue` stops before launch with
+the same command. `session log`, `session export` and `session search` print it only when
+the transcript cannot be read and the chat's recorded directory is gone; after a plain move
+they read the transcript as usual.
+
+`relocate cN` finds where the chat moved from in the harness's own record, then the chat's
+recorded `control_root`. A chat pinned to a worktree (its `task_cwd` differs from its
+`control_root`) never has its worktree guessed as the old path: if the worktree itself
+moved, pass `--from`. For Codex, OpenCode and Pi, continuing from a second checkout while
+the recorded one still exists prints a note ("resumes in X (recorded); you're in Y"), and
+only for a chat not pinned to a worktree.
 
 A project without `[project] id` in `meridian.toml` gets a new identity when its path
 changes, so its chats are not found at all (`Chat 'c419' not found`); relocate does not
@@ -206,9 +215,10 @@ re-home them yet. Set `[project] id` to keep state across moves.
 
 If the project did not move but a Claude transcript file is missing from its recorded
 store, `--continue` searches the recorded config root for that exact session ID. One
-distinct file is linked back and resumed; several files, or a match only in another
-config root, are listed and refused. Pick one with `meridian session relocate cN --native
-PATH`; with no directory move, that re-links the chat in place.
+distinct file is linked back and resumed; several files are listed and refused. Pick one
+with `meridian session relocate cN --native PATH`, which re-links the chat in place and
+moves no path unless you also pass `--from`. A dangling link at the recorded path is
+replaced.
 
 ## Spawn shows as `finalizing`
 

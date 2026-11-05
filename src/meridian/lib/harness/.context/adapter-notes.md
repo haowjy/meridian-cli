@@ -108,8 +108,8 @@ store), it raises `missing` instead, as a fork that leaves its source store does
 A resume into a fresh chat has no recorded store and is exempt. A tracked resume whose recorded file is missing asks `locate_native_session()` for other files with the ID in the recorded config root; the one distinct hit becomes `NativeIdentity.located_from` and Claude links it back at prelaunch. `tui_recovers_directory` marks the harnesses (Pi, OpenCode) whose own TUI handles a gone directory, so a refused relocate still offers "launch anyway". `session relocate` owns where the harness's directory goes: it reads `native_cwd`,
 rebases it once (`state.paths.rebase_path`), and hands `plan_native_relocate` the
 finished `cwd_from`/`cwd_to`; a harness whose own directory does not move (a worktree
-moved, the project did not) is never asked. Claude's new store comes from `resume_store`
-at `cwd_to`, with the recorded config root pinned. Apply compares the harness's current
+moved, the project did not) is never asked. Claude's new store is the store a resume
+would use at `cwd_to`, with the recorded config root pinned. Apply compares the harness's current
 value with the plan (`cwd_to` done, `cwd_from` change, anything else refused). Claude then links `<id>.jsonl` and `<id>/` into it
 (`claude_sessions.link_claude_session`). It only creates links: a target that exists and
 differs is a refusal, never replaced, and the originals are never moved or deleted. The runner binds

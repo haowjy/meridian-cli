@@ -139,8 +139,10 @@ class NativeSessionUnavailable(NativeIdentityError):
         )
 
     def with_hint(self, hint: str | None) -> "NativeSessionUnavailable":
+        """This refusal with ``hint`` added after the hint it already carries."""
+        joined = "\n".join(part for part in (self.hint, hint) if part) or None
         return NativeSessionUnavailable(
-            self.ref, self.reason, store_move=self.store_move, hint=hint
+            self.ref, self.reason, store_move=self.store_move, hint=joined
         )
 
     def lifecycle_fields(self) -> dict[str, object]:

@@ -920,21 +920,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> Path | None:
         return None
 
-    @final
-    def resume_store(
-        self,
-        recorded_store: str,
-        *,
-        child_env: Mapping[str, str],
-        child_cwd: Path,
-    ) -> str:
-        """The store a resume of a chat recorded in ``recorded_store`` would use."""
-        env = dict(child_env)
-        if "resume" in self.continues_in_source_store:
-            self.pin_native_store(env, recorded_store)
-        # No adapter's resume store depends on the spawn or on interactivity.
-        return self._store(env, child_cwd, SpawnId(""), "resume", False)
-
     def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
         """Why a resume's store differs from the recorded one; only the adapter knows
         its store layout, and so how to fix a config-root difference (``fix``). None when

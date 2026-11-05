@@ -130,7 +130,9 @@ namespace contracts.
 `meridian session relocate` appends one `relocate` row per affected chat (v1; a build
 that predates it drops the unknown name and keeps the old paths). The fold rewrites, in
 the chat record and in every generation bucket the chat already has, `control_root`,
-`task_cwd` and `execution_cwd` by whole-component prefix, and replaces `native_store`
+`task_cwd` and `execution_cwd` by whole-component prefix, except the paths listed in
+the row's `paths.keep` (a checkout nested inside the old directory that stays put; the
+planner records them and the fold must skip them), and replaces `native_store`
 where it equals the row's `old` (`native_binding.relocate_key`; `bind` stays fill-only).
 It never creates a bucket, so the history index's write loop finds an ordinal for every
 bucket it returns. Rows are idempotent, so a rerun after a crash is safe: `rebase_path`

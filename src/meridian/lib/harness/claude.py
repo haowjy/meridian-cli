@@ -413,7 +413,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             source = None
         env = {"CLAUDE_CONFIG_DIR": str(config_root)}
         # The store the next launch computes from the moved root, not a restated formula.
-        new_store = Path(self.resume_store(str(recorded), child_env=env, child_cwd=cwd_to))
+        env_with_store = dict(env)
+        self.pin_native_store(env_with_store, str(recorded))
+        new_store = Path(self._store(env_with_store, cwd_to, SpawnId(""), "resume", False))
         if source is None:
             candidates = (recorded / f"{session_id}.jsonl", new_store / f"{session_id}.jsonl")
             source = next((c.resolve() for c in candidates if c.is_file()), None)
