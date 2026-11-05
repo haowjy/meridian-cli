@@ -105,7 +105,10 @@ chat whose child store differs from the recorded one raises
 `classify_store_move()` kind, before any lock; `bind_entry` would refuse it later
 anyway. When the adapter returns no kind (the launch could not pin the recorded
 store), it raises `missing` instead, as a fork that leaves its source store does.
-A resume into a fresh chat has no recorded store and is exempt. The runner binds
+A resume into a fresh chat has no recorded store and is exempt. Claude's `plan_native_relocate` takes the new store from `resume_store` at the new root
+(with the recorded config root pinned), then links `<id>.jsonl` and `<id>/` into it
+(`claude_sessions.link_claude_session`). It only creates links: a target that exists and
+differs is a refusal, never replaced, and the originals are never moved or deleted. The runner binds
 nonempty identities as `assigned` before exec. `observe_after_exit()` returns
 `PostExit`: typed entry errors, owned entry/exit keys, and separate diagnostics.
 It never binds or persists. `launch/native_run.py` owns the observation order,

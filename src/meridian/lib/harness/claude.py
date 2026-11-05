@@ -442,7 +442,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
         links, conflict = claude_session_links(source, new_store)
         if conflict is not None:
-            return refuse(conflict)
+            return refuse(f"{conflict}; remove it, or choose a transcript with --native")
         if not links and str(new_store) == identity.native_store:
             return None
         change = store_change

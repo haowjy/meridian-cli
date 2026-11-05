@@ -125,6 +125,19 @@ outside its scope; cross-chat repair uniqueness requires `scope=None`.
 See [history.md](history.md) for read ordering, append epochs, projection and
 namespace contracts.
 
+### Relocate rows
+
+`meridian session relocate` appends one `relocate` row per affected chat (v1; a build
+that predates it drops the unknown name and keeps the old paths). The fold rewrites, in
+the chat record and in every generation bucket the chat already has, `control_root`,
+`task_cwd` and `execution_cwd` by whole-component prefix, and replaces `native_store`
+where it equals the row's `old` (`native_binding.relocate_key`; `bind` stays fill-only).
+It never creates a bucket, so the history index's write loop finds an ordinal for every
+bucket it returns. Rows are idempotent, so a rerun after a crash is safe. A start an
+older build appends afterwards with the old store folds as a binding conflict and is
+dropped, as it is for any store mismatch. Spawn rows, work items and the `task` links
+are not events: `ops/session_relocate.py` rewrites them through their own writers.
+
 ### One-time native identity import
 
 Runtime authority resolution invokes `ops/legacy_native_import.py` once for an

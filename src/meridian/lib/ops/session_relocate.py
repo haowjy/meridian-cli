@@ -30,7 +30,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.adapter import NativeRelocation, SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.session_links import session_task_link_path
-from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
+from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.platform.atomic import atomic_symlink
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state import session_store, spawn_store, work_repository
@@ -86,6 +86,39 @@ def needs_relocate(
     if resumes_in is not None and not resumes_in.is_dir():
         return RelocateNeed(missing_dir=resumes_in)
     return None
+
+
+def refused_relocation(
+    runtime_root: Path,
+    generations: Sequence[SessionRecord],
+    adapter: SubprocessHarness,
+    need: RelocateNeed,
+    *,
+    target: Path,
+) -> str | None:
+    """The gate's other state: relocate already ran for this chat, yet ``need`` fired.
+
+    Relocate writes the chat's Meridian paths even when the harness refuses its own
+    change, so a gate that fires after a relocate row means the harness still records
+    the old place. Callers show this instead of offering relocate again, which would
+    loop. None when the chat was never relocated.
+    """
+    chat_id = generations[-1].chat_id
+    if not any(
+        isinstance(row, SessionRelocateEvent)
+        for row in session_store.chat_rows(runtime_root, chat_id)
+    ):
+        return None
+    still = need.store_move.recorded if need.store_move else str(need.missing_dir)
+    plan = adapter.plan_native_relocate(
+        _chat_key(tuple(reversed(generations))), old_root=Path(still), new_root=target
+    )
+    reason = (
+        plan.refusal
+        if plan is not None and plan.refusal
+        else f"rerun `meridian session relocate {chat_id}` to finish"
+    )
+    return f"{chat_id} was relocated, but {adapter.id} still records {still}: {reason}"
 
 
 def moved_root(
@@ -166,7 +199,7 @@ class SessionRelocateOutput(BaseModel):
             f"{'Plan (nothing changed)' if self.dry_run else 'Relocated'}: {self.old} -> {self.new}"
         ]
         for chat in self.chats:
-            what = ", ".join(chat.fields) or "no recorded path"
+            what = ", ".join(chat.fields) or "paths already current"
             lines.append(f"  {chat.chat_id} ({chat.harness}): {what}")
             if chat.harness_change:
                 lines.append(f"    {chat.harness}: {chat.harness_change}")
@@ -202,6 +235,10 @@ class _Plan:
     links: tuple[str, ...]  # chats whose task link moves
     items: tuple[str, ...]  # work items whose paths move
     worktrees: bool  # some item's worktree path moves, which git's own metadata still holds
+
+
+def _live(generations: Iterable[SessionRecord]) -> list[SessionRecord]:
+    return [generation for generation in generations if generation.record_mode == "live"]
 
 
 def _chat_paths(generations: Iterable[SessionRecord]) -> tuple[str, ...]:
@@ -259,6 +296,7 @@ def _prefix_pairs(old: Path, new: Path) -> tuple[tuple[str, str], ...]:
 
 def _build_plan(
     runtime_root: Path,
+    state_dir: Path,
     project_root: Path,
     pairs: Sequence[tuple[str, str]],
     old: Path,
@@ -269,19 +307,22 @@ def _build_plan(
 ) -> _Plan:
     if chat is None:
         by_chat: dict[str, list[SessionRecord]] = defaultdict(list)
-        for generation in session_store.fold_session_generations(
-            session_store.chats_rows(runtime_root, None).ordered
+        for generation in _live(
+            session_store.fold_session_generations(
+                session_store.chats_rows(runtime_root, None).ordered
+            )
         ):
-            if generation.record_mode == "live":
-                by_chat[generation.chat_id].append(generation)
+            by_chat[generation.chat_id].append(generation)
     else:
-        by_chat = {chat: [g for g in session_store.chat_generations(runtime_root, chat)]}
+        by_chat = {chat: _live(session_store.chat_generations(runtime_root, chat))}
         if not by_chat[chat]:
             raise ValueError(f"Chat {chat} not found.")
         key = _chat_key(tuple(reversed(by_chat[chat]))).complete()
         for other in session_store.native_chats(runtime_root, key.session_id) if key else ():
-            if other not in by_chat:
-                by_chat[other] = list(session_store.chat_generations(runtime_root, other))
+            if other not in by_chat and (
+                rows := _live(session_store.chat_generations(runtime_root, other))
+            ):
+                by_chat[other] = rows
 
     scan = spawn_store.list_spawns(runtime_root)
     terminal = tuple(
@@ -345,8 +386,6 @@ def _build_plan(
                 native_plans[identity],
             )
         )
-    chats = [c for c in chats if c.pairs or c.native is not None]
-
     chat_ids = {c.chat_id for c in chats}
     spawns = tuple(
         row
@@ -369,8 +408,8 @@ def _build_plan(
     moving_items: list[WorkItem] = []
     if chat is None:
         for item in (
-            *list_work_items(runtime_root)[0],
-            *list_archived_work_items(runtime_root, all_archived=True)[0],
+            *list_work_items(state_dir)[0],
+            *list_archived_work_items(state_dir, all_archived=True)[0],
         ):
             if _matching_pairs(pairs, work_repository.work_item_paths(item)):
                 moving_items.append(item)
@@ -379,7 +418,7 @@ def _build_plan(
         for item in moving_items
     )
     return _Plan(
-        tuple(chats),
+        tuple(c for c in chats if c.pairs or c.native is not None),
         spawns,
         pins,
         links,
@@ -454,6 +493,7 @@ def _journal_rows(
 
 def _write_other_records(
     runtime_root: Path,
+    state_dir: Path,
     project_root: Path,
     pairs: Sequence[tuple[str, str]],
     plan: _Plan,
@@ -481,9 +521,7 @@ def _write_other_records(
         if (moved := _rebase(pairs, os.readlink(link))) is not None:
             atomic_symlink(link, Path(moved))
     for work_id in plan.items:
-        work_repository.move_work_item_paths(
-            runtime_root, work_id, lambda path: _rebase(pairs, path)
-        )
+        work_repository.move_work_item_paths(state_dir, work_id, lambda path: _rebase(pairs, path))
 
 
 def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutput:
@@ -499,9 +537,10 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
     project_root = resolution.project_root
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
+    roots = resolve_roots_for_read(str(project_root))
+    if roots is None:
         raise ValueError(f"No Meridian state for {project_root}: nothing to relocate.")
+    runtime_root, state_dir = roots.runtime_root, roots.project_state_dir
 
     new = Path(payload.to_root).expanduser() if payload.to_root else project_root
     if not new.is_dir():
@@ -532,7 +571,9 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
 
     pairs = _prefix_pairs(old, new)
     native = Path(payload.native).expanduser() if payload.native else None
-    plan = _build_plan(runtime_root, project_root, pairs, old, new, chat=chat, native=native)
+    plan = _build_plan(
+        runtime_root, state_dir, project_root, pairs, old, new, chat=chat, native=native
+    )
     if native is not None:
         if not any(c.native is not None for c in plan.chats):
             raise ValueError("--native is not supported for this chat's harness.")
@@ -601,7 +642,7 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         rows = _journal_rows(plan, refusals)
         if rows:
             session_store.append_chat_rows(runtime_root, rows)
-    _write_other_records(runtime_root, project_root, pairs, plan)
+    _write_other_records(runtime_root, state_dir, project_root, pairs, plan)
     return output(refusals)
 
 
