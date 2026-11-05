@@ -392,6 +392,13 @@ async def launch_prepared_spawn(
             spawn_id=spawn.spawn_id,
             exc=exc,
         )
+        if (
+            warning_observer is not None
+            and isinstance(exc, NativeSessionUnavailable)
+            and exc.reason == "store_moved"
+        ):
+            # The failure text a foreground caller reads must carry the relocate hint.
+            warning_observer("\n".join(part for part in (request.warning, str(exc)) if part))
         return 1
 
     if warning_observer is not None:

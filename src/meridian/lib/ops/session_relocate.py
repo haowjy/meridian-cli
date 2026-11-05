@@ -92,33 +92,36 @@ def refused_relocation(
     runtime_root: Path,
     generations: Sequence[SessionRecord],
     adapter: SubprocessHarness,
-    need: RelocateNeed,
     *,
     target: Path,
 ) -> str | None:
-    """The gate's other state: relocate already ran for this chat, yet ``need`` fired.
+    """The gate's other state: the chat's newest relocate already moved it to ``target``,
+    yet the harness still records that relocate's old directory.
 
     Relocate writes the chat's Meridian paths even when the harness refuses its own
-    change, so a gate that fires after a relocate row means the harness still records
-    the old place. Callers show this instead of offering relocate again, which would
-    loop. None when the chat was never relocated.
+    change, so callers show this instead of offering relocate again, which would loop.
+    None when no such relocate exists or the harness no longer records its old place.
     """
     chat_id = generations[-1].chat_id
-    if not any(
-        isinstance(row, SessionRelocateEvent)
+    moves = [
+        row.paths
         for row in session_store.chat_rows(runtime_root, chat_id)
-    ):
+        if isinstance(row, SessionRelocateEvent) and row.paths is not None
+    ]
+    if not moves or not target.is_relative_to(moves[-1].new):
         return None
-    still = need.store_move.recorded if need.store_move else str(need.missing_dir)
+    newest_first = tuple(reversed(generations))
+    old, new = Path(moves[-1].old), Path(moves[-1].new)
     plan = adapter.plan_native_relocate(
-        _chat_key(tuple(reversed(generations))), old_root=Path(still), new_root=target
+        _chat_key(newest_first),
+        old_roots=(old,),
+        new_root=new,
+        recorded_roots=_control_roots(newest_first),
     )
-    reason = (
-        plan.refusal
-        if plan is not None and plan.refusal
-        else f"rerun `meridian session relocate {chat_id}` to finish"
-    )
-    return f"{chat_id} was relocated, but {adapter.id} still records {still}: {reason}"
+    if plan is None:
+        return None
+    reason = plan.refusal or f"rerun `meridian session relocate {chat_id}` to finish"
+    return f"{chat_id} was relocated to {new}, but {adapter.id} still records {old}: {reason}"
 
 
 def moved_root(
@@ -187,13 +190,20 @@ class SessionRelocateOutput(BaseModel):
     new: str = ""
     chats: tuple[ChatChange, ...] = ()
     spawns: tuple[str, ...] = ()
+    pins: tuple[str, ...] = ()
+    links: tuple[str, ...] = ()
     work_items: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     undo: str | None = None
+    already_at: str | None = None  # where a bare `relocate cN` finds the chat already
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        if not self.chats and not self.spawns and not self.work_items:
+        if not (self.chats or self.spawns or self.pins or self.links or self.work_items):
+            if self.already_at:
+                return (
+                    f"Nothing to relocate: the chat's records already point at {self.already_at}."
+                )
             return f"Nothing to relocate: no record still names {self.old}."
         lines = [
             f"{'Plan (nothing changed)' if self.dry_run else 'Relocated'}: {self.old} -> {self.new}"
@@ -207,6 +217,10 @@ class SessionRelocateOutput(BaseModel):
                 lines.append(f"    {chat.harness} change refused: {chat.refusal}")
         if self.spawns:
             lines.append(f"  spawn rows: {', '.join(self.spawns)}")
+        if self.pins:
+            lines.append(f"  spawn task_dir pins: {', '.join(self.pins)}")
+        if self.links:
+            lines.append(f"  task links: {', '.join(self.links)}")
         if self.work_items:
             lines.append(f"  work items: {', '.join(self.work_items)}")
         lines.extend(self.notes)
@@ -266,15 +280,12 @@ def _matching_pairs(
 ) -> tuple[tuple[str, str], ...]:
     held = tuple(paths)
     return tuple(
-        pair for pair in pairs if any(rebase_path(path, pair[0], pair[1]) for path in held)
+        pair for pair in pairs if any(rebase_path(path, (pair[0],), pair[1]) for path in held)
     )
 
 
 def _rebase(pairs: Sequence[tuple[str, str]], path: str) -> str | None:
-    for old, new in pairs:
-        if (moved := rebase_path(path, old, new)) is not None:
-            return moved
-    return None
+    return rebase_path(path, [old for old, _ in pairs], pairs[0][1])
 
 
 def _prefix_pairs(old: Path, new: Path) -> tuple[tuple[str, str], ...]:
@@ -299,7 +310,6 @@ def _build_plan(
     state_dir: Path,
     project_root: Path,
     pairs: Sequence[tuple[str, str]],
-    old: Path,
     new: Path,
     *,
     chat: str | None,
@@ -333,6 +343,21 @@ def _build_plan(
         and row.entry_chat_id in by_chat
     )
 
+    # Pins and task links name a path too: a crash after the spawn rows leaves them as
+    # the only record a rerun still finds.
+    moving_pins = {
+        row.id: row.entry_chat_id
+        for row in terminal
+        if (pin := read_spawn_scope(project_root, row.id).task_dir) is not None
+        and _rebase(pairs, pin.as_posix()) is not None
+    }
+    moving_links = {
+        chat_id
+        for chat_id in by_chat
+        if (link := session_task_link_path(runtime_root, chat_id)).is_symlink()
+        and _rebase(pairs, os.readlink(link)) is not None
+    }
+
     if chat is None:
         targets = {
             chat_id
@@ -344,6 +369,8 @@ def _build_plan(
             for row in terminal
             if row.entry_chat_id and _matching_pairs(pairs, _spawn_paths(row))
         }
+        targets |= {chat_id for chat_id in moving_pins.values() if chat_id}
+        targets |= moving_links
         # A chat sharing a moved chat's native key shares its store and harness record.
         keys = {
             key
@@ -374,7 +401,13 @@ def _build_plan(
         adapter = _adapter(harness)
         if identity not in native_plans:
             native_plans[identity] = (
-                adapter.plan_native_relocate(identity, old_root=old, new_root=new, native=native)
+                adapter.plan_native_relocate(
+                    identity,
+                    old_roots=tuple(Path(old_spelling) for old_spelling, _ in pairs),
+                    new_root=new,
+                    native=native,
+                    recorded_roots=_control_roots(newest_first),
+                )
                 if adapter is not None
                 else None
             )
@@ -392,19 +425,8 @@ def _build_plan(
         for row in terminal
         if row.entry_chat_id in chat_ids and _matching_pairs(pairs, _spawn_paths(row))
     )
-    pins = tuple(
-        row.id
-        for row in terminal
-        if row.entry_chat_id in chat_ids
-        and (pin := read_spawn_scope(project_root, row.id).task_dir) is not None
-        and _rebase(pairs, pin.as_posix()) is not None
-    )
-    links = tuple(
-        chat_id
-        for chat_id in sorted(chat_ids)
-        if (link := session_task_link_path(runtime_root, chat_id)).is_symlink()
-        and _rebase(pairs, os.readlink(link)) is not None
-    )
+    pins = tuple(spawn_id for spawn_id, owner in moving_pins.items() if owner in chat_ids)
+    links = tuple(sorted(moving_links & chat_ids))
     moving_items: list[WorkItem] = []
     if chat is None:
         for item in (
@@ -571,23 +593,30 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
 
     pairs = _prefix_pairs(old, new)
     native = Path(payload.native).expanduser() if payload.native else None
-    plan = _build_plan(
-        runtime_root, state_dir, project_root, pairs, old, new, chat=chat, native=native
-    )
+    plan = _build_plan(runtime_root, state_dir, project_root, pairs, new, chat=chat, native=native)
     if native is not None:
-        if not any(c.native is not None for c in plan.chats):
-            raise ValueError("--native is not supported for this chat's harness.")
+        if any(c.harness != "claude" for c in plan.chats) or not any(
+            c.native is not None for c in plan.chats
+        ):
+            raise ValueError("--native is only supported for Claude chats.")
         refused = [c.native.refusal for c in plan.chats if c.native and c.native.refusal]
         if refused:
             raise ValueError(f"Refusing --native: {refused[0]}")
 
     prefix = f"meridian session relocate {chat} " if chat else "meridian session relocate "
     rerun = f"{prefix}--from {shlex.quote(str(old))} --to {shlex.quote(str(new))}"
+    reverse = f"{prefix}--from {shlex.quote(str(new))} --to {shlex.quote(str(old))}"
     undo = (
-        f"{prefix}--from {shlex.quote(str(new))} --to {shlex.quote(str(old))}"
-        if chat and old.is_dir()
-        else f"move {old} back, then meridian session relocate --from {new} --to {old}"
+        reverse if chat and old.is_dir() else f"move {shlex.quote(str(old))} back, then {reverse}"
     )
+
+    already_at = None
+    if chat is not None and payload.from_root is None:
+        # Bare form: `old` is where the harness's own record says the chat was, which
+        # after a full relocate is the stale original. Say where Meridian's records are.
+        newest = session_store.chat_generations(runtime_root, chat)[-1]
+        here = next((p for p in (newest.task_cwd, newest.control_root) if p), None)
+        already_at = here if here and Path(here).is_relative_to(new) else None
 
     def output(refusals: Mapping[NativeKeyFields, str | None]) -> SessionRelocateOutput:
         return SessionRelocateOutput(
@@ -607,6 +636,8 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
                 for c in plan.chats
             ),
             spawns=tuple(row.id for row in plan.spawns),
+            pins=plan.pins,
+            links=plan.links,
             work_items=plan.items,
             notes=(
                 ("Git keeps its own worktree paths: run `git worktree repair`.",)
@@ -614,6 +645,7 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
                 else ()
             ),
             undo=undo,
+            already_at=already_at,
         )
 
     if payload.dry_run or not (plan.chats or plan.spawns or plan.pins or plan.links or plan.items):

@@ -573,12 +573,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         identity: NativeKeyFields,
         *,
-        old_root: Path,
+        old_roots: Sequence[Path],
         new_root: Path,
         native: Path | None = None,
+        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
-        _ = native  # the --native form is deferred for this harness
-        return plan_opencode_relocate(identity, old_root=old_root, new_root=new_root)
+        _ = native, recorded_roots  # the --native form is deferred for this harness
+        return plan_opencode_relocate(identity, old_roots=old_roots, new_root=new_root)
 
     def apply_native_relocations(
         self,

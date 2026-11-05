@@ -42,7 +42,7 @@ from meridian.lib.launch.process.terminal_ownership import (
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
-from meridian.lib.ops.relocate_hint import relocate_hint, with_relocate_hint
+from meridian.lib.ops.relocate_hint import copy_checkout_note, relocate_hint, with_relocate_hint
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.session_relocate import needs_relocate
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
@@ -374,6 +374,16 @@ def run_primary_launch(
                 f"using {project_root}. {task_dir_hint or ''}",
             )
             launch_task_dir = project_root.as_posix()
+        else:
+            continue_warning = _merge_warnings(
+                continue_warning,
+                copy_checkout_note(
+                    runtime_root=resolve_project_runtime_root(project_root),
+                    chat_id=continue_chat_id,
+                    task_dir=launch_task_dir,
+                    project_root=project_root,
+                ),
+            )
         continue_source_tracked = continue_contract.session.continue_source_tracked
         continue_source_ref = continue_contract.session.continue_source_ref
         continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot

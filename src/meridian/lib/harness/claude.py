@@ -122,7 +122,7 @@ from meridian.lib.safety.policy import (
     NetworkPolicy,
     network_allows_local_services,
 )
-from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
+from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths, rebase_path
 
 logger = structlog.get_logger(__name__)
 
@@ -391,16 +391,28 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         identity: NativeKeyFields,
         *,
-        old_root: Path,
+        old_roots: Sequence[Path],
         new_root: Path,
         native: Path | None = None,
+        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
         if identity.native_store is None or identity.session_id is None:
             return None
         recorded, session_id = Path(identity.native_store), identity.session_id
+        # The child runs at the chat's control root, so the store follows that root
+        # only when it is the directory that moved (not a worktree inside the project).
+        current = self.native_cwd(identity, recorded_roots=recorded_roots)
+        child_cwd = (
+            rebase_path(str(current), [str(root) for root in old_roots], str(new_root))
+            if current is not None
+            else None
+        )
+        if child_cwd is None:
+            return None
+        old_roots = tuple(old_roots)
 
         def refuse(reason: str) -> NativeRelocation:
-            return NativeRelocation(identity, old_root, new_root, "", refusal=reason)
+            return NativeRelocation(identity, old_roots, new_root, "", refusal=reason)
 
         if native is not None:
             if native.parent.parent.name != "projects":
@@ -415,8 +427,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             config_root = recorded.parent.parent
             source = None
         env = {"CLAUDE_CONFIG_DIR": str(config_root)}
-        # The store the next launch computes from the new root, not a restated formula.
-        new_store = Path(self.resume_store(str(recorded), child_env=env, child_cwd=new_root))
+        # The store the next launch computes from the moved root, not a restated formula.
+        new_store = Path(self.resume_store(str(recorded), child_env=env, child_cwd=Path(child_cwd)))
         if source is None:
             candidates = (recorded / f"{session_id}.jsonl", new_store / f"{session_id}.jsonl")
             source = next((c.resolve() for c in candidates if c.is_file()), None)
@@ -435,7 +447,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if source is None:
             return NativeRelocation(
                 identity,
-                old_root,
+                old_roots,
                 new_root,
                 f"{store_change} (transcript not found anywhere)",
                 native_store=str(new_store),
@@ -453,7 +465,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             change += f"; continue with CLAUDE_CONFIG_DIR={config_root}"
         return NativeRelocation(
             identity,
-            old_root,
+            old_roots,
             new_root,
             change,
             source=source if links else None,

@@ -105,8 +105,12 @@ chat whose child store differs from the recorded one raises
 `classify_store_move()` kind, before any lock; `bind_entry` would refuse it later
 anyway. When the adapter returns no kind (the launch could not pin the recorded
 store), it raises `missing` instead, as a fork that leaves its source store does.
-A resume into a fresh chat has no recorded store and is exempt. Claude's `plan_native_relocate` takes the new store from `resume_store` at the new root
-(with the recorded config root pinned), then links `<id>.jsonl` and `<id>/` into it
+A resume into a fresh chat has no recorded store and is exempt. Every harness's `plan_native_relocate` retargets the directory it records itself, never
+`new_root`: Claude's child runs at the chat's control root, so its new store comes from
+`resume_store` at that root rebased from the old one (`native_cwd` plus
+`state.paths.rebase_path`), with the recorded config root pinned. A harness whose own
+directory is not under the old roots (a worktree moved, the project did not) returns None:
+no change and no refusal. Claude then links `<id>.jsonl` and `<id>/` into it
 (`claude_sessions.link_claude_session`). It only creates links: a target that exists and
 differs is a refusal, never replaced, and the originals are never moved or deleted. The runner binds
 nonempty identities as `assigned` before exec. `observe_after_exit()` returns

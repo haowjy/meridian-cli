@@ -133,7 +133,9 @@ the chat record and in every generation bucket the chat already has, `control_ro
 `task_cwd` and `execution_cwd` by whole-component prefix, and replaces `native_store`
 where it equals the row's `old` (`native_binding.relocate_key`; `bind` stays fill-only).
 It never creates a bucket, so the history index's write loop finds an ordinal for every
-bucket it returns. Rows are idempotent, so a rerun after a crash is safe. A start an
+bucket it returns. Rows are idempotent, so a rerun after a crash is safe: `rebase_path`
+is the one rebase rule (planner, fold, harness plans) and leaves a path already under
+`new` alone when `new` sits inside `old`. A start an
 older build appends afterwards with the old store folds as a binding conflict and is
 dropped, as it is for any store mismatch. Spawn rows, work items and the `task` links
 are not events: `ops/session_relocate.py` rewrites them through their own writers.

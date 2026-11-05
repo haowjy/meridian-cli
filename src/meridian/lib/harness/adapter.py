@@ -272,7 +272,7 @@ class NativeRelocation:
     """
 
     identity: NativeKeyFields
-    old_root: Path
+    old_roots: tuple[Path, ...]
     new_root: Path
     change: str
     source: Path | None = None
@@ -491,9 +491,10 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         identity: NativeKeyFields,
         *,
-        old_root: Path,
+        old_roots: Sequence[Path],
         new_root: Path,
         native: Path | None = None,
+        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None: ...
 
     def apply_native_relocations(
@@ -945,14 +946,20 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         identity: NativeKeyFields,
         *,
-        old_root: Path,
+        old_roots: Sequence[Path],
         new_root: Path,
         native: Path | None = None,
+        recorded_roots: Sequence[Path] = (),
     ) -> NativeRelocation | None:
         """What relocate changes in this harness's own state for one chat, or None.
 
-        ``native`` is the user's ``--native`` file, used in place of a search."""
-        _ = identity, old_root, new_root, native
+        ``old_roots`` are the spellings of the directory that moved to ``new_root``. The
+        harness retargets the directory it records itself, not ``new_root``, and returns
+        None when that directory is not under ``old_roots`` (a worktree moved, the
+        chat's directory did not). ``native`` is the user's ``--native`` file, used in
+        place of a search; ``recorded_roots`` are the chat's control roots, newest
+        first, as for ``native_cwd``."""
+        _ = identity, old_roots, new_root, native, recorded_roots
         return None
 
     def apply_native_relocations(

@@ -54,7 +54,7 @@ from meridian.lib.launch.request import SessionRequest, cross_harness_continue_e
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
-from meridian.lib.ops.relocate_hint import relocate_hint
+from meridian.lib.ops.relocate_hint import copy_checkout_note, relocate_hint
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     inspect_runtime_authority_for_read,
@@ -2571,6 +2571,15 @@ def spawn_continue_sync(
     )
     if gone is not None:
         return _with_command(gone, "spawn.continue")
+    redirect_notice = _merge_warnings(
+        redirect_notice,
+        copy_checkout_note(
+            runtime_root=runtime_root,
+            chat_id=resolved_reference.source_chat_id,
+            task_dir=create_input.task_dir,
+            project_root=project_root,
+        ),
+    )
     preparation = _run_spawn_create_preparation(
         create_input,
         ctx=ctx,

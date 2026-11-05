@@ -435,7 +435,7 @@ def _relocated(record: SessionRecord, event: SessionRelocateEvent) -> SessionRec
     if event.paths is not None:
         for name in ("control_root", "task_cwd", "execution_cwd"):
             value: str | None = getattr(record, name)
-            rebased = rebase_path(value, event.paths.old, event.paths.new) if value else None
+            rebased = rebase_path(value, (event.paths.old,), event.paths.new) if value else None
             if rebased is not None:
                 updates[name] = rebased
     if event.native_store is not None:

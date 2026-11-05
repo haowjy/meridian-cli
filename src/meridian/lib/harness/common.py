@@ -2,7 +2,6 @@
 
 import json
 import math
-from pathlib import Path
 from typing import cast
 
 from meridian.lib.harness.adapter import StreamEvent
@@ -186,11 +185,3 @@ def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
         if thread_id:
             return thread_id
     return None
-
-
-def retarget_directory(current: Path, old_root: Path, new_root: Path) -> Path | None:
-    """Where ``current`` is after ``old_root`` moved to ``new_root``; itself when it is
-    already under ``new_root``; None when it is under neither."""
-    if current.is_relative_to(old_root):
-        return new_root / current.relative_to(old_root)
-    return current if current.is_relative_to(new_root) else None

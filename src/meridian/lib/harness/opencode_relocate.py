@@ -4,8 +4,9 @@ OpenCode refuses to resume a session while its recorded directory is gone, and k
 that directory in its DB. Meridian never writes the DB: one short-lived
 ``opencode serve`` per DB, pinned with ``OPENCODE_DB``, does the move. The serve runs
 in its own process group and the group is killed on every exit path that Python can
-see. ``/move`` answers 204 at once and the row changes about a second later, so each
-move is confirmed by reading the row back before the serve stops.
+see (SIGTERM and SIGHUP included; SIGKILL cannot be). ``/move`` answers 204 at once and
+the row changes about a second later, so each move is confirmed by reading the row back
+before the serve stops.
 """
 
 from __future__ import annotations
@@ -19,21 +20,23 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from contextlib import closing
 from pathlib import Path
+from types import FrameType
 from typing import IO
 
 from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
-from meridian.lib.harness.common import retarget_directory
 from meridian.lib.harness.connections.opencode_http import find_free_port
 from meridian.lib.harness.opencode_transcript import connect_readonly
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
+from meridian.lib.state.paths import rebase_path
 
 _SERVE_READY_SECONDS = 30.0
 _MOVE_APPLIED_SECONDS = 15.0
@@ -49,27 +52,19 @@ def opencode_native_cwd(identity: NativeKeyFields) -> Path | None:
 
 
 def plan_opencode_relocate(
-    identity: NativeKeyFields, *, old_root: Path, new_root: Path
+    identity: NativeKeyFields, *, old_roots: Sequence[Path], new_root: Path
 ) -> NativeRelocation | None:
+    """None when the session's own directory is not under ``old_roots``: it did not move."""
     db = Path(identity.native_store) if identity.native_store else None
     current = opencode_native_cwd(identity)
     if db is None or current is None:
         return None
-    target = retarget_directory(current, old_root, new_root)
+    target = _retarget(current, old_roots, new_root)
     if target is None:
-        return NativeRelocation(
-            identity,
-            old_root,
-            new_root,
-            "OpenCode session directory",
-            source=db,
-            refusal=f"{db}: session directory {current} is not under {old_root}",
-        )
-    if target == current:
         return None
     return NativeRelocation(
         identity,
-        old_root,
+        tuple(old_roots),
         new_root,
         f"OpenCode session directory {current} -> {target} (POST /api/session/<id>/move in {db})",
         source=db,
@@ -91,15 +86,11 @@ def apply_opencode_relocations(
         for index, plan in entries:
             session_id = plan.identity.session_id or ""
             current = _read_directory(db, session_id)
-            target = (
-                None
-                if current is None
-                else retarget_directory(current, plan.old_root, plan.new_root)
-            )
-            if current is None or target is None:
-                refusals[index] = f"{db}: session {session_id} is not under {plan.old_root}"
-            elif target == current:
-                refusals[index] = None  # already done
+            target = None if current is None else _retarget(current, plan.old_roots, plan.new_root)
+            if current is None:
+                refusals[index] = f"{db}: session {session_id} has no directory record"
+            elif target is None:
+                refusals[index] = None  # already done, or not under the old root
             else:
                 moves[session_id] = target
         failures = _move_sessions(db, moves) if moves else {}
@@ -110,9 +101,36 @@ def apply_opencode_relocations(
     return tuple(NativeRelocationResult(plan, refusals[i]) for i, plan in enumerate(plans))
 
 
+def _retarget(current: Path, old_roots: Sequence[Path], new_root: Path) -> Path | None:
+    moved = rebase_path(str(current), [str(root) for root in old_roots], str(new_root))
+    return None if moved is None else Path(moved)
+
+
+@contextlib.contextmanager
+def _exit_on_termination() -> Generator[None]:
+    """Turn SIGTERM and SIGHUP into an exit so the ``finally`` that reaps the serve runs.
+
+    The serve has its own session, so a closed terminal never reaches it; Python's
+    default handlers exit without unwinding. Only the main thread can install them.
+    """
+
+    def stop(signum: int, _frame: FrameType | None) -> None:
+        raise SystemExit(128 + signum)
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def _move_sessions(db: Path, moves: dict[str, Path]) -> dict[str, str]:
     """Move each session through one serve on ``db``; returns a refusal per failure."""
-    with tempfile.TemporaryFile() as out:
+    with tempfile.TemporaryFile() as out, _exit_on_termination():
         process: subprocess.Popen[bytes] | None = None
         try:
             process = _start_serve(db, find_free_port(), out)

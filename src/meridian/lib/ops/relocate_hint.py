@@ -65,6 +65,33 @@ def relocate_hint(
     return "\n".join(lines)
 
 
+def copy_checkout_note(
+    *,
+    runtime_root: Path,
+    chat_id: str | None,
+    task_dir: str | None,
+    project_root: Path,
+) -> str | None:
+    """The note for a continue that resumes in another checkout of the project.
+
+    Codex, OpenCode and Pi resume in the directory the chat recorded, so a continue from
+    a copy runs in the original while it still exists. Claude is covered by its store
+    check. Print only: the user may well want the original.
+    """
+    if chat_id is None or not task_dir or not Path(task_dir).is_dir():
+        return None
+    generations = session_store.chat_generations(runtime_root, chat_id)
+    if not generations or generations[-1].harness == "claude":
+        return None
+    recorded = generations[-1].control_root
+    if not recorded or not Path(recorded).is_dir() or Path(recorded).resolve() == project_root:
+        return None
+    return (
+        f"{chat_id} resumes in {task_dir} (recorded); you're in {project_root}. "
+        f"To move it here: meridian session relocate {chat_id}"
+    )
+
+
 def with_relocate_hint(
     exc: NativeSessionUnavailable,
     *,

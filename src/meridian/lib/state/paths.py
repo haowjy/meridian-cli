@@ -2,6 +2,7 @@
 
 import os
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast
@@ -33,17 +34,29 @@ def normalize_path_for_write(path: str | None) -> str | None:
     return os.path.abspath(os.path.normpath(path))
 
 
-def rebase_path(path: str, old: str, new: str) -> str | None:
-    """``path`` with its leading ``old`` directory replaced by ``new``, or None when it
-    is not under ``old``. Matches whole path components: ``/a/b`` covers ``/a/b/c``,
-    never ``/a/b-old``."""
+def _is_under(path: str, root: str) -> bool:
+    root = root.rstrip("/") or "/"
+    return path == root or path.startswith(root if root.endswith("/") else root + "/")
 
-    old = old.rstrip("/") or "/"
-    if path == old:
-        return new
-    prefix = old if old.endswith("/") else old + "/"
-    if path.startswith(prefix):
-        return new.rstrip("/") + "/" + path[len(prefix) :]
+
+def rebase_path(path: str, olds: Sequence[str], new: str) -> str | None:
+    """``path`` with its leading ``old`` directory replaced by ``new``, or None when
+    there is nothing to change.
+
+    ``olds`` are the spellings of one old directory (as typed, resolved); the first that
+    holds ``path`` wins. Components match whole: ``/a/b`` covers ``/a/b/c``, never
+    ``/a/b-old``. A path already under ``new`` is left alone when ``new`` sits inside
+    ``old``, so a rerun (or a path recorded after the move) is not rebased twice.
+    """
+
+    new = new.rstrip("/") or "/"
+    for old in olds:
+        if not _is_under(path, old):
+            continue
+        if _is_under(new, old) and _is_under(path, new):
+            return None
+        rest = path[len(old.rstrip("/")) :].lstrip("/")
+        return f"{new.rstrip('/')}/{rest}" if rest else new
     return None
 
 

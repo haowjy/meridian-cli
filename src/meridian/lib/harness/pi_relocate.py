@@ -22,8 +22,8 @@ from meridian.lib.core.native_identity import (
     NativeSessionUnavailable,
 )
 from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
-from meridian.lib.harness.common import retarget_directory
 from meridian.lib.harness.pi_identity import read_header, resolve_session_file
+from meridian.lib.state.paths import rebase_path
 
 _HEADER_VERSION = 3
 
@@ -39,11 +39,13 @@ def pi_native_cwd(identity: NativeKeyFields) -> Path | None:
 
 
 def plan_pi_relocate(
-    identity: NativeKeyFields, *, old_root: Path, new_root: Path
+    identity: NativeKeyFields, *, old_roots: Sequence[Path], new_root: Path
 ) -> NativeRelocation | None:
+    """None when the header's own cwd is not under ``old_roots``: it did not move."""
+
     def plan(change: str, source: Path | None, refusal: str | None = None) -> NativeRelocation:
         return NativeRelocation(
-            identity, old_root, new_root, change, source=source, refusal=refusal
+            identity, tuple(old_roots), new_root, change, source=source, refusal=refusal
         )
 
     try:
@@ -62,10 +64,8 @@ def plan_pi_relocate(
     cwd = header.get("cwd")
     if not isinstance(cwd, str) or not cwd:
         return plan("Pi header cwd", path, f"{path}: header has no cwd")
-    target = retarget_directory(Path(cwd), old_root, new_root)
+    target = _retarget(cwd, old_roots, new_root)
     if target is None:
-        return plan("Pi header cwd", path, f"{path}: header cwd {cwd} is not under {old_root}")
-    if target == Path(cwd):
         return None
     return plan(f"Pi header cwd {cwd} -> {target} in {path}", path)
 
@@ -96,11 +96,9 @@ def _apply_one(plan: NativeRelocation) -> str | None:
             or not isinstance(cwd, str)
         ):
             return f"{path}: header changed since the plan"
-        target = retarget_directory(Path(cwd), plan.old_root, plan.new_root)
+        target = _retarget(cwd, plan.old_roots, plan.new_root)
         if target is None:
-            return f"{path}: header cwd {cwd} is not under {plan.old_root}"
-        if target == Path(cwd):
-            return None  # already done
+            return None  # already done, or not under the old root
         header["cwd"] = str(target)
         newline = b"\n" if first.endswith(b"\n") else b""
         line = json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode() + newline
@@ -108,6 +106,10 @@ def _apply_one(plan: NativeRelocation) -> str | None:
     except (OSError, ValueError) as exc:
         return f"{path}: {exc}"
     return None
+
+
+def _retarget(cwd: str, old_roots: Sequence[Path], new_root: Path) -> str | None:
+    return rebase_path(cwd, [str(root) for root in old_roots], str(new_root))
 
 
 def _replace_first_line(path: Path, *, skip: int, line: bytes) -> None:
