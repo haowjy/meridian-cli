@@ -1,6 +1,6 @@
 """Pure native-key binding decisions and write-boundary conflict reporting."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import structlog
@@ -46,6 +46,17 @@ def bind(prior: NativeKeyFields, attempted: NativeKeyFields) -> BindOutcome:
         prior.session_id or attempted.session_id,
     )
     return Same(merged) if merged == prior else Bound(merged)
+
+
+def relocate_key(prior: NativeKeyFields, *, store_old: str, store_new: str) -> NativeKeyFields:
+    """Replace the native store when it is ``store_old``; every other field is kept.
+
+    The one place a bound store changes: ``bind`` stays fill-only. A relocate row
+    names the store it replaces, so replaying it twice changes nothing the second time.
+    """
+    if prior.native_store != store_old:
+        return prior
+    return replace(prior, native_store=store_new)
 
 
 def report_conflict(

@@ -33,6 +33,20 @@ def normalize_path_for_write(path: str | None) -> str | None:
     return os.path.abspath(os.path.normpath(path))
 
 
+def rebase_path(path: str, old: str, new: str) -> str | None:
+    """``path`` with its leading ``old`` directory replaced by ``new``, or None when it
+    is not under ``old``. Matches whole path components: ``/a/b`` covers ``/a/b/c``,
+    never ``/a/b-old``."""
+
+    old = old.rstrip("/") or "/"
+    if path == old:
+        return new
+    prefix = old if old.endswith("/") else old + "/"
+    if path.startswith(prefix):
+        return new.rstrip("/") + "/" + path[len(prefix) :]
+    return None
+
+
 class RuntimePaths(BaseModel):
     """Resolved runtime paths for one Meridian state root.
 

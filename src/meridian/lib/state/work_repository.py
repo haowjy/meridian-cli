@@ -446,6 +446,58 @@ def update_work_item_task_dir(
     )
 
 
+def work_item_paths(item: WorkItem) -> tuple[str, ...]:
+    """The filesystem paths an item records: its task dir and its worktree's two paths."""
+    return tuple(
+        path
+        for path in (item.task_dir, item.worktree.path, item.worktree.repo_path)
+        if path is not None
+    )
+
+
+def move_work_item_paths(
+    runtime_root: Path,
+    work_id: str,
+    move: Callable[[str], str | None],
+) -> bool:
+    """Rewrite the paths ``work_item_paths`` names, active or archived item alike.
+
+    ``move`` returns the new path, or None to leave one alone. The write republishes
+    the item's ``task`` link, so the link follows the new ``task_dir``. Idempotent:
+    returns whether anything changed.
+    """
+
+    def moved(path: str | None) -> str | None:
+        return path if path is None else move(path) or path
+
+    def mutate(
+        _paths: ProjectPaths,
+        active_dir: Path | None,
+        archived_dir: Path | None,
+    ) -> _MutationResult[bool]:
+        warn_both_locations(work_id, active_dir, archived_dir)
+        work_dir = active_dir or archived_dir
+        if work_dir is None:
+            raise ValueError(f"Work item '{work_id}' not found")
+        current = load_work_item_from_dir(work_dir, archived=active_dir is None)
+        updated = current.model_copy(
+            update={
+                "task_dir": moved(current.task_dir),
+                "worktree": current.worktree.model_copy(
+                    update={
+                        "path": moved(current.worktree.path),
+                        "repo_path": moved(current.worktree.repo_path),
+                    }
+                ),
+            }
+        )
+        if updated == current:
+            return _MutationResult(False)
+        return _MutationResult(True, (work_dir, updated))
+
+    return write_state_locked(runtime_root, work_id, mutate)
+
+
 def archive_work_item(
     runtime_root: Path,
     work_id: str,

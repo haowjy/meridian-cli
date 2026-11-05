@@ -59,6 +59,9 @@ from meridian.lib.state.session_fold import (
     SessionRecord as SessionRecord,
 )
 from meridian.lib.state.session_fold import (
+    SessionRelocateEvent as SessionRelocateEvent,
+)
+from meridian.lib.state.session_fold import (
     SessionSettings,
     UnsupportedSessionRecords,
     fold_session_generations,
@@ -355,7 +358,9 @@ def _append_session_rows(data_path: Path, rows: Iterable[BaseModel]) -> None:
             raise ValueError("Historical sessions are inert and cannot be mutated")
         payload = event.model_dump(
             mode="json",
-            exclude_none=isinstance(event, (SessionUpdateEvent, SessionStopEvent)),
+            exclude_none=isinstance(
+                event, (SessionUpdateEvent, SessionStopEvent, SessionRelocateEvent)
+            ),
         )
         unsupported = UnsupportedSessionRecords()
         if not supported_session_event_version(payload, unsupported):

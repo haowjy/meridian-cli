@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -87,6 +87,74 @@ def claude_transcript_first_cwd(path: Path) -> Path | None:
                     return Path(cwd)
     except (OSError, UnicodeError):
         return None
+    return None
+
+
+def locate_claude_session_files(
+    session_id: str, config_roots: Sequence[Path]
+) -> tuple[tuple[Path, Path], ...]:
+    """Every distinct transcript for ``session_id`` as ``(config root, file)``, by ID alone.
+
+    One ``stat`` per project folder, so only for a miss path. A file that is not this
+    session (torn or foreign header) is skipped. Paths that are the same file collapse
+    to one, the real file preferred over a link to it.
+    """
+    if not session_id or Path(session_id).name != session_id or ".." in session_id:
+        return ()
+    found: dict[Path, tuple[Path, Path]] = {}
+    for root in dict.fromkeys(config_roots):
+        for candidate in sorted((root / "projects").glob(f"*/{session_id}.jsonl")):
+            try:
+                if not candidate.is_file():
+                    continue
+                validate_claude_session_file(candidate, session_id)
+            except (OSError, NativeSessionUnavailable, NativeEntryMismatch):
+                continue
+            real = candidate.resolve()
+            found.setdefault(real, (root, real))
+    return tuple(found.values())
+
+
+def claude_session_links(
+    source: Path, target_store: Path
+) -> tuple[tuple[tuple[Path, Path], ...], str | None]:
+    """The links still to create to expose ``source`` in ``target_store``, or the refusal.
+
+    A transcript and its ``<id>/`` sidecar folder both link, so sidecars stay in one
+    place. A target that already holds a different file is a refusal, never replaced:
+    it may carry turns the source lacks, and ``ensure_claude_session_accessible`` would
+    overwrite it. A target that already is the source needs nothing.
+    """
+    items = [source]
+    sidecar = source.with_suffix("")
+    if sidecar.is_dir():
+        items.append(sidecar)
+    pending: list[tuple[Path, Path]] = []
+    for item in items:
+        target = target_store / item.name
+        if target.is_symlink() or target.exists():
+            if target.exists() and target.samefile(item):
+                continue
+            return (), f"{target} already exists and is not {item}"
+        pending.append((item, target))
+    return tuple(pending), None
+
+
+def link_claude_session(source: Path, target_store: Path) -> str | None:
+    """Create the links ``claude_session_links`` names; never touches the originals.
+
+    Returns the refusal, or None when both targets now resolve to the source. Safe to rerun.
+    """
+    pending, refusal = claude_session_links(source, target_store)
+    if refusal is not None:
+        return refusal
+    if pending:
+        target_store.mkdir(parents=True, exist_ok=True)
+    for item, target in pending:
+        try:
+            target.symlink_to(item)
+        except FileExistsError:
+            return f"{target} was created while linking; rerun relocate"
     return None
 
 
