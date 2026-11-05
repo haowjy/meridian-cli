@@ -299,6 +299,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ["--session", "--session-id", "-s", "--continue", "-c", "--fork"]
     )
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
+    tui_recovers_directory: ClassVar[bool] = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE

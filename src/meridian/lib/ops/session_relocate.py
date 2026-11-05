@@ -267,6 +267,9 @@ def _plan_native(
     adapter = adapter_for(generations[-1].harness)
     cwd_from = harness_cwd(generations)
     cwd_to = move(str(cwd_from)) if cwd_from is not None else None
+    if cwd_to is None and native is not None:
+        # A transcript choice with no directory move: the miss-path refusal's way out.
+        cwd_to = None if cwd_from is None else str(cwd_from)
     if adapter is None or cwd_from is None or cwd_to is None:
         return None
     return adapter.plan_native_relocate(
@@ -493,10 +496,11 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         if not generations:
             raise ValueError(f"Chat {chat} not found.")
         moved_from = moved_root(runtime_root, generations, target=new)
-        if moved_from is None:
+        if moved_from is None and payload.native is None:
             raise ValueError(f"Cannot tell where {chat} moved from; pass --from.")
-        old = moved_from
-    if old == new:
+        # Nothing moved and a transcript was chosen: re-store the chat in place.
+        old = moved_from or new
+    if old == new and payload.native is None:
         raise ValueError(f"--from and --to are both {new}.")
     if chat is None and old.exists():
         raise ValueError(
@@ -518,7 +522,13 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
     rerun = f"{prefix}--from {shlex.quote(str(old))} --to {shlex.quote(str(new))}"
     reverse = f"{prefix}--from {shlex.quote(str(new))} --to {shlex.quote(str(old))}"
     undo = (
-        reverse if chat and old.is_dir() else f"move {shlex.quote(str(old))} back, then {reverse}"
+        None
+        if old == new
+        else (
+            reverse
+            if chat and old.is_dir()
+            else f"move {shlex.quote(str(old))} back, then {reverse}"
+        )
     )
 
     already_at = None

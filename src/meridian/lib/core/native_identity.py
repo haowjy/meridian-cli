@@ -199,6 +199,9 @@ class NativeIdentity:
     session_id: str | None
     source_session_id: str | None
     source: Path | None
+    # The file the miss-path search found when the recorded one was missing; equals
+    # ``source``. The prelaunch links it back into ``native_store``.
+    located_from: Path | None = None
 
     def entry_fields(self) -> NativeKeyFields:
         return NativeKeyFields(self.harness, self.native_store, self.session_id)

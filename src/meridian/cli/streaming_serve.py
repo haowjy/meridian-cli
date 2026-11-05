@@ -173,7 +173,7 @@ async def streaming_serve(
                 child_env = dict(connection_config.child_env)
                 prelaunch = launch_ctx.harness.prepare_prelaunch(
                     launch=prepared.launch,
-                    session=launch_ctx.resolved_request.session,
+                    identity=native_run.identity,
                     child_cwd=launch_ctx.binding.child_cwd,
                     child_env=child_env,
                     resolved_harness_session_id=native_run.entry.session_id or "",

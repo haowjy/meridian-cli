@@ -21,7 +21,6 @@ from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeReso
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError
 from meridian.lib.safety.policy import PermissionPolicy, PlatformRule
 from tests.support.launch_paths import launch_paths
@@ -300,7 +299,7 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     recorded_dirs: list[str] = []
     state = ClaudeAdapter().prepare_prelaunch(
         launch=launch_paths(tmp_path, SpawnId("p-test")),
-        session=SessionRequest(),
+        identity=None,
         child_cwd=child_root,
         child_env={
             "HOME": fake_home.as_posix(),
@@ -347,7 +346,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
 
     state = PiAdapter().prepare_prelaunch(
         launch=launch_paths(tmp_path / "runtime", SpawnId("p-test")),
-        session=SessionRequest(),
+        identity=None,
         child_cwd=tmp_path,
         child_env=child_env,
         resolved_harness_session_id="",

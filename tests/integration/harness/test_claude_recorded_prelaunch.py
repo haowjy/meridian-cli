@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.native_identity import NativeIdentity, NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.request import SessionRequest
 from tests.support.launch_paths import launch_paths
 
 
@@ -34,17 +33,12 @@ def test_recorded_claude_source_preparation(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(ambient))
     destination = tmp_path / "destination"
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CLAUDE)
-    session = SessionRequest(
-        requested_harness_session_id=sid,
-        source_native_store=str(store),
-        continue_source_tracked=True,
-        continue_source_ref="c1",
-    )
+    identity = NativeIdentity("claude", "resume", str(store), None, sid, store / f"{sid}.jsonl")
 
     def prepare() -> None:
         adapter.prepare_prelaunch(
             launch=launch_paths(tmp_path, SpawnId("p1")),
-            session=session,
+            identity=identity,
             child_cwd=cwd,
             child_env={"CLAUDE_CONFIG_DIR": str(destination)},
             resolved_harness_session_id=sid,

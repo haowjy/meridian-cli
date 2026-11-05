@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
+from meridian.cli.relocate_prompt import RelocateStop
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -44,6 +45,7 @@ from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session
 from meridian.lib.ops.relocate_gate import (
     copy_checkout_note,
     needs_relocate,
+    refused_relocation,
     relocate_hint,
     with_relocate_hint,
 )
@@ -139,7 +141,7 @@ def _refuse_if_harness_directory_gone(
 ) -> None:
     """The gate: stop before the launch slot when the harness's own record of the chat's
     directory is gone. A moved store is not checked here: the launch preview refuses it
-    with the final child env (``_hint_store_moved``)."""
+    with the final child env (``_stop_on_store_moved``)."""
     if chat_id is None or harness_id is None:
         return
     runtime_root = resolve_project_runtime_root(project_root)
@@ -148,23 +150,37 @@ def _refuse_if_harness_directory_gone(
     if gone is None:
         return
     hint = relocate_hint(runtime_root=runtime_root, chat_id=chat_id, target=project_root)
-    raise ValueError(
-        f"{ref}: {harness_id} records the directory {gone}, which no longer exists."
-        + (f"\n{hint}" if hint else "")
+    raise RelocateStop(
+        ValueError(
+            f"{ref}: {harness_id} records the directory {gone}, which no longer exists."
+            + (f"\n{hint}" if hint else "")
+        ),
+        chat_id=chat_id,
+        project_root=project_root,
+        refused=refused_relocation(runtime_root, generations, target=project_root) is not None,
     )
 
 
 @contextmanager
-def _hint_store_moved(project_root: Path, chat_id: str | None) -> Generator[None]:
-    """Add the relocate hint to a ``store_moved`` refusal, outside the launch slot."""
+def _stop_on_store_moved(project_root: Path, chat_id: str | None) -> Generator[None]:
+    """Add the relocate hint to a ``store_moved`` or ``missing`` refusal, outside the launch
+    slot. A store that moved because the project did is a ``RelocateStop``: the terminal
+    prompt can fix it."""
     try:
         yield
     except NativeSessionUnavailable as exc:
-        raise with_relocate_hint(
-            exc,
-            runtime_root=resolve_project_runtime_root(project_root),
+        runtime_root = resolve_project_runtime_root(project_root)
+        hinted = with_relocate_hint(
+            exc, runtime_root=runtime_root, chat_id=chat_id, target=project_root
+        )
+        if chat_id is None or exc.store_move is None or exc.store_move.kind != "project_moved":
+            raise hinted from exc
+        generations = session_store.chat_generations(runtime_root, chat_id)
+        raise RelocateStop(
+            hinted,
             chat_id=chat_id,
-            target=project_root,
+            project_root=project_root,
+            refused=refused_relocation(runtime_root, generations, target=project_root) is not None,
         ) from exc
 
 
@@ -199,7 +215,10 @@ def run_primary_launch(
     goal: str | None = None,
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
+    launch_anyway: bool = False,
 ) -> PrimaryLaunchOutput:
+    """``launch_anyway`` skips the moved-directory gate: the user chose to let the
+    harness's own TUI recover a directory relocate could not repair."""
     if continue_ref is not None and model is not None:
         print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
         if not model.strip():
@@ -355,9 +374,10 @@ def run_primary_launch(
         if requested_work_id is None:
             requested_work_id = continue_contract.work_id
         launch_task_dir = continue_contract.task_dir
-        _refuse_if_harness_directory_gone(
-            project_root, continue_chat_id, continue_harness, resume_target
-        )
+        if not launch_anyway:
+            _refuse_if_harness_directory_gone(
+                project_root, continue_chat_id, continue_harness, resume_target
+            )
         if launch_task_dir is not None and not Path(launch_task_dir).is_dir():
             task_dir_hint = (
                 relocate_hint(
@@ -469,7 +489,7 @@ def run_primary_launch(
             dry_run=dry_run,
         )
     with (
-        _hint_store_moved(project_root, continue_chat_id),
+        _stop_on_store_moved(project_root, continue_chat_id),
         hold.slot if hold is not None else nullcontext(),
     ):
         launch_result = launch_primary(

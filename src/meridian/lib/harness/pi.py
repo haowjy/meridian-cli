@@ -32,7 +32,6 @@ from meridian.lib.harness.adapter import (
     NativeRelocation,
     NativeRelocationResult,
     RecordConfigDirFn,
-    SessionRequest,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -204,6 +203,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ]
     )
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume"})
+    tui_recovers_directory: ClassVar[bool] = True
     resolves_untracked_source = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
@@ -371,14 +371,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
         _ = (
-            session,
+            identity,
             resolved_harness_session_id,
             record_effective_config_dir,
         )

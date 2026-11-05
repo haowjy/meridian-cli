@@ -404,7 +404,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -463,8 +463,15 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     ) -> Path | None: ...
 
     continues_in_source_store: ClassVar[frozenset[Operation]]
+    # The harness's own TUI asks for a new directory when its recorded one is gone, so a
+    # launch that relocate could not repair is still worth offering.
+    tui_recovers_directory: ClassVar[bool]
 
     def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None: ...
+
+    def locate_native_session(
+        self, *, session_id: str, recorded_store: Path
+    ) -> tuple[Path, ...]: ...
 
     def native_cwd(
         self,
@@ -552,6 +559,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     native_identity: ClassVar[bool] = False
     refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
+    tui_recovers_directory: ClassVar[bool] = False
     resolves_untracked_source: ClassVar[bool] = False
 
     @final
@@ -614,12 +622,23 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
                 raise NativeSessionUnavailable(ref, "missing")
             raise NativeSessionUnavailable(ref, "store_moved", store_move=move)
         source: Path | None = None
+        located_from: Path | None = None
         if op != "create" and (source_store is not None or self.resolves_untracked_source):
             lookup = source_store or self._store(
                 child_env, child_cwd, spawn_id, "resume", interactive
             )
             wanted = intent.source_session_id or intent.preforked_session_id
-            source = self._require_source(wanted, Path(lookup), ref=ref)
+            source = self._require_source(
+                wanted,
+                Path(lookup),
+                ref=ref,
+                # A tracked chat resumed in its recorded store: the file may have gone
+                # missing from it. Nothing else has a recorded place to search around.
+                search_chat=session.continue_chat_id
+                if resumes_chat and source_store is not None and session.continue_source_tracked
+                else None,
+            )
+            located_from = source if source.parent != Path(lookup) else None
         self.pin_native_store(child_env, store)
         return NativeIdentity(
             str(self.id),
@@ -628,6 +647,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             self.assign_session_id(intent, store=Path(store)),
             intent.source_session_id,
             source,
+            located_from,
         )
 
     def _store(
@@ -646,16 +666,36 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             interactive=interactive,
         )
 
-    def _require_source(self, session_id: str | None, store: Path, *, ref: str) -> Path:
+    def _require_source(
+        self, session_id: str | None, store: Path, *, ref: str, search_chat: str | None = None
+    ) -> Path:
+        """The native file for the session. ``search_chat`` names the chat whose recorded
+        file is missing from ``store``: then one other file for the ID is found and used,
+        and several are listed, never picked between. Nothing is saved."""
         if session_id is None:
             raise NativeSessionUnavailable(ref, "unbound")
         try:
             source = self.resolve_native_session_file(session_id=session_id, native_store=store)
         except NativeSessionUnavailable as exc:
             raise exc.for_ref(ref) from exc
-        if source is None:
-            raise NativeSessionUnavailable(ref, "missing")
-        return source
+        if source is not None:
+            return source
+        found = (
+            self.locate_native_session(session_id=session_id, recorded_store=store)
+            if search_chat is not None
+            else ()
+        )
+        if len(found) == 1:
+            return found[0]
+        if found:
+            listing = "".join(f"\n  {path}" for path in found)
+            raise NativeSessionUnavailable(
+                ref,
+                "ambiguous_native_file",
+                hint=f"{session_id} is missing from {store}, and {len(found)} copies exist:"
+                f"{listing}\nPick one: meridian session relocate {search_chat} --native <path>",
+            )
+        raise NativeSessionUnavailable(ref, "missing")
 
     def validate_intent(self, intent: LaunchIntent) -> None:
         pass
@@ -793,7 +833,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -801,7 +841,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> HarnessPrelaunchState:
         _ = (
             launch,
-            session,
+            identity,
             child_cwd,
             child_env,
             resolved_harness_session_id,
@@ -902,6 +942,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         resume reports the transcript as missing."""
         _ = recorded, attempted
         return None
+
+    def locate_native_session(self, *, session_id: str, recorded_store: Path) -> tuple[Path, ...]:
+        """Distinct native files for ``session_id`` outside ``recorded_store`` where the
+        recorded file is missing, searched by ID alone within the recorded config root;
+        paths that are one file collapse. A harness whose transcript never leaves its
+        recorded store has nothing to search: the default."""
+        _ = session_id, recorded_store
+        return ()
 
     def native_cwd(
         self,

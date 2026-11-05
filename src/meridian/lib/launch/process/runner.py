@@ -1016,7 +1016,7 @@ def run_harness_process(
 
                 prelaunch_state = harness_adapter.prepare_prelaunch(
                     launch=launch,
-                    session=preview_request.session,
+                    identity=native_run.identity,
                     child_cwd=launch_child_cwd,
                     child_env=child_env,
                     resolved_harness_session_id=resolved_harness_session_id,

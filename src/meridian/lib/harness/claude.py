@@ -115,7 +115,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     NetworkPolicy,
@@ -362,6 +361,11 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             also_moved=Path(recorded).name != Path(attempted).name,
         )
 
+    def locate_native_session(self, *, session_id: str, recorded_store: Path) -> tuple[Path, ...]:
+        # The recorded config root only: the store check already holds the child to it.
+        found = locate_claude_session_files(session_id, (recorded_store.parent.parent,))
+        return tuple(file for _, file in found)
+
     def native_cwd(
         self,
         identity: NativeKeyFields,
@@ -550,7 +554,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -560,15 +564,27 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if record_effective_config_dir is not None:
             record_effective_config_dir(str(effective_config_root))
 
-        source_id = session.requested_harness_session_id
-        if source_id:
-            source_store = session.source_native_store
+        if identity is not None and identity.source is not None and identity.source_session_id:
+            source_store = identity.source.parent
+            if identity.located_from is not None:
+                # The recorded file was missing: expose the one found in the recorded
+                # store, so the entry check and the next launch see it there.
+                refusal = link_claude_session(identity.located_from, Path(identity.native_store))
+                if refusal is not None:
+                    raise NativeSessionUnavailable(
+                        identity.source_session_id, "missing", hint=refusal
+                    )
+                print(
+                    f"Claude session {identity.source_session_id} was missing from "
+                    f"{identity.native_store}; resuming from {identity.located_from} "
+                    "(linked into the recorded store).",
+                    file=sys.stderr,
+                )
+                source_store = Path(identity.native_store)
             ensure_claude_session_accessible(
-                source_session_id=source_id,
+                source_session_id=identity.source_session_id,
                 child_cwd=child_cwd,
-                source_native_store=Path(source_store)
-                if source_store
-                else (effective_config_root / "projects" / project_slug(child_cwd)),
+                source_native_store=source_store,
                 target_config_root=effective_config_root,
             )
 

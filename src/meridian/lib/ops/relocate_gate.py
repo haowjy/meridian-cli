@@ -144,11 +144,15 @@ def relocate_hint(
 
     ``--from`` comes from ``moved_root``, ``--to`` is the project root the invocation
     resolved. ``only_if_gone`` limits the hint to a recorded directory that no longer
-    exists, for reads, which never launch from a second checkout.
+    exists, for reads, which never launch from a second checkout, and for a transcript that is
+    missing, which a live directory does not explain.
     """
     generations = session_store.chat_generations(runtime_root, chat_id)
     if not generations:
         return None
+    # Already relocated, harness refused: relocating again would loop.
+    if (refused := refused_relocation(runtime_root, generations, target=target)) is not None:
+        return refused
     lines: list[str] = []
     if store_move is not None and store_move.fix is not None:
         lines.append(f"{chat_id} {store_move.fix}")
@@ -156,7 +160,7 @@ def relocate_hint(
             return "\n".join(lines)
         lines.append("The project directory moved as well:")
     old = moved_root(runtime_root, generations, target=target)
-    if only_if_gone and old is not None and old.exists():
+    if only_if_gone and (old is None or old.exists()):
         return None
     if old is None:
         lines.append(f"meridian session relocate {chat_id}")
@@ -210,11 +214,16 @@ def with_relocate_hint(
     chat_id: str | None,
     target: Path,
 ) -> NativeSessionUnavailable:
-    """``exc`` with the relocate hint a ``store_moved`` refusal carries."""
-    if exc.reason != "store_moved" or chat_id is None:
+    """``exc`` with the relocate hint a ``store_moved`` refusal carries, or a ``missing``
+    one when the chat's recorded directory is gone (a live one says nothing of a move)."""
+    if exc.reason not in ("store_moved", "missing") or chat_id is None:
         return exc
     hint = relocate_hint(
-        runtime_root=runtime_root, chat_id=chat_id, target=target, store_move=exc.store_move
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        target=target,
+        store_move=exc.store_move,
+        only_if_gone=exc.reason == "missing",
     )
     return exc.with_hint(hint) if hint else exc
 

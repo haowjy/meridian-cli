@@ -426,7 +426,7 @@ async def launch_prepared_spawn(
 
                 maybe_prelaunch_state = prepare_prelaunch(
                     launch=handoff.launch,
-                    session=handoff.resolved_request.session,
+                    identity=handoff.launch_context.binding.spec.native_identity,
                     child_cwd=handoff.launch_context.control_root,
                     child_env=child_env,
                     resolved_harness_session_id="",

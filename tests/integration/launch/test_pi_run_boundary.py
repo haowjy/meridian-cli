@@ -462,7 +462,7 @@ async def test_rpc_post_attempt_boundary(
     env = dict(ctx.binding.environment.final_env)
     prepared = ctx.harness.prepare_prelaunch(
         launch=launch_paths(ctx.runtime_root, "p42"),
-        session=ctx.request.session,
+        identity=None,
         child_cwd=root,
         child_env=env,
         resolved_harness_session_id="",
