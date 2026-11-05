@@ -176,6 +176,53 @@ A ref that names nothing fails with a not-found error (`Chat 'c99999' not found`
 rather than resuming. Chat refs are `c<digits>`; any other value is treated as a native
 session ID. `@latest`, `@last-failed` and `@last-completed` also work with `--continue`.
 
+## A moved project directory or Claude store
+
+After `mv ~/repos/tether ~/repos/muxen`, `meridian --continue c419` from `muxen` used to
+end with `native_binding_conflict` and `Session resume failed`: Claude's transcripts live
+in a folder named after the project path, and Meridian refuses to continue a chat in a
+different store. Now `--continue` stops before launch, names the old and new paths, and
+prints the fix; on a terminal it asks whether to relocate this chat, every chat under the
+old path (offered only when the old path no longer exists), or neither. With `--dry-run`,
+`--no-input` or no terminal it prints the refusal and the command instead of asking.
+Pi and OpenCode also offer "Launch anyway" in that first prompt, and again after a
+relocate whose harness part was refused: their own TUI asks for the directory.
+
+```bash
+meridian session relocate --from ~/repos/tether --to ~/repos/muxen   # every chat under the old path
+meridian session relocate c419                                        # one chat (also works while the old path exists)
+meridian session relocate c419 --dry-run                              # print the plan, change nothing
+```
+
+Relocate rewrites Meridian's recorded paths and the harness's own record of the
+directory (Claude: links to the transcript; OpenCode: the session's directory; Pi: the
+transcript header). It refuses chats that are running. If the output reports a refused
+harness change, follow the way out it prints. `spawn --continue` stops before launch with
+the same command. `session log`, `session export` and `session search` print it only when
+the transcript cannot be read and the chat's recorded directory is gone; after a plain move
+they read the transcript as usual.
+
+`relocate cN` finds where the chat moved from in the harness's own record, then the chat's
+recorded `control_root`. A chat pinned to a worktree (its `task_cwd` differs from its
+`control_root`) never has its worktree guessed as the old path, since the target is always
+the project root you run from, not where a worktree went. If the worktree itself moved,
+Meridian says so and prints `meridian session relocate cN --from OLD --to <where it is now>`
+for you to fill in; it prints a runnable command, or offers a prompt choice, only when it
+knows both ends. For Codex, OpenCode and Pi, continuing from a second checkout while
+the recorded one still exists prints a note ("resumes in X (recorded); you're in Y"), and
+only for a chat not pinned to a worktree.
+
+A project without `[project] id` in `meridian.toml` gets a new identity when its path
+changes, so its chats are not found at all (`Chat 'c419' not found`); relocate does not
+re-home them yet. Set `[project] id` to keep state across moves.
+
+If the project did not move but a Claude transcript file is missing from its recorded
+store, `--continue` searches the recorded config root for that exact session ID. One
+distinct file is linked back and resumed; several files are listed and refused. Pick one
+with `meridian session relocate cN --native PATH`, which re-links the chat in place and
+moves no path unless you also pass `--from`. A dangling link at the recorded path is
+replaced.
+
 ## Spawn shows as `finalizing`
 
 New spawns never show `finalizing`; they go from `running` straight to their outcome. You can still see it on a spawn an older build wrote, or in the output of `spawn cancel` when a cancellation did not finish within about 6 seconds because the runner's process is stuck. In both cases, if the runner has died the status reads as crashed or cancelled (see below); otherwise run `meridian doctor`.

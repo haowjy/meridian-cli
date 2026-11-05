@@ -328,13 +328,15 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
 ) -> None:
     """Resume launches must not inject seed session args into passthrough."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    source = tmp_path / "source"
-    source.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project_root = tmp_path / "seed-resume"
+    project_root.mkdir()
+    # A resume into its own chat must find its recorded store where the child runs.
+    source = tmp_path / "home" / ".claude" / "projects" / project_slug(project_root)
+    source.mkdir(parents=True)
     (source / "existing-session-id.jsonl").write_text(
         json.dumps({"sessionId": "existing-session-id"}) + "\n"
     )
-    project_root = tmp_path / "seed-resume"
-    project_root.mkdir()
     launch_context, _harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.CLAUDE,

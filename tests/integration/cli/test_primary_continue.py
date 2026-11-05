@@ -473,7 +473,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
 
     assert output.warning is not None
     assert source_task_dir.as_posix() in output.warning
-    assert "falling back to the normal launch directory" in output.warning
+    assert "using " in output.warning
     context = contexts[0]
     assert context.execution_cwd == project_root.resolve()
     assert context.task_cwd is None
@@ -823,8 +823,12 @@ def test_complete_claude_key_projects_exact_resume_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stub_bundle_request_and_resolve(monkeypatch, model="sonnet", harness=HarnessId.CLAUDE)
+    from meridian.lib.harness.claude_sessions import project_slug
+
     runtime_root = _state_root(tmp_path)
-    native_store = runtime_root / "native-claude" / "projects"
+    # The store the resumed child runs in: a resume refuses any other.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    native_store = tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
     native_store.mkdir(parents=True, exist_ok=True)
     native_id = "claude-session-42"
     (native_store / f"{native_id}.jsonl").write_text(

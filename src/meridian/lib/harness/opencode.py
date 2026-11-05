@@ -7,12 +7,17 @@ The Meridian adapter targets current opencode.ai CLI releases.
 import logging
 import re
 import sqlite3
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable, Operation
+from meridian.lib.core.native_identity import (
+    NativeKey,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+    Operation,
+)
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
@@ -20,6 +25,8 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
+    NativeRelocation,
+    NativeRelocationResult,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -45,6 +52,11 @@ from meridian.lib.harness.opencode_backend import (
 from meridian.lib.harness.opencode_idle import (
     detect_ttl,
     primary_idle_sensor,
+)
+from meridian.lib.harness.opencode_relocate import (
+    apply_opencode_relocations,
+    opencode_native_cwd,
+    plan_opencode_relocate,
 )
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
 from meridian.lib.harness.opencode_snapshot import opencode_turn_since
@@ -287,6 +299,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ["--session", "--session-id", "-s", "--continue", "-c", "--fork"]
     )
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
+    tui_recovers_directory: ClassVar[bool] = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE
@@ -547,6 +560,32 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not matches:
             return None
         return matches[0]
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        _ = recorded_roots
+        return opencode_native_cwd(identity)
+
+    def _plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None,
+    ) -> NativeRelocation | None:
+        _ = native  # refused by plan_native_relocate: no transcript choice here
+        return plan_opencode_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to)
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]:
+        return apply_opencode_relocations(plans)
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         return _owns_session(project_root, session_ref)

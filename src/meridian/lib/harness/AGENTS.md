@@ -49,7 +49,10 @@ a spec field in neither fails startup.
   `legacy_native_stores.py` is a one-time import seam, not a runtime repair fallback.
 - **Transcript resolution is exact.** Recorded store plus full native ID; multiple
   matches fail as `ambiguous_native_file`. Never reinterpret a recorded Claude project
-  store as a config root; no ambient-store fallback.
+  store as a config root. A missing file is searched for by exact ID only within the
+  recorded config root, only on a tracked `--continue`, and the result is linked back
+  into the recorded store; there is no ambient-store fallback, and several distinct
+  files refuse. Recorded paths change only through `meridian session relocate`.
 - **Model observations have one writer**: `model_observation.observe_session_model`
   stores the raw native model token. Don't call `session_store.record_model_observation`
   elsewhere.

@@ -6,7 +6,8 @@ import json
 import os
 import shlex
 import sys
-from contextlib import nullcontext
+from collections.abc import Generator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -14,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
+from meridian.cli.relocate_prompt import RelocateStop
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -40,11 +42,18 @@ from meridian.lib.launch.process.terminal_ownership import (
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.relocate_gate import (
+    copy_checkout_note,
+    needs_relocate,
+    refused_relocation,
+    relocate_hint,
+    with_relocate_hint,
+)
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -127,6 +136,56 @@ def resolve_session_target(
     return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 
+def _refuse_if_harness_directory_gone(
+    project_root: Path, chat_id: str | None, harness_id: str | None, ref: str
+) -> None:
+    """The gate: stop before the launch slot when the harness's own record of the chat's
+    directory is gone. A moved store is not checked here: the launch preview refuses it
+    with the final child env (``_stop_on_store_moved``)."""
+    if chat_id is None or harness_id is None:
+        return
+    runtime_root = resolve_project_runtime_root(project_root)
+    generations = session_store.chat_generations(runtime_root, chat_id)
+    gone = needs_relocate(generations)
+    if gone is None:
+        return
+    hint = relocate_hint(runtime_root=runtime_root, chat_id=chat_id, target=project_root)
+    raise RelocateStop(
+        ValueError(
+            f"{ref}: {harness_id} records the directory {gone}, which no longer exists."
+            + (f"\n{hint}" if hint else "")
+        ),
+        chat_id=chat_id,
+        project_root=project_root,
+        refused=refused_relocation(runtime_root, generations, target=project_root) is not None,
+    )
+
+
+@contextmanager
+def _stop_on_store_moved(project_root: Path, chat_id: str | None) -> Generator[None]:
+    """Add the relocate hint to a ``store_moved`` or ``missing`` refusal, outside the launch
+    slot. A store that moved because the project did is a ``RelocateStop``: the terminal
+    prompt can fix it."""
+    try:
+        yield
+    except NativeSessionUnavailable as exc:
+        runtime_root = resolve_project_runtime_root(project_root)
+        hinted = with_relocate_hint(
+            exc, runtime_root=runtime_root, chat_id=chat_id, target=project_root
+        )
+        if chat_id is None or exc.store_move is None or exc.store_move.kind != "project_moved":
+            if hinted is exc:
+                raise
+            raise hinted from exc
+        generations = session_store.chat_generations(runtime_root, chat_id)
+        raise RelocateStop(
+            hinted,
+            chat_id=chat_id,
+            project_root=project_root,
+            refused=refused_relocation(runtime_root, generations, target=project_root) is not None,
+        ) from exc
+
+
 def run_primary_launch(
     *,
     project_root: Path | None = None,
@@ -158,7 +217,10 @@ def run_primary_launch(
     goal: str | None = None,
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
+    launch_anyway: bool = False,
 ) -> PrimaryLaunchOutput:
+    """``launch_anyway`` skips the moved-directory gate: the user chose to let the
+    harness's own TUI recover a directory relocate could not repair."""
     if continue_ref is not None and model is not None:
         print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
         if not model.strip():
@@ -314,14 +376,35 @@ def run_primary_launch(
         if requested_work_id is None:
             requested_work_id = continue_contract.work_id
         launch_task_dir = continue_contract.task_dir
+        if not launch_anyway:
+            _refuse_if_harness_directory_gone(
+                project_root, continue_chat_id, continue_harness, resume_target
+            )
         if launch_task_dir is not None and not Path(launch_task_dir).is_dir():
+            task_dir_hint = (
+                relocate_hint(
+                    runtime_root=resolve_project_runtime_root(project_root),
+                    chat_id=continue_chat_id,
+                    target=project_root,
+                )
+                if continue_chat_id is not None
+                else None
+            )
             continue_warning = _merge_warnings(
                 continue_warning,
-                f"Continued session's task_dir is unavailable or not a directory: "
-                f"{launch_task_dir}; "
-                "falling back to the normal launch directory.",
+                f"Continued session's task_dir is unavailable: {launch_task_dir}; "
+                f"using {project_root}. {task_dir_hint or ''}",
             )
             launch_task_dir = project_root.as_posix()
+        else:
+            continue_warning = _merge_warnings(
+                continue_warning,
+                copy_checkout_note(
+                    runtime_root=resolve_project_runtime_root(project_root),
+                    chat_id=continue_chat_id,
+                    project_root=project_root,
+                ),
+            )
         continue_source_tracked = continue_contract.session.continue_source_tracked
         continue_source_ref = continue_contract.session.continue_source_ref
         continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot
@@ -406,7 +489,10 @@ def run_primary_launch(
             caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
             dry_run=dry_run,
         )
-    with hold.slot if hold is not None else nullcontext():
+    with (
+        _stop_on_store_moved(project_root, continue_chat_id),
+        hold.slot if hold is not None else nullcontext(),
+    ):
         launch_result = launch_primary(
             project_root=project_root,
             hold=hold,

@@ -22,6 +22,7 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
+    NativeSessionUnavailable,
 )
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -1014,14 +1015,18 @@ def run_harness_process(
                             claude_config_dir=config_dir,
                         )
 
-                prelaunch_state = harness_adapter.prepare_prelaunch(
-                    launch=launch,
-                    session=preview_request.session,
-                    child_cwd=launch_child_cwd,
-                    child_env=child_env,
-                    resolved_harness_session_id=resolved_harness_session_id,
-                    record_effective_config_dir=_record_effective_config_dir,
-                )
+                try:
+                    prelaunch_state = harness_adapter.prepare_prelaunch(
+                        launch=launch,
+                        identity=native_run.identity,
+                        child_cwd=launch_child_cwd,
+                        child_env=child_env,
+                        resolved_harness_session_id=resolved_harness_session_id,
+                        record_effective_config_dir=_record_effective_config_dir,
+                    )
+                except NativeSessionUnavailable as exc:
+                    # The adapter knows the native session id; the user knows the chat.
+                    raise exc.for_ref(managed.chat_id or exc.ref) from exc
                 if prelaunch_state.env_overrides:
                     child_env.update(prelaunch_state.env_overrides)
                 command = harness_adapter.resolve_primary_command(

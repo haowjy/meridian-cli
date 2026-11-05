@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -28,6 +29,7 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
+    NativeStoreMove,
     Operation,
     PostExit,
 )
@@ -51,7 +53,7 @@ from meridian.lib.launch.launch_types import (
     SpecT,
     TerminalSurfaceMode,
 )
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.safety.policy import NetworkPolicy
 from meridian.lib.state.paths import LaunchPaths
 
@@ -248,6 +250,36 @@ class NativePrimaryRuntimeMetadata(BaseModel):
 RecordConfigDirFn = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class NativeRelocation:
+    """What relocate changes in a harness's own state for one chat.
+
+    ``cwd_from`` is the directory the harness records for the chat and ``cwd_to`` the
+    one relocate decided it moves to; the ops layer owns that rule, the harness only
+    changes its own state. ``change`` states it in one line for the plan output.
+    ``source`` is the native file the change acts on, chosen at plan time so apply and
+    ``--dry-run`` name the same file. ``native_store`` is the chat's new store when the
+    move changes it (Claude). A change the harness can't make is a plan with
+    ``refusal`` set, not an exception.
+    """
+
+    identity: NativeKeyFields
+    cwd_from: Path
+    cwd_to: Path
+    change: str
+    source: Path | None = None
+    native_store: str | None = None
+    refusal: str | None = None
+
+
+@dataclass(frozen=True)
+class NativeRelocationResult:
+    """The outcome of one applied plan; ``refusal`` is None when it took effect."""
+
+    plan: NativeRelocation
+    refusal: str | None = None
+
+
 @runtime_checkable
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
@@ -372,7 +404,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -429,6 +461,38 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         session_id: str,
         native_store: Path,
     ) -> Path | None: ...
+
+    continues_in_source_store: ClassVar[frozenset[Operation]]
+    # The harness's own TUI asks for a new directory when its recorded one is gone, so a
+    # launch that relocate could not repair is still worth offering.
+    tui_recovers_directory: ClassVar[bool]
+
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None: ...
+
+    def locate_native_session(
+        self, *, session_id: str, recorded_store: Path
+    ) -> tuple[Path, ...]: ...
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None: ...
+
+    def plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None = None,
+    ) -> NativeRelocation | None: ...
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]: ...
 
     def resolve_session_file(
         self,
@@ -495,6 +559,9 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     native_identity: ClassVar[bool] = False
     refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
+    tui_recovers_directory: ClassVar[bool] = False
+    # Relocate accepts the user's own transcript file (`--native`) for this harness.
+    native_transcript_choice: ClassVar[bool] = False
     resolves_untracked_source: ClassVar[bool] = False
 
     @final
@@ -533,22 +600,47 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         interactive: bool,
     ) -> NativeIdentity:
         op, ref = intent.operation, session.source_ref
-        source: Path | None = None
-        if op != "create":
-            wanted = intent.source_session_id or intent.preforked_session_id
-            source_store = session.source_native_store
-            if source_store is None and session.continue_source_tracked:
-                raise NativeSessionUnavailable(ref, "unbound")
-            if source_store is not None and op in self.continues_in_source_store:
-                self.pin_native_store(child_env, source_store)
-                if self._store(child_env, child_cwd, spawn_id, op, interactive) != source_store:
-                    raise NativeSessionUnavailable(ref, "missing")
-            if source_store is not None or self.resolves_untracked_source:
-                lookup = source_store or self._store(
-                    child_env, child_cwd, spawn_id, "resume", interactive
-                )
-                source = self._require_source(wanted, Path(lookup), ref=ref)
+        source_store = session.source_native_store if op != "create" else None
+        if op != "create" and source_store is None and session.continue_source_tracked:
+            raise NativeSessionUnavailable(ref, "unbound")
+        if source_store is not None and op in self.continues_in_source_store:
+            self.pin_native_store(child_env, source_store)
         store = self._store(child_env, child_cwd, spawn_id, op, interactive)
+        # A resume into its own chat must run in the recorded store: bind_entry refuses
+        # any other, later and untyped. A resume landing in a fresh chat has no recorded
+        # store to keep.
+        resumes_chat = op == "resume" and _resumes_source_chat(session)
+        if (
+            source_store is not None
+            and store != source_store
+            and (resumes_chat or op in self.continues_in_source_store)
+        ):
+            move = (
+                self.classify_store_move(recorded=source_store, attempted=store)
+                if resumes_chat
+                else None
+            )
+            if move is None:
+                raise NativeSessionUnavailable(ref, "missing")
+            raise NativeSessionUnavailable(ref, "store_moved", store_move=move)
+        source: Path | None = None
+        located_from: Path | None = None
+        if op != "create" and (source_store is not None or self.resolves_untracked_source):
+            lookup = source_store or self._store(
+                child_env, child_cwd, spawn_id, "resume", interactive
+            )
+            wanted = intent.source_session_id or intent.preforked_session_id
+            source = self._require_source(
+                wanted,
+                Path(lookup),
+                ref=ref,
+                # A tracked chat resumed in its recorded store: the file may have gone
+                # missing from it. Nothing else has a recorded place to search around.
+                search_chat=session.continue_chat_id
+                if resumes_chat and source_store is not None and session.continue_source_tracked
+                else None,
+            )
+            located_from = source if source.parent != Path(lookup) else None
         self.pin_native_store(child_env, store)
         return NativeIdentity(
             str(self.id),
@@ -557,6 +649,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             self.assign_session_id(intent, store=Path(store)),
             intent.source_session_id,
             source,
+            located_from,
         )
 
     def _store(
@@ -575,16 +668,36 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             interactive=interactive,
         )
 
-    def _require_source(self, session_id: str | None, store: Path, *, ref: str) -> Path:
+    def _require_source(
+        self, session_id: str | None, store: Path, *, ref: str, search_chat: str | None = None
+    ) -> Path:
+        """The native file for the session. ``search_chat`` names the chat whose recorded
+        file is missing from ``store``: then one other file for the ID is found and used,
+        and several are listed, never picked between. Nothing is saved."""
         if session_id is None:
             raise NativeSessionUnavailable(ref, "unbound")
         try:
             source = self.resolve_native_session_file(session_id=session_id, native_store=store)
         except NativeSessionUnavailable as exc:
             raise exc.for_ref(ref) from exc
-        if source is None:
-            raise NativeSessionUnavailable(ref, "missing")
-        return source
+        if source is not None:
+            return source
+        found = (
+            self.locate_native_session(session_id=session_id, recorded_store=store)
+            if search_chat is not None
+            else ()
+        )
+        if len(found) == 1:
+            return found[0]
+        if found:
+            listing = "".join(f"\n  {path}" for path in found)
+            raise NativeSessionUnavailable(
+                ref,
+                "ambiguous_native_file",
+                hint=f"{session_id} is missing from {store}, and {len(found)} copies exist:"
+                f"{listing}\nPick one: meridian session relocate {search_chat} --native <path>",
+            )
+        raise NativeSessionUnavailable(ref, "missing")
 
     def validate_intent(self, intent: LaunchIntent) -> None:
         pass
@@ -722,7 +835,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -730,7 +843,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> HarnessPrelaunchState:
         _ = (
             launch,
-            session,
+            identity,
             child_cwd,
             child_env,
             resolved_harness_session_id,
@@ -809,6 +922,78 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> Path | None:
         return None
 
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
+        """Why a resume's store differs from the recorded one; only the adapter knows
+        its store layout, and so how to fix a config-root difference (``fix``). None when
+        the difference is no move: the launch could not pin the recorded store, and the
+        resume reports the transcript as missing."""
+        _ = recorded, attempted
+        return None
+
+    def locate_native_session(self, *, session_id: str, recorded_store: Path) -> tuple[Path, ...]:
+        """Distinct native files for ``session_id`` outside ``recorded_store`` where the
+        recorded file is missing, searched by ID alone within the recorded config root;
+        paths that are one file collapse. A harness whose transcript never leaves its
+        recorded store has nothing to search: the default."""
+        _ = session_id, recorded_store
+        return ()
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        """The directory this harness resumes the session in, from its own record.
+
+        ``recorded_roots`` are the chat's generation control roots, newest first, for a
+        harness that can only confirm a recorded root against its own state. None when
+        the harness keeps no such record or the record is absent.
+        """
+        _ = identity, recorded_roots
+        return None
+
+    def plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None = None,
+    ) -> NativeRelocation | None:
+        """What relocate changes in this harness's own state for one chat, or None.
+
+        Called only when the harness's own directory (``native_cwd``) is ``cwd_from`` and
+        relocate decided it becomes ``cwd_to``. ``native`` is the user's ``--native``
+        file: refused here unless ``native_transcript_choice`` says the harness can use
+        one, so a harness never ignores it. Override ``_plan_native_relocate``, not this.
+        """
+        if native is not None and not self.native_transcript_choice:
+            return NativeRelocation(
+                identity, cwd_from, cwd_to, "", refusal=f"--native is not supported for {self.id}"
+            )
+        return self._plan_native_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to, native=native)
+
+    def _plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None,
+    ) -> NativeRelocation | None:
+        _ = identity, cwd_from, cwd_to, native
+        return None
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]:
+        """Apply every plan for this harness in one call; idempotent. Receives only
+        plans without a refusal. A failure is a result with a refusal, per plan. The
+        default has nothing to change."""
+        return tuple(NativeRelocationResult(plan) for plan in plans)
+
     def resolve_session_file(
         self,
         *,
@@ -818,3 +1003,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> Path | None:
         _ = project_root, session_id, config_root_hint
         return None
+
+
+def _resumes_source_chat(session: SessionRequest) -> bool:
+    return bool(session.continue_chat_id) and is_exact_continue_session(session)

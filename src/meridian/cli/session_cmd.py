@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from cyclopts import App, Parameter
@@ -21,6 +23,21 @@ from meridian.lib.extensions.registry import get_first_party_registry
 
 if TYPE_CHECKING:
     from meridian.lib.ops.session_reentry import Launch
+
+
+@contextmanager
+def _hint_gone_directory(file_path: str | None) -> Generator[None]:
+    """A transcript read that finds its recorded path missing says how to relocate."""
+    from meridian.lib.core.native_identity import NativeSessionUnavailable
+    from meridian.lib.ops.relocate_gate import with_read_hint
+
+    try:
+        yield
+    except NativeSessionUnavailable as exc:
+        project_root = _session_project_root(file_path)
+        if project_root is None:
+            raise
+        raise with_read_hint(exc, project_root=Path(project_root)) from exc
 
 
 def _session_project_root(file_path: str | None) -> str | None:
@@ -271,23 +288,24 @@ def _session_log(
         if len(tail) > 1:
             raise ValueError("--tail accepts at most one value.")
         resolved_tail = 5 if len(tail) == 0 else tail[0]
-    output = session_log_sync(
-        SessionLogInput(
-            ref=ref,
-            segment=segment,
-            global_scope=global_scope,
-            full=full,
-            truncate=not no_truncate,
-            tail=resolved_tail,
-            from_ordinal=from_ordinal,
-            before_ordinal=before_ordinal,
-            around_ordinal=around_ordinal,
-            limit=limit,
-            context=context,
-            file_path=file_path,
-            project_root=_session_project_root(file_path),
+    with _hint_gone_directory(file_path):
+        output = session_log_sync(
+            SessionLogInput(
+                ref=ref,
+                segment=segment,
+                global_scope=global_scope,
+                full=full,
+                truncate=not no_truncate,
+                tail=resolved_tail,
+                from_ordinal=from_ordinal,
+                before_ordinal=before_ordinal,
+                around_ordinal=around_ordinal,
+                limit=limit,
+                context=context,
+                file_path=file_path,
+                project_root=_session_project_root(file_path),
+            )
         )
-    )
     if raw:
         emit(output, format_ctx=FormatContext(verbosity=1))
         return
@@ -322,8 +340,8 @@ def _session_export(
 ) -> None:
     from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 
-    emit(
-        session_export_sync(
+    with _hint_gone_directory(file_path):
+        output = session_export_sync(
             SessionExportInput(
                 ref=ref,
                 file_path=file_path,
@@ -331,7 +349,7 @@ def _session_export(
                 project_root=_session_project_root(file_path),
             )
         )
-    )
+    emit(output)
 
 
 def _session_search(
@@ -371,8 +389,8 @@ def _session_search(
 ) -> None:
     from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 
-    emit(
-        session_search_sync(
+    with _hint_gone_directory(file_path):
+        output = session_search_sync(
             SessionSearchInput(
                 query=query,
                 ref=ref,
@@ -383,7 +401,7 @@ def _session_search(
                 project_root=_session_project_root(file_path),
             )
         )
-    )
+    emit(output)
 
 
 def _session_repair(
@@ -418,6 +436,45 @@ def _session_repair(
                 ref=ref,
                 native=native,
                 force=force,
+                project_root=cli_project_root_posix(),
+            )
+        )
+    )
+
+
+def _session_relocate(
+    emit: Emitter,
+    ref: Annotated[
+        str | None,
+        Parameter(help="Chat id (c123) to relocate alone; omit with --from to relocate all."),
+    ] = None,
+    from_root: Annotated[
+        str | None,
+        Parameter(name="--from", help="The directory the chats were recorded in."),
+    ] = None,
+    to_root: Annotated[
+        str | None,
+        Parameter(name="--to", help="The directory they live in now."),
+    ] = None,
+    native: Annotated[
+        str | None,
+        Parameter(name="--native", help="Claude only: the transcript file to continue."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        Parameter(name="--dry-run", help="Print the plan and change nothing."),
+    ] = False,
+) -> None:
+    from meridian.lib.ops.session_relocate import SessionRelocateInput, session_relocate_sync
+
+    emit(
+        session_relocate_sync(
+            SessionRelocateInput(
+                ref=ref,
+                from_root=from_root,
+                to_root=to_root,
+                native=native,
+                dry_run=dry_run,
                 project_root=cli_project_root_posix(),
             )
         )
@@ -524,6 +581,7 @@ def register_session_commands(app: App) -> None:
         "meridian.session.export": lambda: partial(_session_export, emit),
         "meridian.session.search": lambda: partial(_session_search, emit),
         "meridian.session.repair": lambda: partial(_session_repair, emit),
+        "meridian.session.relocate": lambda: partial(_session_relocate, emit),
     }
     register_extension_cli_group(
         app,

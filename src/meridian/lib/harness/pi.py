@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -29,8 +29,9 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     HarnessPrelaunchState,
     NativePrimaryRuntimeMetadata,
+    NativeRelocation,
+    NativeRelocationResult,
     RecordConfigDirFn,
-    SessionRequest,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -52,6 +53,11 @@ from meridian.lib.harness.pi_paths import (
     pi_meridian_state_dir_env_override,
     resolve_pi_agent_dir,
     resolve_pi_spawn_session_root,
+)
+from meridian.lib.harness.pi_relocate import (
+    apply_pi_relocations,
+    pi_native_cwd,
+    plan_pi_relocate,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
@@ -197,6 +203,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ]
     )
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume"})
+    tui_recovers_directory: ClassVar[bool] = True
     resolves_untracked_source = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
@@ -292,6 +299,32 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
 
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        _ = recorded_roots
+        return pi_native_cwd(identity)
+
+    def _plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None,
+    ) -> NativeRelocation | None:
+        _ = native  # refused by plan_native_relocate: no transcript choice here
+        return plan_pi_relocate(identity, cwd_from=cwd_from, cwd_to=cwd_to)
+
+    def apply_native_relocations(
+        self,
+        plans: Sequence[NativeRelocation],
+    ) -> tuple[NativeRelocationResult, ...]:
+        return apply_pi_relocations(plans)
+
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         if run.pi_harness_profile is not None:
@@ -337,14 +370,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
         _ = (
-            session,
+            identity,
             resolved_harness_session_id,
             record_effective_config_dir,
         )

@@ -1,9 +1,10 @@
 """Claude CLI harness adapter."""
 
 import json
+import os
 import secrets
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
@@ -16,10 +17,12 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeIdentityError,
     NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
     NativeSessionUnavailable,
+    NativeStoreMove,
     Operation,
     PostExit,
 )
@@ -32,6 +35,8 @@ from meridian.lib.harness.adapter import (
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
+    NativeRelocation,
+    NativeRelocationResult,
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
@@ -50,11 +55,16 @@ from meridian.lib.harness.claude_inbox import post_primary_message
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
+    claude_session_links,
+    claude_transcript_first_cwd,
     claude_turn_since,
     ensure_claude_session_accessible,
+    link_claude_session,
+    locate_claude_session_files,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
     resolve_claude_native_session_file,
+    validate_claude_session_file,
 )
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
@@ -105,7 +115,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     NetworkPolicy,
@@ -227,6 +236,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         ["--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"]
     )
     resolves_untracked_source = True
+    native_transcript_choice = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
@@ -339,6 +349,133 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ).resolve()
         )
 
+    def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
+        # A store is <config root>/projects/<slug(control_root)>.
+        root = Path(recorded).parent.parent
+        if root == Path(attempted).parent.parent:
+            return NativeStoreMove(recorded, attempted, "project_moved")
+        return NativeStoreMove(
+            recorded,
+            attempted,
+            "config_root",
+            fix=f"is recorded under the Claude config root {root}: set CLAUDE_CONFIG_DIR={root}",
+            also_moved=Path(recorded).name != Path(attempted).name,
+        )
+
+    def locate_native_session(self, *, session_id: str, recorded_store: Path) -> tuple[Path, ...]:
+        # The recorded config root only: the store check already holds the child to it.
+        found = locate_claude_session_files(session_id, (recorded_store.parent.parent,))
+        return tuple(file for _, file in found)
+
+    def native_cwd(
+        self,
+        identity: NativeKeyFields,
+        *,
+        recorded_roots: Sequence[Path] = (),
+    ) -> Path | None:
+        if identity.native_store is None:
+            return None
+        store = Path(identity.native_store)
+        # Compare forward: a slug can't be reversed (`my_app`, `my.app` and `my-app`
+        # share one), so only a recorded root whose slug names the store is trusted.
+        for root in recorded_roots:
+            if project_slug(root) == store.name:
+                return root
+        if identity.session_id is None:
+            return None
+        return claude_transcript_first_cwd(store / f"{identity.session_id}.jsonl")
+
+    def _plan_native_relocate(
+        self,
+        identity: NativeKeyFields,
+        *,
+        cwd_from: Path,
+        cwd_to: Path,
+        native: Path | None,
+    ) -> NativeRelocation | None:
+        if identity.native_store is None or identity.session_id is None:
+            return None
+        recorded, session_id = Path(identity.native_store), identity.session_id
+
+        def refuse(reason: str) -> NativeRelocation:
+            return NativeRelocation(identity, cwd_from, cwd_to, "", refusal=reason)
+
+        if native is not None:
+            if native.parent.parent.name != "projects":
+                return refuse(f"{native} is not inside a Claude <config root>/projects/<folder>")
+            try:
+                validate_claude_session_file(native, session_id)
+            except NativeIdentityError as exc:
+                return refuse(f"{native} is not this chat's transcript: {exc}")
+            config_root = native.parent.parent.parent
+            source: Path | None = native.resolve()
+        else:
+            config_root = recorded.parent.parent
+            source = None
+        env = {"CLAUDE_CONFIG_DIR": str(config_root)}
+        # The store the next launch computes from the moved root, not a restated formula.
+        env_with_store = dict(env)
+        self.pin_native_store(env_with_store, str(recorded))
+        new_store = Path(self._store(env_with_store, cwd_to, SpawnId(""), "resume", False))
+        if source is None:
+            candidates = (recorded / f"{session_id}.jsonl", new_store / f"{session_id}.jsonl")
+            source = next((c.resolve() for c in candidates if c.is_file()), None)
+        if source is None:
+            # The miss path: the transcript under the recorded config root, and under the
+            # root the child env resolves to when that differs.
+            recorded_root = recorded.parent.parent
+            found = locate_claude_session_files(
+                session_id, (recorded_root, resolve_claude_config_root(env, Path.cwd()))
+            )
+            if len(found) > 1 or any(root != recorded_root for root, _ in found):
+                listing = ", ".join(str(file) for _, file in found)
+                return refuse(
+                    f"{session_id} is not in {recorded}, but exists at {listing}; "
+                    "pick one with --native"
+                )
+            source = found[0][1] if found else None
+        store_change = f"native store {recorded} -> {new_store}"
+        if source is None:
+            return NativeRelocation(
+                identity,
+                cwd_from,
+                cwd_to,
+                f"{store_change} (transcript not found anywhere)",
+                native_store=str(new_store),
+            )
+        links, conflict = claude_session_links(source, new_store)
+        if conflict is not None:
+            return refuse(f"{conflict}; remove it, or choose a transcript with --native")
+        if not links and str(new_store) == identity.native_store:
+            return None
+        change = store_change
+        if links:
+            folder = " and its folder" if source.with_suffix("").is_dir() else ""
+            change += f"; link {session_id}.jsonl{folder} from {source.parent}"
+        if native is not None and config_root != resolve_claude_config_root(os.environ, Path.cwd()):
+            change += f"; continue with CLAUDE_CONFIG_DIR={config_root}"
+        return NativeRelocation(
+            identity,
+            cwd_from,
+            cwd_to,
+            change,
+            source=source if links else None,
+            native_store=str(new_store),
+        )
+
+    def apply_native_relocations(
+        self, plans: Sequence[NativeRelocation]
+    ) -> tuple[NativeRelocationResult, ...]:
+        return tuple(
+            NativeRelocationResult(
+                plan,
+                link_claude_session(plan.source, Path(plan.native_store))
+                if plan.source is not None and plan.native_store is not None
+                else None,
+            )
+            for plan in plans
+        )
+
     def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
         return (
             str(uuid4())
@@ -420,7 +557,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self,
         *,
         launch: LaunchPaths,
-        session: SessionRequest,
+        identity: NativeIdentity | None,
         child_cwd: Path,
         child_env: dict[str, str],
         resolved_harness_session_id: str,
@@ -430,15 +567,27 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if record_effective_config_dir is not None:
             record_effective_config_dir(str(effective_config_root))
 
-        source_id = session.requested_harness_session_id
-        if source_id:
-            source_store = session.source_native_store
+        if identity is not None and identity.source is not None and identity.source_session_id:
+            source_store = identity.source.parent
+            if identity.located_from is not None:
+                # The recorded file was missing: expose the one found in the recorded
+                # store, so the entry check and the next launch see it there.
+                refusal = link_claude_session(identity.located_from, Path(identity.native_store))
+                if refusal is not None:
+                    raise NativeSessionUnavailable(
+                        identity.source_session_id, "missing", hint=refusal
+                    )
+                print(
+                    f"Claude session {identity.source_session_id} was missing from "
+                    f"{identity.native_store}; resuming from {identity.located_from} "
+                    "(linked into the recorded store).",
+                    file=sys.stderr,
+                )
+                source_store = Path(identity.native_store)
             ensure_claude_session_accessible(
-                source_session_id=source_id,
+                source_session_id=identity.source_session_id,
                 child_cwd=child_cwd,
-                source_native_store=Path(source_store)
-                if source_store
-                else (effective_config_root / "projects" / project_slug(child_cwd)),
+                source_native_store=source_store,
                 target_config_root=effective_config_root,
             )
 

@@ -99,7 +99,21 @@ Numeric cost coercion rejects boolean, nonfinite, and unrepresentable values.
 source. `SessionRequest.source_native_store` is the sole source-namespace carrier
 for all harnesses; it always comes from the recorded chat, never config hints.
 `finalize_native_identity()` pins store/ID against the final child env
-before argv projection, so the bound key, env and argv agree. The runner binds
+before argv projection, so the bound key, env and argv agree. A resume into its own
+chat whose child store differs from the recorded one raises
+`NativeSessionUnavailable(reason="store_moved")` with both stores and the adapter's
+`classify_store_move()` result, before any lock; `bind_entry` would refuse it later
+anyway. When the adapter returns None (the launch could not pin the recorded
+store), it raises `missing` instead, as a fork that leaves its source store does.
+A resume into a fresh chat has no recorded store and is exempt. A tracked resume whose recorded file is missing asks `locate_native_session()` for other files with the ID in the recorded config root; the one distinct hit becomes `NativeIdentity.located_from` and Claude links it back at prelaunch. `tui_recovers_directory` marks the harnesses (Pi, OpenCode) whose own TUI handles a gone directory, so a refused relocate still offers "launch anyway". `session relocate` owns where the harness's directory goes: it reads `native_cwd`,
+rebases it once (`state.paths.rebase_path`), and hands `plan_native_relocate` (a final template that refuses `--native` unless
+`native_transcript_choice` is set, then calls the harness's `_plan_native_relocate`) the
+finished `cwd_from`/`cwd_to`; a harness whose own directory does not move (a worktree
+moved, the project did not) is never asked. Claude's new store is the store a resume
+would use at `cwd_to`, with the recorded config root pinned. Apply compares the harness's current
+value with the plan (`cwd_to` done, `cwd_from` change, anything else refused). Claude then links `<id>.jsonl` and `<id>/` into it
+(`claude_sessions.link_claude_session`). It only creates links: a target that exists and
+differs is a refusal, never replaced, and the originals are never moved or deleted. The runner binds
 nonempty identities as `assigned` before exec. `observe_after_exit()` returns
 `PostExit`: typed entry errors, owned entry/exit keys, and separate diagnostics.
 It never binds or persists. `launch/native_run.py` owns the observation order,
