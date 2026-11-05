@@ -115,18 +115,26 @@ class NativeSessionUnavailable(NativeIdentityError):
         reason: UnavailableReason,
         *,
         store_move: NativeStoreMove | None = None,
+        hint: str | None = None,
     ) -> None:
         self.ref = ref
         self.reason: UnavailableReason = reason
         self.store_move = store_move
+        self.hint = hint
         self.failure_code = self._CODES[reason]
         details = store_move.render() if store_move is not None else {}
-        super().__init__(
-            f"{self.failure_code}: {self._MESSAGES[reason].format(ref=ref, **details)}"
-        )
+        message = f"{self.failure_code}: {self._MESSAGES[reason].format(ref=ref, **details)}"
+        super().__init__(f"{message}\n{hint}" if hint else message)
 
     def for_ref(self, ref: str) -> "NativeSessionUnavailable":
-        return NativeSessionUnavailable(ref, self.reason, store_move=self.store_move)
+        return NativeSessionUnavailable(
+            ref, self.reason, store_move=self.store_move, hint=self.hint
+        )
+
+    def with_hint(self, hint: str | None) -> "NativeSessionUnavailable":
+        return NativeSessionUnavailable(
+            self.ref, self.reason, store_move=self.store_move, hint=hint
+        )
 
     def lifecycle_fields(self) -> dict[str, object]:
         fields: dict[str, object] = {"ref": self.ref, "reason": self.reason}

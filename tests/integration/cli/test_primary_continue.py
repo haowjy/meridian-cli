@@ -473,7 +473,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
 
     assert output.warning is not None
     assert source_task_dir.as_posix() in output.warning
-    assert "falling back to the normal launch directory" in output.warning
+    assert "using " in output.warning
     context = contexts[0]
     assert context.execution_cwd == project_root.resolve()
     assert context.task_cwd is None

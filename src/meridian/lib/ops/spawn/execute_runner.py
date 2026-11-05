@@ -39,6 +39,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.ops.relocate_hint import with_relocate_hint
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
@@ -85,8 +86,17 @@ class PreparedExecutionHandoff:
     work_id: str | None
 
 
-def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
-    return exc.for_ref(session.source_ref) if isinstance(exc, NativeSessionUnavailable) else exc
+def _with_source_ref(
+    exc: Exception, session: SessionRequest, *, runtime_root: Path, project_root: Path
+) -> Exception:
+    if not isinstance(exc, NativeSessionUnavailable):
+        return exc
+    return with_relocate_hint(
+        exc.for_ref(session.source_ref),
+        runtime_root=runtime_root,
+        chat_id=session.continue_chat_id,
+        target=project_root,
+    )
 
 
 def _log_launch_failure_without_traceback(
@@ -364,7 +374,12 @@ async def launch_prepared_spawn(
             prepared=prepared,
         )
     except Exception as exc:
-        exc = _with_source_ref(exc, request.session)
+        exc = _with_source_ref(
+            exc,
+            request.session,
+            runtime_root=runtime_root,
+            project_root=project_paths.project_root,
+        )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -434,7 +449,12 @@ async def launch_prepared_spawn(
                     ),
                 )
         except Exception as exc:
-            exc = _with_source_ref(exc, request.session)
+            exc = _with_source_ref(
+                exc,
+                request.session,
+                runtime_root=runtime_root,
+                project_root=project_paths.project_root,
+            )
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,
