@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.5] - 2026-11-05
+
+### Added
+- `meridian session relocate`: after a project directory moves, rewrite a chat's (or every chat's) recorded paths and bring Claude, OpenCode and Pi's own record of the directory in line. See [troubleshooting](https://github.com/haowjy/meridian-cli/blob/main/docs/troubleshooting.md#a-moved-project-directory-or-claude-store).
+
+### Fixed
+- `meridian --continue` after moving a project directory no longer fails with `native_binding_conflict` and `Session resume failed`. It stops before launch with the `session relocate` command (on a terminal, it offers to run it), and a Claude chat whose transcript file is missing from its recorded store is found by exact session ID and linked back.
+- `spawn --continue` stops with the relocate command when the recorded directory is gone, and `session log`, `session export` and `session search` print it when the transcript can't be read and the recorded directory is gone.
+
 ## [0.19.4] - 2026-11-05
 
 ### Fixed
