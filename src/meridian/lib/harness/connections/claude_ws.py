@@ -34,6 +34,7 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -201,10 +202,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
         self._signal_in_flight = False
         await self._send_user_turn(text)
+        # Claude replies to no stdin frame: the write finishing is all we know.
+        return DeliveryKind.POSTED
 
     async def send_cancel(self) -> None:
         """Signal cancellation by transitioning state and sending SIGINT."""

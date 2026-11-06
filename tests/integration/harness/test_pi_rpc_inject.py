@@ -17,6 +17,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.runtime import (
@@ -135,7 +136,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                     return
                 yield event
 
-        async def send_user_message(self, message: str) -> None:
+        async def send_user_message(self, message: str) -> DeliveryKind:
             received_messages.append(message)
             await self._events.put(
                 RawHarnessEvent(
@@ -144,6 +145,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                     payload={"status": "succeeded", "exit_code": 0},
                 )
             )
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None

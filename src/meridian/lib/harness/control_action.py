@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import cast
 
 from meridian.lib.harness.connections.base import ConnectionNotReady
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -42,6 +43,8 @@ class ControlActionResult:
     action_id: str
     submission_seq: int
     error: str | None = None
+    delivery: DeliveryKind | None = None
+    """Set when ``send`` returned one (inject); None for other actions."""
 
 
 @dataclass(frozen=True)
@@ -147,7 +150,7 @@ class ControlActionCoordinator:
                     attempt=attempt,
                 )
                 try:
-                    await send()
+                    sent = await send()
                 except Exception as exc:
                     last_error = str(exc)
                     retryable = attempt < attempts and self._is_retryable(exc)
@@ -172,20 +175,24 @@ class ControlActionCoordinator:
                         error=last_error,
                     )
 
-                await self._append_transition(
-                    action_id=action_id,
-                    action=action,
-                    status=ControlActionStatus.ACKNOWLEDGED,
-                    submission_seq=submission_seq,
-                    interrupt_epoch=interrupt_epoch,
-                    source=source,
-                    payload=payload,
-                    attempt=attempt,
-                )
+                delivery = sent if isinstance(sent, DeliveryKind) else None
+                # A posted message stays at ``sent``: no harness confirmed it.
+                if delivery is not DeliveryKind.POSTED:
+                    await self._append_transition(
+                        action_id=action_id,
+                        action=action,
+                        status=ControlActionStatus.ACKNOWLEDGED,
+                        submission_seq=submission_seq,
+                        interrupt_epoch=interrupt_epoch,
+                        source=source,
+                        payload=payload,
+                        attempt=attempt,
+                    )
                 return ControlActionResult(
                     success=True,
                     action_id=action_id,
                     submission_seq=submission_seq,
+                    delivery=delivery,
                 )
 
             return ControlActionResult(

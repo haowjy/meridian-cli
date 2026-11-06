@@ -18,6 +18,7 @@ from meridian.lib.harness.bundle import (
     post_to_primary,
     primary_accepts_messages,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
@@ -234,7 +235,11 @@ async def send_message(
 
     ok = parsed.get("ok")
     if ok is True:
-        print(f"Message delivered to spawn {normalized_spawn_id}")
+        # A server without ``delivery`` is an older build that only wrote to its harness.
+        if parsed.get("delivery") == DeliveryKind.ACKNOWLEDGED:
+            print(f"Message delivered to spawn {normalized_spawn_id}")
+        else:
+            print(f"Message posted to spawn {normalized_spawn_id} (no receipt)")
         return
 
     error_value = parsed.get("error")

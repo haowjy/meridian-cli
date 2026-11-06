@@ -35,6 +35,7 @@ from meridian.lib.harness.connections.pi_rpc_stream import (
     PiRpcInbox,
     pi_rpc_frames,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.pi_failure import compact_pi_failure_output
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
@@ -302,8 +303,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         child = self._child
         return self._state == "connected" and child is not None and child.returncode is None
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         await self._send_prompt(text, wait_for_ack=True)
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _send_prompt(self, text: str, *, wait_for_ack: bool) -> None:
         kind = "inject" if wait_for_ack else "prompt"

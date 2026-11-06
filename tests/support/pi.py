@@ -21,6 +21,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
@@ -115,8 +116,9 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         del text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

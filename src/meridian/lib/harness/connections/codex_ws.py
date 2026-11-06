@@ -66,6 +66,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -537,7 +538,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected("send_user_message")
         self._signal_in_flight = False
 
@@ -550,7 +551,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     "expectedTurnId": self._current_turn_id,
                 },
             )
-            return
+            return DeliveryKind.ACKNOWLEDGED
 
         await self._request(
             "turn/start",
@@ -559,6 +560,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "input": _build_text_user_input(text),
             },
         )
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected("begin_followup_turn")

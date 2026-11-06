@@ -35,6 +35,7 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -159,8 +160,8 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return False
         return self._impl.health()
 
-    async def send_user_message(self, text: str) -> None:
-        await self._transport().send_user_message(text)
+    async def send_user_message(self, text: str) -> DeliveryKind:
+        return await self._transport().send_user_message(text)
 
     async def send_cancel(self) -> None:
         await self._transport().send_cancel()

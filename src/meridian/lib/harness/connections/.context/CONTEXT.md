@@ -70,7 +70,9 @@ Required abstract methods — every subclass must implement all of these:
 - `start(config, spec)` → async; raises if already started
 - `stop()` → async; idempotent
 - `health()` → bool
-- `send_user_message(text)` → async
+- `send_user_message(text)` → async, returns `DeliveryKind` (`posted` or `acknowledged`; see
+  [Inject Acknowledgment](../.context/CONTEXT.md#inject-acknowledgment)). A new connection
+  states `acknowledged` only if the call waits for a harness response.
 - `send_cancel()` → async
 - `events()` → `AsyncIterator[HarnessEvent]`
 

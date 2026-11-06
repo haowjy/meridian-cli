@@ -12,6 +12,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     RawHarnessEvent,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.launch.signals import (
@@ -99,8 +100,9 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             type(self).send_cancel_calls += 1

@@ -19,6 +19,7 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     RawHarnessEvent,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -306,8 +307,9 @@ class FakeManagedConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

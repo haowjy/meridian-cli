@@ -62,6 +62,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.opencode_backend import v1_session_running
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -665,10 +666,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
         self._signal_in_flight = False
         await self._post_session_message(text)
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected()

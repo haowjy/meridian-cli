@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     HarnessRequest,
     RawHarnessEvent,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.paths import resolve_runtime_paths
@@ -149,8 +150,9 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None
@@ -304,8 +306,9 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None
@@ -466,8 +469,9 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None

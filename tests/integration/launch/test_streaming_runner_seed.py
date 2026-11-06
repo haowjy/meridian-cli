@@ -16,6 +16,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     RawHarnessEvent,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import context as launch_context_module
@@ -96,8 +97,9 @@ class _ClaudeSeedPersistenceConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -173,8 +175,9 @@ class _UnboundOpenCodeConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -251,8 +254,9 @@ class _OpenCodeConnectSessionConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

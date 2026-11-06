@@ -28,6 +28,7 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -166,7 +167,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
         raise RuntimeError(
             "Cursor subprocess transport does not support live user-message injection"

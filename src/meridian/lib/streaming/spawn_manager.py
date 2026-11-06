@@ -22,6 +22,7 @@ from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -344,8 +345,8 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        async def _send_message() -> None:
-            await session.connection.send_user_message(message)
+        async def _send_message() -> DeliveryKind:
+            return await session.connection.send_user_message(message)
 
         outcome = await session.control_actions.run_action(
             action=ControlActionType.INJECT,
@@ -362,6 +363,7 @@ class SpawnManager:
         result = InjectResult(
             success=True,
             inbound_seq=outcome.submission_seq,
+            delivery=outcome.delivery,
         )
         if on_result is not None:
             on_result(result)

@@ -17,6 +17,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     PrimaryEventScope,
@@ -130,8 +131,9 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

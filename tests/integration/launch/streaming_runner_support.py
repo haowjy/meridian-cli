@@ -20,6 +20,7 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import (
@@ -142,8 +143,9 @@ class _ReportThenHangConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -286,8 +288,9 @@ class _OpenCodeTerminalWithScopeConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -385,8 +388,9 @@ class _ResidentDeadlineConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
