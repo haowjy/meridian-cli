@@ -40,8 +40,10 @@ native config. See [managed startup and failure behavior](codex-tui-passthrough.
 `spawn message` reaches a session through the control socket its launcher serves, for
 spawned sessions and primaries alike. It prints
 "Message delivered" when the harness answered the request that carried the message
-(Codex, OpenCode, Pi) and "Message posted … (no receipt)" when the write finished but
-the harness confirms nothing (Claude). A Claude primary's launcher binds its socket once
+(Codex, OpenCode) and "Message posted … (no receipt)" when the write finished but
+the harness confirms nothing (Claude, and Pi, whose message API returns nothing). A Pi primary
+serves its socket from the `meridian-message` extension inside Pi: a message sent while a turn
+runs steers into that turn, and one sent while Pi compacts is refused. A Claude primary's launcher binds its socket once
 Claude has published its session inbox, so a primary that has not (`--bare`, `--safe-mode`,
 `--print`, Claude older than 2.1.224) has no socket; the command waits up to 30 seconds
 for one, then fails saying the session has no message route. A primary started by an older
@@ -54,14 +56,15 @@ covers the values and the trade-off. Chat and spawn IDs count per
 project, so a peer in another repo is addressed with `-C <repo>`. Each injected
 message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
 sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
-with `-C <sender project root>` when the sender is in another project. A primary whose
-harness has a message route states its own address in that form in its capabilities block.
+with `-C <sender project root>` when the sender is in another project. A primary states its own
+address in that form in its capabilities block, including a Claude primary that publishes no
+inbox (`--bare`, `--safe-mode`), where the address leads to the no-route error.
 Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
 that chat now, else the spawn that ran it; a chat ID never means a child it launched.
 After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
-`cancel` on a primary still needs `--force`. Codex, OpenCode and Pi primaries
+`cancel` on a primary still needs `--force`. Codex and OpenCode primaries
 have no message route yet ([#498](https://github.com/haowjy/meridian-cli/issues/498));
 the command waits 30 seconds and fails.
 
