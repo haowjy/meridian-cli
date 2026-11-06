@@ -265,6 +265,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._events_exited = False
         self._primary_observer_mode = False
         self._tui_left_session = False
+        # Sessions announced with a parent (subagents, nested): never a move.
+        self._child_session_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._stop_lock = asyncio.Lock()
@@ -406,14 +408,30 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             resolution={"decision": decision, **(payload or {})},
         )
 
-    def _note_session_created(self, event: RawHarnessEvent) -> None:
+    def _created_session_ids(self, payload: dict[str, object]) -> tuple[str | None, str | None]:
+        """Return ``(session id, parent id)`` of a ``session.created`` payload.
+
+        V1 nests ``info`` under ``properties``.
+        """
+        props = payload.get("properties")
+        info = cast("dict[str, object]", props).get("info") if isinstance(props, dict) else None
+        if not isinstance(info, dict):
+            return None, None
+        source = cast("dict[str, object]", info)
+        session_id, parent_id = source.get("id"), source.get("parentID")
+        return (
+            session_id if isinstance(session_id, str) else None,
+            parent_id if isinstance(parent_id, str) and parent_id else None,
+        )
+
+    def _note_tui_session(self, event: RawHarnessEvent) -> None:
         """Latch ``_tui_left_session`` when a new top-level session appears.
 
         The event stream is global, and the TUI's ``ctrl+x n`` creates its session on
-        the first message, so ``session.created`` with no parent is the only sign of a
-        move. A subagent's session has a parent. Switching to an existing session
-        sends nothing, so that move is invisible. V1 nests ``info`` under
-        ``properties``; V2 flattens ``sessionID`` and ``parentID`` into the data.
+        the first message, so ``session.created`` with no parent is the sign of a
+        move. A subagent's session has a parent and is recorded as a child. Switching
+        to an existing session sends nothing, so that move is invisible until V2
+        shows the human's input (see ``OpenCodeV2Connection``).
         """
         if (
             not self._primary_observer_mode
@@ -421,24 +439,21 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             or event.event_type != "session.created"
         ):
             return
-        payload = event.payload
-        props = payload.get("properties")
-        info: object = (
-            cast("dict[str, object]", props).get("info") if isinstance(props, dict) else None
-        )
-        source = cast("dict[str, object]", info) if isinstance(info, dict) else payload
-        created_id = source.get("id" if source is not payload else "sessionID")
-        if (
-            not isinstance(created_id, str)
-            or source.get("parentID")
-            or created_id == self._session_id
-        ):
+        created_id, parent_id = self._created_session_ids(event.payload)
+        if created_id is None or created_id == self._session_id:
             return
+        if parent_id:
+            self._child_session_ids.add(created_id)
+            return
+        self._latch_tui_left(created_id, event.event_type)
+
+    def _latch_tui_left(self, session_id: str, signal: str) -> None:
         self._tui_left_session = True
         logger.warning(
-            "OpenCode TUI left session %s for %s; messages are refused",
+            "OpenCode TUI left session %s for %s (%s); messages are refused",
             self._session_id,
-            created_id,
+            session_id,
+            signal,
         )
 
     async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
@@ -455,7 +470,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         write is local, so it cannot stall the drain.
         """
 
-        self._note_session_created(event)
+        self._note_tui_session(event)
 
         if event.event_type in self._PERMISSION_ASK_EVENT_TYPES:
             session_id, request_id = _extract_opencode_permission_context(event.payload)

@@ -185,17 +185,22 @@ acknowledged it. Meridian never answers an approval an injected turn raises: the
 for the person, as long as it is on that session.
 
 The route serves only the session the launcher started, and refuses once the TUI leaves it, so
-a message does not run where nobody sees it. The observer is subscribed to every session's
-lifecycle events but not to their turns, so it sees a move only from those: on Codex a
+a message does not run where nobody sees it. On Codex the observer is subscribed to every
+thread's lifecycle events but not to their turns, so it sees a move only from those: a
 `thread/started` for a thread that is neither ephemeral nor parented (`/new`, `/fork`), or a
-status or goal event naming a thread that was not announced as a helper (`/resume`; title and
-memory helpers are ephemeral, subagents are parented, `thread/closed` and `notLoaded` are
-unloads); on OpenCode a `session.created` with no parent and another id. The refusal is sticky and
+status or goal event naming a thread that was not announced as a helper (`/resume`; title helpers were seen ephemeral and other helpers are judged by the same
+rule, subagents are parented, `thread/closed` and `notLoaded` are unloads). OpenCode's stream
+is global, so there a move is a `session.created` with no parent and another id, and on V2
+also a `session.forked` for another id (Fork session, at the moment of the fork) or a
+`session.inbox.enqueued` for an id that is neither the first session nor a session announced
+with a parent (the human typing in a session they switched to). A subagent's session is
+created with a parent and never forks. A child whose `session.created` fell in a stream
+reconnect gap reads as a move; the refusal stays honest. The refusal is sticky and
 changes nothing else: the socket stays bound, and `harness_session_id`, the idle sensor and
-`--continue` stay on the first session. Two gaps: OpenCode sends no event for `ctrl+x n` until
-the first message, nor for switching to an existing session, so a message sent then goes to
-the first session and reports delivered; and a TUI that returns to the first session stays
-refused until relaunch. Following the TUI instead needs a signal that Codex `/resume` of a
+`--continue` stay on the first session. Two gaps: OpenCode sends no event for the new-session
+(`ctrl+x n`) or switch-session (`ctrl+x l`) command itself, so a message sent before the
+human types anything there goes to the first session and reports delivered; and a TUI that
+returns to the first session stays refused until relaunch. Following the TUI instead needs a signal that Codex `/resume` of a
 loaded thread and OpenCode session switching do not give.
  On OpenCode
 V2 a message carries text only, so the server runs it with the session's last model, which is

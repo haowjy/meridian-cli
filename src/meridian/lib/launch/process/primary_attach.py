@@ -435,7 +435,7 @@ class PrimaryAttachLauncher:
                     finally:
                         # Unbind once the TUI is gone: nothing renders a message after that.
                         # Unbinding first would hold TUI termination behind a hung send.
-                        await self._unbind_route(route_stack)
+                        await route_stack.aclose()
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
@@ -501,14 +501,6 @@ class PrimaryAttachLauncher:
         except Exception:
             logger.warning(
                 "primary_attach.route_bind_failed", spawn_id=str(self._spawn_id), exc_info=True
-            )
-
-    async def _unbind_route(self, stack: AsyncExitStack) -> None:
-        try:
-            await stack.aclose()
-        except Exception:
-            logger.warning(
-                "primary_attach.route_unbind_failed", spawn_id=str(self._spawn_id), exc_info=True
             )
 
     async def _start_primary_observer_connection_with_retry(

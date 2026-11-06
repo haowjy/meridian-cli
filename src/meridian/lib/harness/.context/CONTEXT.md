@@ -164,7 +164,8 @@ an injected turn raises reaches the TUI and the observer alike; nothing answers 
 The route serves only the launch's first session: the connection latches that the TUI left
 it (`_tui_left_thread`, `_tui_left_session`) and `send_user_message` then raises
 `DeliveryRefused(TUI_MOVED_MESSAGE)`. Nothing else follows the TUI: `harness_session_id`, the idle
-sensor and `--continue` stay on the first session. The signals and the two gaps:
+sensor and `--continue` stay on the first session. The signals and the two gaps (OpenCode's
+new-session and switch-session commands are invisible until the human types):
 `docs/harness-integration.md`.
 `has_message_route` is still derived from the port, so these primaries' capabilities
 block does not yet state their address.

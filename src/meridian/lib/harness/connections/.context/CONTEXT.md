@@ -15,8 +15,10 @@ announced id as its own sent `turn/steer` and `turn/start` to a thread the TUI i
 no turn events for threads it did not start): `_note_tui_thread` latches a non-ephemeral,
 parentless `thread/started`, or an idle/active status or goal event for an id never announced as
 a helper, and the connection then refuses sends. A misread helper would kill the route for the
-session, so `thread/closed` and `notLoaded` never count. OpenCode latches the same way on a
-parentless `session.created` with another id (`_note_session_created`, V1 and V2 event shapes).
+session, so `thread/closed` and `notLoaded` never count. Helpers are recorded before our own id is known, so one announced during init is not misread. OpenCode
+latches on a parentless `session.created` with another id (`_note_tui_session`, V1 and V2
+event shapes); V2 also on `session.forked` for another id and on `session.inbox.enqueued` for an
+id not recorded as a child.
 
 `PiRpcConnection` owns one receive task from successful startup through stop.
 Reception resolves prompt ACKs and observes protocol readiness independently of

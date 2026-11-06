@@ -37,7 +37,7 @@ class TransportDead(DeliveryError):
 TUI_MOVED_MESSAGE = (
     "The TUI moved to another session, and a primary takes messages only for the session "
     "it started with. Nothing was sent. Type in the TUI, or relaunch with "
-    "`meridian --continue` (it reopens the first session, not the one the TUI is on) "
+    "`meridian --continue <chat>` (it reopens the first session, not the one the TUI is on) "
     "and send again."
 )
 """Refusal text once a Codex or OpenCode primary's TUI has left the session the route serves."""
