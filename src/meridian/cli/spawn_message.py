@@ -208,7 +208,10 @@ async def send_message(
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
         response_data = await _send_and_receive(reader, writer, request)
     except TimeoutError:
-        _fail(f"timed out waiting for response from spawn {normalized_spawn_id}")
+        _fail(
+            f"timed out waiting for response from spawn {normalized_spawn_id}; "
+            "the message may have been delivered and was not resent"
+        )
     except ConnectionRefusedError:
         _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
     except FileNotFoundError:
