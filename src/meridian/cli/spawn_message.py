@@ -128,11 +128,11 @@ def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
 async def _send_and_receive(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
-    request: dict[str, str],
+    line: bytes,
 ) -> bytes:
-    """Send request and receive response, with proper cleanup."""
+    """Send one encoded request line and receive the response, with proper cleanup."""
     try:
-        writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        writer.write(line)
         await writer.drain()
         return await asyncio.wait_for(reader.readline(), timeout=_RESPONSE_TIMEOUT_SECONDS)
     finally:
@@ -200,14 +200,17 @@ async def send_message(
             _fail(f"spawn {normalized_spawn_id} has no message route{older}")
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
-    if len(framed.encode("utf-8")) > MAX_REQUEST_BYTES:
+    # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
+    line = (
+        json.dumps({"type": "user_message", "text": framed}, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    if len(line) > MAX_REQUEST_BYTES:
         _fail(f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit")
-    request: dict[str, str] = {"type": "user_message", "text": framed}
 
     response_data = b""
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
-        response_data = await _send_and_receive(reader, writer, request)
+        response_data = await _send_and_receive(reader, writer, line)
     except TimeoutError:
         _fail(
             f"timed out waiting for response from spawn {normalized_spawn_id}; "
@@ -217,6 +220,11 @@ async def send_message(
         _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
     except FileNotFoundError:
         _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
+    except (ConnectionResetError, BrokenPipeError):
+        _fail(
+            f"connection to spawn {normalized_spawn_id} was reset; "
+            "the message may not have been delivered and was not resent"
+        )
     except OSError as exc:
         if exc.errno == errno.ENOENT:
             _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
