@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -302,8 +303,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         child = self._child
         return self._state == "connected" and child is not None and child.returncode is None
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         await self._send_prompt(text, wait_for_ack=True)
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _send_prompt(self, text: str, *, wait_for_ack: bool) -> None:
         kind = "inject" if wait_for_ack else "prompt"

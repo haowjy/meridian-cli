@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.bundle import (
@@ -238,7 +239,12 @@ async def send_message(
 
     ok = parsed.get("ok")
     if ok is True:
-        print(f"Message delivered to spawn {normalized_spawn_id}")
+        # A server without ``delivery`` (an older build) does not say how far the message
+        # got, so claim only that it was posted.
+        if parsed.get("delivery") == DeliveryKind.ACKNOWLEDGED:
+            print(f"Message delivered to spawn {normalized_spawn_id}")
+        else:
+            print(f"Message posted to spawn {normalized_spawn_id} (no receipt)")
         return
 
     error_value = parsed.get("error")

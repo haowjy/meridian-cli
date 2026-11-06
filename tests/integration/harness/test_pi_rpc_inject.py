@@ -14,6 +14,7 @@ import pytest
 
 from meridian.cli import spawn_message as spawn_message_module
 from meridian.lib.config.loader import load_config
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
@@ -135,7 +136,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                     return
                 yield event
 
-        async def send_user_message(self, message: str) -> None:
+        async def send_user_message(self, message: str) -> DeliveryKind:
             received_messages.append(message)
             await self._events.put(
                 RawHarnessEvent(
@@ -144,6 +145,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                     payload={"status": "succeeded", "exit_code": 0},
                 )
             )
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None

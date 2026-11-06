@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -201,10 +202,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
         self._signal_in_flight = False
         await self._send_user_turn(text)
+        # Claude replies to no stdin frame: the write finishing is all we know.
+        return DeliveryKind.POSTED
 
     async def send_cancel(self) -> None:
         """Signal cancellation by transitioning state and sending SIGINT."""

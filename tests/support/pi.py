@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
@@ -115,8 +116,9 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         del text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

@@ -11,6 +11,7 @@ from typing import ClassVar
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
@@ -142,8 +143,9 @@ class _ReportThenHangConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -286,8 +288,9 @@ class _OpenCodeTerminalWithScopeConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None
@@ -385,8 +388,9 @@ class _ResidentDeadlineConnection:
     def health(self) -> bool:
         return self.state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         return None

@@ -24,6 +24,7 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -665,10 +666,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
         self._signal_in_flight = False
         await self._post_session_message(text)
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected()
