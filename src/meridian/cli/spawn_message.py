@@ -29,7 +29,8 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
 
-_RESPONSE_TIMEOUT_SECONDS = 30.0
+# Above the 30 s harness request timeouts, so their failure text reaches the sender.
+_RESPONSE_TIMEOUT_SECONDS = 35.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
@@ -209,7 +210,10 @@ async def send_message(
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
         response_data = await _send_and_receive(reader, writer, request)
     except TimeoutError:
-        _fail(f"timed out waiting for response from spawn {normalized_spawn_id}")
+        _fail(
+            f"timed out waiting for response from spawn {normalized_spawn_id}; "
+            "the message may have been delivered and was not resent"
+        )
     except ConnectionRefusedError:
         _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
     except FileNotFoundError:
