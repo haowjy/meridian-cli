@@ -118,7 +118,7 @@ denies.
 | Codex | sandbox mode, approval policy, shell/web/image switches, scoped shell rules as a `PreToolUse` hook | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
 | OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
-| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_TOOL_POLICY` (extension rules) |
+| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_TOOL_POLICY`, plus the pre-rename `_MERIDIAN_PI_PERMISSION_POLICY` for one release (extension rules) |
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
@@ -177,22 +177,43 @@ overrides; the app-server thread payload remains authoritative for its model, ef
 sandbox, and approval fields, so those native collisions are skipped and reported.
 
 **The Codex shell hook.** `CodexPermissions.tool_hook` holds the `ExtensionPolicy` (the
-compile Pi's extension also reads, `tool_extension_policy.py`) restricted to `bash` rules,
-set only when one is scoped. The hook definition and its trust (`hooks.state.<key>.trusted_hash`,
-an inline table: the dotted spelling is ignored) ride the `codex app-server` argv from
-`codex_tool_hook.py`, so Meridian writes no `config.toml` and a shared `CODEX_HOME` is
-untouched; the policy reaches the stdlib-only enforcer (`codex_runtime/tool_hook.py`) in
-`_MERIDIAN_TOOL_POLICY`, which a launch never inherits. Codex skips an untrusted hook silently
-and fails open on every hook failure, so: the hook command turns any enforcer failure into a
-block (`... || exit 2` with a message); `CodexConnection.start` calls `hooks/list` before the
-thread starts and refuses the launch unless exactly one `sessionFlags` `preToolUse` entry is
-trusted, enabled and has the expected `currentHash` (a Codex without `hooks/list` is refused
-too); a timeout stays open, and the connection logs the `failed` `hook/completed`. Allowlists
-fail closed on a command the parser cannot read; deny-lists are best effort and report
-`partial`. The enforcer is a copy of Pi's ranking with a different parser, so the two are
-kept equal by hand. `codex exec` is not a live Codex path (the contract lists only the
-streaming transport, and a primary is a managed attach), so its argv is preview only and has
-no `hooks/list` check. The hook does not see `apply_patch` or MCP calls.
+compile Pi's extension also reads, `tool_extension_policy.py`) restricted to `bash` and `*`
+rules, set only when one is scoped. A hook cannot ask, so an unscoped `ask` is carried as
+`deny`; a scoped `ask` is not carried and stays unsupported. The hook definition and its trust
+(`hooks.state.<key>.trusted_hash`, an inline table: the dotted spelling is ignored) ride the
+`codex app-server` argv from `codex_tool_hook.py`, so Meridian writes no `config.toml` and a
+shared `CODEX_HOME` is untouched; the policy reaches the stdlib-only enforcer
+(`codex_runtime/tool_hook.py`) in `_MERIDIAN_TOOL_POLICY`, which a launch never inherits.
+Codex skips an untrusted hook silently and fails open on every hook failure, so:
+
+- the hook command is a `python -I -c` bootstrap that hashes the enforcer file against the
+  digest on the argv and runs the bytes it hashed, so an agent that can write the file cannot
+  turn the hook off; a mismatch exits 2. What remains: an agent that can replace the
+  interpreter or its standard library. Upgrading Meridian under a running launch makes the
+  digest stale, which blocks every shell call until the launch restarts;
+- the command turns any other enforcer failure into a block (`... || exit 2` with a message);
+- `CodexConnection.start` calls `hooks/list` before the thread starts and refuses the launch
+  unless exactly one `sessionFlags` `preToolUse` entry is trusted, enabled and has the
+  expected `currentHash` (a Codex without `hooks/list` is refused too). A project
+  `.codex/config.toml` that turns hooks off is caught here;
+- a timeout stays open (the connection logs the `failed` `hook/completed`), so the enforcer's
+  work is linear in the command: the glob match has no backtracking.
+
+The enforcer has two readers. Under `bash_fail_closed` (an allowlist, or any rule denying
+commands no scoped rule names) it accepts only a closed grammar of simple commands and refuses
+everything else, so a bash feature it does not know cannot slip through; it also requires a
+program given by path to sit in a system bin directory, since a rule matches the program by
+name. Deny-lists use a best-effort reader that sees through wrappers (per-wrapper option
+tables), `sh -c`/`eval`, substitutions, braces and `$'..'`; what it cannot see is named in the
+report line. A shell reading stdin is refused whenever a rule denies, because Codex's
+`write_stdin` would feed it commands the hook never sees; REPLs (`python`) stay open. The hook
+payload carries only `command`: `exec_command`'s `shell` parameter picks among the installed
+shells and is not visible to the hook. The enforcer is a copy of Pi's ranking with a different
+parser, so the two are kept equal by hand. `codex exec` is not a live Codex path (the contract
+lists only the streaming transport, and a primary is a managed attach), so its argv is preview
+only and has no `hooks/list` check. The hook does not see `apply_patch` or MCP calls. Every
+hook report line is `partial`: the interpreter caveat above, and those tools, hold whatever
+the policy.
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
 from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule

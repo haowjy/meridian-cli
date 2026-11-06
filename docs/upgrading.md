@@ -2,26 +2,48 @@
 
 ## Scoped shell rules on Codex need Codex 0.129.0 or newer
 
-A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`) or a per-capability `bash`
-allowlist used to launch with those rules reported `unsupported` and not enforced. Meridian now
-enforces them with a `PreToolUse` hook it adds to the `codex app-server` command line, and the
-report marks scoped denies `partial` and allowlists `native`. Before the first turn, Meridian asks
-Codex (`hooks/list`) whether the hook is loaded and trusted, and it refuses the launch if not.
+A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`), a `*` rule beside scoped
+`bash` allows, or a per-capability `bash` allowlist used to launch with those rules reported
+`unsupported` and not enforced. Meridian now enforces them with a `PreToolUse` hook it adds to the
+`codex app-server` command line, and the report marks them `partial` (the gaps below). Before the
+first turn, Meridian asks Codex (`hooks/list`) whether the hook is loaded and trusted, and it
+refuses the launch if not.
 
 What changes for you:
 
 - **Codex older than 0.129.0.** A launch whose profile has such a rule fails with "The shell-rule
   hook is not running" (or "this Codex does not answer hooks/list"). Upgrade Codex, or drop the
   scoped rules from the profile. Profiles with no scoped `bash` rule launch as before.
-- **A passthrough that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a
-  `hooks.state` override) now stops those launches the same way.
+- **Anything that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a `hooks.state`
+  override, a project `.codex/config.toml` with `hooks` off) stops those launches the same way.
+- **Allowlists accept only simple commands.** When a profile's rules refuse every shell command
+  that no scoped allow names (an allowlist, `"*": deny` beside scoped allows, or `bash: deny` or
+  `bash: ask` beside them), a command runs only if it is plain words and quoted strings joined by
+  `;`, `&&`, `||`, `|` and newlines, with at most `>/dev/null` and `2>&1` as redirection. Variables
+  and `$(...)`, double-quoted `$`, heredocs, `{ }` and `( )`, `if`/`for`, `NAME=value` prefixes,
+  and a program run by path outside `/usr/bin`, `/bin`, `/usr/local/bin`, `/usr/sbin`, `/sbin` are
+  refused, even when the command inside them would be allowed. Single-quote strings that need a
+  `$`. `bash -c '...'`, `sudo`, `env`, `timeout` and similar wrappers are read, with their string
+  held to the same grammar.
+- **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
+  refuses the other commands. A scoped `ask` is still not enforced.
 - **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
   `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
   (`bash(rg *)`, `bash(cat *)`).
-- **Gaps that remain.** The hook checks the command string. It does not see `sh script.sh`,
-  `python -c`, commands built at run time, or an option between a program and its subcommand
-  (`git -C <dir> reset --hard`); `apply_patch` and MCP calls never reach it. A hook that times out
-  (10 seconds) lets that one call run and logs a warning.
+- **A shell that reads stdin is refused** whenever a rule denies (`bash`, `sh -s`, `sh <<EOF`,
+  `x | sh`), because Codex's `write_stdin` would feed it commands the hook never sees.
+- **The hook script is pinned.** The hook command carries the SHA-256 of the enforcer and refuses
+  every shell call if the file no longer matches. Upgrading Meridian while a Codex launch is
+  running therefore blocks that launch's shell calls until you restart it.
+- **Gaps that remain.** The hook checks the command string. A scoped deny does not see
+  `sh script.sh`, an interpreter (`python -c`, or a REPL such as `python` typed into through
+  `write_stdin`), a wrapper it does not know, `find -exec`, commands built at run time, or an
+  option between a program and its subcommand (`git -C <dir> reset --hard`); an allowlist
+  inherits whatever its allowed commands can do (`bash(python *)` runs anything). `apply_patch`
+  and MCP calls never reach the hook, and an agent that can replace the Python interpreter or its
+  standard library turns the hook off. A hook that times out (10 seconds) lets that one call run
+  and logs a warning; the matcher itself is linear in the command, so input length does not cause
+  that.
 
 ## Messages to a primary go through its launcher
 
