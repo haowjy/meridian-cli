@@ -43,7 +43,7 @@ spawned sessions and primaries alike. It prints
 (Codex, OpenCode) and "Message posted … (no receipt)" when the write finished but
 the harness confirms nothing (Claude, and Pi, whose message API returns nothing). A Pi primary
 serves its socket from the `meridian-message` extension inside Pi: a message sent while a turn
-runs steers into that turn, and one sent while Pi compacts is refused. A Claude primary's launcher binds its socket once
+runs steers into that turn, and one sent during a manual `/compact` is refused. A Claude primary's launcher binds its socket once
 Claude has published its session inbox, so a primary that has not (`--bare`, `--safe-mode`,
 `--print`, Claude older than 2.1.224) has no socket; the command waits up to 30 seconds
 for one, then fails saying the session has no message route. A primary started by an older

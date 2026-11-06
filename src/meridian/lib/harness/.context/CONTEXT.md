@@ -157,6 +157,7 @@ lexical block, so no PID-reuse check is needed. A harness with no port (Codex,
 OpenCode until their routes land) serves nothing. Pi has no port either, because its
 route is not in the launcher: the `meridian-message` extension binds the same path
 (`_MERIDIAN_PI_CONTROL_SOCKET`, set for primaries only) from `session_start` in TUI mode
+(from the first `agent_start` when the launch passes a prompt, `_MERIDIAN_PI_LAUNCH_PROMPT`)
 and unlinks any stale file first, so the launcher never serves a Pi primary's socket and
 `control_actions.jsonl` does not record its messages.
 

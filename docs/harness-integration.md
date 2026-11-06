@@ -241,14 +241,21 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` a
 - **meridian-idle**, interactive primaries only: translates Pi idle/input events
   into core idle push and warning decisions. It never loads in spawned RPC
   sessions.
-- **meridian-message**, interactive primaries only: serves the primary's control socket
-  (`spawn message`) from inside Pi, at the path the launcher passes in
-  `_MERIDIAN_PI_CONTROL_SOCKET`, and only in TUI mode. A message becomes a user turn
-  through `pi.sendUserMessage`, steering when a turn is running. Pi's call returns
-  nothing, so the reply is `posted`, never `acknowledged`; during compaction the extension
-  refuses, because Pi rejects the prompt and shows the rejection only as an extension
-  error. The launcher serves no socket for a Pi primary, so `control_actions.jsonl`
-  does not record its messages.
+- **meridian-message**, interactive primaries only, and loaded first: serves the primary's
+  control socket (`spawn message`) from inside Pi, at the path the launcher passes in
+  `_MERIDIAN_PI_CONTROL_SOCKET`, and only in TUI mode. It binds at `session_start`,
+  except at the first startup of a launch that passes a prompt
+  (`_MERIDIAN_PI_LAUNCH_PROMPT`): it binds at the first `agent_start`, so a message
+  cannot start a run before the launch prompt does. A message becomes a user turn
+  through `pi.sendUserMessage` with `deliverAs: "steer"`, which Pi reads only while a run
+  is streaming, so an idle message starts a turn. Pi's call returns nothing, so the reply
+  is `posted`, never `acknowledged`. During a manual `/compact` the extension refuses,
+  because Pi rejects the prompt and shows the rejection only as an extension error;
+  auto-compaction runs inside the active run and queues the steer. Load order matters:
+  Pi awaits `session_shutdown` handlers in load order, and loading first closes the
+  socket before `managed-bash` waits on its tasks. A listen failure shows as a
+  "Meridian messaging is off" notice. The launcher serves no socket for a Pi primary,
+  so `control_actions.jsonl` does not record its messages.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
 quiescence: parent idle, reconciled transitive descendants finished, private work
