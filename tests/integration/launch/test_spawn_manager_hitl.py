@@ -215,7 +215,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_retryable_permission_send_failure_resolves_not_failed(
+async def test_spawn_manager_coordinator_retries_connection_not_ready_for_permission_reply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

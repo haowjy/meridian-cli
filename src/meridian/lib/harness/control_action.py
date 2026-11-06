@@ -151,8 +151,9 @@ class ControlActionCoordinator:
                 )
 
             attempts = self._resolved_attempts(max_attempts)
-            last_error: str | None = None
-            for attempt in range(1, attempts + 1):
+            attempt = 0
+            while True:
+                attempt += 1
                 await self._append_transition(
                     action_id=action_id,
                     action=action,
@@ -166,7 +167,7 @@ class ControlActionCoordinator:
                 try:
                     await send()
                 except Exception as exc:
-                    last_error = _failure_text(exc)
+                    error_text = _failure_text(exc)
                     if attempt < attempts and isinstance(exc, ConnectionNotReady):
                         await asyncio.sleep(self._retry_delay_secs)
                         continue
@@ -179,13 +180,13 @@ class ControlActionCoordinator:
                         source=source,
                         payload=payload,
                         attempt=attempt,
-                        error=last_error,
+                        error=error_text,
                     )
                     return ControlActionResult(
                         success=False,
                         action_id=action_id,
                         submission_seq=submission_seq,
-                        error=last_error,
+                        error=error_text,
                     )
 
                 await self._append_transition(
@@ -203,13 +204,6 @@ class ControlActionCoordinator:
                     action_id=action_id,
                     submission_seq=submission_seq,
                 )
-
-            return ControlActionResult(
-                success=False,
-                action_id=action_id,
-                submission_seq=submission_seq,
-                error=last_error,
-            )
 
     def _reserve_submission_seq(self) -> int:
         submission_seq = self._submission_seq
