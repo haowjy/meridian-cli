@@ -20,6 +20,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.platform.python_module import module_argv
 
 if TYPE_CHECKING:
     from meridian.lib.ops.session_reentry import Launch
@@ -100,7 +101,7 @@ def _exec_decision(
 
     from meridian.lib.ops.session_reentry import StartFromLaunch
 
-    argv = [sys.executable, "-m", "meridian", "-C", project_root]
+    argv = module_argv("meridian", "-C", project_root)
     if config_file:
         argv.extend(("--config", config_file))
     if isinstance(decision, StartFromLaunch):
@@ -118,7 +119,7 @@ def _exec_decision(
         argv.extend(("--fork" if decision.kind == "fork" else "--continue", decision.chat_id))
     sys.stdout.flush()
     sys.stderr.flush()
-    exec_fn(sys.executable, argv)
+    exec_fn(argv[0], argv)
 
 
 def _session_browse(
