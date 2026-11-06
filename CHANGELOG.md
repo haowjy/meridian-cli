@@ -6,6 +6,24 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.7] - 2026-11-06
+
+### Fixed
+- When an older `meridian` comes first on PATH, hooks, Pi extensions and the agent's shell inside a harness now call the Meridian build that launched the session. Exceptions: a login shell that resets PATH (Codex runs `bash -lc`), Meridian-dispatched lifecycle hooks (they never get the shim), a shim directory inside the harness's write set (refused, with a warning on primary and foreground `spawn` launches only), and a failed shim write (a warning is logged and the older build may still answer). Before, `/spawn:show` and the Claude spawn-watch hook ran the older build and failed on flags it did not know (#764).
+
+**Depends on #882** (it adds `module_argv`; merge #882 first). This branch has #882 merged in. The shim text is built from `module_argv`, and a lint in `meridian.dev.lints` rejects `sys.executable` outside `python_module.py`, `claude.py`, `mars_roots.py` and `cli_shim.py` (`meridian/dev` is exempt).
+- The control-action coordinator no longer resends a message after a timeout. It used to retry, so a Codex follow-up could start two turns. A timed-out send now fails once at the coordinator, whichever side gave up first: if `spawn message` stopped waiting early, the coordinator still makes no second attempt. This changes the coordinator only; nothing here stops another caller from sending the same message again. Every failure except `ConnectionNotReady` (a timeout, `reset by peer`, `Broken pipe`, a Codex socket close, a Pi ack timeout) reaches the sender with "; the message may have arrived and was not resent" appended, so the sender does not resend by hand. The control-action journal records the same text, where a timeout used to record a blank error. Pi no longer wraps its ack timeout in a `RuntimeError`; it raises the `TimeoutError`, and the coordinator adds the warning.
+- `meridian spawn message` no longer says "Message delivered" when the harness confirmed nothing. When the launcher supplies the new `delivery` field, a Claude child now prints "Message posted to spawn pN (no receipt)" and Codex, OpenCode and Pi children still print "Message delivered". A launcher from an older build omits the field, and the CLI then prints "posted" for every harness.
+- `spawn message` no longer tells a recipient to reply to a sender it cannot reach. A Claude primary with no published inbox (bare mode, Claude Code older than 2.1.224) and a child with no control socket now get "it has no reply route here" instead of a `meridian spawn message ...` command that fails.
+- A failed interrupt no longer makes the next interrupt report success without sending anything. OpenCode and Claude connections now undo their half-applied cancel state when the send fails, so the retry really sends. (A live event stream only: when the stream has already ended during the send, the automatic retry can still record the interrupt as delivered; see Compatibility and risk.)
+- A resident child that rearms while a background task or descendant still runs is no longer nudged at every turn end. One child was nudged 234 times in 31 minutes. Where the task is not visible to Meridian (OpenCode and Codex background shells), nudges after a rearm are at least 270 s apart.
+- The resident completion window (`timeouts.resident_deadline_seconds`) is now an idle limit: the child's own work inside a turn (Claude assistant frames, Codex items and output deltas, OpenCode tool and shell progress) and `meridian spawn rearm` renew it, so a child doing real work is no longer cleaned up mid-turn. Meridian's own nudges do not renew it, and neither does output from a background process after the turn ended. When a window passes with no work, the child gets one nudge, then cleanup if it does no work within 300 s.
+- A child that ran `meridian spawn done` and is idle in a later turn is nudged once instead of being published as `succeeded` over the running turn.
+- `resident_rearm_budget` caps `spawn rearm` grants only.
+
+### Security
+- Meridian's own re-launches of its package (the `meridian spawn --bg` worker, the `meridian session` picker's resume/fork, and the artifact server) no longer import a `meridian/` directory from the project's working directory in place of the installed package. The fix removes the implicit current-directory entry from `sys.path` (`python -P`); it does not cover an empty or relative `PYTHONPATH` entry, which still resolves to the working directory (#876).
+
 ## [0.19.6] - 2026-11-06
 
 ### Fixed
