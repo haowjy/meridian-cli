@@ -420,19 +420,22 @@ class PrimaryAttachLauncher:
                         )
                     tui_lifecycle_finished = True
                 finally:
-                    # Unbind when the TUI is gone: nothing renders a message after that.
-                    await self._unbind_route(route_stack)
-                    if (
-                        running_process is not None
-                        and launch_task is not None
-                        and not tui_lifecycle_finished
-                    ):
-                        await self._stop_idle_task()
-                        await self._stop_tui_launch_task(
-                            running_process,
-                            launch_task,
-                            reason="primary_attach_shutdown",
-                        )
+                    try:
+                        if (
+                            running_process is not None
+                            and launch_task is not None
+                            and not tui_lifecycle_finished
+                        ):
+                            await self._stop_idle_task()
+                            await self._stop_tui_launch_task(
+                                running_process,
+                                launch_task,
+                                reason="primary_attach_shutdown",
+                            )
+                    finally:
+                        # Unbind once the TUI is gone: nothing renders a message after that.
+                        # Unbinding first would hold TUI termination behind a hung send.
+                        await self._unbind_route(route_stack)
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
