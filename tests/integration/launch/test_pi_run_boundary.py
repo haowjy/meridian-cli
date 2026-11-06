@@ -275,3 +275,263 @@ async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
         await serve.streaming_serve("pi", "hello", model="pi-test")
     assert caught.value is (run_error if run_fails else identity_error)
     assert order == ["run", "conclude", "cleanup"]
+
+from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.session_target import resolve_transcript_source
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.integration.launch.test_pi_identity_launch import context
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["same", "switch", "switch-missing", "restart", "mismatch", "truncated"],
+)
+def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
+    root = pi_runtime
+    install_boundary_shim(root, shape)
+    launch_context = context(root)
+    outcome = run_harness_process(
+        launch_context,
+        HarnessRegistry.with_defaults(),
+        prepared=launch_context.prepared,
+    )
+    assert outcome.primary_spawn_id is not None and outcome.chat_id is not None
+    runtime = root / ".meridian"
+    row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
+    assert row is not None
+    entry = session_store.chat_record(runtime, outcome.chat_id)
+    assert entry is not None
+    assert row.chat_id == outcome.chat_id
+    assert entry.harness_session_id != "switched-id"
+    assert outcome.exit_code == (1 if shape == "mismatch" else 0)
+    expected = (
+        "verified"
+        if shape in {"same", "switch"}
+        else "mismatch"
+        if shape == "mismatch"
+        else "unresolved"
+    )
+    assert (row.run_boundary.status if row.run_boundary else None) == expected
+    meta = json.loads(launch_paths(runtime, row.id).primary_meta.read_text())
+    assert "exit_identity" not in meta
+    if shape == "mismatch":
+        assert_entry_mismatch(runtime, row.id, entry)
+    if shape == "same":
+        assert row.current_chat_id == row.chat_id
+    if shape == "switch":
+        assert row.current_chat_id != row.chat_id
+        exit_chat = session_store.chat_record(runtime, row.current_chat_id or "")
+        assert exit_chat is not None and exit_chat.harness_session_id == "switched-id"
+        spawn_reference = resolve_session_reference(
+            root,
+            row.id,
+            runtime_root=runtime,
+        )
+        chat_reference = resolve_session_reference(
+            root,
+            entry.chat_id,
+            runtime_root=runtime,
+        )
+        assert spawn_reference.authoritative_harness_session_id == "switched-id"
+        assert chat_reference.authoritative_harness_session_id == entry.harness_session_id
+    if shape == "switch-missing":
+        assert row.run_boundary is not None and row.current_chat_id is None
+        assert row.chat_id == outcome.chat_id
+        assert row.status == "succeeded"
+        assert all(
+            record.harness_session_id != "switched-id"
+            for record in session_store.list_all_session_records(runtime)
+        )
+    if shape != "mismatch":
+        target = resolve_transcript_source(
+            ref=row.id,
+            file_path=None,
+            project_root=root,
+            runtime_root=runtime,
+        )
+        expected_id = "switched-id" if shape == "switch" else entry.harness_session_id
+        assert target.source.session_id == expected_id
+        assert ("entry chat" in (target.view_label or "")) == (
+            shape in {"restart", "truncated", "switch-missing"}
+        )
+
+
+@pytest.mark.parametrize(
+    "shape,expected_id",
+    [
+        ("switch", "switched-id"),
+        ("switch-missing", "entry"),
+    ],
+)
+def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
+    pi_runtime: Path,  # noqa: F811
+    shape: str,
+    expected_id: str,
+) -> None:
+    root = pi_runtime
+    install_boundary_shim(root, shape)
+    runtime = resolve_project_runtime_root_for_write(root)
+    _primary_cli(root)
+    row = spawn_store.list_spawns(runtime).records[0]
+    assert row is not None and row.chat_id is not None
+
+    continued = _primary_cli(root, continue_ref=row.id, dry_run=True)
+    forked = _primary_cli(root, fork_ref=row.id, dry_run=True)
+    chat_continued = _primary_cli(root, continue_ref=row.chat_id, dry_run=True)
+
+    target_chat_id = row.current_chat_id if shape == "switch" else row.chat_id
+    target_record = session_store.chat_record(runtime, target_chat_id or "")
+    entry_record = session_store.chat_record(runtime, row.chat_id)
+    assert target_record is not None and target_record.native_store is not None
+    assert entry_record is not None and entry_record.native_store is not None
+    target_file = Path(target_record.native_store) / (
+        f"2_{expected_id}.jsonl"
+        if expected_id == "switched-id"
+        else f"1_{target_record.harness_session_id}.jsonl"
+    )
+    entry_file = Path(entry_record.native_store) / f"1_{entry_record.harness_session_id}.jsonl"
+    for projected in (continued, forked):
+        assert str(target_file) in projected.command
+        if shape == "switch":
+            assert str(entry_file) not in projected.command
+    assert str(entry_file) in chat_continued.command
+    if shape == "switch":
+        assert str(target_file) not in chat_continued.command
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "switch",
+        "mismatch",
+        "header-missing",
+        "header-poisoned",
+        "late-quit",
+        "connection-switch",
+    ],
+)
+async def test_rpc_post_attempt_boundary(
+    pi_runtime: Path,  # noqa: F811
+    shape: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    from meridian.lib.core.domain import Spawn
+    from meridian.lib.core.types import ModelId, SpawnId
+    from meridian.lib.launch.session_scope import session_scope
+    from meridian.lib.launch.streaming_runner import execute_with_streaming
+    from meridian.lib.launch.types import PrimarySessionMetadata
+
+    root = pi_runtime
+    install_boundary_shim(root, shape)
+    if shape == "connection-switch":
+        from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+
+        original_stop = PiRpcConnection.stop
+
+        async def stop(connection, **kwargs):
+            result = await original_stop(connection, **kwargs)
+            connection._session_id = "switched-id"
+            return result
+
+        monkeypatch.setattr(PiRpcConnection, "stop", stop)
+    if shape.startswith("header-"):
+        shim = root.parent / "fake-bin" / "pi"
+        text = shim.read_text().replace("header_id=$id", "header_id=wrong-entry")
+        if shape == "header-missing":
+            text = text.replace(
+                'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+                'rm "$_MERIDIAN_PI_SESSION_BOUNDARY_PATH"\nif [ "$rpc" != "rpc" ]; then exit 0; fi',
+            )
+        else:
+            text = text.replace('"invalid_reason":null', '"invalid_reason":"poison"')
+        shim.write_text(text)
+    ctx = context(root, primary=False)
+    run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("pi-test"), status="queued")
+    spawn_store.start_spawn(
+        ctx.runtime_root,
+        spawn_id=run.spawn_id,
+        chat_id="",
+        model="pi-test",
+        agent="",
+        harness="pi",
+        kind="streaming",
+        prompt="hello",
+        status="queued",
+    )
+    env = dict(ctx.binding.environment.final_env)
+    prepared = ctx.harness.prepare_prelaunch(
+        launch=launch_paths(ctx.runtime_root, "p42"),
+        identity=None,
+        child_cwd=root,
+        child_env=env,
+        resolved_harness_session_id="",
+    )
+    env.update(prepared.env_overrides)
+    ctx = replace(
+        ctx,
+        binding=replace(
+            ctx.binding,
+            environment=replace(
+                ctx.binding.environment,
+                final_env=MappingProxyType(env),
+            ),
+        ),
+    )
+    with session_scope(
+        launch_slot=LaunchSlot(),
+        runtime_root=ctx.runtime_root,
+        metadata=PrimarySessionMetadata(
+            harness="pi",
+            model="pi-test",
+            agent="",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
+        request=ctx.request.session,
+        spawn_id="p42",
+        startup_attempt_id="boundary-test",
+    ) as managed:
+        code = await asyncio.wait_for(
+            execute_with_streaming(
+                run,
+                request=ctx.request,
+                launch_context=ctx,
+                project_root=root,
+                launch=launch_paths(ctx.runtime_root, run.spawn_id),
+                session_attempt=managed,
+            ),
+            20,
+        )
+        assert code == (0 if shape in {"switch", "late-quit", "connection-switch"} else 1)
+        entry = session_store.chat_record(ctx.runtime_root, managed.chat_id)
+        assert entry is not None and entry.harness_session_id not in {"wrong-entry", "switched-id"}
+        if shape == "mismatch":
+            assert_entry_mismatch(ctx.runtime_root, "p42", entry)
+            return
+        if shape.startswith("header-"):
+            row = spawn_store.get_spawn(ctx.runtime_root, "p42")
+            assert row is not None and row.terminal is not None
+            assert row.terminal.error == "entry_mismatch"
+            assert row.run_boundary is not None
+            assert row.current_chat_id is None
+            assert row.run_boundary.status == "mismatch"
+            events = [
+                json.loads(line)
+                for line in (ctx.runtime_root / "sessions.jsonl").read_text().splitlines()
+            ]
+            assert not any(event.get("kind") == "invocation_started" for event in events)
+            return
+        row = spawn_store.get_spawn(ctx.runtime_root, "p42")
+        assert row is not None and row.run_boundary is not None
+        assert row.run_boundary.status == "verified"
+        assert row.chat_id == managed.chat_id
+        assert row.current_chat_id not in {None, managed.chat_id}

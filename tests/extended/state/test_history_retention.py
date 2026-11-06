@@ -445,3 +445,66 @@ def test_failed_retirement_sync_is_repaired_before_gc_and_ack(tmp_path: Path, mo
     assert not recover_archives(root, destination)
     assert any(receipt.event == "reclaimed" for receipt in read_receipts(root))
     assert verify_archive(Path(result.archives[0])).records
+
+
+def test_unavailable_current_digest_never_falls_back_to_older_snapshot(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import capture_record, publish_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+    old = capture_record(
+        root / "spawns" / key,
+        state.model_copy(update={"prompt": None}),
+        None,
+        state.terminal.finished_at,
+    )
+    first = publish_archive(root, tmp_path / "older", (old,))
+    spawn_store.update_spawn(root, key, work_id="newer snapshot")
+    archive_history(root, destination=tmp_path / "current", refs=(key,), apply=True)
+    index = HistoryIndex(root)
+    assert len(index.snapshots()) == 2
+    (tmp_path / "current").rename(tmp_path / "offline")
+    with pytest.raises(FileNotFoundError):
+        _selected_archive_locations(index, str(state.history_id))
+    assert (tmp_path / "older" / first.zip_name).exists()
+
+
+def test_selective_restore_does_not_select_unrequested_snapshots(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import capture_record, import_archive, publish_archive
+
+    root = tmp_path / "runtime"
+    keys = (_terminal(root), _terminal(root))
+    records = []
+    for key in keys:
+        state = spawn_store.get_spawn(root, key)
+        assert state is not None and state.terminal is not None
+        records.append(
+            capture_record(
+                root / "spawns" / key,
+                state.model_copy(update={"prompt": None}),
+                None,
+                state.terminal.finished_at,
+            )
+        )
+    older = publish_archive(root, tmp_path / "older", tuple(records))
+    spawn_store.update_spawn(root, keys[1], work_id="current-second")
+    state = spawn_store.get_spawn(root, keys[1])
+    assert state is not None and state.terminal is not None
+    current = capture_record(
+        root / "spawns" / keys[1],
+        state.model_copy(update={"prompt": None}),
+        None,
+        state.terminal.finished_at,
+    )
+    newer = publish_archive(root, tmp_path / "newer", (current,))
+    fresh = tmp_path / "fresh"
+    import_archive(fresh, tmp_path / "newer" / newer.zip_name)
+    restore_archive(fresh, tmp_path / "older" / older.zip_name, (str(records[0].history_id),))
+    assert (
+        _selected_archive_locations(HistoryIndex(fresh), str(current.history_id))[0]
+        .receipt.records[0]
+        .state.work_id
+        == "current-second"
+    )

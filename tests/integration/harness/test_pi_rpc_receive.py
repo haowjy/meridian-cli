@@ -127,7 +127,29 @@ async def test_large_frame_preserves_tool_output_and_next_response(
             await events.aclose()
 
 
-
-
-
-
+@pytest.mark.asyncio
+async def test_large_prompt_and_startup_frame_do_not_block_each_other(tmp_path: Path) -> None:
+    startup = (
+        "print(json.dumps({'type':'session','id':'startup','data':'x'*(512*1024)}),flush=True)"
+    )
+    body = (
+        "print(json.dumps({'type':'response','command':'prompt',"
+        "'id':command['id'],'success':True}),flush=True)"
+    )
+    async with rpc_process(
+        tmp_path,
+        body,
+        startup=startup,
+        prompt="x" * (512 * 1024),
+        timing=PiRpcTimingPolicy(
+            prompt_ack_timeout_seconds=1, abort_grace_seconds=0.05, kill_grace_seconds=0.05
+        ),
+    ) as connection:
+        events = connection.events()
+        try:
+            while (event := await asyncio.wait_for(anext(events), 1)).event_type != "response":
+                pass
+            assert event.payload["success"] is True
+            assert connection.session_id == "startup"
+        finally:
+            await events.aclose()

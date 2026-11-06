@@ -143,3 +143,31 @@ def test_opencode_transcript_resolution_uses_exact_storage_store(
             config_root_hint=storage_root,
         )
     assert caught.value.reason == "ambiguous_native_file"
+
+
+def test_claude_adapter_does_not_resolve_session_from_prefixed_child_project_slug(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    child_cwd = project_root / ".meridian" / "spawns" / "p1"
+    child_cwd.mkdir(parents=True)
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+
+    session_id = str(uuid4())
+    child_project_dir = fake_home / ".claude" / "projects" / project_slug(child_cwd)
+    child_project_dir.mkdir(parents=True)
+    child_session_path = child_project_dir / f"{session_id}.jsonl"
+    child_session_path.write_text(
+        json.dumps({"type": "agent-setting", "sessionId": session_id}) + "\n",
+        encoding="utf-8",
+    )
+
+    adapter = ClaudeAdapter()
+    assert adapter.resolve_session_file(project_root=project_root, session_id=session_id) is None
+    assert (
+        adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is False
+    )
+    assert child_session_path.exists()

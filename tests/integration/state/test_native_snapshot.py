@@ -221,3 +221,17 @@ def test_later_reserved_marker_never_becomes_complete_transcript(
     assert validation.descriptor is None
 
 
+def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
+    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
+    from meridian.lib.ops.session_transcript import SessionLogRoute, parse_session_target
+
+    path = tmp_path / "copied-native.jsonl"
+    _snapshot(path)  # Valid empty snapshot for native-1, not selected-native.
+    target = SessionLogTarget(TranscriptSource.native("pi", "selected-native", path))
+    with pytest.raises(ValueError, match="binding"):
+        parse_session_target(
+            project_root=tmp_path,
+            runtime_root=None,
+            target=target,
+            route=SessionLogRoute("ref", "selected-native"),
+        )

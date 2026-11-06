@@ -214,4 +214,60 @@ def test_collision_refuses_before_exec(
         context(pi_runtime, primary=primary)
     assert not (pi_runtime.parent / "argv").exists()
 
+from meridian.lib.launch.process.runner import run_harness_process
 
+
+@pytest.mark.parametrize("fork", [False, True])
+@pytest.mark.parametrize("behavior", ["ok", "mismatch", "wrong-parent"])
+def test_resume_and_fork_use_verified_absolute_source(
+    pi_runtime: Path,
+    fork: bool,
+    behavior: str,
+) -> None:
+    root = pi_runtime
+    install_shim(root)
+    first_context = context(root)
+    first = run_harness_process(
+        first_context,
+        HarnessRegistry.with_defaults(),
+        prepared=first_context.prepared,
+    )
+    assert first.chat_id is not None
+    native_id, store = assert_prebound(root, first.chat_id)
+    before = session_store.chat_record(root / ".meridian", first.chat_id)
+    source = store / f"1_{native_id}.jsonl"
+    install_shim(root, behavior=behavior)
+    resumed_context = context(
+        root,
+        session=SessionRequest(
+            requested_harness_session_id=native_id,
+            continue_chat_id=first.chat_id,
+            source_native_store=str(store),
+            continue_fork=fork,
+            primary_session_mode="fork" if fork else "resume",
+        ),
+    )
+    outcome = run_harness_process(
+        resumed_context,
+        HarnessRegistry.with_defaults(),
+        prepared=resumed_context.prepared,
+    )
+    argv = (root.parent / "argv").read_text().splitlines()
+    assert argv[argv.index("--fork" if fork else "--session") + 1] == str(source)
+    assert native_id not in argv
+    if fork:
+        assert outcome.chat_id != first.chat_id
+        assert outcome.chat_id is not None
+        new_id, _ = assert_prebound(root, outcome.chat_id)
+        assert new_id != native_id
+    else:
+        assert "--session-id" not in argv
+    after = session_store.chat_record(root / ".meridian", first.chat_id)
+    assert before is not None and after is not None
+    assert (after.harness_session_id, after.native_store) == (
+        before.harness_session_id,
+        before.native_store,
+    )
+    assert outcome.exit_code == (
+        1 if behavior == "mismatch" or (fork and behavior == "wrong-parent") else 0
+    )

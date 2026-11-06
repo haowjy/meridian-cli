@@ -181,3 +181,14 @@ def test_append_durable_jsonl_line_rejects_failed_repair_without_losing_next_eve
 
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"id": 1, "kind": "start"}, {"id": 3, "kind": "new"}]
+
+
+def test_append_durable_jsonl_line_preserves_complete_row_missing_newline(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    complete = '{"id":1,"kind":"complete"}'
+    path.write_bytes(complete.encode())
+
+    append_durable_jsonl_line(path, '{"id":2,"kind":"new"}')
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [{"id": 1, "kind": "complete"}, {"id": 2, "kind": "new"}]
