@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -48,7 +48,8 @@ class FakeResidentBackendControl:
         self.awaiting_done_values: list[bool] = []
         self.status: LivenessDecision = LivenessDecision.CONTINUE
         self.injected_messages: list[str] = []
-        self.fail_inject: bool = False
+        self.inject_error: Exception | None = None
+        self.inject_attempts = 0
 
     def health_status(self) -> LivenessDecision:
         return self.status
@@ -57,8 +58,9 @@ class FakeResidentBackendControl:
         self.awaiting_done_values.append(awaiting)
 
     async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject:
-            raise DeliveryRefused("inject failed")
+        self.inject_attempts += 1
+        if self.inject_error is not None:
+            raise self.inject_error
         self.injected_messages.append(message)
 
 
