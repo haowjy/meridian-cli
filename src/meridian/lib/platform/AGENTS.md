@@ -6,10 +6,13 @@ process-scope, signals, paths) are untested legacy: don't add or expand them, an
 `IS_WINDOWS`/`IS_POSIX` rather than inline `sys.platform`.
 
 Layers: detection and primitives (`__init__.py`, `locking.py`, `terminate.py`,
-`launch_gate.py`), and process containment (`process_scope/`).
+`launch_gate.py`, `python_module.py`), and process containment (`process_scope/`).
 
 ## Rules
 
+- **Re-exec this package through `python_module.module_argv`.** It passes `-P` so a
+  `meridian/` directory in the project cannot shadow the package. Never build
+  `[sys.executable, "-m", "meridian..."]` by hand.
 - **Keep OS-specific imports here.** `fcntl`, `pty`, `termios`, `tty` (POSIX) and `msvcrt`
   (Windows) are imported elsewhere only through the deferred proxies
   (`from meridian.lib.platform import fcntl, pty`) or a function-local import; never a

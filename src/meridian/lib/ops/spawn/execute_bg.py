@@ -3,7 +3,6 @@
 import argparse
 import asyncio
 import os
-import sys
 from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -19,6 +18,7 @@ from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.platform.python_module import module_argv
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot, adopt_handoff, take_handoff_fd
@@ -86,16 +86,16 @@ def _build_background_worker_command(
     spawn_id: SpawnId,
     project_paths: Any,
 ) -> tuple[str, ...]:
-    return (
-        sys.executable,
-        "-m",
-        "meridian.lib.ops.spawn.execute_bg",
-        "--spawn-id",
-        str(spawn_id),
-        "--project-root",
-        project_paths.project_root.as_posix(),
-        "--runtime-root",
-        str(runtime_root),
+    return tuple(
+        module_argv(
+            "meridian.lib.ops.spawn.execute_bg",
+            "--spawn-id",
+            str(spawn_id),
+            "--project-root",
+            project_paths.project_root.as_posix(),
+            "--runtime-root",
+            str(runtime_root),
+        )
     )
 
 
