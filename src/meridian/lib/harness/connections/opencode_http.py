@@ -254,7 +254,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         # True once ``events()`` has returned: nothing reads the stream, so a
         # failed cancel must leave ``stopping`` in place (see ``send_cancel``).
         self._events_exited = False
@@ -598,7 +597,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             agent=spec.agent_name,
         )
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._events_exited = False
         self._event_queue = asyncio.Queue()
         self._queue_waiter = None
@@ -661,7 +659,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         await self._cleanup_runtime()
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._transition("stopped")
         return StopResult()
 
@@ -677,7 +674,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
-        self._signal_in_flight = False
         await self._post_session_message(text)
         return DeliveryKind.ACKNOWLEDGED
 
@@ -692,7 +688,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # the SSE read, so a later terminal (V1 ``session.idle`` reads as
         # SUCCEEDED and outranks ``cancel_sent``) is never read. A failed POST
         # undoes it, so a retry sends again.
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         try:
@@ -702,7 +697,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 accepted_statuses=self._ACTION_SUCCESS_STATUSES,
             )
         except BaseException:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
             # Roll back only while the drain is alive and ``stop()`` has not
             # taken over: otherwise ``stopping`` is the truth (no reader, or a
@@ -1633,7 +1627,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     async def _ensure_http_client(self) -> aiohttp.ClientSession:
@@ -1675,7 +1668,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_path = None
         self._last_health_ok = False
         self._cancel_requested = False
-        self._signal_in_flight = False
         try:
             await self._cancel_request_dispatch_tasks()
             await self._clear_stale_pending_requests(reason="connection_stopped")

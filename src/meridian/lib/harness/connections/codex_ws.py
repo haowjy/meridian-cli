@@ -248,7 +248,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id: str | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._event_stream_ended = False
@@ -382,7 +381,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id = None
         self._liveness.reset()
         self._cancel_requested = False
-        self._signal_in_flight = False
 
         host = config.ws_bind_host
         port = config.ws_port if config.ws_port > 0 else _reserve_port(host)
@@ -552,7 +550,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._ws is None or not _ws_is_open(self._ws):
             # A send on a closed websocket writes nothing.
             raise TransportDead("Codex websocket is closed")
-        self._signal_in_flight = False
         thread_id = self._require_thread_id("send_user_message")
         if self._current_turn_id:
             try:
@@ -587,7 +584,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._require_connected("send_cancel")
 
         self._cancel_requested = True
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._close_ws()
@@ -979,7 +975,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             self._thread_id = None
             self._cancel_requested = False
-            self._signal_in_flight = False
             self._launch_spec = None
             self._codex_home = None
             self._startup_emitter = None
@@ -1434,13 +1429,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id
             self._liveness.signal_turn_started(turn_id)
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
             self._end_current_turn()
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def _end_current_turn(self) -> None:

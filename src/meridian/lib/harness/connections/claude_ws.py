@@ -35,7 +35,6 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
-from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
@@ -106,7 +105,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_stream_started = False
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._startup_emitter: StartupPhaseEmitter | None = None
 
     @property
@@ -157,7 +155,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             agent=spec.agent_name,
         )
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._set_state("starting")
 
         try:
@@ -195,7 +192,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             await self._cleanup_resources(terminate_process=True)
             self._cancel_requested = False
-            self._signal_in_flight = False
             self._set_state("stopped")
             return StopResult()
 
@@ -206,7 +202,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
-        self._signal_in_flight = False
         await self._send_user_turn(text)
         # Claude replies to no stdin frame: the write finishing is all we know.
         return DeliveryKind.POSTED
@@ -219,12 +214,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = True
             return
         self._ensure_connected()
-        self._signal_in_flight = True
         self._set_state("stopping")
         try:
             await self._signal_process(signal.SIGINT)
         except Exception:
-            self._signal_in_flight = False
             self._set_state("connected")
             raise
         self._cancel_requested = True
@@ -304,10 +297,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._state,
                 f"Claude connection is not ready (state={self._state}); expected 'connected'.",
             )
-
-    def observe_event_semantics(self, semantics: EventSemantics) -> None:
-        if semantics.clears_signal:
-            self._signal_in_flight = False
 
     def _set_state(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
