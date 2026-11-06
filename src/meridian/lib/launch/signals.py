@@ -13,7 +13,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from threading import Lock, RLock, current_thread, main_thread
 from types import FrameType
-from typing import Final, Protocol, cast
+from typing import Final, Protocol, cast, overload
 
 # ---------------------------------------------------------------------------
 # Signal forwarding
@@ -23,18 +23,17 @@ TARGET_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGINT, signal.SIGTE
 # Deferred for the length of a ``mask_termination`` section, then re-delivered. A closing
 # terminal sends SIGHUP, which would otherwise kill a runner halfway through its terminal write.
 TERMINATION_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGTERM, signal.SIGHUP)
+MASKED_SIGNALS: Final[tuple[signal.Signals, ...]] = (*TARGET_SIGNALS, *TERMINATION_SIGNALS)
 
 
+@overload
+def signal_to_exit_code(received_signal: signal.Signals) -> int: ...
+@overload
+def signal_to_exit_code(received_signal: None) -> None: ...
 def signal_to_exit_code(received_signal: signal.Signals | None) -> int | None:
-    """Map forwarded signal to documented meridian exit code."""
+    """Shell convention for death by signal: 128 + signal number."""
 
-    if received_signal == signal.SIGINT:
-        return 130
-    if received_signal == signal.SIGTERM:
-        return 143
-    if received_signal == signal.SIGHUP:
-        return 129
-    return None
+    return None if received_signal is None else 128 + received_signal.value
 
 
 class SignalReceiver(Protocol):
@@ -117,7 +116,7 @@ class SignalCoordinator:
 
     @contextmanager
     def mask_termination(self) -> Generator[None, None, None]:
-        """Defer SIGTERM and SIGHUP while executing a critical section.
+        """Defer SIGINT, SIGTERM and SIGHUP while executing a critical section.
 
         A signal that arrives inside is re-delivered on exit, so it is delayed, not lost.
         Handlers can only be changed from the main thread, so elsewhere this does nothing
@@ -147,7 +146,7 @@ class SignalCoordinator:
         for receiver in self._receivers:
             desired.update(receiver.target_signals)
         if self._termination_mask_depth > 0:
-            desired.update((*TARGET_SIGNALS, *TERMINATION_SIGNALS))
+            desired.update(MASKED_SIGNALS)
         return desired
 
     def _reconcile_handlers_locked(self) -> None:
@@ -193,7 +192,7 @@ class SignalCoordinator:
     def _on_signal(self, raw_signum: int, frame: FrameType | None) -> None:
         signum = signal.Signals(raw_signum)
         with self._lock:
-            if signum in TERMINATION_SIGNALS and self._termination_mask_depth > 0:
+            if signum in MASKED_SIGNALS and self._termination_mask_depth > 0:
                 self._deferred_termination.append(signum)
                 return
             receivers = tuple(

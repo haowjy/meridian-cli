@@ -618,7 +618,7 @@ class SpawnApplicationService:
             launch,
             CancelIntent(
                 requested_at=RealClock().utc_now_iso(),
-                exit_code=130,
+                exit_code=128 + signal.SIGTERM.value,
                 error="cancelled",
                 requested_by=requested_by,
             ),

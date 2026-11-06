@@ -548,3 +548,33 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
     assert row.status == "succeeded"
     assert row.terminal.input_tokens == 7
     assert "surviving report" in launch_paths(context.runtime_root, row.id).report.read_text()
+
+
+def test_keyboard_interrupt_in_black_box_wait_finalizes_cancelled_130(tmp_path: Path) -> None:
+    context, registry = _build_primary_launch_context(
+        project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5"
+    )
+
+    def interrupted_child(
+        command,
+        cwd,
+        env,
+        output_log_path,
+        process_launcher,
+        on_child_started,
+        launcher_diagnostics_path,
+    ):
+        _ = command, cwd, env, output_log_path, launcher_diagnostics_path
+        on_child_started(ProcessIdentity(446, 100.0, 446))
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_harness_process(
+            context,
+            registry,
+            prepared=context.prepared,
+            run_primary_process_with_capture_fn=interrupted_child,
+        )
+    row = list_spawns(context.runtime_root).records[0]
+    assert row.status == "cancelled"
+    assert row.terminal.exit_code == 130

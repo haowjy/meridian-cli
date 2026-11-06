@@ -224,15 +224,13 @@ class PrimaryAttachLauncher:
         self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
-        self._signal_cancel_requested = False
-        self._signal_exit_code = 130
+        self._received_signal: signal.Signals | None = None
 
     def _request_signal_cancel(self, signum: signal.Signals) -> None:
         """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
-        if not self._signal_cancel_requested:
-            self._signal_exit_code = signal_to_exit_code(signum) or 130
-        self._signal_cancel_requested = True
+        if self._received_signal is None:
+            self._received_signal = signum
         running = self._running_process
         if running is not None:
             running.cancel_wait()
@@ -316,8 +314,7 @@ class PrimaryAttachLauncher:
 
         if not self._durable:
             self._launch.dir.mkdir(parents=True, exist_ok=True)
-        self._signal_cancel_requested = False
-        self._signal_exit_code = 130
+        self._received_signal = None
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
             callback=self._request_signal_cancel,
@@ -387,7 +384,7 @@ class PrimaryAttachLauncher:
                         terminal_fds=window.terminal_fds,
                     )
                     self._running_process = running_process
-                    if self._signal_cancel_requested:
+                    if self._received_signal is not None:
                         # A signal arrived during backend startup; honor it now that the
                         # TUI process exists.
                         running_process.cancel_wait()
@@ -407,7 +404,8 @@ class PrimaryAttachLauncher:
                     launched = await asyncio.shield(launch_task)
                     # A pane close can make the TUI return zero. Observation order,
                     # not its exit code, distinguishes cancellation from normal quit.
-                    cancelled = self._signal_cancel_requested
+                    signal_exit_code = signal_to_exit_code(self._received_signal)
+                    cancelled = signal_exit_code is not None
                     if cancelled:
                         # The wait stopped on the signal; ensure the TUI scope is gone.
                         await self._stop_idle_task()
@@ -432,7 +430,7 @@ class PrimaryAttachLauncher:
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
-                exit_code=self._signal_exit_code if cancelled else launched.exit_code,
+                exit_code=launched.exit_code if signal_exit_code is None else signal_exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
@@ -440,7 +438,7 @@ class PrimaryAttachLauncher:
             )
         except Exception:
             telemetry.fail()
-            if self._signal_cancel_requested:
+            if self._received_signal is not None:
                 # A signal arrived before the TUI was interruptible (e.g. during
                 # backend startup) and startup failed. Honor the cancellation
                 # instead of surfacing a failure the fallback path would relaunch.
@@ -450,7 +448,7 @@ class PrimaryAttachLauncher:
                 )
                 return PrimaryAttachOutcome(
                     facts=self._facts,
-                    exit_code=self._signal_exit_code,
+                    exit_code=signal_to_exit_code(self._received_signal),
                     session_id=session_id,
                     tui_pid=None,
                     cancelled=True,

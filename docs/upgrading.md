@@ -13,7 +13,7 @@ status Meridian recorded for the session:
 | killed by signal N | `128+N` |
 | cancelled by SIGTERM to Meridian | `143` |
 | cancelled by SIGHUP to Meridian (closing terminal) | `129` |
-| cancelled by Ctrl-C | `130` |
+| SIGINT reaching Meridian | `130` |
 | Meridian could not record the session | nonzero |
 | `--dry-run` | `0` |
 
@@ -33,6 +33,15 @@ A supervisor stop used to read as Ctrl-C: SIGTERM and SIGHUP to Meridian exited 
 should also accept `143` and `129`; a spawn that Meridian cancelled has status `cancelled` whichever
 number it carries. Spawns recorded earlier with `130` stay valid and read as before. A harness that
 ends itself with SIGTERM also gives `143`; read the spawn's status to tell it from a cancel.
+
+`meridian spawn cancel` sends SIGTERM, so its recorded intent is now `143`, not `130`. That shows
+for `--force` on a live primary, and for any spawn whose runner is already gone when it is cancelled;
+a spawn whose runner receives the SIGTERM already stored `143`.
+
+A SIGINT that reaches Meridian (`kill -INT`, or a redirected stdin) now stores `130` and ends
+`cancelled`; before, it exited `130` but stored `2` and ended `failed`. A terminal Ctrl-C normally
+goes to the harness, not Meridian, so the result is the harness's own. A Ctrl-C during shutdown can
+still give shell `130` with a different stored result.
 
 This change writes no new on-disk state. Rollback has not been probed.
 

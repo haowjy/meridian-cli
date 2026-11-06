@@ -46,7 +46,7 @@ snapshots. Register any new launcher in `select_process_launcher()`.
 - **Native job control belongs to the shell.** Drivers enter `native_sigint_shield()`;
   SIGTSTP is left alone; the native gate sends one root TERM, never a group signal.
 - **Signal receivers only latch.** Every primary path registers a SIGTERM/SIGHUP
-  `SignalCallbackReceiver` with `escalate_on_repeat`, reports `cancelled`, exits 130. The
+  `SignalCallbackReceiver` with `escalate_on_repeat`, reports `cancelled`, exits and stores `128+signal` (143, 129). A SIGINT that reaches Meridian is a `KeyboardInterrupt`; the outer `except` records 130 `cancelled`. The
   callback runs between bytecodes, so no non-reentrant lock: no `LaunchGate` call, no
   `Event.set()`. Latch a bool and act from a main-thread poll. Dead-tty cleanup catches
   `OSError` **and** `termios.error`. See [.context/CONTEXT.md](.context/CONTEXT.md).

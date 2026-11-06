@@ -235,15 +235,13 @@ def run_primary_process_with_capture(
     on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
 ) -> PrimaryProcessResult:
-    cancelled = False
-    cancel_exit_code = 130
+    received_signal: signal.Signals | None = None
     wait_completed = False
 
     def request_cancel(signum: signal.Signals) -> None:
-        nonlocal cancelled, cancel_exit_code
-        if not wait_completed and not cancelled:
-            cancelled = True
-            cancel_exit_code = signal_to_exit_code(signum) or 130
+        nonlocal received_signal
+        if not wait_completed and received_signal is None:
+            received_signal = signum
 
     cancel_receiver = SignalCallbackReceiver(
         target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -295,10 +293,10 @@ def run_primary_process_with_capture(
             try:
                 wait_thread.start()
                 while not wait_finished.wait(0.1):
-                    if cancelled and not terminate_requested:
+                    if received_signal is not None and not terminate_requested:
                         terminate_requested = True
                         running.terminate()
-                    if cancelled and not cancel_wait_requested:
+                    if received_signal is not None and not cancel_wait_requested:
                         cancel_wait_requested = True
                         running.cancel_wait()
             except BaseException:
@@ -321,11 +319,12 @@ def run_primary_process_with_capture(
     finally:
         coordinator.unregister_receiver(cancel_receiver)
 
+    signal_exit_code = signal_to_exit_code(received_signal)
     return PrimaryProcessResult(
-        exit_code=cancel_exit_code if cancelled else launched.exit_code,
+        exit_code=launched.exit_code if signal_exit_code is None else signal_exit_code,
         pid=launched.pid,
         launcher_diagnostics_path=window.captured_path,
-        cancelled=cancelled,
+        cancelled=signal_exit_code is not None,
     )
 
 
@@ -1130,6 +1129,11 @@ def run_harness_process(
                         primary_spawn_id,
                         exit_code=exit_code,
                     )
+            except KeyboardInterrupt:
+                # SIGINT that reaches Meridian is a cancel: record what the shell will see.
+                exit_code = signal_to_exit_code(signal.SIGINT)
+                cancelled = True
+                raise
             except NativeIdentityError as exc:
                 identity_error = exc
                 exit_code = 1
