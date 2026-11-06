@@ -11,7 +11,12 @@ Initial-prompt rejection remains spawn-fatal.
 own helper threads (titles, memory) to every client with `thread/started`, and the TUI can
 open others; `_update_turn_state` ignores events for any thread but its own. Taking an
 announced id as its own sent `turn/steer` and `turn/start` to a thread the TUI is not on
-(`thread not found`).
+(`thread not found`). The same announcements are the only sign the TUI moved (the observer gets
+no turn events for threads it did not start): `_note_tui_thread` latches a non-ephemeral,
+parentless `thread/started`, or an idle/active status or goal event for an id never announced as
+a helper, and the connection then refuses sends. A misread helper would kill the route for the
+session, so `thread/closed` and `notLoaded` never count. OpenCode latches the same way on a
+parentless `session.created` with another id (`_note_session_created`, V1 and V2 event shapes).
 
 `PiRpcConnection` owns one receive task from successful startup through stop.
 Reception resolves prompt ACKs and observes protocol readiness independently of
