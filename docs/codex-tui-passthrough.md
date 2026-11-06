@@ -58,11 +58,11 @@ Roots are deduplicated and resolved to absolute paths before projection. Paths t
 
 Managed primary sessions surface approval requests instead of auto-accepting or rejecting them.
 
-In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian's permission broker records it in the session's `permission_requests.jsonl` and publishes the transition to runtime consumers. A controller can then answer through the connection API.
+In the managed architecture Meridian and the TUI are both clients of the Codex app-server, and Meridian's connection stays open after the TUI attaches. As of Codex 0.164, a `*/requestApproval` JSON-RPC server request reaches every client on the thread: the TUI shows its own prompt, and whichever client answers first wins. When Meridian receives an approval or `item/tool/requestUserInput` request, its permission broker records it in the session's `permission_requests.jsonl` and publishes the transition to runtime consumers. A controller can then answer through the connection API.
 
 Key properties:
 
-- **Requests are surfaced, not auto-accepted.** Pending requests stay open until a controller responds or Codex times out.
+- **Requests are surfaced, not auto-accepted.** Pending requests stay open until the human answers in the TUI, a controller responds, or Codex times out.
 - **Subagent spawns fail closed.** The permission broker refuses requests immediately, journals the refusal, and does not route it to the parent session.
 - **Unsupported server request methods** (anything other than approval and user-input variants) still return a transport-level error.
 
@@ -118,8 +118,7 @@ The important condition is:
 Rollout materialization makes the thread technically resumable. Meridian also waits
 for the bootstrap turn to complete before handing the websocket endpoint to the TUI.
 Attaching during the bootstrap turn can strand the remote TUI in a stale `Working`
-state after the observer connection is displaced, which also prevents normal idle
-Ctrl+C exit behavior.
+state, which also prevents normal idle Ctrl+C exit behavior.
 
 If Codex exposes an atomic "completed turn handoff" signal, Meridian should prefer it
 over coordinating the rollout and completion signals separately. It should not improve
