@@ -82,8 +82,6 @@ def test_retention_preserves_spawn_owned_segments_for_live_spawns(tmp_path) -> N
     assert segment.exists()
 
 
-
-
 def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     valid_segment = write_segment(

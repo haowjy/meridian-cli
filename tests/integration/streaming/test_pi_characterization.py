@@ -60,5 +60,3 @@ async def test_pi_eof_during_stabilization_cannot_bypass_child_validation(
         assert coordinator.classify_outstanding_work().spawn_children is True
     finally:
         await coordinator.stop()
-
-

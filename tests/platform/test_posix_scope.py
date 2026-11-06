@@ -13,14 +13,17 @@ fully mocked — no real I/O.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import psutil
-import pytest
 
 from meridian.lib.platform.process_scope import posix
 from meridian.lib.platform.process_scope.base import CleanupResult
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # helpers

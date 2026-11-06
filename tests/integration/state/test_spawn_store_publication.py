@@ -4,30 +4,40 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.ops.pruning import (
     StaleSpawnArtifact,
     prune_stale_spawn_artifacts,
     scan_stale_spawn_artifacts,
 )
+from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import spawn_store as spawn_store_module
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.launch_lock import acquire as acquire_lock
+from meridian.lib.state.paths import LaunchPaths, RuntimePaths, launch_archive, resolve_spawn_dir
 from meridian.lib.state.spawn import repository as spawn_repository
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import LaunchRef, SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, read_state, scan_spawn_ids
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_store import (
+    LaunchInput,
     finalize_spawn,
     gc_abandoned_stages,
+    get_spawn,
+    reopen_spawn,
     start_spawn,
+    update_spawn,
 )
 
 
@@ -326,17 +336,6 @@ def test_delete_published_spawn_rejects_staging_container(tmp_path: Path) -> Non
         delete_published_spawn(runtime_root, ".staging", can_delete=lambda _row: True)
 
     assert staged_state.read_text(encoding="utf-8") == "in progress\n"
-
-import json
-import shutil
-from typing import Any
-from meridian.lib.core.domain import TokenUsage
-from meridian.lib.ops.spawn.query import detail_from_row
-from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.launch_lock import acquire as acquire_lock
-from meridian.lib.state.paths import LaunchPaths, launch_archive, resolve_spawn_dir
-from meridian.lib.state.spawn.model import LaunchRef
-from meridian.lib.state.spawn_store import LaunchInput, get_spawn, reopen_spawn, update_spawn
 
 
 def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> None:

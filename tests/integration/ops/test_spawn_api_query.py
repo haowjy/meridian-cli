@@ -89,5 +89,3 @@ def _write_primary_meta(
         + "\n",
         encoding="utf-8",
     )
-
-

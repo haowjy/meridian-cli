@@ -396,5 +396,3 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
     assert (result.returncode, result.stderr) == (0, "")
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
-
-

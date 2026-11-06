@@ -25,8 +25,6 @@ def _repo(tmp_path: Path) -> Path:
     return project_root
 
 
-
-
 def _build_workspace_launch_context(
     *,
     project_root: Path,
@@ -51,16 +49,6 @@ def _build_workspace_launch_context(
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
-
-
-
-
-
-
-
-
-
-
 
 
 def test_user_global_workspace_config_is_ignored_for_snapshot_and_launch(
@@ -90,9 +78,3 @@ def test_user_global_workspace_config_is_ignored_for_snapshot_and_launch(
         user_workspace_root.as_posix() not in arg
         for arg in runtime_ctx.binding.run_params.extra_args
     )
-
-
-
-
-
-

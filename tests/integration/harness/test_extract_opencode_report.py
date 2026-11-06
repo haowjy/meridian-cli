@@ -78,8 +78,6 @@ def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
         _resolve_session_continuation(request=request, harness=harness)
 
 
-
-
 def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, monkeypatch):
     """assistantMessageID joins session_message.id, in the recorded store only."""
     recorded, ambient = tmp_path / "recorded.db", tmp_path / "ambient.db"
@@ -117,8 +115,6 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
     assert extraction.harness_session_id == session
 
 
-
-
 @pytest.mark.parametrize("ids", [(), ("missing",), ("ses_other_msg_0",)])
 def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
     db = tmp_path / "native.db"
@@ -134,10 +130,6 @@ def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
         OPENCODE_EXTRACTOR.read_native_turn(NativeKey("opencode", str(db), "ses_owned"), ids)
         is None
     )
-
-
-
-
 
 
 def test_child_events_before_parent_user_do_not_supply_run_facts():

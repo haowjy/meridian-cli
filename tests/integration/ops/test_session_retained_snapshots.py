@@ -121,5 +121,3 @@ def test_imported_history_reads_zip_member_in_place(archived: Archived, tmp_path
     )
     assert again.selected == () and again.already_imported == (archived.history_id,)
     assert "Already imported: " + archived.history_id in again.format_text()
-
-

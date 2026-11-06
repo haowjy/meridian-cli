@@ -349,5 +349,3 @@ def lock_held(path: Path) -> bool:
         except BlockingIOError:
             return True
     return False
-
-

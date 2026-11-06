@@ -11,6 +11,7 @@ import pytest
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -213,8 +214,6 @@ def test_collision_refuses_before_exec(
     with pytest.raises(ValueError, match="native_identity_collision"):
         context(pi_runtime, primary=primary)
     assert not (pi_runtime.parent / "argv").exists()
-
-from meridian.lib.launch.process.runner import run_harness_process
 
 
 @pytest.mark.parametrize("fork", [False, True])

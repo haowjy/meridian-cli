@@ -91,5 +91,3 @@ def test_push_warn_and_missing_message_rendering() -> None:
         warn_email=False,
     )
     assert bare.body == "Cache expiry warning: reply to keep it warm\nMeridian"
-
-

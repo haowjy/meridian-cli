@@ -747,5 +747,3 @@ def test_complete_claude_key_projects_exact_resume_command(
 
     assert "--resume" in output.command
     assert native_id in output.command
-
-

@@ -120,5 +120,3 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
     assert row.status in {"succeeded", "failed"}
     assert row.terminal is not None
     assert row.terminal.duration_secs in {10.0, 99.0}
-
-

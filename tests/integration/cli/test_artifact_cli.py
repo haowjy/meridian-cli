@@ -35,19 +35,11 @@ def test_teardown_is_surgically_scoped_to_slug(monkeypatch: pytest.MonkeyPatch) 
     assert commands == [["serve", "--https=50000", "--set-path=/my-report", "off"]]
 
 
-
-
-
-
-
-
 class _FakeProcess:
     pid = 4242
 
     def poll(self) -> None:
         return None
-
-
 
 
 def _serve(
@@ -60,18 +52,6 @@ def _serve(
     process_created_at: float | None = 1000.0,
 ) -> Serve:
     return Serve(slug, port, "/tmp", None, created, ttl, False, pid, process_created_at)
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @pytest.mark.integration
@@ -130,8 +110,6 @@ def test_prefix_static_server_serves_tailscale_forwarded_paths(tmp_path: Path) -
         proc.wait(timeout=2)
 
 
-
-
 @pytest.mark.parametrize("slug", ["", "/", "..", "a/b", " white ", "a--b", "x\nroot"])
 def test_invalid_persisted_slugs_are_dropped_without_tailscale_calls(
     slug: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -176,8 +154,6 @@ def test_tailscale_boundaries_reject_invalid_slug_without_subprocess(
         service._tailscale_register(50000, "", funnel=False)
     with pytest.raises(service.ArtifactError):
         service.tailscale_off("/", 50000, funnel=False)
-
-
 
 
 def test_stop_failure_preserves_entry_and_pid(
@@ -232,8 +208,6 @@ def test_failed_post_registration_rollback_persists_recovery_entry(
     assert [item.slug for item in store.load_serves()] == ["recovery"]
 
 
-
-
 def test_pid_birth_epoch_is_passed_to_termination(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[int, float]] = []
     monkeypatch.setattr(
@@ -243,8 +217,6 @@ def test_pid_birth_epoch_is_passed_to_termination(monkeypatch: pytest.MonkeyPatc
     )
     service.terminate_pid(123, 456.5)
     assert calls == [(123, 456.5)]
-
-
 
 
 def test_concurrent_serves_are_serialized_without_lost_entries(
@@ -286,8 +258,6 @@ def test_concurrent_serves_are_serialized_without_lost_entries(
     assert {item.local_port for item in serves} == {50000, 50001}
 
 
-
-
 def test_routed_cli_list_format_json_emits_json(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -322,5 +292,3 @@ def test_routed_cli_list_format_json_emits_json(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)[0]["slug"] == "report"
-
-

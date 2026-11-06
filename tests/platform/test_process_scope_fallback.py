@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-import psutil
 from typing import TYPE_CHECKING
 
-from meridian.lib.platform.process_scope import fallback
+import psutil
 
+from meridian.lib.platform.process_scope import fallback
 
 if TYPE_CHECKING:
     import pytest
@@ -58,5 +57,3 @@ def test_terminate_tree_sync_skips_on_pid_reuse_mismatch(
     assert result.kill_escalated is False
     assert root.terminated == 0
     assert root.killed == 0
-
-

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-
 def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -151,5 +150,3 @@ def test_archived_intermediate_preserves_live_grandchild_membership(tmp_path: Pa
 
     assert assessment.disposition == "blocked"
     assert [blocker.identity for blocker in assessment.blockers] == ["p3"]
-
-

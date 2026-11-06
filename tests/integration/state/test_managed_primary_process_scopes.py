@@ -5,7 +5,6 @@ import json
 import threading
 from contextlib import suppress
 from pathlib import Path
-
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat

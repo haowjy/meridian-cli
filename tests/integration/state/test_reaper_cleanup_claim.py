@@ -134,5 +134,3 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
     assert terminated == [scope.release_id]
     claim_path = runtime_root / "spawns" / spawn_id / "reaper_cleanup_claim.json"
     assert not claim_path.exists()
-
-

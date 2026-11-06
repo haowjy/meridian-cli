@@ -270,5 +270,3 @@ def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) 
         )
 
     assert read_state(spawns_dir, "p1").status == "succeeded"  # type: ignore[union-attr]
-
-

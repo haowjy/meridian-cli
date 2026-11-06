@@ -11,9 +11,16 @@ import pytest
 
 from meridian.cli.primary_launch import PrimaryLaunchOutput, run_primary_launch
 from meridian.lib.harness.pi_boundary import read_boundary
+from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.conftest import requires_pi_dist
 from tests.integration.launch.test_pi_identity_launch import (
+    context,
     install_shim,
     pi_runtime,  # noqa: F401
 )
@@ -275,14 +282,6 @@ async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
         await serve.streaming_serve("pi", "hello", model="pi-test")
     assert caught.value is (run_error if run_fails else identity_error)
     assert order == ["run", "conclude", "cleanup"]
-
-from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.process.runner import run_harness_process
-from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.session_target import resolve_transcript_source
-from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from tests.integration.launch.test_pi_identity_launch import context
 
 
 @pytest.mark.parametrize(

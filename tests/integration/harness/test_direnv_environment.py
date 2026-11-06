@@ -71,9 +71,3 @@ def test_real_direnv_restores_environment(
     with pytest.raises(ValueError, match="environment restoration failed") as failure:
         undo_direnv({**base, "DIRENV_DIFF": "sensitive-invalid-diff"})
     assert "sensitive" not in str(failure.value)
-
-
-
-
-
-

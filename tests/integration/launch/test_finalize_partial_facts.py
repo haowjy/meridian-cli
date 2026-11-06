@@ -1,7 +1,5 @@
 """Malformed output must preserve good evidence without certifying partial usage."""
 
-
-
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.extractors.claude import ClaudeFold, ClaudeHarnessExtractor
 from meridian.lib.launch.extract import enrich_finalize
@@ -35,19 +33,3 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     assert result.report_path.read_text().endswith("surviving report\n")
     assert result.usage is not None
     assert result.usage.input_tokens == 7
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -139,8 +139,6 @@ def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     )
 
 
-
-
 def test_primary_surface_denies_agent_but_not_task(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -230,8 +228,6 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         "TaskUpdate",
         "TodoWrite",
     }.issubset(disallowed)
-
-
 
 
 def test_allow_builtin_agents_claude_cross_module_contract(

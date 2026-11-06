@@ -220,5 +220,3 @@ def test_interrupted_reopen_leaves_the_item_archived(
     reopened = work_repository.reopen_work_item(runtime_root, item.name)
     assert reopened.status == "open"
     assert (runtime_root / "work" / item.name / "notes.md").is_file()
-
-

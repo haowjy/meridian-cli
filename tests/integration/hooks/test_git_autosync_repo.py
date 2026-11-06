@@ -366,5 +366,3 @@ def test_git_autosync_aborts_stale_rebase_on_entry(
     assert result.success is True
     assert not _git_path(work, "rebase-merge", env=git_env).exists()
     assert not _git_path(work, "rebase-apply", env=git_env).exists()
-
-

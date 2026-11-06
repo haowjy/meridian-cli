@@ -130,5 +130,3 @@ def test_inspect_lists_evidence_then_bind_validates_and_refuses(
     with pytest.raises(ValueError, match="already bound to c1"):
         _repair(project, "c2", right, force=True)
     assert _repair(project, "c2", late, force=True).forced
-
-

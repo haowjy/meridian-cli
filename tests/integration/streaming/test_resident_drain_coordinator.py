@@ -424,5 +424,3 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     already_terminal = spawn_store.get_spawn(tmp_path, SpawnId("p3"))
     assert already_terminal is not None
     assert already_terminal.status == "succeeded"
-
-

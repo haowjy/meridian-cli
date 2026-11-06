@@ -34,5 +34,3 @@ def test_json_document_round_trip_is_private_and_tolerant(tmp_path: Path) -> Non
     assert repaired == _Document(value=1)
     assert read_model(path, _Document) == repaired
     assert path.stat().st_mode & 0o777 == 0o600
-
-

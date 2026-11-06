@@ -95,5 +95,3 @@ def test_start_spawn_rejects_symlinked_staging_container(tmp_path: Path) -> None
 
     assert victim.read_text(encoding="utf-8") == "keep\n"
     assert not (paths.spawns_dir / "p1").exists()
-
-

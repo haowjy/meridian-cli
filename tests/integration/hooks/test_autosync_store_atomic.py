@@ -93,5 +93,3 @@ def test_resolution_preserves_idless_document_shape_and_hides_unknown_fields(
     assert record.id == "c2"
     assert record.sync_root == tmp_path.as_posix()
     assert "custom" not in record.model_dump()
-
-

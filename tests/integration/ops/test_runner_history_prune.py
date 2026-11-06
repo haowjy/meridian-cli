@@ -303,5 +303,3 @@ def test_apply_rechecks_native_identity_not_just_file_existence(
     assert result.pruned == ()
     assert result.errors == (f"{key}: record or native source changed since planning; kept",)
     assert (root / "spawns" / key / "history.jsonl").is_file()
-
-

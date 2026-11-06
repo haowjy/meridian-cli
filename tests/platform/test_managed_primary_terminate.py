@@ -47,5 +47,3 @@ def test_terminate_managed_primary_processes_skips_birth_mismatch(monkeypatch) -
 
     assert signaled == (9102,)
     assert terminated_pids == [9102]
-
-

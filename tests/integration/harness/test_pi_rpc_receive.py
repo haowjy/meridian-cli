@@ -83,10 +83,6 @@ async def rpc_process(
         await connection.stop()
 
 
-
-
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("event_type", ["message_end", "agent_end"])
 async def test_large_frame_preserves_tool_output_and_next_response(

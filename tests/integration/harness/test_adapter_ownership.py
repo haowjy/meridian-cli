@@ -18,40 +18,6 @@ def _clear_inherited_claude_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_codex_transcript_resolution_refuses_duplicate_exact_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

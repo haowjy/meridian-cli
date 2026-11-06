@@ -11,17 +11,19 @@ import pytest
 
 from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     RawHarnessEvent,
 )
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
     LaunchPaths,
     resolve_project_runtime_root_for_write,
 )
+from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.launch_paths import launch_paths
 from tests.support.pi_extensions import configure_pi_extension_projection
 
@@ -34,12 +36,6 @@ _PI_HELP_SURFACE = (
 
 def _is_pi_phase_event(event: RawHarnessEvent) -> bool:
     return event.event_type == "meridian.pi.lifecycle.phase"
-
-
-
-
-
-
 
 
 async def _start_existing_pi_connection(
@@ -67,12 +63,6 @@ def _publish_manager_spawn(runtime_root: Path, spawn_id: SpawnId) -> None:
         harness="pi",
         prompt="hello",
     )
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -142,10 +132,6 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
     await connection.stop(reason="test")
     _ = [event async for event in event_iter]
-
-from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
-from meridian.lib.harness.connections.pi_rpc import PiRpcTimingPolicy
-from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 class _NoopControlServer:

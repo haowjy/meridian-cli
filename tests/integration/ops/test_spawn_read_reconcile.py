@@ -112,5 +112,3 @@ def test_dead_runner_with_reused_pid_is_not_running(tmp_path: Path) -> None:
     finally:
         unrelated.kill()
         unrelated.wait(timeout=5)
-
-

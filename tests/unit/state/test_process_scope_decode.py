@@ -93,5 +93,3 @@ def test_scope_sidecar_missing_required_field_is_discarded(field: str) -> None:
     del payload[field]
 
     assert process_scope_projection.scope_snapshot_from_dict(payload) is None
-
-

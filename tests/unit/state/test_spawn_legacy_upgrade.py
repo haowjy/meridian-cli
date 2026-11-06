@@ -122,5 +122,3 @@ def test_unknown_legacy_field_is_rejected_without_data_loss() -> None:
 
     with pytest.raises(LegacySpawnStateUpgradeError, match="unknown_fields"):
         upgrade_legacy_spawn_state(row)
-
-

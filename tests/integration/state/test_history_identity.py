@@ -40,5 +40,3 @@ def test_identity_survives_mutation_and_transfer(tmp_path: Path) -> None:
                 lambda row, update=update: row.model_copy(update=update),
             )
         assert get_spawn(root, spawn_id) == result.after
-
-

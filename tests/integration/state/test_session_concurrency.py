@@ -38,5 +38,3 @@ def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     allocated = sorted(allocated)
     assert allocated == [f"c{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "session-id-counter").read_text(encoding="utf-8") == f"{process_count}\n"
-
-

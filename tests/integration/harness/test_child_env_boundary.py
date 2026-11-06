@@ -143,5 +143,3 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         assert env["HOME"] == str(bound_home)
         assert "CLAUDECODE" not in env
         assert "MERIDIAN_SECRET_PROBE" not in env
-
-

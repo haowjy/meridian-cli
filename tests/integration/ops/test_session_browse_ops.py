@@ -110,5 +110,3 @@ def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> 
     stopped_row = next(row for row in stopped_listing.rows if row.chat_id == chat_id)
     assert isinstance(stopped_row.reentry, Blocked)
     assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
-
-

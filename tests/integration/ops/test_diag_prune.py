@@ -510,5 +510,3 @@ def test_doctor_adhoc_retention_ignores_cwd_project_config(
     env_value_applied = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=True))
     assert len(env_value_applied.adhoc_project_dirs) == 1
     assert env_value_applied.adhoc_project_dirs[0].prunable
-
-

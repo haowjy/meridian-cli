@@ -36,8 +36,6 @@ def test_workspace_init_appends_scaffold_to_existing_local_config_without_worksp
     assert content.count("[workspace.example]") == 1
 
 
-
-
 def test_workspace_init_recognizes_existing_commented_scaffold_without_duplication(
     tmp_path: Path,
 ) -> None:
