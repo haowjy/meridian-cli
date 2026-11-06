@@ -57,6 +57,7 @@ def _persist_report(
     launch: LaunchPaths,
     extracted: ExtractedReport,
     text_capped: bool,
+    warnings: list[str],
 ) -> Path | None:
     if extracted.content is None:
         return None
@@ -69,6 +70,7 @@ def _persist_report(
         wrapped = f"{heading}\n\n{extracted.content.strip()}\n"
         if text_capped and extracted.source == "assistant_message":
             wrapped += "\n[Attempt text was truncated at 1 MiB before report extraction.]\n"
+        wrapped += "".join(f"\n[Warning: {warning}]\n" for warning in warnings)
         atomic_write_text(target, wrapped)
         return target
 
@@ -136,6 +138,7 @@ def enrich_finalize(
         launch=launch,
         extracted=report,
         text_capped=facts.report_text_capped,
+        warnings=facts.warnings,
     )
 
     return FinalizeExtraction(

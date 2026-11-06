@@ -9,6 +9,7 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
+from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.permission_journal import PermissionDenial
 
@@ -89,9 +90,28 @@ def _dict_rows(raw: object) -> dict[str, Mapping[str, object]]:
     }
 
 
+# Claude's init event names the manual mode ``default``.
+_INIT_MODE_NAME = {"manual": "default"}
+
+
 class ClaudeFold(AttemptFold):
+    expected_permission_mode: str | None = None
+
+    def bind_launch(self, spec: ResolvedLaunchSpec) -> None:
+        mode = compile_claude_permissions(spec)[0].permission_mode
+        self.expected_permission_mode = _INIT_MODE_NAME.get(mode, mode) if mode else None
+
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
         facts = self.facts
+        if kind == "system" and payload.get("subtype") == "init":
+            actual = payload.get("permissionMode")
+            expected = self.expected_permission_mode
+            if expected is not None and isinstance(actual, str) and actual != expected:
+                facts.warnings.append(
+                    f"Claude ran with permissionMode {actual}, not the {expected} the launch "
+                    "asked for. It falls back when the model or the account does not offer "
+                    "that mode, so calls the profile expected to run may have been refused."
+                )
         if kind == "result":
             text = extract_text(payload.get("result"))
             if text:

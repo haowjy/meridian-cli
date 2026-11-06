@@ -136,7 +136,10 @@ its classifier approves unmatched calls instead of refusing them. So `approval: 
 with a gate uses `acceptEdits` (edits keep running; it also runs file
 commands such as `touch`, `rm` and redirects inside the working directories), unless an
 edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
-Plain deny and ask rules stay authoritative under `auto` (checked live).
+An unscoped `*: ask` gates the same way. Plain deny and ask rules stay authoritative under
+`auto` (checked live on `claude-haiku-5-5`; `claude-haiku-4-5` does not offer `auto`, runs `manual`,
+and proves nothing about it). Claude's init event reports the mode it ran; `ClaudeFold` warns into
+the report when that differs from the launch.
 `dontAsk` is reserved for a whole-policy allowlist (`*: deny`), which also limits
 `--tools`; it refuses every tool not allowed, so it would turn a bash allowlist into a
 whole-policy one. Ask rules hold under every mode, bypass included, so they do not change

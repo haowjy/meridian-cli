@@ -18,15 +18,28 @@ What changes for an agent with `approval: auto`:
   `meridian spawn`. The classifier can refuse a call it judges risky, and a refused call is not
   retried. `deny` and `ask` rules still hold; on a scratch project a `deny` on `git revert *` and an
   `ask` on web tools both refused under `auto`. A profile that gates a tool through the mode (a
-  plain `deny` or `ask` beside scoped allows of the same tool) or carries a whole-policy allowlist keeps
-  `acceptEdits` or `dontAsk`, because the classifier would approve what those modes refuse. The
-  permission report names the mode it chose.
+  plain `deny` or `ask` beside scoped allows of the same tool, or an unscoped `*: ask`) keeps
+  `acceptEdits` or `manual`, and one with a whole-policy allowlist keeps `dontAsk`, because the
+  classifier would approve what those modes refuse. The permission report names the mode it chose.
+- **Claude may not offer `auto`.** Claude runs `manual` instead when the model does not support
+  `auto` (`claude-haiku-4-5` is one) or the account or settings turn it off. A spawn then refuses
+  every edit, command and tool the profile does not allow, and exits as succeeded. Meridian reads
+  `permissionMode` from Claude's init event and adds a warning to the spawn's report when it differs
+  from the launch. The launch-time permission report cannot know this, so its `approval: auto` line
+  says so.
+- **A confined profile gets two wider limits.** With `sandbox: workspace-write` or `read-only`,
+  the classifier, not `acceptEdits`, decides an Edit or Write outside the working directories, so it
+  can run. With `network: deny` or a host list, it decides WebFetch and WebSearch, which the
+  network setting never covered, so they can run. Both are in the permission report's sandbox and
+  network lines.
 - **Codex.** A reviewer model now answers sandbox escalations, so a request to write outside
   `workspace-write` or reach the network can be approved. Before, the launch inherited the reviewer
-  from the user's `~/.codex/config.toml`, or had none and the spawn refused the request. Meridian sets
-  both values on every launch, so the result no longer depends on that file. The reviewer's tokens do
-  not appear in `codex exec --json` usage or in Meridian's usage totals. `approval: confirm` is
-  unchanged: Meridian sets no reviewer, and a spawn refuses every approval request.
+  from the user's `~/.codex/config.toml` or the forked thread, or had none and the spawn refused the
+  request. Meridian sets both values on every launch, so the result no longer depends on that file or
+  thread. The reviewer's tokens do not appear in `codex exec --json` usage or in Meridian's usage
+  totals. `approval: confirm` now sets `approvals_reviewer="user"`: a spawn refuses every approval
+  request, even from a Codex home that sets `auto_review` or a thread forked from an `auto` one.
+  Before, such a home or fork let the reviewer approve a `confirm` spawn's escalation.
 - **`--approve-for-me` is not used.** Codex's flag refuses `--sandbox`, forces `workspace-write` and does
   not exist on `codex app-server`, so the profile's sandbox would be lost.
 

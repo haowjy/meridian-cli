@@ -10,7 +10,7 @@ channels, so a rule that order shadows, or that the compile left out, says so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 from typing import Literal
 
@@ -26,6 +26,7 @@ from meridian.lib.harness.projections.network_claude import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 from meridian.lib.safety.policy import (
+    Allow,
     EnforcementReport,
     PermissionPolicy,
     PlatformRule,
@@ -36,6 +37,7 @@ from meridian.lib.safety.policy import (
     complete_report,
     platform_element,
     rule_element,
+    unscoped_action,
 )
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
 
@@ -475,6 +477,9 @@ def _policy_mode(
     if policy.is_allowlist:
         return False, "dontAsk"
     mode = _gate_mode(policy, channels.gates)
+    if mode is None and policy.approval == "auto" and unscoped_action(policy.rules, "*") == "ask":
+        # An unscoped ``*: ask`` decides every unmatched call; auto's classifier would.
+        mode = "acceptEdits"
     return (False, mode) if mode is not None else _approval_mode(policy)
 
 
@@ -732,6 +737,11 @@ def _approval_line(
             f"{compiled}, which a passthrough permission flag replaces",
         )
     if policy_mode == _approval_mode(policy):
+        if policy_mode[1] == "auto":
+            compiled += (
+                "; Claude runs manual instead when the model or the account does not offer "
+                "auto, and a spawn's report says so"
+            )
         return ReportLine(element, "native", compiled)
     if policy.is_allowlist:
         return ReportLine(element, "partial", f"{compiled}; the allowlist decides every call")
@@ -848,6 +858,11 @@ def _sandbox_line(policy: PermissionPolicy, permissions: ClaudePermissions) -> R
     if policy.sandbox != "danger-full-access":
         status = "partial"
         settings += "; confines Bash subprocesses only, not Edit/Write"
+        if permissions.permission_mode == "auto":
+            settings += (
+                "; under --permission-mode auto Claude's classifier, not acceptEdits, decides "
+                "an Edit/Write outside the working directories, so it can run"
+            )
     if sandbox.excluded_commands:
         settings += (
             "; excludedCommands="
@@ -898,14 +913,20 @@ def compile_claude_permissions(
     lines.extend(_platform_lines(policy, permissions))
     if policy.sandbox != "default":
         lines.append(_sandbox_line(policy, permissions))
-    lines.append(
-        claude_network_line(
-            policy,
-            network,
-            sandbox_enabled=bool(sandbox is not None and sandbox.enabled),
-            excluded_commands=sandbox.excluded_commands if sandbox is not None else (),
-        )
+    network_line = claude_network_line(
+        policy,
+        network,
+        sandbox_enabled=bool(sandbox is not None and sandbox.enabled),
+        excluded_commands=sandbox.excluded_commands if sandbox is not None else (),
     )
+    if permissions.permission_mode == "auto" and not isinstance(policy.network, Allow):
+        network_line = replace(
+            network_line,
+            note=network_line.note
+            + "; web tools (WebFetch, WebSearch) are outside this setting, and under "
+            "--permission-mode auto Claude's classifier, not acceptEdits, decides them",
+        )
+    lines.append(network_line)
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(

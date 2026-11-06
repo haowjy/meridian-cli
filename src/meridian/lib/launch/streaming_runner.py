@@ -1078,6 +1078,7 @@ async def execute_with_streaming(
                 fold = harness_bundle.extractor.create_fold(
                     spawn_row.prior_usage.harness_cumulative
                 )
+                fold.bind_launch(spec)
                 facts = fold.facts
                 runner_phase[0] = "starting_attempt"
                 _record_lifecycle("attempt_started", attempt=1)
