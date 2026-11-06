@@ -35,6 +35,7 @@ from meridian.lib.harness.codex_rollout import (
     find_attachable_rollout_session_id,
     resolve_codex_home,
 )
+from meridian.lib.harness.codex_tool_hook import check_hooks_list
 from meridian.lib.harness.connections.base import (
     MAX_HARNESS_MESSAGE_BYTES,
     AutoAcceptHandler,
@@ -67,6 +68,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -438,6 +440,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 timeout_seconds=self._connect_timeout(),
             )
             await self._notify("initialized")
+            await self._require_tool_hook(spec, effective_cwd)
 
             if self._is_fresh_session(spec):
                 self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
@@ -469,6 +472,33 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._transition("failed")
             await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _require_tool_hook(self, spec: ResolvedLaunchSpec, cwd: Path) -> None:
+        """Refuse the launch unless Codex lists the shell-rule hook as trusted and enabled.
+
+        Codex skips an untrusted hook without a word and fails open on every hook failure, so
+        a launch whose profile needs the hook must not start a thread without it. A Codex
+        with no ``hooks/list`` answers with a JSON-RPC error and is refused the same way.
+        """
+
+        if compile_codex_permissions(spec)[0].tool_hook is None:
+            return
+        try:
+            listing = await self._request(
+                "hooks/list",
+                {"cwds": [str(cwd)]},
+                timeout_seconds=self._connect_timeout(),
+            )
+        except _CodexRpcError as exc:
+            raise RuntimeError(
+                "This profile's scoped shell rules need Codex's hooks/list to confirm the "
+                f"enforcing hook, and this Codex does not answer it ({exc}). Upgrade Codex."
+            ) from exc
+        problem = check_hooks_list(listing)
+        if problem is not None:
+            raise RuntimeError(
+                f"The shell-rule hook is not running, so the launch is refused: {problem}"
+            )
 
     async def _cleanup_start_failure(self) -> None:
         async with self._stop_lock:
@@ -1159,6 +1189,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> None:
         if method == "serverRequest/resolved":
             await self._resolve_server_request(payload)
+        elif method == "hook/completed":
+            self._warn_hook_failure(payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
             RawHarnessEvent(
@@ -1167,6 +1199,25 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 harness_id=self.harness_id.value,
                 raw_text=raw_text,
             )
+        )
+
+    def _warn_hook_failure(self, payload: dict[str, object]) -> None:
+        """Say when Meridian's shell hook failed to decide, since Codex then lets the call run.
+
+        A crash of the enforcer is a block, not a failure; this is the timeout, the one
+        failure the hook command cannot turn into a block.
+        """
+
+        run = payload.get("run")
+        if not isinstance(run, dict):
+            return
+        hook = cast("dict[str, object]", run)
+        if hook.get("source") != "sessionFlags" or hook.get("status") != "failed":
+            return
+        logger.warning(
+            "Codex shell-rule hook failed for spawn %s, so its shell call ran unchecked: %s",
+            self._spawn_id,
+            hook.get("entries"),
         )
 
     async def _resolve_server_request(self, payload: dict[str, object]) -> None:

@@ -64,6 +64,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
 )
+from meridian.lib.harness.projections.tool_extension_policy import TOOL_POLICY_ENV
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     EventSemantics,
@@ -403,6 +404,19 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_cwd: Path,
     ) -> tuple[CompositionWarning, ...]:
         return codex_network_config_warnings(child_cwd, child_env)
+
+    def project_launch_env(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        system_prompt_path: Path,
+        env: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Hand the shell rules to the launch's PreToolUse hook, which reads them from env."""
+
+        _ = system_prompt_path, env
+        hook = compile_codex_permissions(spec)[0].tool_hook
+        return {TOOL_POLICY_ENV: hook.model_dump_json()} if hook is not None else {}
 
     def reject_removed_native_config(self, native_config: Mapping[str, object]) -> None:
         reject_removed_codex_native_config(native_config)
