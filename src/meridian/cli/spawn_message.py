@@ -28,7 +28,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import control_socket_path
 
-# Above the 30 s harness request timeouts (Codex, Pi), so their failure text reaches the sender.
+# Above the 30 s harness request timeouts, so their failure text reaches the sender.
 _RESPONSE_TIMEOUT_SECONDS = 35.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1

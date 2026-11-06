@@ -322,14 +322,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         ack = asyncio.get_running_loop().create_future()
         self._pending_prompt_acks[command_id] = ack
         try:
-            try:
-                async with asyncio.timeout(self._timing.prompt_ack_timeout_seconds):
-                    await self._send_rpc_message(payload, event="prompt")
-                    await ack
-            except TimeoutError as exc:
-                # Delivery may have succeeded. A RuntimeError is intentionally not
-                # retryable by the control-action coordinator.
-                raise RuntimeError("pi_rpc_prompt_ack_timeout: delivery uncertain") from exc
+            async with asyncio.timeout(self._timing.prompt_ack_timeout_seconds):
+                await self._send_rpc_message(payload, event="prompt")
+                await ack
         finally:
             self._pending_prompt_acks.pop(command_id, None)
             if not ack.done():

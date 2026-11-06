@@ -54,15 +54,12 @@ class _CounterState:
 
 
 def _failure_text(exc: Exception) -> str:
-    """Text for the sender: never blank, and honest about what a timeout leaves unknown."""
+    """Text for the sender: never blank; any failure but ConnectionNotReady may follow the write."""
 
-    if isinstance(exc, TimeoutError):
-        detail = str(exc)
-        return (
-            "timed out after the request was sent; it may have been delivered and was not resent"
-            + (f" ({detail})" if detail else "")
-        )
-    return str(exc) or type(exc).__name__
+    text = str(exc) or type(exc).__name__
+    if isinstance(exc, ConnectionNotReady):
+        return text
+    return f"{text}; the message may have arrived and was not resent"
 
 
 class ControlActionCoordinator:
@@ -95,7 +92,6 @@ class ControlActionCoordinator:
         payload: dict[str, object],
         source: str,
         send: Callable[[], Awaitable[object]],
-        max_attempts: int | None = None,
         fence_on_interrupt: bool = True,
     ) -> ControlActionResult:
         """Run one action via serialized send + durable transition records.
@@ -150,7 +146,6 @@ class ControlActionCoordinator:
                     error=error_text,
                 )
 
-            attempts = self._resolved_attempts(max_attempts)
             attempt = 0
             while True:
                 attempt += 1
@@ -168,7 +163,7 @@ class ControlActionCoordinator:
                     await send()
                 except Exception as exc:
                     error_text = _failure_text(exc)
-                    if attempt < attempts and isinstance(exc, ConnectionNotReady):
+                    if attempt < self._default_max_attempts and isinstance(exc, ConnectionNotReady):
                         await asyncio.sleep(self._retry_delay_secs)
                         continue
                     await self._append_transition(
@@ -214,11 +209,6 @@ class ControlActionCoordinator:
         action_seq = self._action_seq
         self._action_seq += 1
         return f"ca-{action_seq}"
-
-    def _resolved_attempts(self, max_attempts: int | None) -> int:
-        if max_attempts is None:
-            return self._default_max_attempts
-        return max(1, int(max_attempts))
 
     async def _append_transition(
         self,
