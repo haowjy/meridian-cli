@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 
 from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.harness.bundle import PrimaryMessageRoute
@@ -20,20 +20,10 @@ _ROUTE_POLL_SECONDS = 0.25
 _JOIN_SECONDS = 10.0
 
 
-def _serve_when_routable(
-    launch: LaunchPaths, factory: PrimaryMessageRoute, pid: int, stop: threading.Event
-) -> None:
-    route: MessageRoute | None = None
-    while not stop.is_set():
-        route = factory(launch, pid)
-        if route is not None:
-            break
-        stop.wait(_ROUTE_POLL_SECONDS)
-    if route is not None:
-        asyncio.run(_serve(launch, route, stop))
+@asynccontextmanager
+async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncIterator[None]:
+    """Bind the spawn's control socket to *route*, journaled, for the block's duration."""
 
-
-async def _serve(launch: LaunchPaths, route: MessageRoute, stop: threading.Event) -> None:
     coordinator = ControlActionCoordinator(launch=launch)
     server = ControlSocketServer(
         control_socket_path(launch.runtime_root, launch.spawn_id),
@@ -44,9 +34,31 @@ async def _serve(launch: LaunchPaths, route: MessageRoute, stop: threading.Event
     )
     await server.start()
     try:
-        await asyncio.to_thread(stop.wait)
+        yield
     finally:
         await server.stop()
+
+
+def _serve_when_routable(
+    launch: LaunchPaths, factory: PrimaryMessageRoute, pid: int, stop: threading.Event
+) -> None:
+    """Thread body: wait for a route, then serve it until *stop*. Logs, never raises."""
+
+    async def serve_until_stopped(route: MessageRoute) -> None:
+        async with serving_route(launch, route):
+            await asyncio.to_thread(stop.wait)
+
+    try:
+        route: MessageRoute | None = None
+        while not stop.is_set():
+            route = factory(launch, pid)
+            if route is not None:
+                break
+            stop.wait(_ROUTE_POLL_SECONDS)
+        if route is not None:
+            asyncio.run(serve_until_stopped(route))
+    except Exception:
+        logger.warning("Primary control socket for %s failed", launch.spawn_id, exc_info=True)
 
 
 @contextmanager
@@ -57,31 +69,21 @@ def primary_control_socket(
 
     The socket is bound only once *factory* returns a route, so a socket file always
     means a message can be delivered. Leaving the block unbinds it and joins the thread.
-    ``serve`` never raises: a failure in on-running would kill the child. Must be entered
-    holding the launch lock.
+    ``serve`` never raises: a failure in on-running would kill the child. With no
+    *factory* (harness without a primary route) ``serve`` does nothing.
     """
 
-    # The caller holds the launch lock, so any file here is a dead launcher's: unlinking
-    # now sends a sender to the normal poll instead of a refused connection.
-    control_socket_path(launch.runtime_root, launch.spawn_id).unlink(missing_ok=True)
     stop = threading.Event()
     thread: threading.Thread | None = None
 
-    def run(pid: int) -> None:
-        assert factory is not None
-        try:
-            _serve_when_routable(launch, factory, pid, stop)
-        except Exception:
-            logger.warning("Primary control socket for %s failed", launch.spawn_id, exc_info=True)
-
     def serve(pid: int) -> None:
         nonlocal thread
-        if factory is None or thread is not None:
+        if factory is None:
             return
         try:
             thread = threading.Thread(
-                target=run,
-                args=(pid,),
+                target=_serve_when_routable,
+                args=(launch, factory, pid, stop),
                 name=f"meridian-primary-control-{launch.spawn_id}",
                 daemon=True,
             )

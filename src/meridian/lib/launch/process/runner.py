@@ -83,6 +83,7 @@ from meridian.lib.state.session_store import (
     update_session_spawn_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE, SpawnRecord
+from meridian.lib.streaming.control_socket import control_socket_path
 
 from ..context import (
     LaunchContext,
@@ -843,6 +844,10 @@ def run_harness_process(
     )
     try:
         if hold is not None:
+            # The hold is the launch lock: any control socket here is a dead launcher's.
+            # Removing it before the spawn reads as active sends a sender to the
+            # normal poll instead of a refused connection.
+            control_socket_path(runtime_root, reserved_spawn_id).unlink(missing_ok=True)
             reopened = lifecycle_service.reopen(
                 primary_reservation(
                     chat_id=resume_chat_id,

@@ -39,7 +39,11 @@ snapshots. Register any new launcher in `select_process_launcher()`.
   on-running callback starts a daemon thread that binds the socket once the harness bundle's
   `primary_message_route` returns a route, and leaving the block unbinds it and joins the
   thread, inside the launch lock and before finalize. `serve` never raises, because a raising
-  on-running callback kills the child. Managed attach serves nothing yet.
+  on-running callback kills the child. The bind-and-journal body is `serving_route(launch,
+  route)`, an async context manager any launch leg on its own loop reuses. A dead launcher's
+  stale socket file is unlinked in `run_harness_process` once the launch lock is held (before
+  `reopen` for a continue), so a sender polls instead of seeing a refused connection. Managed
+  attach serves nothing yet.
 - **Assigned identity binds before exec.** A finalized `native_identity` with an ID
   (minted create, verified resume, fork target) binds as `source="assigned"` before the
   child starts; a conflict refuses the launch. Identities without an ID (Claude fork)
