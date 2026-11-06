@@ -27,6 +27,12 @@ UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 # Runner and client processes may have different TMPDIR values; the shared
 # discovery path must not depend on either process's environment.
 _POSIX_SOCKET_ROOT = Path("/tmp")
+# One request is one line; asyncio's 64 KiB default would cap messages far below what
+# the harnesses accept.
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
+# A client that connects and stays silent must not pin a handler, or hang stop().
+_REQUEST_READ_TIMEOUT_SECONDS = 10.0
+_STOP_WAIT_SECONDS = 5.0
 # bind() creates the file before the kernel publishes the bound socket.
 _STALE_SOCKET_AGE_SECONDS = 120
 
@@ -151,6 +157,7 @@ class ControlSocketServer:
                 self._handle_client,
                 host="127.0.0.1",
                 port=0,
+                limit=MAX_REQUEST_BYTES,
             )
             sockets = self._server.sockets or ()
             if not sockets:
@@ -173,7 +180,7 @@ class ControlSocketServer:
         # The runner holds this spawn's launch.lock for the endpoint lifetime.
         self._socket_path.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
-            self._handle_client, path=str(self._socket_path)
+            self._handle_client, path=str(self._socket_path), limit=MAX_REQUEST_BYTES
         )
 
     async def _handle_client(
@@ -183,13 +190,22 @@ class ControlSocketServer:
 
         response: dict[str, object]
         try:
-            raw = await reader.readline()
-            if not raw:
-                response = {"ok": False, "error": "empty request"}
-            else:
-                response = await self._handle_request(raw)
-        except Exception as exc:
-            response = {"ok": False, "error": str(exc)}
+            raw = await asyncio.wait_for(reader.readline(), _REQUEST_READ_TIMEOUT_SECONDS)
+        except TimeoutError:
+            response = {"ok": False, "error": "no request received"}
+        except ValueError:
+            response = {
+                "ok": False,
+                "error": f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit",
+            }
+        else:
+            try:
+                if raw:
+                    response = await self._handle_request(raw)
+                else:
+                    response = {"ok": False, "error": "empty request"}
+            except Exception as exc:
+                response = {"ok": False, "error": str(exc)}
 
         encoded = (
             json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
@@ -237,16 +253,18 @@ class ControlSocketServer:
     async def stop(self) -> None:
         """Close the server and remove its discovery artifact."""
 
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+        # Unlink first: a client that keeps its connection open can delay wait_closed.
         if IS_WINDOWS:
             self._port = None
             self._port_file.unlink(missing_ok=True)
-            return
-
-        self._socket_path.unlink(missing_ok=True)
+        else:
+            self._socket_path.unlink(missing_ok=True)
+        if server is not None:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(server.wait_closed(), _STOP_WAIT_SECONDS)
 
 
 __all__ = [
