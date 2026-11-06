@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -40,7 +40,6 @@ from meridian.lib.harness.connections.base import (
     AutoAcceptHandler,
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     HarnessRequest,
@@ -51,6 +50,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -565,7 +565,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected("begin_followup_turn")
         if self._current_turn_id is not None:
-            raise ConnectionNotReady("Codex follow-up turns require an idle backend")
+            raise DeliveryRefused("Codex follow-up turns require an idle backend")
         self._signal_in_flight = False
         await self._request(
             "turn/start",
@@ -1202,19 +1202,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 exc_info=True,
             )
 
-    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
-        callback = getattr(self._request_handler, "on_request_failed", None)
-        if callback is None:
-            return
-        try:
-            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
-        except Exception:
-            logger.warning(
-                "Codex request handler failed to persist failure state for request %s",
-                request_id,
-                exc_info=True,
-            )
-
     async def _notify_requests_cancelled(self, request_ids: list[str], *, reason: str) -> None:
         if not request_ids:
             return
@@ -1303,14 +1290,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _require_connected(self, operation: str) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"Codex connection is not connected; cannot {operation} from state '{self._state}'"
+            raise not_ready(
+                self._state,
+                f"Codex connection is not connected; cannot {operation} from state '{self._state}'",
             )
 
     def _require_thread_id(self, operation: str) -> str:
         thread_id = self._thread_id
         if thread_id is None:
-            raise ConnectionNotReady(f"Codex thread ID is unavailable; cannot {operation}")
+            raise DeliveryRefused(f"Codex thread ID is unavailable; cannot {operation}")
         return thread_id
 
     def _connect_timeout(self) -> float:

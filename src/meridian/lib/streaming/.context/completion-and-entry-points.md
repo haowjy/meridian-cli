@@ -83,8 +83,7 @@ session drains that keep the harness alive across turns.
   `harness/pi_private_state.py` reader, and its per-source failures feed the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
-- `control_socket.py` — per-spawn inject endpoint
-- `types.py` — `InjectResult`, `ControlMessage`
+- `control_socket.py` — per-spawn message endpoint
 
 Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
 their sole persisted-descendant authority. The derived rows also decide Pi result

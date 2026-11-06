@@ -1,8 +1,6 @@
-"""Streaming message and control types."""
+"""Streaming: active harness connections and their control endpoints."""
 
 from typing import TYPE_CHECKING
-
-from meridian.lib.streaming.types import ControlMessage, InjectResult
 
 if TYPE_CHECKING:
     from meridian.lib.streaming.control_socket import ControlSocketServer
@@ -10,9 +8,7 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import SpawnSession
 
 __all__ = [
-    "ControlMessage",
     "ControlSocketServer",
-    "InjectResult",
     "SpawnManager",
     "SpawnSession",
 ]

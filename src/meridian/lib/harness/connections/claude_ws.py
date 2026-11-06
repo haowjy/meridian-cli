@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -22,12 +22,12 @@ from meridian.lib.harness.claude_version import claude_version
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     RawHarnessEvent,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -298,8 +298,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _ensure_connected(self) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"Claude connection is not ready (state={self._state}); expected 'connected'."
+            raise not_ready(
+                self._state,
+                f"Claude connection is not ready (state={self._state}); expected 'connected'.",
             )
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
@@ -371,7 +372,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         child = self._child
         process = None if child is None else child.process
         if process is None or process.stdin is None:
-            raise ConnectionNotReady("Claude subprocess stdin is not available.")
+            raise TransportDead("Claude subprocess stdin is not available.")
 
         wire = json.dumps(payload, separators=(",", ":")) + "\n"
         trace_wire_send(self._tracer, "stdin_write", wire, bytes=len(wire.encode("utf-8")))

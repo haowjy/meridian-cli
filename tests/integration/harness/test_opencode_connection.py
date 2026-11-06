@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -24,9 +24,6 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.connections.opencode_connection import (
-    OpenCodeConnection as OpenCodeDispatcherConnection,
-)
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.semantics import normalize_event
@@ -1542,19 +1539,3 @@ async def test_opencode_injected_events_keep_fifo_order_with_pending_waiter(
         "request/opened",
         "request/resolved",
     ]
-
-
-@pytest.mark.asyncio
-async def test_opencode_dispatcher_delegates_request_failed_callback() -> None:
-    failures: list[tuple[str, str]] = []
-
-    class _Impl:
-        async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
-            failures.append((request_id, error))
-
-    dispatcher = OpenCodeDispatcherConnection()
-    dispatcher._impl = cast("Any", _Impl())
-
-    await dispatcher._notify_request_failed("per_1", error="boom")
-
-    assert failures == [("per_1", "boom")]

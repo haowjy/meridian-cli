@@ -10,7 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, MessageRoute, TransportDead
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
@@ -45,7 +45,6 @@ from meridian.lib.streaming.spawn_drain_loop import (
     resolve_terminal_outcome,
 )
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
-from meridian.lib.streaming.types import InjectResult
 
 StartConnectionPort = Callable[
     ["ConnectionConfig", ResolvedLaunchSpec],
@@ -64,7 +63,6 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
-InjectResultCallback = Callable[[InjectResult], None]
 EventHook = Callable[[RawHarnessEvent], None]
 
 
@@ -74,9 +72,8 @@ def _default_control_server_factory(
     manager: SpawnManager,
 ) -> ControlSocketServer:
     return ControlSocketServer(
-        spawn_id=spawn_id,
-        socket_path=socket_path,
-        manager=manager,
+        socket_path,
+        MessageRoute(lambda text: manager.deliver(spawn_id, text, source="control_socket")),
     )
 
 
@@ -275,7 +272,7 @@ class SpawnManager:
             receiver=receiver,
             config=config,
             emit_event=self.emit_event,
-            inject=self.inject,
+            deliver=self.deliver,
             build_spawn_application_service=_build_spawn_application_service,
         )
 
@@ -316,58 +313,22 @@ class SpawnManager:
             return None
         return await completion_future
 
-    async def inject(
-        self,
-        spawn_id: SpawnId,
-        message: str,
-        source: str = "control_socket",
-        on_result: InjectResultCallback | None = None,
-    ) -> InjectResult:
-        """Record and route one user message injection to the target connection."""
+    async def deliver(
+        self, spawn_id: SpawnId, text: str, *, source: str = "control_socket"
+    ) -> DeliveryKind:
+        """Route one user message to the spawn's connection; failures raise ``DeliveryError``."""
 
         record = spawn_store.get_spawn(self._runtime_root, spawn_id)
         if record is not None and record.status in TERMINAL_SPAWN_STATUSES:
-            result = InjectResult(
-                success=False,
-                error=f"spawn not running: {record.status}",
-            )
-            if on_result is not None:
-                on_result(result)
-            return result
+            raise TransportDead(f"spawn not running: {record.status}")
 
         session = self._sessions.get(spawn_id)
         if session is None or session.terminal_published:
-            result = InjectResult(
-                success=False,
-                error=f"Spawn {spawn_id} is not active",
-            )
-            if on_result is not None:
-                on_result(result)
-            return result
+            raise TransportDead(f"Spawn {spawn_id} is not active")
 
-        async def _send_message() -> DeliveryKind:
-            return await session.connection.send_user_message(message)
-
-        outcome = await session.control_actions.run_action(
-            action=ControlActionType.INJECT,
-            payload={"text": message},
-            source=source,
-            send=_send_message,
+        return await session.control_actions.deliver(
+            session.connection.send_user_message, text, source=source
         )
-        if not outcome.success:
-            result = InjectResult(success=False, error=outcome.error or "inject_failed")
-            if on_result is not None:
-                on_result(result)
-            return result
-
-        result = InjectResult(
-            success=True,
-            inbound_seq=outcome.submission_seq,
-            delivery=outcome.delivery,
-        )
-        if on_result is not None:
-            on_result(result)
-        return result
 
     async def interrupt(
         self,
@@ -381,107 +342,12 @@ class SpawnManager:
         if session is None:
             raise RuntimeError(f"Spawn {spawn_id} is not active")
 
-        outcome = await session.control_actions.run_action(
+        await session.control_actions.run_action(
             action=ControlActionType.INTERRUPT,
             payload={},
             source=source,
             send=session.connection.send_cancel,
         )
-        if not outcome.success:
-            raise RuntimeError(outcome.error or "interrupt_failed")
-
-    async def respond_request(
-        self,
-        spawn_id: SpawnId,
-        *,
-        request_id: str,
-        decision: str,
-        payload: dict[str, object] | None = None,
-        source: str = "chat",
-    ) -> None:
-        """Send one serialized permission decision for a pending harness request."""
-
-        session = self._sessions.get(spawn_id)
-        if session is None:
-            raise RuntimeError(f"Spawn {spawn_id} is not active")
-
-        async def _respond() -> None:
-            await session.connection.respond_request(request_id, decision, payload)
-
-        response_payload: dict[str, object] = {
-            "request_id": request_id,
-            "decision": decision,
-        }
-        if payload is not None:
-            response_payload["payload"] = payload
-
-        outcome = await session.control_actions.run_action(
-            action=ControlActionType.PERMISSION_REPLY,
-            payload=response_payload,
-            source=source,
-            send=_respond,
-        )
-        if not outcome.success:
-            error = outcome.error or "permission_reply_failed"
-            if error != "stale_after_interrupt":
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=error,
-                )
-            raise RuntimeError(error)
-
-    async def respond_user_input(
-        self,
-        spawn_id: SpawnId,
-        *,
-        request_id: str,
-        answers: dict[str, object],
-        source: str = "chat",
-    ) -> None:
-        """Send one serialized user-input response for a pending harness request."""
-
-        session = self._sessions.get(spawn_id)
-        if session is None:
-            raise RuntimeError(f"Spawn {spawn_id} is not active")
-
-        async def _respond() -> None:
-            await session.connection.respond_user_input(request_id, answers)
-
-        outcome = await session.control_actions.run_action(
-            action=ControlActionType.USER_INPUT_REPLY,
-            payload={"request_id": request_id, "answers": answers},
-            source=source,
-            send=_respond,
-        )
-        if not outcome.success:
-            error = outcome.error or "user_input_reply_failed"
-            if error != "stale_after_interrupt":
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=error,
-                )
-            raise RuntimeError(error)
-
-    async def _notify_runtime_request_failed(
-        self,
-        connection: HarnessConnection[Any],
-        *,
-        request_id: str,
-        error: str,
-    ) -> None:
-        callback = getattr(connection, "_notify_request_failed", None)
-        if callback is None:
-            return
-        try:
-            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
-        except Exception:
-            logger.debug(
-                "Runtime request failure callback raised for request %s",
-                request_id,
-                exc_info=True,
-            )
 
     def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
         """Return the active connection for one spawn, if present."""

@@ -72,7 +72,11 @@ Required abstract methods — every subclass must implement all of these:
 - `health()` → bool
 - `send_user_message(text)` → async, returns `DeliveryKind` (`posted` or `acknowledged`; see
   [Inject Acknowledgment](../.context/CONTEXT.md#inject-acknowledgment)). A new connection
-  states `acknowledged` only if the call waits for a harness response.
+  states `acknowledged` only if the call waits for a harness response. A failure raises
+  `DeliveryError`: `DeliveryRefused` when the harness is alive and nothing was written
+  (the coordinator retries it once), `TransportDead` when it is gone and nothing was
+  written (`not_ready(state, text)` picks between them for a send outside `connected`),
+  and any other exception when the message may have arrived (reported once, never resent).
 - `send_cancel()` → async
 - `events()` → `AsyncIterator[HarnessEvent]`
 

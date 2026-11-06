@@ -24,7 +24,7 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -35,7 +35,6 @@ from meridian.lib.harness.connections.base import (
     AutoAcceptHandler,
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     HarnessRequest,
@@ -46,6 +45,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -685,7 +685,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected()
         if self._signal_in_flight:
-            raise ConnectionNotReady("OpenCode follow-up turns require an idle backend")
+            raise DeliveryRefused("OpenCode follow-up turns require an idle backend")
         self._signal_in_flight = False
         await self._post_session_message(message)
 
@@ -1674,13 +1674,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _require_session_id(self) -> str:
         if self._session_id is None:
-            raise ConnectionNotReady("OpenCode session has not been created yet")
+            raise DeliveryRefused("OpenCode session has not been created yet")
         return self._session_id
 
     def _require_connected(self) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"OpenCode connection is not ready (current state: {self._state})"
+            raise not_ready(
+                self._state, f"OpenCode connection is not ready (current state: {self._state})"
             )
 
     def _process_exited(self) -> bool:

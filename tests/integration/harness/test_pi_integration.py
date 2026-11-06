@@ -15,7 +15,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
-    ConnectionNotReady,
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
@@ -953,7 +952,7 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
     monkeypatch.setattr(pi_rpc_module, "resolve_pi_runtime", _fail_resolve_runtime)
 
     connection = PiRpcConnection()
-    with pytest.raises(ConnectionNotReady, match=rf"^{expected_error}$"):
+    with pytest.raises(RuntimeError, match=rf"^{expected_error}$"):
         await _start_existing_pi_connection(
             connection,
             ConnectionConfig(

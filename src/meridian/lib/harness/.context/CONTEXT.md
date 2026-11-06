@@ -256,14 +256,14 @@ arrived).
 | Cursor | none | Unsupported; `send_user_message()` raises. |
 | Pi | acknowledged | The matching prompt-command RPC response reported success. Initial prompt delivery is intentionally not acknowledgment-blocking. |
 
-The kind travels: `ControlActionCoordinator.run_action` → `InjectResult.delivery` →
+The kind travels: `ControlActionCoordinator.deliver` → the `DeliveryKind` it returns →
 the control-socket response's `delivery` field → `meridian spawn message`, which prints
 "Message delivered" for `acknowledged` and "Message posted … (no receipt)" for `posted`.
 A response without `delivery` comes from an older launcher that does not say how far
 the message got, so the CLI claims only `posted`. A posted inject ends at `posted` in
 `control_actions.jsonl` and an acknowledged one at `acknowledged`; a launcher that died
-mid-write leaves `sent` as the last status. For non-inject actions (an interrupt, for
-example), `acknowledged` only means `send` returned. Readers ignore statuses they do
+mid-write leaves `sent` as the last status. For an interrupt,
+`acknowledged` only means `send` returned. Readers ignore statuses they do
 not know.
 
 Codex keeps a conservative unscoped fallback: if a `turn/completed` event has no
@@ -352,8 +352,8 @@ server — the TUI (secondary observer) can only observe notifications.
 request handler:
 - Spawn paths: `PermissionBroker` with auto-reject (the request is answered `reject`)
 - Managed-primary attach: `PermissionBroker` without auto-reject (journals and
-  surfaces the request as durable events; no in-tree code replies — the control
-  socket's `permission_reply` message is the only reply path)
+  surfaces the request as durable events; no in-tree code replies, and the control
+  socket carries only messages)
 
 ### Codex: Live-Fork Snapshot Contract
 

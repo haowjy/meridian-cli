@@ -14,16 +14,12 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
+from meridian.lib.core.delivery import DeliveryError, MessageRoute
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
-from meridian.lib.streaming.types import InjectResult
-
-if TYPE_CHECKING:
-    from meridian.lib.streaming.spawn_manager import SpawnManager
-
 
 # sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
 # callers can validate before asyncio reaches the less actionable bind error.
@@ -122,13 +118,12 @@ def _sweep_stale_sockets(own_path: Path) -> None:
 
 
 class ControlSocketServer:
-    """Handle one control socket endpoint for one active spawn."""
+    """Serve one control socket endpoint: each request is one message for the route."""
 
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager):
-        self._spawn_id = spawn_id
+    def __init__(self, socket_path: Path, route: MessageRoute):
         self._socket_path = socket_path
         self._port_file = socket_path.with_suffix(".port")
-        self._manager = manager
+        self._route = route
         self._server: asyncio.AbstractServer | None = None
         self._port: int | None = None
 
@@ -225,79 +220,18 @@ class ControlSocketServer:
         if not isinstance(message_type, str):
             return {"ok": False, "error": "missing request type"}
 
-        result: InjectResult
-        if message_type == "user_message":
-            text = payload.get("text")
-            if not isinstance(text, str):
-                return {"ok": False, "error": "user_message requires text"}
-            response: dict[str, object] | None = None
-
-            def _on_result(inject_result: InjectResult) -> None:
-                nonlocal response
-                response = self._result_to_response(inject_result)
-
-            result = await self._manager.inject(
-                self._spawn_id,
-                message=text,
-                source="control_socket",
-                on_result=_on_result,
-            )
-            return response or self._result_to_response(result)
-        if message_type == "interrupt":
-            await self._manager.interrupt(self._spawn_id, source="control_socket")
-            return {"ok": True}
-        if message_type == "permission_reply":
-            request_id = payload.get("request_id")
-            decision = payload.get("decision")
-            reply_payload = payload.get("payload")
-            if not isinstance(request_id, str) or not request_id:
-                return {"ok": False, "error": "permission_reply requires request_id"}
-            if not isinstance(decision, str) or not decision:
-                return {"ok": False, "error": "permission_reply requires decision"}
-            if reply_payload is not None and not isinstance(reply_payload, dict):
-                return {"ok": False, "error": "permission_reply payload must be an object"}
-            typed_payload = (
-                cast("dict[str, object]", reply_payload)
-                if isinstance(reply_payload, dict)
-                else None
-            )
-            await self._manager.respond_request(
-                self._spawn_id,
-                request_id=request_id,
-                decision=decision,
-                payload=typed_payload,
-                source="control_socket",
-            )
-            return {"ok": True}
-        if message_type == "user_input_reply":
-            request_id = payload.get("request_id")
-            answers = payload.get("answers")
-            if not isinstance(request_id, str) or not request_id:
-                return {"ok": False, "error": "user_input_reply requires request_id"}
-            if not isinstance(answers, dict):
-                return {"ok": False, "error": "user_input_reply requires answers object"}
-            typed_answers = cast("dict[str, object]", answers)
-            await self._manager.respond_user_input(
-                self._spawn_id,
-                request_id=request_id,
-                answers=typed_answers,
-                source="control_socket",
-            )
-            return {"ok": True}
-        else:
+        if message_type != "user_message":
             return {"ok": False, "error": f"unsupported request type: {message_type}"}
-
-    @staticmethod
-    def _result_to_response(result: InjectResult) -> dict[str, object]:
-        response: dict[str, object]
-        if result.success:
-            response = {"ok": True}
-        else:
-            response = {"ok": False, "error": result.error or "request failed"}
-        if result.inbound_seq is not None:
-            response["inbound_seq"] = result.inbound_seq
-        if result.delivery is not None:
-            response["delivery"] = result.delivery.value
+        text = payload.get("text")
+        if not isinstance(text, str):
+            return {"ok": False, "error": "user_message requires text"}
+        try:
+            delivery = await self._route.deliver(text)
+        except DeliveryError as exc:
+            return {"ok": False, "error": str(exc)}
+        response: dict[str, object] = {"ok": True, "delivery": delivery.value}
+        if self._route.note is not None:
+            response["note"] = self._route.note
         return response
 
     async def stop(self) -> None:

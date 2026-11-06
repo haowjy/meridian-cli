@@ -11,19 +11,19 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     RawHarnessEvent,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -492,7 +492,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         try:
             resolved_runtime = resolve_pi_runtime(env=env, role=launch_role)
         except PiRuntimeResolutionError as exc:
-            raise ConnectionNotReady(str(exc)) from exc
+            raise RuntimeError(str(exc)) from exc
         command[0] = resolved_runtime.binary_path
         self._launch_command = tuple(command)
         self._launch_cwd = str(config.control_root)
@@ -655,12 +655,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def _send_rpc_message(self, payload: dict[str, object], *, event: str) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady("Pi RPC connection is not ready for send operations.")
+            raise not_ready(self._state, "Pi RPC connection is not ready for send operations.")
 
         child = self._child
         process = None if child is None else child.process
         if process is None or process.stdin is None or process.returncode is not None:
-            raise ConnectionNotReady("Pi RPC subprocess is not available for writes.")
+            raise TransportDead("Pi RPC subprocess is not available for writes.")
 
         wire_payload = json.dumps(payload, separators=(",", ":")) + "\n"
         trace_wire_send(self._tracer, event, wire_payload)

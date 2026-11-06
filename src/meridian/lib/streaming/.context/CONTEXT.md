@@ -262,8 +262,8 @@ Inject flows through the control socket:
 meridian spawn message <id> --message "..."
   → fixed per-user POSIX directory / hashed control socket
   → ControlSocketServer._handle_client()
-  → SpawnManager.inject()
-    → ControlActionCoordinator.run_action()  — journals and serializes the action
+  → MessageRoute.deliver → SpawnManager.deliver()
+    → ControlActionCoordinator.deliver()  — journals and serializes the action
     → connection.send_user_message(message)
 ```
 
@@ -321,7 +321,7 @@ the connection exposes the needed seam.
 
 ## Anti-Patterns
 
-- **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.inject()` so the action coordinator serializes it.
+- **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.deliver()` so the action coordinator serializes it.
 - **Do not gate hooks or delivery on writer existence.** Facts and subscribers must work without runner-history persistence.
 - **Don't share a manager across concurrent event loops** — the session dict is not thread-safe.
 

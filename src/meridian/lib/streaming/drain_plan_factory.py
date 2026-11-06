@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from meridian.lib.core.delivery import DeliveryError, DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -18,7 +20,6 @@ from meridian.lib.streaming.drain_policy import (
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_drain_teardown import EmitEvent, PiDrainSessionTeardown
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
-from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import (
@@ -27,16 +28,12 @@ if TYPE_CHECKING:
     )
 
 
-class SerializedInject(Protocol):
-    """Manager-owned serialized injection capability."""
+class SerializedDeliver(Protocol):
+    """Manager-owned serialized delivery capability."""
 
     def __call__(
-        self,
-        spawn_id: SpawnId,
-        message: str,
-        source: str = "control_socket",
-        on_result: Callable[[InjectResult], None] | None = None,
-    ) -> Awaitable[InjectResult]: ...
+        self, spawn_id: SpawnId, text: str, *, source: str = "control_socket"
+    ) -> Awaitable[DeliveryKind]: ...
 
 
 class DescendantCancellationService(Protocol):
@@ -55,7 +52,7 @@ def build_drain_plan(
     receiver: HarnessConnection[Any],
     config: ConnectionConfig,
     emit_event: EmitEvent,
-    inject: SerializedInject,
+    deliver: SerializedDeliver,
     build_spawn_application_service: BuildSpawnApplicationService,
 ) -> DrainPlan:
     """Build the complete drain-loop configuration for one active spawn."""
@@ -83,12 +80,12 @@ def build_drain_plan(
         await service.cancel_descendants(spawn_id)
 
     async def _send_pi_done_nudge(message: str) -> None:
-        await inject(spawn_id, message, source="pi_done_nudge")
+        # The Pi drain proceeds whether or not the nudge arrives.
+        with suppress(DeliveryError):
+            await deliver(spawn_id, message, source="pi_done_nudge")
 
     async def _send_completion_nudge(message: str) -> None:
-        result = await inject(spawn_id, message, source="completion_nudge")
-        if not result.success:
-            raise RuntimeError(result.error or "completion handshake injection failed")
+        await deliver(spawn_id, message, source="completion_nudge")
 
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)

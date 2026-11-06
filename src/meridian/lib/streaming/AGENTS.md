@@ -67,8 +67,8 @@ fail, or clear signals for the parent.
 ## Key Rules
 
 **Never call `connection.send_user_message()` directly.** Always use
-`SpawnManager.inject()`. The `ControlActionCoordinator` serializes concurrent
-inject, interrupt, permission reply, and user-input-reply actions. Calling the
+`SpawnManager.deliver()`. The `ControlActionCoordinator` serializes concurrent
+message deliveries and interrupts. Calling the
 connection directly breaks this serialization.
 
 **Spawn-owned journals share the spawn row's lifetime.** Permission and control-action
