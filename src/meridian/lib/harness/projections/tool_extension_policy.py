@@ -17,6 +17,11 @@ from meridian.lib.tools import ToolAction, ToolRule, split_native
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
 # so a nested launch never inherits it (see ``child=False`` in env_registry).
 TOOL_POLICY_ENV = "_MERIDIAN_TOOL_POLICY"
+# What a Pi bundle built before the rename reads. Pi's adapter sets both for one release.
+# Delete this, its use in pi.py, and its entries in constants.py and env_registry.py once
+# no supported Pi bundle predates `_MERIDIAN_TOOL_POLICY` (the release after the one that
+# renamed it).
+LEGACY_PI_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
 _STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
 
@@ -131,6 +136,7 @@ def needs_extension(
 
 
 __all__ = [
+    "LEGACY_PI_POLICY_ENV",
     "TOOL_POLICY_ENV",
     "ExtensionPolicy",
     "ExtensionRule",

@@ -336,6 +336,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "Launch-local scoped-tool policy for the harness-side enforcer (Pi extension, Codex hook).",
         child=False,
     ),
+    _internal_handle(
+        "_MERIDIAN_PI_PERMISSION_POLICY",
+        "Pre-rename name of _MERIDIAN_TOOL_POLICY, still set for older Pi bundles.",
+        child=False,
+    ),
 )
 
 ENV_FAMILIES: tuple[EnvFamily, ...] = (

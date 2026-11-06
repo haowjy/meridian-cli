@@ -76,7 +76,10 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
 )
-from meridian.lib.harness.projections.tool_extension_policy import TOOL_POLICY_ENV
+from meridian.lib.harness.projections.tool_extension_policy import (
+    LEGACY_PI_POLICY_ENV,
+    TOOL_POLICY_ENV,
+)
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     PI_CANCELLED_STOP_REASONS,
@@ -525,12 +528,19 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Pass the bound policy directly to Pi's launch-local extension."""
+        """Pass the bound policy directly to Pi's launch-local extension.
+
+        A bundle built before the rename still reads the old name, and now fails open when
+        its variable is unset; both names carry the policy.
+        """
 
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return {TOOL_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        if policy is None:
+            return {}
+        encoded = policy.model_dump_json()
+        return {TOOL_POLICY_ENV: encoded, LEGACY_PI_POLICY_ENV: encoded}
 
     def resolve_session_file(
         self,

@@ -296,12 +296,10 @@ describe("path scope evaluation", () => {
 });
 
 describe("policy loading", () => {
-  it("is a no-op only when the policy variable is absent", () => {
-    const handlers = new Map<string, (...args: any[]) => any>();
-    meridianPermissionsExtension({
-      on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
-    } as any);
-    expect(handlers).toEqual(new Map());
+  it("fails closed when the policy variable is absent", () => {
+    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
+      "Pi permission policy is missing",
+    );
   });
 
   it("fails closed when the policy variable is empty", () => {
