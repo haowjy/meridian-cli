@@ -205,7 +205,7 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     ]
     path.write_bytes(b"\n".join(json.dumps(line).encode() for line in lines) + b'\n{"v":2')
 
-    assert latest_messaging_socket(path, pid=pid) == (latest, 2.0)
+    assert latest_messaging_socket(path, pid=pid) == latest
     assert latest_messaging_socket(path, pid=pid + 2) is None
     assert [
         item.key.session_id
