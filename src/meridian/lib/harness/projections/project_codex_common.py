@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AGENTS_PREFIX,
+    CODEX_CONFIG_APPROVAL_POLICY_KEY,
+    CODEX_CONFIG_APPROVALS_REVIEWER_KEY,
     CODEX_CONFIG_FEATURES_PREFIX,
     CODEX_CONFIG_NETWORK_ACCESS_KEY,
     CODEX_CONFIG_SANDBOX_MODE_KEY,
@@ -108,6 +110,23 @@ class CodexSandboxProjection:
             config[_CODEX_NETWORK_PROXY_ENABLED_KEY] = True
             config[_CODEX_NETWORK_PROXY_DOMAINS_KEY] = dict(self.network_domains)
         return fields, config
+
+
+def project_codex_approval_args(permissions: CodexPermissions) -> list[str]:
+    """The ``-c`` overrides for approval, shared by ``codex exec`` and ``codex app-server``."""
+
+    args: list[str] = []
+    if permissions.approval_policy is not None:
+        args += [
+            "-c",
+            f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}={json.dumps(permissions.approval_policy)}",
+        ]
+    if permissions.approvals_reviewer is not None:
+        args += [
+            "-c",
+            f"{CODEX_CONFIG_APPROVALS_REVIEWER_KEY}={json.dumps(permissions.approvals_reviewer)}",
+        ]
+    return args
 
 
 def project_codex_sandbox(

@@ -1,5 +1,52 @@
 # Upgrade notes
 
+## `approval: auto` uses each harness's own auto
+
+`approval: auto` (`--approval auto`) used to compile to the nearest prompt-free setting. It now
+asks for the harness's own auto mode on Claude and Codex:
+
+| Harness | Before | Now |
+|---|---|---|
+| Claude | `--permission-mode acceptEdits` | `--permission-mode auto` |
+| Codex | `approval_policy="on-request"`, plus whatever `~/.codex/config.toml` set | `approval_policy="on-request"` and `approvals_reviewer="auto_review"`, on `codex exec` and `codex app-server` |
+| Cursor, OpenCode, Pi | unchanged | unchanged |
+
+What changes for an agent with `approval: auto`:
+
+- **Claude.** Claude's classifier now approves or refuses the calls `acceptEdits` used to leave
+  unmatched. Most calls run: edits and Bash outside the working directories, commits, pushes,
+  `meridian spawn`. The classifier can refuse a call it judges risky, and a refused call is not
+  retried. `deny` and `ask` rules still hold; on a scratch project a `deny` on `git revert *` and an
+  `ask` on web tools both refused under `auto`. A profile that gates a tool through the mode (a
+  plain `deny` or `ask` beside scoped allows of the same tool, or an unscoped `*: ask`) keeps
+  `acceptEdits` or `manual`, and one with a whole-policy allowlist keeps `dontAsk`, because the
+  classifier would approve what those modes refuse. The permission report names the mode it chose.
+- **Claude may not offer `auto`.** Claude runs `manual` instead when the model does not support
+  `auto` (`claude-haiku-4-5` is one) or the account or settings turn it off. A spawn then refuses
+  every edit, command and tool the profile does not allow, and exits as succeeded. Meridian reads
+  `permissionMode` from Claude's init event and adds a warning to the spawn's report when it differs
+  from the launch. The launch-time permission report cannot know this, so its `approval: auto` line
+  says so.
+- **A confined profile gets two wider limits.** With `sandbox: workspace-write` or `read-only`,
+  the classifier, not `acceptEdits`, decides an Edit or Write outside the working directories, so it
+  can run. With `network: deny` or a host list, it decides WebFetch and WebSearch, which the
+  network setting never covered, so they can run. Both are in the permission report's sandbox and
+  network lines.
+- **Codex.** A reviewer model now answers sandbox escalations, so a request to write outside
+  `workspace-write` or reach the network can be approved. Before, the launch inherited the reviewer
+  from the user's `~/.codex/config.toml` or the forked thread, or had none and the spawn refused the
+  request. Meridian sets both values on every launch, so the result no longer depends on that file or
+  thread. The reviewer's tokens do not appear in `codex exec --json` usage or in Meridian's usage
+  totals. `approval: confirm` now sets `approvals_reviewer="user"`: a spawn refuses every approval
+  request, even from a Codex home that sets `auto_review` or a thread forked from an `auto` one.
+  Before, such a home or fork let the reviewer approve a `confirm` spawn's escalation.
+  `auto_review` needs Codex 0.125.0 or later: 0.120.0 fails at launch with an unknown-variant
+  config error, and 0.100.0 or older ignores the key, so no reviewer is applied.
+- **`--approve-for-me` is not used.** Codex's flag refuses `--sandbox`, forces `workspace-write` and does
+  not exist on `codex app-server`, so the profile's sandbox would be lost.
+
+To keep the old Claude behavior, pass `--permission-mode acceptEdits` as a passthrough argument.
+
 ## A primary launch exits with the harness's status
 
 `meridian`, `meridian --continue`, `--fork`, `--from` and `meridian bootstrap` used to exit `0`

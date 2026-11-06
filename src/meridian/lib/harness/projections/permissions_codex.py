@@ -41,11 +41,19 @@ _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
     "auto": "on-request",
     # Codex 0.163 accepts only ``on-request`` and ``never``; ``untrusted`` is rejected
-    # at startup, so ``confirm`` cannot be stricter than ``auto`` here.
+    # at startup, so ``confirm`` is ``on-request`` with a human reviewer (see below).
     "confirm": "on-request",
     "never": "never",
     "yolo": "never",
 }
+
+# Who answers an ``on-request`` escalation. Set for every mode that can raise one, so a launch
+# never inherits the reviewer from ``~/.codex/config.toml`` or from the thread it forks:
+# ``auto`` is Codex's own auto (the guardian reviewer); ``confirm`` is ``user``, which a spawn
+# refuses and a primary asks. ``never`` and ``yolo`` raise no request, so no reviewer is read.
+# ``codex exec --approve-for-me`` is not used: it refuses ``--sandbox``, forces
+# workspace-write, and app-server has no such flag.
+_APPROVALS_REVIEWER_BY_MODE: dict[ApprovalMode, str] = {"auto": "auto_review", "confirm": "user"}
 
 _SANDBOX_MODE_BY_MODE: dict[SandboxMode, str | None] = {
     "default": None,
@@ -76,6 +84,7 @@ class CodexPermissions:
     sandbox_mode: str | None
     network: CodexNetworkSettings
     approval_policy: str | None
+    approvals_reviewer: str | None
     shell_tool: bool | None
     web_search: bool | None
     view_image: bool | None
@@ -192,6 +201,7 @@ def _compile_codex_permission_values(
             sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
             network=network.native,
             approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
+            approvals_reviewer=_APPROVALS_REVIEWER_BY_MODE.get(policy.approval),
             shell_tool=switches["shell_tool"],
             web_search=switches["web_search"],
             view_image=switches["view_image"],
@@ -426,12 +436,17 @@ def _codex_report(
         )
     if permissions.approval_policy is not None:
         note = f"approval_policy={permissions.approval_policy}"
+        if permissions.approvals_reviewer is not None:
+            note += f", approvals_reviewer={permissions.approvals_reviewer}"
+            if permissions.approvals_reviewer == "auto_review":
+                note += ": Codex's reviewer decides escalations and can approve one"
         if policy.approval == "confirm":
             lines.append(
                 ReportLine(
                     f"approval: {policy.approval}",
                     "partial",
-                    f"{note}; Codex has no stricter mode, so confirm behaves as auto",
+                    f"{note}; Codex has no mode stricter than on-request, so a request the "
+                    "sandbox allows to escalate is asked of the user (a spawn refuses it)",
                 )
             )
         else:

@@ -9,13 +9,13 @@ from meridian.lib.harness.projections._guards import (
 )
 from meridian.lib.harness.projections.compaction import project_codex_autocompact_args
 from meridian.lib.harness.projections.native_config import (
-    CODEX_CONFIG_APPROVAL_POLICY_KEY,
     CODEX_CONFIG_REASONING_EFFORT_KEY,
     project_codex_native_config,
 )
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
+    project_codex_approval_args,
     project_codex_sandbox,
     project_codex_tool_switch_flags,
 )
@@ -98,13 +98,7 @@ def project_codex_spec_to_cli_args(
     permissions, _ = compile_codex_permissions(spec)
     sandbox = project_codex_sandbox(spec, permissions)
     command.extend(sandbox.subprocess_args())
-    if permissions.approval_policy is not None:
-        command.extend(
-            (
-                "-c",
-                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}={json.dumps(permissions.approval_policy)}",
-            )
-        )
+    command.extend(project_codex_approval_args(permissions))
     command.extend(project_codex_tool_switch_flags(permissions))
     native_config_args, _ = project_codex_native_config(spec.native_config)
     command.extend(native_config_args)

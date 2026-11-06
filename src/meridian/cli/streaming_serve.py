@@ -125,6 +125,7 @@ async def streaming_serve(
         native_key = None
         extractor = get_harness_bundle(harness_id).extractor
         fold = extractor.create_fold()
+        fold.bind_launch(launch_ctx.binding.spec)
         facts = fold.facts
 
         print(f"Started spawn {spawn_id} (harness={prepared.resolved_harness})")
