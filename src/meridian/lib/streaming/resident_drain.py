@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
@@ -298,12 +299,16 @@ class _HoldProfile:
             raise RuntimeError("completion handshake backend is unavailable")
         try:
             await self._send_nudge(self._nudge_message(report_kept=state.candidate is not None))
-        except Exception:
+        except Exception as exc:
             self._confirmation_failed = True
             if expiry_nudge:
-                # The child was not asked, so the next expiry retries, once.
-                self._confirmation_requested = confirmation_requested
-                self._confirmation_grace_at = None
+                if isinstance(exc, DeliveryRefused):
+                    # The child was not asked, so the next expiry retries, once.
+                    self._confirmation_requested = confirmation_requested
+                    self._confirmation_grace_at = None
+                else:
+                    # Gone, or the nudge may have arrived: never resend it.
+                    self._idle_nudge_sends = _IDLE_NUDGE_SENDS
             raise
         if expiry_nudge:
             self._idle_nudge_sends = _IDLE_NUDGE_SENDS
