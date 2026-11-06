@@ -121,6 +121,12 @@ class PrimaryInbox(Protocol):
     ) -> str: ...
 
 
+class PrimaryInboxRoute(Protocol):
+    """Raise ``PrimaryInboxError`` unless a post to this primary has a live route now."""
+
+    def __call__(self, *, runtime_root: Path, record: SpawnRecord) -> object: ...
+
+
 def _no_event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], None], ...]:
     return ()
 
@@ -138,6 +144,7 @@ class HarnessBundle(Generic[SpecT]):
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
     primary_inbox: PrimaryInbox | None = None
+    primary_inbox_route: PrimaryInboxRoute | None = None
     primary_idle_sensor: PrimaryIdleSensor | None = None
     native_idle_hook: NativeIdleHook | None = None
     detect_ttl: DetectIdleTtl | None = None
@@ -227,6 +234,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         semantics=bundle.semantics,
         event_sinks=bundle.event_sinks,
         primary_inbox=bundle.primary_inbox,
+        primary_inbox_route=bundle.primary_inbox_route,
         primary_idle_sensor=bundle.primary_idle_sensor,
         native_idle_hook=bundle.native_idle_hook,
         detect_ttl=bundle.detect_ttl,
@@ -268,9 +276,7 @@ def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
         raise KeyError(f"unknown harness: {harness_id}") from exc
 
 
-def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
-    """Return this primary's inbox port, or None when its harness has none."""
-
+def _primary_bundle(record: SpawnRecord) -> HarnessBundle[Any] | None:
     try:
         harness_id = HarnessId(record.harness or "")
     except ValueError:
@@ -279,13 +285,32 @@ def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
     from meridian.lib.harness import ensure_bootstrap
 
     ensure_bootstrap()
-    return get_harness_bundle(harness_id).primary_inbox
+    return get_harness_bundle(harness_id)
 
 
-def primary_accepts_messages(record: SpawnRecord) -> bool:
-    """True when this primary's harness exposes a route that posts to it."""
+def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
+    """Return this primary's inbox port, or None when its harness has none."""
 
-    return primary_inbox(record) is not None
+    bundle = _primary_bundle(record)
+    return None if bundle is None else bundle.primary_inbox
+
+
+def primary_accepts_messages(record: SpawnRecord, *, runtime_root: Path) -> bool:
+    """True when a post to this primary would find a live route, by the post's own check.
+
+    *runtime_root* is the one this record was read from.
+    """
+
+    bundle = _primary_bundle(record)
+    if bundle is None or bundle.primary_inbox is None:
+        return False
+    if bundle.primary_inbox_route is None:
+        return True
+    try:
+        bundle.primary_inbox_route(runtime_root=runtime_root, record=record)
+    except PrimaryInboxError:
+        return False
+    return True
 
 
 def post_to_primary(

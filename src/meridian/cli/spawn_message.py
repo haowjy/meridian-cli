@@ -43,6 +43,7 @@ def framed_message(
     *,
     sender_spawn_id: str | None = None,
     sender: SpawnRecord | None = None,
+    sender_root: Path | None = None,
     sender_project_root: Path | None = None,
 ) -> str:
     """Open the message with its sender and, when it exists, a way to answer.
@@ -50,13 +51,14 @@ def framed_message(
     A session that receives a message otherwise cannot tell which session sent
     it, or where to reply. The frame is text, not wire metadata: every harness's
     delivery path carries it unchanged. *sender* is the sender's own record, absent
-    when its state can't be read from here; *sender_project_root* is set only when
+    when its state can't be read from here; *sender_root* is the runtime root it was
+    read from; *sender_project_root* is set only when
     the sender lives in another project, which is when the reply needs ``-C``.
     """
 
     if sender_spawn_id is None:
         provenance = "[Meridian] Message with no sender identity; it has no reply address."
-    elif sender is None or not _can_receive_reply(sender):
+    elif sender is None or sender_root is None or not _can_receive_reply(sender, sender_root):
         where = f"spawn {sender_spawn_id}"
         if sender is not None and sender.continue_chat_id:
             where += f" (chat {sender.continue_chat_id})"
@@ -89,12 +91,18 @@ def _sender_record(runtime_root: Path | None, sender_spawn_id: str | None) -> Sp
     return read_derived(runtime_root, sender_spawn_id)
 
 
-def _can_receive_reply(sender: SpawnRecord) -> bool:
-    """True when a message sent back to the sender would reach a live route."""
+def _can_receive_reply(sender: SpawnRecord, sender_root: Path) -> bool:
+    """True when a message sent back to the sender would reach a live route.
+
+    Mirrors what ``send_message`` needs: a primary's published inbox, a child's
+    control socket. *sender_root* is the runtime root the sender's record came from.
+    """
 
     if not is_active_spawn_status(sender.status):
         return False
-    return sender.kind != "primary" or primary_accepts_messages(sender)
+    if sender.kind == "primary":
+        return primary_accepts_messages(sender, runtime_root=sender_root)
+    return control_socket_path(sender_root, sender.id).exists()
 
 
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
@@ -181,6 +189,7 @@ async def send_message(
         normalized_message,
         sender_spawn_id=sender_spawn_id,
         sender=_sender_record(sender_root, sender_spawn_id),
+        sender_root=sender_root,
         sender_project_root=sender_project_root,
     )
 
