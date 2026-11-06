@@ -30,13 +30,8 @@ def _process_exited(spawn_id: SpawnId) -> PrimaryInboxError:
     )
 
 
-def post_primary_message(
-    *,
-    runtime_root: Path,
-    record: SpawnRecord,
-    message: str,
-) -> str:
-    """Post one user message to the inbox published by a live Claude primary."""
+def resolve_primary_inbox(*, runtime_root: Path, record: SpawnRecord) -> Path:
+    """Return the live inbox socket a Claude primary published, or raise why none is reachable."""
 
     spawn_id = SpawnId(record.id)
     worker_pid = record.worker_pid
@@ -53,6 +48,19 @@ def post_primary_message(
     inbox, recorded_at = published_inbox
     if not is_process_alive_born_by(worker_pid, recorded_at):
         raise _process_exited(spawn_id)
+    return inbox
+
+
+def post_primary_message(
+    *,
+    runtime_root: Path,
+    record: SpawnRecord,
+    message: str,
+) -> str:
+    """Post one user message to the inbox published by a live Claude primary."""
+
+    spawn_id = SpawnId(record.id)
+    inbox = resolve_primary_inbox(runtime_root=runtime_root, record=record)
 
     wire_message = (
         json.dumps(

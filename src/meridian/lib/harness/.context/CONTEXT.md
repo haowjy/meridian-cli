@@ -151,7 +151,9 @@ and record epoch for the primary's recorded worker PID, then refuses the post
 unless that PID is still a live, non-zombie process born by the recorded epoch.
 This prevents a stale primary row from posting to an unrelated Claude process
 that reused the PID. Claude owns the native wire protocol. A post has no delivery
-acknowledgement and must not be described as delivered.
+acknowledgement and must not be described as delivered. `primary_inbox_route`
+runs the same resolution without posting; the message frame uses it to decide
+whether to advertise a reply, and a primary without it counts as unreachable.
 
 ### `HarnessContract` as Inspectable Surface
 

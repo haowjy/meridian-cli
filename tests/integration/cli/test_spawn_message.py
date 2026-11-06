@@ -121,6 +121,12 @@ async def test_claude_primary_posts_to_published_inbox(
         prompt="child",
     )
 
+    # The child sender is reachable only while its control socket exists.
+    monkeypatch.setattr(
+        spawn_message, "control_socket_path", lambda _root, spawn_id: tmp_path / f"{spawn_id}.sock"
+    )
+    (tmp_path / "p2.sock").touch()
+
     try:
         await spawn_message.send_message("p1", "Reply exactly ACK", sender_spawn_id="p2")
     finally:
