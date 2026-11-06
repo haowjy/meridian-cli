@@ -2,12 +2,13 @@
 
 Meridian deliberately recomposes the launch prompt from the selected local profile,
 ``skills.loaded``, and launch-owned context/report blocks. The bundle's precomposed
-``agent_body``, ``prompt_surface.system_instruction``, ``supplemental_documents``, and
-``scaffold_slots`` are therefore unread rather than competing instruction surfaces.
-The top-level ``agent`` duplicates the request's selected local profile. Top-level routing
-diagnostics duplicate ``route_trace`` and stay there; provenance keys without launch
-semantics remain diagnostic. ``tools.rules`` is the permission contract; the legacy
-``tools.allowed``, ``disallowed``, and ``mcp`` derivatives are not server config.
+``agent_body``, ``prompt_surface`` (system instruction and agent inventory),
+``supplemental_documents``, and ``scaffold_slots`` are therefore unread rather than
+competing instruction surfaces. The top-level ``agent`` duplicates the request's
+selected local profile. Top-level routing diagnostics duplicate ``route_trace`` and
+stay there; provenance keys without launch semantics remain diagnostic.
+``tools.rules`` is the permission contract; the legacy ``tools.allowed``,
+``disallowed``, and ``mcp`` derivatives are not server config.
 """
 
 from __future__ import annotations
@@ -111,7 +112,6 @@ class BundleResult:
     network: NetworkPolicy | SandboxDerivedNetwork
     provenance: dict[str, str]
     warnings: tuple[str, ...]
-    prompt_surface_inventory_prompt: str
     tool_rules: tuple[ToolRule, ...]
     platform_tool_rules: tuple[ToolRule, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
@@ -628,7 +628,6 @@ def _parse_bundle_payload(
         }
     )
 
-    prompt_surface = _optional_object_field(payload, "prompt_surface")
     tools = _optional_object_field(payload, "tools")
 
     skills_obj = _optional_object_field(payload, "skills")
@@ -647,7 +646,6 @@ def _parse_bundle_payload(
         network=network,
         provenance=provenance,
         warnings=_as_str_tuple(payload.get("warnings")),
-        prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),
         skills_loaded=skills_loaded,
@@ -834,7 +832,6 @@ def bundle_to_resolved_policy(
         selection_report=bundle.selection_report,
         warnings=warnings,
         alias_catalog=alias_catalog,
-        bundle_inventory_prompt=bundle.prompt_surface_inventory_prompt or None,
         bundle_available_skills=bundle.skills_available,
         skill_delivery=skill_delivery,
     )

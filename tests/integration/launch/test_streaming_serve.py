@@ -55,9 +55,6 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
         harness=HarnessId.CODEX,
         harness_model="gpt-5.4",
         execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
-        prompt_surface_inventory_prompt=(
-            "# Meridian Agents\n\n## Subagent\n- `meridian spawn -a reviewer`: Review.\n"
-        ),
     )
 
     async def _run_streaming_spawn(**kwargs: object) -> DrainOutcome:

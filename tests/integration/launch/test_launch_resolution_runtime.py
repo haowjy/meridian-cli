@@ -444,7 +444,7 @@ def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRe
     )
 
 
-def test_primary_launch_injects_bundle_inventory(
+def test_primary_launch_points_to_live_agent_catalog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -452,18 +452,11 @@ def test_primary_launch_injects_bundle_inventory(
     peer_name = "coder"
     skill_name = "review"
     skill_description = "Review helper"
-    bundle_inventory = (
-        "# Meridian Agents\n\n"
-        "## Subagent\n"
-        "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
-        f"- `meridian spawn -a {peer_name}`: Peer.\n"
-    )
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model=model,
         harness=HarnessId.CLAUDE,
-        prompt_surface_inventory_prompt=bundle_inventory,
     )
     write_agent(
         tmp_path,
@@ -488,10 +481,10 @@ def test_primary_launch_injects_bundle_inventory(
         if preview.projected_content and preview.projected_content.system_prompt
         else preview.binding.run_params.prompt
     )
-    assert "# Meridian Agents" in text
-    assert "## Subagent" in text
-    assert "`meridian spawn -a dev-orchestrator`" in text
-    assert f"`meridian spawn -a {peer_name}`" in text
+    # The agent catalog is read live through the command, never frozen into the prompt.
+    assert "# Meridian Agents" not in text
+    assert f"`meridian spawn -a {peer_name}`" not in text
+    assert "`meridian spawn subagents`" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
     floor = CallerBoundary.from_env_value(

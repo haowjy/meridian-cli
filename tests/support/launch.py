@@ -85,7 +85,6 @@ class FakeBundleResult:
     provider_constraint: str | None = None
     selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
-    prompt_surface_inventory_prompt: str = ""
     tool_rules: tuple[ToolRule, ...] = ()
     platform_tool_rules: tuple[ToolRule, ...] = ()
     skills_loaded: tuple[LoadedSkillEntry, ...] = ()
@@ -167,7 +166,6 @@ def _direct_prepared_surface(
         ),
         profile_tool_rules=(),
         has_spawn_capability=False,
-        profile_mode="subagent",
         model_selection=None,
         launch_request=resolved_request,
     )
@@ -263,7 +261,6 @@ def stub_bundle_request_and_resolve(
     bundle_network: NetworkPolicy | SandboxDerivedNetwork | None = None,
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
-    prompt_surface_inventory_prompt: str = "",
     tool_rules: tuple[ToolRule, ...] = (),
     platform_tool_rules: tuple[ToolRule, ...] = (),
     skills_loaded: tuple[LoadedSkillEntry, ...] = (),
@@ -296,7 +293,6 @@ def stub_bundle_request_and_resolve(
                 else resolved_policy.network or SandboxDerivedNetwork()
             ),
             warnings=warnings,
-            prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
             tool_rules=tool_rules,
             platform_tool_rules=platform_tool_rules,
             skills_loaded=skills_loaded,

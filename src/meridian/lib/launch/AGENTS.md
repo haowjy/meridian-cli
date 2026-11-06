@@ -104,10 +104,10 @@ prompt is valid for `--continue` and reference-only launches.
 - **`--from` prior context goes in the user turn, not the system prompt.** Prior reports
   may hold user-generated content and the system prompt carries implicit authority.
   Use `resolve_task_context_inputs()`.
-- **No per-launch values in the system prompt**: a spawn's run ID, launching chat and
+- **No per-launch values in the system prompt**: a spawn's ID, launching chat and
   session links go in the first user turn (`build_launch_facts_prompt()`) so sibling
   spawns send byte-identical system bytes. A primary's own chat ID and links stay in the
-  capability block (`--continue` replays no user turn); a primary gets no run-ID line,
+  capability block (`--continue` replays no user turn); a primary gets no spawn-ID line,
   since no caller holds it and the chat ID is its handle. A `--goal` never creates a user
   turn for a primary. Rationale and the task-dir pin rules:
   [.context/CONTEXT.md](.context/CONTEXT.md).

@@ -135,7 +135,6 @@ def build_launch_policy_snapshot(
     model_selection: SnapshotModelSelection | None = None,
     loaded_skills: tuple[SkillContent, ...] = (),
     available_skills: tuple[AvailableSkillEntry, ...] = (),
-    bundle_inventory_prompt: str | None = None,
     profile: AgentProfile | None = None,
     skill_delivery: SkillDeliveryMode,
 ) -> LaunchPolicySnapshot:
@@ -173,7 +172,6 @@ def build_launch_policy_snapshot(
         ),
         matched_policy_rule=request.matched_policy_rule,
         selection_report=request.selection_report,
-        bundle_inventory_prompt=(bundle_inventory_prompt or "").strip() or None,
         skill_delivery=skill_delivery,
     )
 

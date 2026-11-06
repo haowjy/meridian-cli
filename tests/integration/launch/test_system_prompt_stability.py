@@ -95,7 +95,7 @@ def test_system_prompt_is_stable_across_launches(
 ) -> None:
     """A continue keeps the bytes; a new goal or surface changes them.
 
-    The run ID, the launching chat, a spawn's goal and a spawn's per-chat links are
+    The spawn ID, the launching chat, a spawn's goal and a spawn's per-chat links are
     per-launch, so they live in the user turn. Rebuilding them into the system prompt
     made every continue miss the harness prompt cache.
     """

@@ -17,6 +17,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn subagents` | List the agents in the calling agent's `subagents:` list, with descriptions and routing markers |
+| `meridian spawn subagents --all` | List every installed agent, including `model-invocable: false` ones and those outside the caller's list |
 | `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Show a spawn's report and status; inside a spawn, a terminal report body consumes its pending completion notice (`--no-observe` opts out) |
@@ -632,8 +634,9 @@ directory actually read, so a Mars-provided skill points at
 | `succeeded` | Completed successfully |
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
+| `timed_out` | Exceeded its runtime budget |
 
-`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued`, `--status finalizing` and `--view queued` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
+`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are not listable filters: spawns written by older builds can still show them, but `--status queued`, `--status finalizing` and `--view queued` fail as unsupported. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
 ## Spawn References
 

@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from pydantic import ValidationError
 
-from meridian.lib.catalog.agent import AgentMode
 from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
@@ -300,7 +299,6 @@ class PreparedLaunchSurface:
     runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tool_rules: tuple[ToolRule, ...]
     has_spawn_capability: bool
-    profile_mode: AgentMode
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -840,7 +838,6 @@ def _reproject_capabilities_at_bind(
     chat_id: str | None,
     launch_facts: str,
     spawn_capable: bool,
-    profile_mode: AgentMode,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Render the capability block with bound paths and re-project prompt channels.
@@ -860,7 +857,6 @@ def _reproject_capabilities_at_bind(
 
     capabilities = build_capabilities_prompt(
         spawn_capable=spawn_capable,
-        profile_mode=profile_mode,
         project_root=project_root,
         control_root=control_root,
         task_dir=task_dir,
@@ -1013,7 +1009,6 @@ def _build_shared_composition(
             skill.name for skill in policy.resolved_skills.loaded_skills if skill.content.strip()
         ),
         spawn_usage_contract=spawn_usage_contract,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
         harness_guidance=policy.adapter.shell_network_guidance(
             sandbox=policy.execution_policy.sandbox,
             network=network,
@@ -1421,7 +1416,6 @@ def prepare_launch_surface(
                 model_selection=model_selection,
                 loaded_skills=resolved_skills.loaded_skills,
                 available_skills=policies.bundle_available_skills,
-                bundle_inventory_prompt=policies.bundle_inventory_prompt,
                 profile=profile,
                 skill_delivery=policies.skill_delivery,
             )
@@ -1482,7 +1476,6 @@ def prepare_launch_surface(
         ),
         profile_tool_rules=profile_tool_rules,
         has_spawn_capability=has_spawn_capability(profile),
-        profile_mode=profile.mode if profile is not None else "subagent",
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1701,7 +1694,7 @@ def bind_launch_context(
     # A primary's environment and prompt name per-chat links that work and task-dir
     # commands repoint, so neither goes stale while the session runs. Every
     # execution has its own chat and so its own links: a spawn's are named in its
-    # `# Meridian run` user turn, not the system prompt, so sibling spawns share the
+    # `# Meridian spawn` user turn, not the system prompt, so sibling spawns share the
     # cached prefix. A dry run has no session, so it keeps concrete directories.
     bound_work_link: Path | None = None
     bound_task_link: Path | None = None
@@ -1732,7 +1725,7 @@ def bind_launch_context(
                 spawn_id=bindings.spawn_id,
             )
     # Bind the child env before projection: it is the source of the prompt's launch
-    # facts, so the capability block and the `# Meridian run` block describe the same
+    # facts, so the capability block and the `# Meridian spawn` block describe the same
     # chat, spawn ID and work directory the child process actually receives.
     launch_env_overrides: dict[str, str] = {}
     # Resolve before restoring the environment, then carry the decision to
@@ -1774,7 +1767,7 @@ def bind_launch_context(
     else:
         launching_chat_id = child_context_env.get("MERIDIAN_CHAT_ID", "").strip() or None
     # A primary has no caller holding its spawn ID: the human addresses it by chat ID,
-    # which the capability block already names, so it gets no run-ID line.
+    # which the capability block already names, so it gets no spawn-ID line.
     launch_facts = build_launch_facts_prompt(
         spawn_id=None if is_primary_launch else child_context_env.get("MERIDIAN_SPAWN_ID"),
         chat_id=launching_chat_id,
@@ -1796,7 +1789,6 @@ def bind_launch_context(
         chat_id=primary_chat_id,
         launch_facts=launch_facts,
         spawn_capable=prepared.has_spawn_capability,
-        profile_mode=prepared.profile_mode,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     conversation_intent = resolved_request.session.conversation_intent

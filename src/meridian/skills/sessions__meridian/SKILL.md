@@ -16,7 +16,7 @@ the gaps.
 `$MERIDIAN_CHAT_ID` is the chat of the conversation that launched you: your own chat
 if you are a primary session, your parent's chat if you are a spawn, so it is not the
 root at depth two or more. A primary's capabilities block gives its `cNNN` value; a
-spawn's `# Meridian run` block gives its launcher's. Use that literal in restricted
+spawn's `# Meridian spawn` block gives its launcher's. Use that literal in restricted
 shells. To reach the root, walk up: `meridian spawn show <spawn ID>` prints a `Parent`
 line, so repeat on each parent until it has none; the last spawn's chat is the
 root's. Pass any chat or spawn ID you find to `session log`. If the chain is cut

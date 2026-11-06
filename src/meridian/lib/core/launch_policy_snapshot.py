@@ -46,7 +46,7 @@ class LaunchPolicySnapshot(BaseModel):
     model_selection_harness_model_id: str | None = None
     field_provenance: dict[str, str] = Field(default_factory=dict)
     selection_report: dict[str, object] | None = None
-    bundle_inventory_prompt: str | None = None
+    # Older builds also wrote `bundle_inventory_prompt`; reads ignore it.
     # A snapshot an older build wrote has no mode; those launches delivered inline.
     skill_delivery: SkillDeliveryMode = "inline"
 
