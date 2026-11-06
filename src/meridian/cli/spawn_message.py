@@ -192,7 +192,7 @@ async def send_message(
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
             older = (
-                "; a primary started by an older build needs a relaunch"
+                "; a primary may have been started by an older build (relaunch it) or run without a message channel"
                 if record.kind == "primary"
                 else ""
             )
