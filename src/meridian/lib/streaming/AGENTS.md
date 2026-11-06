@@ -26,10 +26,10 @@ every hold nudges through `SpawnManager.deliver`. Every hold also reads persiste
 descendants. Select the profile once from these capabilities; evidence reports facts,
 while profiles own hold, done/rearm, deadline and nudge policy.
 
-**The hold's lifecycle is one table.** `hold_state.py` holds one `HoldState` value and
-the pure `decide(state, facts)`: no I/O, no clock, no store. `_HoldProfile` gathers the
-facts and applies the step. A new hold behaviour is a row or a fact there, not a flag on
-the profile.
+**The hold's lifecycle is one table.** `hold_state.py` holds one `HoldState` value, the
+pure `decide(state, facts)` and the folds around it: no I/O, no clock, no store.
+`_HoldProfile` reads files, sends and applies what they return. A new hold behaviour is a
+row, a fact or a fold there, not a flag on the profile.
 
 ## Completion
 

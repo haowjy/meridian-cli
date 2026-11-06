@@ -1,8 +1,8 @@
-"""The resident hold's ask lifecycle: one state value and one precedence table.
+"""The resident hold's lifecycle: one state value, one precedence table and the folds.
 
-No I/O, no async, no clock. `_HoldProfile` in `resident_drain.py` gathers the facts,
-calls `decide` and applies the step. The rows are named as in
-`.context/completion-and-entry-points.md`.
+No I/O, no async, no clock. `_HoldProfile` in `resident_drain.py` reads the files and the
+clock, sends, and applies what these functions return. Why the rows are as they are:
+`.context/completion-and-entry-points.md`. `decide` marks each row's name.
 """
 
 from __future__ import annotations
@@ -123,6 +123,7 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     end = facts.end
     disposition = facts.assessment.disposition
 
+    # A1
     if end is not None and not end.action.terminate:
         decision = ProfileDecision(action="clear", emit_turn_boundary=end.action.emit_turn_boundary)
         return HoldStep(HoldState(), decision)
@@ -131,47 +132,48 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
             facts.candidate is not None
             and end.outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
         ):
-            if disposition == "ready" and not facts.active_turn:
+            if disposition == "ready" and not facts.active_turn:  # A2
                 return _publish(state, facts)
-            if facts.expired:
+            if facts.expired:  # A3
                 return _timeout(facts)
-            if facts.active_turn:
+            if facts.active_turn:  # A3b
                 # The turn outdated the candidate, and nothing that follows can vouch for
                 # it, so no later row may publish: end here, without orphaning descendants.
                 decision = ProfileDecision(
                     action="cleanup", outcome=end.outcome, cleanup_reason=_TURN_CUT_OFF
                 )
                 return HoldStep(HoldState(), decision)
-            if disposition == "unknown" or _descendant_blocked(facts.assessment):
+            if disposition == "unknown" or _descendant_blocked(facts.assessment):  # A4
                 ask = AskPhase.SETTLED if state.ask is AskPhase.SENT else state.ask
                 return _wait(replace(state, ask=ask), facts)
-        decision = ProfileDecision(action="fail", outcome=end.outcome)
+        decision = ProfileDecision(action="fail", outcome=end.outcome)  # A5
         return HoldStep(HoldState(), decision)
-    if state.answer is not None and facts.dead:
+    if state.answer is not None and facts.dead:  # B1
         return _timeout(facts)
-    if facts.rearm:
+    if facts.rearm:  # B2
         decision = ProfileDecision(
             action="abandon_candidate", emit_turn_boundary=end is not None, reset_deadline=True
         )
         return HoldStep(_after_rearm(state, facts.assessment), decision)
-    if facts.candidate is None:
+    if facts.candidate is None:  # C1, C2
         return _expiry(state, facts) if facts.expired else _wait(state, facts)
     if state.closing:
         if disposition == "unknown":
-            if facts.expired and end is None:
+            if facts.expired and end is None:  # D1
                 decision = ProfileDecision(action="fail", outcome=_UNREADABLE)
                 return HoldStep(HoldState(), decision)
-            return _wait(state, facts, leave_awaiting=end is None)
-        if not facts.active_turn:
+            return _wait(state, facts, leave_awaiting=end is None)  # D2
+        if not facts.active_turn:  # D3
             return _publish(state, facts)
-    if facts.expired:
+    if facts.expired:  # E1
         return _expiry(state, facts)
     if end is not None:
         state = replace(state, rearmed=False)
-    if facts.active_turn:
+    if facts.active_turn:  # E2
         return _wait(state, facts, leave_awaiting=end is None)
-    if disposition == "unknown":
+    if disposition == "unknown":  # E3
         return _wait(state, facts, leave_awaiting=end is None)
+    # E4
     if (
         facts.accepts_signals
         and not state.rearmed
@@ -179,9 +181,9 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         and not _lease_quiet(state.lease, facts.assessment)
     ):
         return _wait(replace(state, lease=None), facts, nudge=True)
-    if disposition == "ready" and _settled(state, facts):
+    if disposition == "ready" and _settled(state, facts):  # E5
         return _publish(state, facts)
-    return _wait(state, facts)
+    return _wait(state, facts)  # E6
 
 
 def outcome_at_close(

@@ -60,60 +60,45 @@ defaults to `None`; resident rearms and Pi waves cannot reset it.
 
 ### The hold's table
 
-`hold_state.py` is the hold's whole lifecycle: one frozen `HoldState` and `decide(state,
-facts)`. An **ask** is any question the hold sends. Its kind is expiry if `answer` is open
-when the send starts, otherwise turn-end. "Nudge" stays the wire word
-(`source="completion_nudge"`).
+`hold_state.py` is the hold's whole lifecycle: one frozen `HoldState`, `decide(state, facts)`
+and the folds and readers around them, all pure. `_HoldProfile` reads the signal files and
+the clock, sends, and applies what they return. The rows live in `decide`, and
+`tests/unit/streaming/test_hold_state.py` pins them; this page says why they are that way.
+An **ask** is any question the hold sends. Its kind is expiry if `answer` is open when the
+send starts, otherwise turn-end. "Nudge" stays the wire word (`source="completion_nudge"`).
 
-| `HoldState` | Meaning |
-|---|---|
-| `ask` | `UNASKED`; `SENT`, a turn should start within the grace; `SETTLED`, a turn started, the grace passed, or the send failed |
-| `asked_at` | Last send. The grace is `asked_at` plus the poll interval. It survives a rearm |
-| `answer` | Open from an expiry ask until the child works. `retry_left` allows one more ask after a refusal |
-| `lease` | `HeldLease(blockers)`: turn ends stay quiet while these are all that runs. `SpacedLease(not_before)`: rearm with nothing visible |
-| `rearmed` | The next good turn end is the next candidate |
-| `closing` | `done` latched |
+`decide` runs its timers first: a `SENT` ask past its grace becomes `SETTLED`, and a
+`SpacedLease` past `not_before` retires. So neither can stay a wake, and `next_wake` needs
+no clock. A timer the shell has to guard with the clock is how the 1 ms spin got in. Then the
+first matching row wins, and success turn ends and wait evaluations share every row from
+B1 down, which is why a hold behaviour has one place to live.
 
-`decide` first turns a `SENT` ask past its grace into `SETTLED`, so a grace timer cannot go
-past due. Then the first matching row wins. Success turn ends and wait evaluations share
-every row from B1 down.
+**Success never publishes over a running turn.** A candidate stands for a finished turn, so
+a turn running at a close outdates it. A2, D3, E2 and `outcome_at_close` all read
+`active_turn`. A transport close during a turn takes its own row, A3b, which fails with the
+close's outcome and cancels descendants, and ends the hold there: no later evaluation can see evidence
+come back and publish the old reply. For the same reason `_active_turn` stays set at a failed
+terminal event: clearing it first would blind those rows. A candidate at an idle child stays
+good, so a close with a ready tree publishes it. A `spawn cancel` of an idle child usually
+ends `cancelled` first, through the runner's SIGTERM path; `outcome_at_close` decides only
+when the drain reads the close first, and whether that should stay `succeeded` is an open
+owner call.
 
-| # | When | Decision | State |
-|---|---|---|---|
-| A1 | `end`, action does not terminate | `clear` | reset |
-| A2 | `end` not succeeded, replaceable transport close, candidate, `ready` | `complete` candidate | |
-| A3 | Same, not `ready`, `expired` | timeout | reset |
-| A4 | Same, `unknown` or blocked by a persisted descendant | wait | an ask out becomes `SETTLED` |
-| A5 | `end` not succeeded, anything else | `fail` its outcome | reset |
-| B1 | `answer` open and `dead` | timeout | reset |
-| B2 | `rearm` | `abandon_candidate`, reset deadline | keep `asked_at`, `rearmed`, new lease |
-| C1 | No candidate, `expired` | expiry | |
-| C2 | No candidate | wait | |
-| D1 | `closing`, `unknown`, `expired`, no `end` | `fail` `resident_evidence_unreadable` | reset |
-| D2 | `closing`, `unknown` | wait | |
-| D3 | `closing`, no `active_turn` | `complete` candidate | |
-| E1 | `expired` | expiry | |
-| E2 | `active_turn` | wait | at an `end`, from here down: `rearmed = False` |
-| E3 | `unknown` | wait | |
-| E4 | `accepts_signals`, `UNASKED`, not `rearmed`, (`answer` closed or `end`), lease not quiet | wait + nudge | |
-| E5 | `ready`, settled | `complete` candidate | |
-| E6 | Otherwise | wait | |
+**A rearm is charged only when `decide` takes it.** `after_signals` reads the budget and row
+B2 spends it, so a rearm dropped by a row above B2 costs nothing.
 
-**Expiry:** with signals, a live backend, and `answer` closed or `retry_left`, wait + nudge
-and reset the deadline. Otherwise timeout. **Settled:** no signals, or `SETTLED`, or
-`UNASKED` with `answer` open (the expiry ask was refused, so a ready tree may publish).
-A `closing` child in a turn falls through to E1 and E2, which is why a wedged `done` is
-asked and not published.
+**A `closing` child in a turn falls through to expiry,** which is why a wedged `done` is asked
+and not published.
 
-`send_nudge` sets `SENT` before it awaits, so no failure can leave the ask looking unsent
-and re-fire E4, and it stamps `asked_at` again afterwards, so the grace starts when the
-send ends. Then it folds the result:
+`after_send` runs once on every outcome, including failures, and stamps `asked_at` when the
+attempt ends, so the grace starts when the send ends. Only cancellation skips it, and that
+stops the coordinator. A refused send still counts as an attempt for the 270 s spacing.
 
 | Outcome of `deliver` | Means | `ask` | `answer` | Then |
 |---|---|---|---|---|
 | Returned | Delivered | `SENT` | `retry_left = False` | |
-| `DeliveryRefused` | Alive, nothing written | Expiry from `UNASKED`: `UNASKED`. Else `SETTLED` | unchanged | Raise |
-| `TransportDead`, or health says dead | Gone | `SETTLED` | `retry_left = False` | Raise |
+| `DeliveryRefused` | Alive, nothing written | Expiry with nothing asked: `REFUSED`. Else `SETTLED` | unchanged | Raise |
+| `TransportDead`, or `backend_dead()` | Gone | `SETTLED` | `retry_left = False` | Raise |
 | Any other exception | May have arrived | As returned | As returned | Log |
 
 The raise reaches the coordinator's `except` around `send_nudge`, which re-evaluates at
@@ -122,15 +107,23 @@ send counts as sent because Claude's normal success is a write with no receipt, 
 already means "may have been dropped", and resending could put the same nudge in front of
 the child twice.
 
-A dead transport cleans up at once for an expiry ask, through B1. A turn-end ask has no
-window: a ready tree publishes, and otherwise the stream close or the next expiry ends it.
-Row A4 and `should_defer_close` hold for descendants on purpose, so B1 must not widen to
-turn-end asks.
+A dead transport reaches the hold as a close event, usually before B1 can see it. With no
+turn running and a ready tree, A2 publishes, even with an expiry ask out: a Codex child
+SIGKILLed while idle ends `succeeded`. With a turn running it ends `failed` with the close's
+message, as above. Blocked or unknown evidence waits in A4, and then `defers_close` and
+`outcome_at_close` decide. B1 covers a backend found dead with no close event yet, so it fires
+at the next turn end or expiry. A turn-end ask has no window: a ready tree publishes, and
+otherwise the stream close or the next expiry ends it. Row A4 and `defers_close` hold for
+descendants on purpose, so B1 must not widen to turn-end asks.
+
+An ask that goes unanswered ends at the next expiry only if `answer` has no retry left. A
+blocked turn-end ask opens a window at the first expiry and cleans up 300 s later. An expiry
+ask that was sent has no retry, so its next expiry cleans up.
 
 The drain blocks during a send. One send is bounded at 33 s, but the wait for `run_action`'s
-lock is not, so a queued `spawn message` can add one more send. Nothing deadlocks: the drain
-holds no lock while it waits, and the Codex and OpenCode event queues are unbounded, so
-their reply is still read.
+lock is not: it is first in, first out, so every queued `spawn message` adds a send, and a
+stop with no budget waits behind them. Nothing deadlocks: the drain holds no lock while it
+waits, and the Codex and OpenCode event queues are unbounded, so their reply is still read.
 
 A `spawn message` to a held child is neither work nor an ask. The hold does not see it.
 What follows is an ordinary turn: `turn_active` settles an ask, the child's work renews the
@@ -178,8 +171,8 @@ session drains that keep the harness alive across turns.
 - `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
   immutable categorized snapshots
-- `hold_state.py` — the hold's state value and `decide` table; pure
-- `resident_drain.py` — `HoldEvidence`, `_HoldProfile` (the shell around `decide`),
+- `hold_state.py` — the hold's state value, `decide` table, folds and close rules; pure
+- `resident_drain.py` — `HoldEvidence`, `_HoldProfile` (the shell around `hold_state.py`),
   cleanup, and the hold coordinator
 - `rearm_window.py` — shared resident/native idle-limit arithmetic and persisted rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
