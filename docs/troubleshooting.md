@@ -41,15 +41,17 @@ Run `uv tool update-shell` and restart your shell. If using a virtual environmen
 
 ## `which meridian` inside a harness shows `~/.meridian/bin/<hash>/meridian`
 
-When another `meridian` comes first on PATH, such as an older install, a launch from a
-build that is not first on PATH puts a one-line shim for the launching build at the front
-of the harness's PATH. Hooks, extensions and the agent's shell then call that build. The
-shim runs `python -m meridian` from the build that launched the session. Nothing is
-written when PATH already resolves to the launching build. If the build is deleted while
-a session runs, `meridian` in that session exits 127 naming the missing interpreter;
-relaunch. Login shells (Codex runs `bash -lc`) rebuild PATH from the profile and may
-drop the shim. A `MERIDIAN_HOME` inside `/tmp` or the project is refused with a warning,
-because sandboxes can write there.
+When `meridian` on the PATH a harness would inherit is not the build that launched it
+(an older install first on PATH, or a pip `--user`, pyenv or wrapper layout), the launch
+puts a one-line shim for the launching build at the front of the harness's PATH. Hooks,
+extensions and the agent's shell then call that build. The shim runs `python -m meridian`
+from the build that launched the session; for a wrapper layout it runs the same build.
+Nothing is written when PATH already resolves to the launching build's own console script.
+If the build is deleted while a session runs, `meridian` in that session exits 127 naming
+the missing interpreter; relaunch. Login shells (Codex runs `bash -lc`) rebuild PATH from the
+profile and may drop the shim. A `MERIDIAN_HOME` inside `/tmp`, the project directory or a
+sandbox-writable root is refused with a warning, because sandboxes can write there. Primary
+and foreground `spawn` launches show the warning; `--bg` spawns do not.
 
 ## Harness not found
 

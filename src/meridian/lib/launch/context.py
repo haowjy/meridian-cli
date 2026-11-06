@@ -92,7 +92,7 @@ from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 
-from .cli_shim import pin_launching_build
+from .cli_shim import pin_launching_build, write_pinned_shim
 from .command import (
     build_launch_argv,
     normalize_system_prompt_passthrough_args,
@@ -113,7 +113,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan, merge_env_overrides, undo_direnv
+from .env import build_env_plan, merge_env_overrides, path_within, undo_direnv
 from .permissions import launch_permission_rules
 from .policies import (
     ModelSelectionContext,
@@ -723,23 +723,15 @@ def _dedupe_roots_in_order(roots: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
-def _path_within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
-
-
 def _is_task_cwd_covered_by_projection(
     *,
     task_cwd: Path,
     control_root: Path,
     projected_roots: tuple[Path, ...],
 ) -> bool:
-    if _path_within(task_cwd, control_root):
+    if path_within(task_cwd, control_root):
         return True
-    return any(_path_within(task_cwd, root) for root in projected_roots)
+    return any(path_within(task_cwd, root) for root in projected_roots)
 
 
 _KNOWN_MODEL_FAMILIES: dict[str, str] = {
@@ -1881,12 +1873,12 @@ def bind_launch_context(
         run_inputs=run_params,
         runtime_env_overrides=bind_env_overrides,
     )
-    pin_warnings: tuple[CompositionWarning, ...] = ()
-    if not bindings.dry_run:
-        # After the env is final so config.env and request overrides cannot undo it.
-        pin_warning = pin_launching_build(env, projected_roots=projected_roots)
-        if pin_warning:
-            pin_warnings = (CompositionWarning(code="cli_shim_skipped", message=pin_warning),)
+    # After the env is final so config.env and request overrides cannot undo it.
+    # Pure, so preview binds (which carry the primary launch's warnings) run it too.
+    pin_warning = pin_launching_build(env, write_roots=(child_cwd, *projected_roots))
+    pin_warnings = (
+        (CompositionWarning(code="cli_shim_skipped", message=pin_warning),) if pin_warning else ()
+    )
     intent = harness.plan_native_identity(
         run_params, preforked_session_id=bindings.forked_harness_session_id
     )
@@ -1988,6 +1980,7 @@ def materialize_launch_context(context: LaunchContext) -> LaunchContext:
 
     ensure_project_lifetime_lock(context.runtime_root)
     binding = context.binding
+    write_pinned_shim(binding.environment.final_env)
     spec = materialize_launch_spec(
         context.harness.id,
         binding.spec,
