@@ -1,106 +1,11 @@
-# platform/process_scope — Context
+# Process scope
 
-Process containment layer: one API seam, three platform backends, one fallback.
-The parent `.context/` covers the high-level invariants; this file covers the
-mechanism details specific to the sub-module.
+A process-group signal reaches reparented group members, unlike a single-PID
+signal. Descendants that created their own group need the separately captured
+tree; the tree fallback alone can miss children reparented during its snapshot.
+`pgid_reachable` is diagnostic only: signal 0 counts zombies and has no group
+birth-time guard.
 
-## Architecture
-
-Two dispatch entry points share the same routing logic but serve different call contexts:
-
-```
-# Async callers (launch paths)
-ScopedProcessHandle.terminate()
-  ├── containment == "posix_pgid"        → posix.terminate_pgid()
-  ├── containment == "windows_job"       → windows_job.terminate_job()
-  └── containment == "pid_tree_fallback" → fallback.terminate_tree()
-
-# Sync callers (reaper, cancel, session-exit) — same dispatch, sync I/O
-terminate_scope_sync(scope)
-  ├── containment == "posix_pgid"        → posix.terminate_pgid()
-  └── else                               → fallback.terminate_tree_sync()
-```
-
-Both entry points never raise — exceptions are caught and returned as a degraded
-`CleanupResult` with `skip_reason="termination_exception"`. `ScopedProcessHandle.terminate()`
-logs with `process_scope.terminate_failed`; `terminate_scope_sync` logs with
-`terminate_scope_sync.failed`.
-
-`terminate_scope_sync` sets `degraded_fallback=True` when the containment type is
-anything other than `"pid_tree_fallback"` (i.e., posix_pgid fell through to fallback,
-or windows_job routed to fallback) — matching the async path's degraded semantics exactly.
-
-## Contracts
-
-### PID Reuse Guard (PROC-006)
-
-Every adapter checks `root_created_at_epoch` before sending any signal:
-
-- If current process birth time differs from recorded by more than 1 second,
-  the PID was reused — skip the kill and return `skip_reason="pid_reuse_detected"`.
-- If the root process is absent (already dead), POSIX continues in degraded mode;
-  the fallback treats an absent root as "already exited" and returns normally.
-
-`root_created_at_epoch = 0.0` in the fallback is a sentinel meaning "unknown" —
-the birth-time check is skipped when this sentinel is present.
-
-### POSIX: Why Group Kill Is Stronger Than Single-PID Kill
-
-`os.killpg(pgid, SIGTERM)` sends to every process in the group, including
-descendants that have reparented to PID 1. Single-PID `SIGTERM` only reaches
-the root; if the root has exited and its children reparented, they escape.
-
-A descendant that started its own process group (Claude's background shell task) is not in
-the group, so `terminate_pgid()` also SIGTERMs the live descendants it snapshotted whose group
-differs. Without it the task outlives the harness until the grace expires, and a cancel's
-5 s grace SIGKILLs the runner first.
-
-When the root is already dead before `terminate_pgid()` is called (degraded mode),
-the function still attempts `os.killpg()`. A full-table scan by PGID retains
-orphaned group members for the grace wait and SIGKILL escalation, including
-members that ignore SIGTERM after their leader exits (PROC-004 sweep).
-
-### Legacy Windows Branch (Untested): Job Object Handle Lifetime
-
-`assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle **must
-stay alive** until the scope should be released — `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
-kills all job members when the handle closes. `ScopedProcessHandle` owns the handle,
-uses it for termination, and closes it explicitly. This branch remains unsupported
-and untested. Persisted snapshots have no live handle and use the sync tree fallback.
-
-### Gate Release
-
-The scope handle owns the async wait task. Observed child exit sends `stop`; task
-cancellation without observed exit closes the pipe as runner death. Termination
-cancels and awaits this task. POSIX termination runs off the event loop so the
-child watcher can reap and disarm the guardian during the grace wait.
-
-### Fallback Path Limitations
-
-`terminate_tree()` / `terminate_tree_sync()` take a snapshot of the process tree
-with `psutil.children(recursive=True)` before sending signals. If an intermediate
-exits between snapshot and signal, its children drop from the tree and escape.
-This snapshot race is accepted for the fallback path — it is better than nothing
-but weaker than group kill or Job Object containment.
-
-## Patterns
-
-- Use `ScopedProcessHandle.terminate()` from async launch callers — it handles
-  containment dispatch, logging, and exception safety in one call.
-- Use `terminate_scope_sync(scope, ...)` from sync callers that have a
-  `ProcessScopeSnapshot` (reaper, cancel, session-exit). This is the correct
-  sync path for all scope-aware termination; it routes to the right backend
-  based on `scope.containment`.
-- Use `terminate_tree_sync(pid, ...)` only when there is no scope metadata —
-  legacy worker-pid fallback and hook contexts (git-autosync) where a
-  `ProcessScopeSnapshot` is unavailable.
-- Do not call `posix.terminate_pgid()` or `windows_job.terminate_job()` directly
-  from outside this package — `ScopedProcessHandle.terminate()` and
-  `terminate_scope_sync()` are the two integration entry points.
-
-## Related
-
-- [`../AGENTS.md`](../AGENTS.md) — module entry points
-- [`../.context/CONTEXT.md`](../.context/CONTEXT.md) — parent platform invariants
-- [`../../../core/.context/CONTEXT.md`](../../../core/.context/CONTEXT.md) — process_cleanup.py, which owns policy decisions and calls terminate_scope_sync()
-- KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/process-scope.md` (see `meridian context kb`)
+The gate's wait task sends `stop` on observed child exit; cancellation before
+exit closes the pipe as runner death. POSIX termination runs off the event loop
+so the watcher can reap the child and disarm the guardian during the grace wait.

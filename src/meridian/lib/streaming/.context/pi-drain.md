@@ -1,222 +1,26 @@
-# lib/streaming/ — Pi Drain Context
+# Pi drain
 
-Pi-specific quiescence and tracked-child behavior for spawned Pi sessions. The
-generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
+Pi is idle only after agent settlement and with no open compaction. `agent_end`
+is provisional: retry or compaction can follow. A new run invalidates the prior
+success candidate. Queue updates and summarization-retry events are not paired
+activity boundaries and cannot establish busy or idle.
 
-## Pi RPC Quiescence Drain
+Persisted, parent-linked descendants are the authority, including grandchildren
+beneath a terminal or archived child. Streamed lifecycle-like messages are not
+descendant evidence. Each proposed success needs a refresh begun after the
+proposal; cached readiness cannot authorize it.
 
-Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
-owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` adapts
-the Pi collaborators to the shared `CompletionCoordinator`. `pi_drain.py`
-owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
-precedence, phases, deadlines, nudges, and stream-exit policy.
-`drain_plan_factory.py` is the composition root for the full Pi drain plan.
+A missing private-work file means no blocker; an unreadable or invalid file is
+unknown evidence, not an empty snapshot. `done` cannot bypass an active turn,
+owed delivery or unknown evidence. Receipt persistence precedes the public event:
+until the exact delivery is observed, admission remains unknown, and the parent
+must subsequently become idle. Never fabricate a missing observation after a crash.
 
-### Native Run Settlement
+Child-wave, unknown-evidence and delivery windows are separate and anchored;
+polling does not extend them. A new active turn clears the idle delivery window.
+There is no default total wall-clock ceiling across successive child waves;
+`--timeout` provides one when needed.
 
-Meridian follows Pi's session-level lifecycle rather than treating every assistant
-batch as idle:
-
-- `turn_end` closes one assistant/tool batch and does not change parent activity.
-- `agent_end` records the latest low-level attempt provisionally; retries,
-  compaction recovery, and queued continuation may still follow it. Its raw frame
-  remains observable; only the decoded attempt outcome is retained privately.
-- `agent_settled` resolves that retained attempt (or fails closed when the attempt
-  is missing/malformed). Native idleness requires settlement **and no open
-  compaction**: `aborted` remains cancellation, and final provider errors retain
-  their diagnostics. Either event order is valid; `compaction_end` does not need a
-  second settlement after an already-settled run, and it cannot settle an active run.
-
-Retry, automatic compaction, and agent-start events keep the parent active. Pi's
-summarization-retry and queue-update notifications are retained as raw facts but
-do not establish activity: branch-summary retries have no paired compaction
-boundary, and an idle queued continuation has no run until a later prompt.
-The tracker keeps agent settlement and compaction-in-progress separately:
-a manual compaction can start inside a settlement hook before the public settlement
-event arrives. Both facts must permit idleness; neither event overwrites the other. A new run invalidates the previous success candidate and micro-drain;
-it must supply its own attempt and settlement. Manual compaction is separate from an automatic run:
-its `compaction_end` closes that operation without creating another agent run.
-Compaction retries belong to the open compaction, not a new agent run. An end event
-cannot settle an otherwise active agent. Pi's combined idle observation also gates
-`done`; the generic coordinator's turn flag is not a second native-idle authority. A
-notification-delivery deadline is armed only while that settled parent is idle;
-starting a new run clears the old window, so active work cannot spend an earlier idle
-budget. Exact receipt/public-observation and causal response fences remain in force
-during every settlement. Explicit single-turn/persistent API drain policies retain
-their chosen termination behavior after settlement; only the normal Pi quiescence
-policy adds disk-work and success-validation fences.
-
-### Ownership Boundary
-
-The Pi completion composition owns:
-
-- parent idle/active observation
-- disk watcher / quiescence integration (`PiDiskWatcher`, `PiQuiescenceTracker`)
-- active persisted-descendant tracking from the reconciled transitive spawn tree
-- durable result obligations, causal admission fencing and bounded recovery decisions
-- micro-drain candidate state and phase-event emission coordination
-- Pi failure/finalization decisions when the process exits before quiescence
-
-`SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi evidence
-or cleanup to the corresponding collaborator in `pi_drain.py`; add precedence, phase,
-deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception is
-purely generic event persistence, observer dispatch, subscriber fan-out, or
-control-socket handling.
-
-`PiPrivateWorkLedger` owns validated managed-bash facts, causal receipts, and
-private-file read failures. It exposes categorized immutable blocker snapshots.
-`PiDiskWatcher` reads task, receipt, public-observation, explicit-consumption and fault files, while
-`PiLifecycleTracker` validates the produced quiescence lifecycle event. Canonical
-notification and subspawn events are not part of the Pi runtime contract.
-`PiQuiescenceTracker` fences the parent active before acknowledging the exact public
-custom-message admission; unrelated activity and wall-clock timestamps cannot acknowledge work. The Pi
-evidence collaborator combines private-work snapshots with reconciled transitive
-persisted-descendant evidence; the profile uses the summary for deadlines and
-finalization decisions.
-
-Pi and resident use the shared reconciled transitive persisted tree as descendant
-authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a
-`finalizing` direct child stays live while its launch lock is held and reads derived
-terminal when that lock is free. A durable report does not make the child terminal.
-Resident semantics remain unchanged.
-Only valid, parent-linked rows enter the tree; incomplete and wrong-parent directories
-are not descendant evidence. Both profiles consume the same immutable cached assessment;
-streamed events never trigger a descendant read. Meridian's `start_spawn()` publishes
-complete rows atomically.
-
-### Disk State Authority
-
-Pi extensions coordinate private work with Python through disk files:
-
-- bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
-- exact admission receipts under `runtime_root/pi-bash/<parent>/launch-receipts.json`
-- Python's exact public-event acknowledgements in `delivery-observations.json`
-- explicit CLI observations/dismissals in `runtime_root/spawns/<parent>/observed-launches.json`
-  and `pi-bash/<parent>/cleared-launches.json`, keyed by launch (`<spawn id>:<n>`); readers
-  also merge the pre-launch files as launch 1. The drain holds the session open for a
-  launch `state/spawn_ownership.owed_launches` returns for this session (read in the same descendant refresh pass as the records) (current background
-  children plus the index's `owed_launches`, so a child a continue re-parented away still
-  counts), until its key is consumed; blocker identity is always the launch key. The disk watcher watches both
-  directories and wakes only for the files it reads
-- supervised watcher/storage diagnostics in `delivery-fault.json`
-
-See [the delivery contract](../../../pi_runtime/.context/delivery-contract.md) for full
-shapes and writers. `last-notification.json` is retired and ignored. A direct child is
-owed back only when its `launch_mode` is `background`: a launcher that waited for a
-foreground child already saw that result, so only its launching Bash record can still
-owe one. Core owns that rule (`state/spawn_ownership.is_owed_child`); the extension
-mirrors it as `isBackgroundLaunch`, and this drain applies it to both result blockers and
-launcher-obligation transfer. Terminal tracked background Bash stays owed until its
-persisted wait marker or exact admission receipt. A background direct-child row transfers
-its matching launcher obligation, without log parsing; a foreground row transfers
-nothing. Which parents are direct is core's rule too, handed to a primary launch as
-`_MERIDIAN_PI_OWED_PARENT_IDS`.
-
-Persisted descendant state comes independently through `DescendantRefreshOwner`. Its
-single-flight worker uses `ReconciledDescendantEvidence` to discover the transitive
-subtree from the history index, including archived ancestry, then authoritatively reads
-the selected loose rows under `runtime_root/spawns/`. Stdout lifecycle-like subspawn
-messages and wake notifications are not descendant evidence.
-
-Private-disk changes are not passive. `PiDiskWatcher` wakes the drain loop when a bash
-or delivery file changes, and the drain loop re-evaluates quiescence on those
-wakeups. Terminal-event micro-drain rechecks private disk before accepting success;
-finish-based bounded refresh rechecks descendants without coupling reads to event volume.
-
-An absent private-work file means no blocker. A file that exists but cannot be read or
-validated produces typed unknown evidence instead of an empty snapshot. Boolean,
-nonfinite timestamp, wrong-parent, malformed member and version values are rejected.
-Unknown evidence and undelivered results have anchored recovery windows (configured
-child-wave window, otherwise 300 seconds). Delivery anchors at the start of each genuinely idle delivery window. New active
-work clears that window; its later settlement receives a fresh idle budget.
-Ordinary idle polling does not renew the deadline. Unknown evidence remains bounded while active too. Failure reports
-`pi_evidence_unreadable` with original evidence detail or `pi_delivery_unresolved`.
-`done` may release known running execution or descendant liveness once the parent
-is idle. It cannot skip a native active turn, an owed result/publication, or unknown
-evidence. Result delivery never schedules the generic done nudge; the parent must
-receive and finish its causal notice before completion can select its report.
-
-Every proposed success requests a descendant refresh begun after that proposal. Pi
-reevaluates policy only after the qualifying result commits; a cached ready result cannot
-authorize publication. Refresh completion wakes the existing drain arbitration rather
-than acting as lifecycle truth. If the event stream has closed, that arbitration still
-enforces refresh, stabilization, nudge, and completion timers.
-
-### Child Wave Timeout
-
-When the parent agent is idle and reconciled descendants are still pending,
-`PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
-with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Pi-private
-bash execution does not start the child-wave deadline. Publication/delivery and unknown
-evidence use their separate bounded recovery windows. Child-wave timeout state
-is latched and its deadline cleared before the outcome publishes. The single
-descendant cleanup then runs asynchronously and best-effort. Ordinary cleanup or
-timeout-phase emission failures are diagnostic and do not replace that outcome or
-restart waiting-phase emission. Startup reaper reconciliation recovers cleanup
-interrupted by a crash.
-
-Child-wave windows are anchored when their corresponding wave begins; ordinary
-descendant disk evidence does not slide them. Pi has no default total wall-clock
-ceiling: descendant quiescence may require successive waves, each with its own anchored
-window, and that unbounded total duration is intentional.
-Operators who need an absolute bound use the shared `--timeout` /
-`MERIDIAN_TIMEOUT` outer attempt timer, which is non-renewing and defaults to `None`.
-Resident completion uses the same outer ceiling but otherwise follows its separate
-signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
-
-### Micro-Drain
-
-After a settled success has a ready work assessment, the shared
-`CompletionCoordinator` enters its `stabilizing` phase. Once that window elapses,
-the coordinator enters an explicit `validating` phase and requests one fresh
-descendant read. The refresh commit wakes the drain; it does not re-arm the
-stabilization timer or synchronously rescan on every wake. Activity during either
-phase invalidates the candidate. The Pi profile supplies the short policy window,
-while activity and fresh descendant validation are owned by that coordinator state
-(there is no second Pi phase gate). A slow initial descendant refresh does not move
-the idle/terminal anchor used by Pi's done-nudge delay.
-
-Receipt persistence precedes the native public RPC message event. Until Python observes
-that exact delivery ID and membership, evidence remains unknown; once observed, the
-parent active fence requires its subsequent idle turn. A crash between receipt and
-public observation fails closed with `pi_delivery_event_unobserved`; never fabricate
-the missing acknowledgement. Admission plus observation survives cold restart.
-
-### Pi Phase Events
-
-The drain loop emits `meridian.pi.lifecycle.phase` events for Pi-specific milestones.
-An inline phase sink atomically updates `spawns/<id>/pi-lifecycle.json`;
-`meridian spawn show` reads its latest phase and bounded cleanup status:
-
-| Phase | When |
-|---|---|
-| `drain_started` | Drain loop begins |
-| `session_event_seen` / `session_event_absent` | Pi session event observed (or not) |
-| `waiting_for_tracked_children` | Parent idle, children still running |
-| `pi_child_wave_timeout` | Wave deadline expired |
-| `quiescence_micro_drain_started` | Settled success candidate seen, polling for quiescence |
-| `quiescence_micro_drain_extended` | Additional event during micro-drain |
-| `quiescence_deferred` | Settled candidate but still waiting for children/private disk evidence |
-| `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
-| `finalized` | Drain complete; final status/exit_code/error |
-
-### Pi Tracked Child Cleanup
-
-When the Pi process exits with active tracked descendants (crashed, killed, or otherwise
-terminated before quiescence), `PiCompletionCleanup` invokes the injected descendant
-cancellation service. Persisted spawn rows are the sole child authority; cleanup does
-not depend on unproduced lifecycle PID/PGID telemetry.
-
-### Pi Connection Cleanup
-
-Pi connections use the plan-owned `PiDrainSessionTeardown` with a `quiescent` stop reason. The
-Pi process receives an abort message (`{"type": "abort"}`) and has a 5-second grace
-period to exit. If it doesn't exit within that window, the stop is escalated to
-process termination (`SIGTERM` then `SIGKILL`). Cleanup phases are tracked via
-`meridian.pi.lifecycle.phase` events for observability.
-
-## Related .context/
-
-- [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — PiAdapter, quiescence completion model, disk-backed coordination state
-- [../../harness/connections/.context/CONTEXT.md](../../harness/connections/.context/CONTEXT.md) — PiRpcConnection JSON-RPC transport and event normalization
-- [../../ops/spawn/.context/CONTEXT.md](../../ops/spawn/.context/CONTEXT.md) — Pi nested stale detection in query.py
+The [delivery contract](../../../pi_runtime/.context/delivery-contract.md)
+describes the private disk records. KB `architecture/completion-drain-coordination.md`
+describes the shared completion coordinator.

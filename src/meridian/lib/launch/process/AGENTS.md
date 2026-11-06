@@ -55,4 +55,4 @@ snapshots. Register any new launcher in `select_process_launcher()`.
 
 [.context/CONTEXT.md](.context/CONTEXT.md) — backend selection, managed-attach fallback,
 finalization, session ID observation, terminal ownership, signal cancellation.
-Parent: [../AGENTS.md](../AGENTS.md); sibling spawn path: [../streaming/AGENTS.md](../streaming/AGENTS.md).
+Parent: [../AGENTS.md](../AGENTS.md); sibling spawn path: [../streaming_runner.py](../streaming_runner.py).

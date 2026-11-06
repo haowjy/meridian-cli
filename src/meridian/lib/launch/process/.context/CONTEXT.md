@@ -176,7 +176,7 @@ ID and paths after the primary CLI's preview bind.
 ## Lateral Links
 
 → [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — composition seam, three driving adapters, rules
-→ [../../streaming/.context/CONTEXT.md](../../streaming/.context/CONTEXT.md) — streaming spawn execution (sibling path)
+→ [../../streaming_runner.py](../../streaming_runner.py) — streaming spawn execution (sibling path)
 
 ## Terminal ownership (from AGENTS.md)
 

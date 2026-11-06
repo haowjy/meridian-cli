@@ -1,28 +1,13 @@
-- streaming_runner.py runner_phase/lifecycle_active list-cells + atexit
-  breadcrumb registration: coarse diagnostic labeling only, NOT a lifecycle
-  state machine. #424 should keep the breadcrumb sink separate from
-  execution/finalization (explicit callbacks or a small runner-owned
-  diagnostic context) rather than promoting these cells into state.
-- HarnessHistoryWriter's last-observed-event marker (throttled projection,
-  state/history.py) should not be carried into #424 as a projection API —
-  rewrite-era design should derive orphan evidence from authoritative
-  history or an explicitly-owned diagnostics sink.
 - [#454] Bind-seam env projection is not structurally final. Pi timeout/ping
   are projected post-bind by two writers (spawn_service, streaming_runner) and
   the primary path skips apply_pi_bind_time_env; bindings.chat_id is set after
   bind; generic env.py holds adapter.id branches. Consolidate to an
   adapter-owned projection hook invoked inside bind_launch_context(), building
-  ResolvedLaunchEnvironment.final_env only after it. (A1)
+  ResolvedLaunchEnvironment.final_env only after it.
 - [#454] prepare_prelaunch() has two output channels — a mutable child_env and
   a returned env_overrides — handled differently by spawned vs primary callers.
   Make child_env a read-only Mapping and env_overrides the sole output, applied
-  once via a shared launch helper. (A2)
-- native_run.py: group post-exit process facts (`pid`, start time, child env/cwd)
-  into an `ExitFacts` value if the pipeline grows; keep serve's started-connection
-  distinction rather than inferring every caller's start solely from pid.
-- process/runner.py: replace the remaining `managed` local and post-scope spawn-ID
-  injection when session-attempt construction is next revised; these names no
-  longer describe a separate managed-session abstraction.
+  once via a shared launch helper.
 - `request.py` and `tests/support/launch.py`: production rejects the `DIRECT`
   composition surface, but `LaunchRuntime.composition_surface` still defaults to
   `DIRECT` and 18 test/support files reference a facade that reimplements direct
@@ -40,12 +25,6 @@
   streaming tests). To make it structural, have bind return the launch files and let
   `start_spawn` write them into the staged dir before publishing, or start the spawn
   before bind and roll the row back on composition failure.
-- `workspace_projection.py`: after OpenCode roots moved into the harness hook, the
-  module only reports applicability. `ProjectionResult.args`,
-  `_project_claude_workspace_args`, `ProjectionResult.diagnostics`,
-  `WorkspaceProjectionDiagnostic` and the diagnostics branch in `context.py`
-  (`bind_launch_context`) have no producer or consumer. Collapse to
-  `workspace_applicability(harness_id, roots)` and delete the rest (thermo p8773 L6).
 - [#764] Launching-build shim (`cli_shim.py`) known limits: login shells rewrite PATH, so
   Codex (`bash -lc`) and a profile that resets PATH drop the shim from the model's shell.
   Meridian-dispatched lifecycle hooks run in the launcher's `os.environ` (`runner.py:72`)
@@ -61,3 +40,4 @@
   closes it. A refusal leaves an inherited shim in place: a nested launch whose roots cover
   the shim home, under a parent whose roots did not, still has the shim first on PATH, and
   `write_pinned_shim` rewrites it into the refused root if it was deleted.
+
