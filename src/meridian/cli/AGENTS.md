@@ -1,77 +1,19 @@
-# cli/ — CLI Entry Point and Startup Pipeline
+# CLI startup
 
-Descriptor-driven: every invocation is classified before any heavy module imports,
-so fast paths stay fast. Pipeline, invocation-class table, lazy-import strategy, and
-session-initiation handling: `.context/CONTEXT.md`.
+Give each real subcommand an exact `COMMAND_CATALOG` descriptor. Longest-prefix
+fallback otherwise makes a missing `spawn` subcommand inherit the parent's
+bootstrap and telemetry policy.
 
-`canonicalize_argv()` → `classify_invocation()` (longest-prefix match against
-`COMMAND_CATALOG` in `startup/catalog.py`) → `CommandDescriptor` (`startup_class`,
-`bootstrap_plan`, `telemetry_mode`, `root_source`).
+Keep handler imports local and command implementations out of `app_tree.py`:
+selective registration depends on importing only the requested group. Normalize
+argv before classification, including fork and continue forms.
 
-## Rules
+For `-C` to another project, clear project-scoped inherited environment for the
+whole invocation; attribution from the source project cannot cross that boundary.
+The sender for `spawn message` is carried separately, not restored to the environment.
 
-- **`COMMAND_CATALOG` is the only routing source.** The startup path never queries the
-  extension registry or a command module, and `main.py` carries no routing logic.
-- **Every real subcommand gets an exact descriptor.** The longest-prefix fallback means
-  a missing `spawn <sub>` descriptor silently inherits `spawn`'s `WRITE_RUNTIME`
-  bootstrap and telemetry class. Add it with the command; delete it with the command.
-- **`startup_class` drives telemetry and primary-launch repairs; bootstrap comes only
-  from `state_requirement`.** The default `spawn` route is the exception inside
-  `WRITE_RUNTIME`: project-read bootstrap only, because ops must resolve the inherited
-  caller boundary before materializing runtime state. Other mutating `spawn`
-  subcommands keep runtime-write bootstrap.
-- **Read-only classes never initialize authority or telemetry.** `READ_ROOTLESS`,
-  `READ_PROJECT`, `READ_RUNTIME` never mint project/session IDs or create runtime roots;
-  they may only catch up the disposable history index, never lifecycle authority.
-- **Project identity has committed and ad-hoc tiers.** Write preparation mints a marked
-  project's ID or materializes path-derived state under the user home; it never creates
-  `meridian.toml` in a bare directory. `init` / `config init` write the scaffold and
-  committed ID atomically before bootstrap and never move ad-hoc history.
-- **`root_source = RootSource.ARGV`** commands (`meridian init [path]`) defer bootstrap
-  and call `prepare_for_project_write(arg_derived_root)` themselves.
-- **`doctor` is a pure observer when no runtime root exists.** `--global` may scan and
-  prune state but must not mint identity or initialize the user Mars root.
-- **Handler imports stay local.** Groups register through `register_extension_cli_group`,
-  which reads unresolved declarations; resolving the whole registry (`list_all`,
-  `list_for_surface`) imports every operation. `_register_commands_for_invocation()`
-  imports only the group matching the first positional token (all groups only for `--help`).
-- **`app_tree.py` must not import command implementations**, or selective registration
-  collapses into importing everything.
-- **`invocation.py` owns invocation state.** Commands import `emit`,
-  `get_global_options()`, `current_output_sink()` from there, never from `main.py`
-  or through `register_*` callbacks. Everything runs inside `invocation_scope()`
-  (`main()` shares one warning cache across bootstrap and dispatch); in-process
-  callers and tests install explicit `GlobalOptions`.
-- **Handlers return typed results implementing `to_cli_output()`**; no `isinstance`
-  dispatch in `main.py`.
-- **Identity is valid only in its own project.** When `-C` resolves to a different
-  project identity than the inherited `MERIDIAN_PROJECT_DIR` (`is_same_project`; a
-  worktree of the same committed project is the same project),
-  `main._directory_env_scope` unsets every `project_scoped` variable in
-  `env_registry.py` (spawn, chat, parent, work, task dir, ...) for the whole invocation,
-  so context, ops, telemetry, and child env are unattributed and the task dir falls to
-  the target's root. Tag new per-project variables there; don't list them here. Depth
-  stays: it is the recursion guard. Commands aimed at another project may read results,
-  never consume them; `spawn ack` is refused when no spawn identity remains. Same-project
-  `-C` keeps attribution and may observe (`resolve_cli_observer_context`).
-  An unreadable inherited `MERIDIAN_PROJECT_DIR` counts as another project. `-C` is also
-  the caller's cwd (`os.chdir` in `_main_impl`, restored in `main()`), like `git -C`, so the
-  `ambient-cwd` task-cwd tier never sees the shell's directory.
-  The one exception is the caller itself: `_directory_env_scope` reads it before the drop
-  and yields it as `Caller` into `GlobalOptions.caller` (never back into the env); only
-  `spawn message` reads it, to name the sender and give a `-C <sender root>` reply.
-- **Fork/from/continue conflicts live in `validate_fork_mode()`** (`argv_normalization.py`),
-  consumed by `spawn.py` and `primary_launch.py` via `ForkModeResolution`. The
-  `--fork` + model/agent/skills identity lock is CLI policy, not an ops invariant.
-- **`canonicalize_argv()` runs before every classifier.** Never classify or call Cyclopts
-  on raw argv containing `--fork`, `--fork-fresh`, `--from`, or bare `--continue`.
-- **Session browse keeps process transfer outside the TUI.** The picker returns a typed
-  re-entry decision; only the `session_cmd.py` handler may `exec` it, after the
-  full-screen app has closed.
-- **Register nested handlers by call**, not decorator (`sub_app.command(fn, name=...)`,
-  `bindings.add(key)(fn)`): pyright's `reportUnusedFunction` flags local functions
-  used only as decorators. Module-level decorated commands are fine.
-- **Cyclopts private API goes through `cyclopts_internals.py`** (carries the per-line
-  suppressions); recheck it when upgrading Cyclopts.
-- **Don't mutate shared `App` objects for help profiles**; `HelpProfile` is selected at
-  build time per invocation.
+Session browse returns a re-entry decision; the handler execs it only after the
+full-screen app closes. Build help profiles per invocation rather than mutating
+shared `App` objects.
+
+[.context/CONTEXT.md](.context/CONTEXT.md) describes the startup pipeline.

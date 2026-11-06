@@ -630,10 +630,24 @@ _OPENCODE_V2_ACTIVITY_EVENTS: tuple[str, ...] = (
     "session.tool.failed",
 )
 
+# Tool and shell progress is work but not a turn start: a long tool must not look
+# idle. Heartbeat-like events (usage, rename, inbox, execution.started) stay unmarked.
+_OPENCODE_V2_WORK_ONLY_EVENTS: tuple[str, ...] = (
+    "session.step.streamed",
+    "session.tool.progress",
+    "session.tool.success",
+    "shell.created",
+    "shell.exited",
+)
+
 # OpenCode 2 emits ``session.execution.*`` instead of ``session.idle``; the
 # version dispatcher only routes 2.x streams here, so both tables can coexist.
 _OPENCODE_V2_EVENT_SEMANTICS: dict[str, EventSemantics] = {
-    **{name: EventSemantics(activity="turn_active") for name in _OPENCODE_V2_ACTIVITY_EVENTS},
+    **{
+        name: EventSemantics(activity="turn_active", work=True)
+        for name in _OPENCODE_V2_ACTIVITY_EVENTS
+    },
+    **{name: EventSemantics(work=True) for name in _OPENCODE_V2_WORK_ONLY_EVENTS},
     "session.execution.succeeded": EventSemantics(
         activity="idle",
         clears_signal=True,
@@ -659,10 +673,10 @@ _OPENCODE_V2_EVENT_SEMANTICS: dict[str, EventSemantics] = {
 
 OPENCODE_SEMANTICS = HarnessSemantics(
     events={
-        "agent_message_chunk": EventSemantics(activity="turn_active"),
-        "agent_thought_chunk": EventSemantics(activity="turn_active"),
-        "tool_call": EventSemantics(activity="turn_active"),
-        "tool_call_update": EventSemantics(activity="turn_active"),
+        "agent_message_chunk": EventSemantics(activity="turn_active", work=True),
+        "agent_thought_chunk": EventSemantics(activity="turn_active", work=True),
+        "tool_call": EventSemantics(activity="turn_active", work=True),
+        "tool_call_update": EventSemantics(activity="turn_active", work=True),
         "session.idle": EventSemantics(
             activity="idle",
             clears_signal=True,
@@ -686,6 +700,9 @@ OPENCODE_SEMANTICS = HarnessSemantics(
             "session.idle",
             "session.error",
             *_OPENCODE_V2_ACTIVITY_EVENTS,
+            "session.step.streamed",
+            "session.tool.progress",
+            "session.tool.success",
             "session.execution.succeeded",
             "session.execution.failed",
             "session.execution.interrupted",

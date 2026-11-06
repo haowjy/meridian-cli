@@ -87,7 +87,7 @@ capabilities and delegates to it. There are two completion profiles: the shared
 resident/native-task hold and Pi. A native task source or resident backend selects
 the shared hold. It is built by `ResidentDrainCoordinator.build`; its hold profile
 owns candidate-scoped signal admission, reads one `HoldEvidence`, and composes
-`RearmWindow` for absolute deadlines and budgeted rearm. Pi keeps its separate
+`RearmWindow` for idle-limit deadlines and budgeted rearm. Pi keeps its separate
 child-wave windows. Claude's connection supplies
 `harness/claude_drain.py`'s
 `ClaudeNativeTaskSource`; it owns snapshot parsing, not policy, and reports only

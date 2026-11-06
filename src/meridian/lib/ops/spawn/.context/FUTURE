@@ -1,7 +1,5 @@
-# Future: lib/ops/spawn
+# Spawn follow-ups
 
-- `api.py` `spawn_wait_sync`: the wait lease in `observed-spawns.json` is
-  rewritten (lock, atomic write, psutil birth lookup) on every 0.25 s poll for
-  a lease that lasts at least 30 s, and `spawn collect` reads that file every
-  second. Renew only when the pending set changes or about a third of
-  `lease_seconds` has passed.
+- `api.py`: renew a wait lease only when the pending set changes or part of its
+  lifetime has elapsed; each 0.25-second poll currently rewrites a lease lasting
+  at least 30 seconds.

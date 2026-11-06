@@ -1,85 +1,14 @@
 # Portable history and derived discovery
 
-Files and immutable ZIPs own history. SQLite and dirty markers contain no unique
-domain facts. `history_index.py` alone projects metadata sources, acknowledges markers,
-and selects the current history digest. Archive byte mechanics alone resolve
-physical locations, remount hints and equivalent-copy verification. Lifecycle/control reads remain direct.
+Files and verified ZIPs own history; SQLite is disposable. Lifecycle and control
+decisions read authority directly. Indexed writers mark a source before mutation;
+failed marking prevents the mutation. Catch-up acknowledges only an unchanged
+marker under the source lock, so a concurrent write cannot be lost.
 
-## Mutation and projection
-
-Every indexed mutation holds root `locks/history-mutation.lock` shared, then its
-source lock. `HistoryChanges.mark()` publishes a durable random token before the
-source changes. Failure to mark prevents the mutation. Writers never need SQLite.
-
-Catch-up captures a finite dirty set. Every authority is read under its source
-lock, except that append-only `sessions.jsonl` may be projected to the committed
-end observed by an open file descriptor while its writer holds the lock. In that
-case its marker stays pending. A rewrite by tail repair is an atomic
-replace, so a reader already holding the old inode sees the complete pre-rewrite
-state; the cursor's inode/tail check forces a full replay on the next catch-up.
-SQLite commits FULL, and marker acknowledgement always happens under the source
-lock and removes only an unchanged token. Nonterminal spawn markers remain
-pending; active stream appends may coalesce them. Terminal writes and late events
-replace the token. Active activity is explicitly provisional.
-
-Incremental session projection loads only the accepted-chat row and generation
-rows for each chat touched after the cursor. Recency uses
-the highest-ordinal generation bucket, which can differ from the accepted
-generation when a key is reused. A cursor reset still clears the
-session projection and replays the full committed log. One read may observe only
-a committed prefix of a multi-line `SessionBindings.commit()` batch. That is
-acceptable for this disposable discovery projection; lifecycle and control
-decisions continue to read session authority directly.
-
-Lock order: catchup -> root mutation -> database -> source -> markers. Plain
-SQLite readers hold only the database gate. Rebuild holds catchup/root gates, uses a fresh rollback-journal
-stage, drains all pending sources, then checkpoints and closes the old WAL
-under the exclusive database gate before replacement. Reset takes root
-exclusively, writes a new generation before dropping markers, and rebuilds
-authority. Never unlink these lock identities.
-
-External copies require explicit rebuild/import. Online repair uses `session
-index rebuild`; damaged coordination requires `--reset`. Offline deletion of
-`history-index/` is safe only after its runtime's users stop. Leave `locks/` alone.
-Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery.
-
-## Schema namespace and mixed-version overlap
-
-`SCHEMA_VERSION` (in `history_changes.py`) and the latest supported session event
-version name one projection namespace:
-`history-index/history-v<N>-sessions-v<M>.sqlite3`, its correspondingly versioned
-stage, pending queue with GENERATION, catch-up/database/marker locks, and init latch.
-Changing either version builds a fresh file from authority; there is no in-place migration,
-because an older build that is still running (a background runner that outlives
-an upgrade) must keep reading the file it understands. 0.6.7 and earlier use the
-unversioned `history.sqlite3`, `pending/`, locks and latch. This build never opens
-them and does not delete them.
-
-Authority and its locks stay shared: `locks/history-mutation.lock` and source
-locks. Each schema's writers mark only that schema's queue, so neither build
-consumes, clears or resets the other's markers or GENERATION, and neither waits on
-the other's catch-up or database gate. An older runner reads descendants through
-its own index; that is what finalizes it (0.6.7's Pi drain treats any index error
-as unknown evidence and does not complete while the error persists).
-
-Writers of an older build still mutate shared authority during the overlap. Catch-up
-re-reads every active loose spawn and the session-log cursor without a marker, so
-runners that finish and primaries that stop after an upgrade still project. Spawns
-an older build creates are found through the shared `spawn-id-counter`: catch-up
-compares it to the `spawns` cursor and projects the IDs between (IDs reserved before
-their directory exists stay in the cursor's retry set). Archive changes an older build
-makes need `session index rebuild`. The older index misses this build's writes.
-The older index skips unsupported session rows and keeps projecting later ones, so
-it still discovers its own sessions. The session cursor stores the skipped versions,
-and every catch-up and rebuild warns from it, not only the pass that crossed the
-row. The build for that session format gets a different namespace and rebuilds from
-authority.
-
-Rollback: the older build's index is stale after any use of a newer build, and a
-pre-release build of this branch migrated `history.sqlite3` to schema 6 in place.
-After rolling back, run the older build's `meridian session index rebuild
---metadata-only`, or delete `history-index/history.sqlite3*` while no older process
-uses the runtime.
+Index lock order is catchup → root mutation → database → source → markers.
+The index and coordination namespace changes with schema and session format:
+an older runner may still need its own index after an upgrade. Do not migrate or
+reset another version's projection in place.
 
 ## Initialization and read budgets
 
@@ -120,154 +49,20 @@ loose row before using lifecycle state; archived rows are traversal edges, not
 projected lifecycle authority. A cold initialization or rebuild is still corpus-sized
 even though the warm query and authoritative rereads are subtree-sized.
 
-## Identity and authority
-
-History UUID identifies one transcript, not a reusable cN alias. Sessions retain
-all generations; fork-start captures the source UUID before a chat can resume.
-Headers carry portable origin/relationships. Attempt facts come from the live
-fold, not replayed runner events. Native capture snapshots the exact bound key
-for both primary and child spawns. No native source means no archive eligibility;
-those records stay loose with a reason. Archive packs sealed records and does
-not run capture. Post-stop maintenance receives the exact completed spawn ID,
-not the latest chat projection.
-
-Capture selection runs under the aggregate guard and requires agreement among
-state, primary metadata and the linked generation. Known active owners and
-unreleased live scopes block capture and are rechecked before publication.
-Those live-owner outcomes are retryable capture deferrals; archive passes report
-them separately from corrupt, quarantined or missing-source errors. Post-stop
-maintenance takes the native key its own capture sealed, runs the guard's owner
-query for that key, and, once no owner is live, retries every terminal record
-bound to the same native session; it never sweeps unrelated history.
-A deferral during snapshot finalization aborts the caller-owned atomic stage.
-Only a complete provider observation seals `native-transcript.jsonl`; a valid
-seal is the idempotent no-op. Runner-stream existence is not capture evidence.
-
-`native_snapshot.py` defines the separate sealed JSONL storage codec. It retains
-raw native JSON text in source/ordinal envelopes; a final digest binds header,
-body and observation metadata. Its writer serializes into a caller-owned atomic
-stage and does not itself qualify native input or acquire aggregate locks. The
-shared transcript reader recognizes this storage header even in renamed files,
-validates incrementally, and exposes storage status independently of rendering.
-The operations layer checks known native-session/harness or history-UUID bindings
-at header consumption, before any body record; explicit file reads impose no
-identity inferred from their filename. Reserved storage frames cannot fall through
-to permissive native or append-stream interpretation after a damaged header.
-Early close/budget exhaustion is partial; a valid empty seal is complete, not a
-reason to select another source. Explicit snapshot reads validate the seal; normal chat reads resolve the native
-key. Legacy ZIP stream members can be restored as inert bytes, never decoded.
-The portable record digest (`retention_digest.py`) hashes a record's JSON as
-stored, never a re-serialization through current models, so model growth cannot
-invalidate older ZIPs. Checks of unchanged facts compare both sides through
-current models.
-
-The index keeps current metadata, independent locations, generation aliases and
-session/work projections. Multiple ZIP copies remain candidates even with a
-loose copy present. Only copies matching the selected portable digest are interchangeable; an
-offline current snapshot never falls back to different older content. Published
-snapshots remain separate until reclaim intent or explicit import selects them. Corrupt authority refuses complete coverage; it is never an empty result.
-
-Snapshot reads use one resolver source kind, `snapshot`, selected in two cases only:
-a restored historical record reads its local aggregate snapshot, and an archive-only
-record this runtime did not reclaim itself (an import) streams the catalog-selected
-ZIP member in place. Both bind the header to the history UUID and verify the seal.
-A record this runtime reclaimed keeps reading its live binding, and a missing live
-native source stays missing. Corpus search covers live native bindings only.
-
 ## Retention and restore
 
-`retention_archive.py` owns inventory, ZIP bytes, independent verification and
-append-only receipts. `ops/session_archive.py` owns eligibility and final
-root-exclusive protection/witness revalidation. Publication never deletes
-sources. Reclaim-prepared receipts precede removal; loose locations win while
-both copies exist. Capture hashes under the shared root/source locks, bracketed by exact membership,
-POSIX change-time and raw session/state witnesses shared with repeat restore.
-The final exclusive gate rechecks this witness and fresh dependency protection,
-not all file bytes. After verification, archive reclaim atomically retires the
-aggregate into existing spawn staging and syncs both parents; recursive cleanup
-runs only after root/spawn/scope locks are released. A failed parent sync leaves
-the prepared receipt and staging intact, without returning a cleanup handle.
-GC snapshots retirement entries then syncs both parents before disposal; recovery
-syncs both parents before acknowledging an absent source. A persistent sync failure
-therefore leaves the retirement pending, without another journal or lifecycle. Partial removal
-there cannot hide the current ZIP. Startup staging GC may discard this residue;
-it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire. Reclaim orders dependents before dependencies, before
-bundle limits, and refuses to retire a dependency while any loose record requires it.
-The archive lock owns one destination staging name per runtime; retries clean only
-that runtime's unpublished ZIP, never another runtime's staging or a published ZIP.
+Hash stored record JSON as stored, not after parsing through current models: new
+model defaults would invalidate an older archive's digest. Checks comparing
+unchanged facts pass both sides through current models.
 
-Restore extracts selected records into private stages outside ordinary spawn
-stage GC, verifies copied bytes, assigns new local aliases, and publishes inert
-historical state. A durable per-history restore plan spans publication/session
-append for retry. Each plan owns its history-ID-named extraction stage; ordinary
-failures clean the stage, and retry discards crash residue before fresh extraction.
-No PID, lease, scope or harness continuation becomes live.
-External ZIP extraction and hashing run outside the root gate. The final gate
-revalidates aliases/history conflicts, publishes the staged aggregate and appends
-the historical session. Historical guards belong in persistence/control seams,
-not just the CLI.
-Original source metadata remains provenance, not executable process ownership.
+Capture hashes under shared ownership, then revalidates membership and change
+time under the exclusive gate. Witnesses detect changes after hashing; they do
+not replace checksums. Publication does not delete sources. Reclaim receipts
+precede removal, and cleanup follows release of root, spawn and scope locks.
 
-Restored session generations are immutable at their append boundary as well as
-in replay. Restore is the sole historical-generation mint and uses the reserved
-`historical-<uuid hex>` prefix. Append guards classify the event generation in O(1)
-instead of folding the session log. The prefix rules (an import must carry it, a
-live start must not) run only at append time. Replay must never enforce them: replay
-cannot skip a row, so one older-build restore would fail every indexed read and
-rebuild. Replay checks only that an import is inactive, plus the mutation rule. An
-unprefixed restore already appended by an older build bypasses the append guard but
-remains inoperable: operations refuse to continue or fork historical sessions. An
-unfinished older-build `RestorePlan` does not resume because the released plan had
-no persisted resume contract.
+Restore publishes inert historical records. Its generation prefix is checked
+at append, not replay: an older accepted restore must remain readable. A live
+binding whose native transcript is missing does not fall back to a retained
+snapshot. Imported or restored records can read their own sealed snapshot.
 
-Per-operation session reads use `chats_rows`/`chat_rows`/`chat_record`/`chat_generations` and
-`native_chats`/`native_observations`; they decode only selected rows. Their bodies
-still scan `sessions.jsonl` bytes. Bulk repair/import bindings keep one
-`SessionBindings` snapshot; cross-chat checks require its full (`scope=None`)
-view. Lock-scoped reads that make write decisions refuse unsupported rows in their
-scope; a newer row naming no chat or native session is never selected by a scoped
-read, so it refuses only full-snapshot decisions. Selection and observation dedup
-run inside the append seam's mutation (shared) → sessions-flock epoch, without
-nested lock re-entry, so validation and publication are atomic. Blind appends do
-not read the journal: appending this build's own format interprets nothing, and
-newer builds read older rows. A per-append compatibility scan was removed because
-it re-read the whole journal under the sessions lock whenever another process had
-appended (~0.25 s at 40k rows, growing with history).
-[#418](https://github.com/haowjy/meridian-cli/issues/418) replaces these filtered
-passes with per-chat journals. `live_observer_for_chat` and capture's spawn-side
-ownership check still scan spawn rows: chat claims cannot find a spawn whose
-native key was recorded only in its own state.
-Exact session lookup returns raw authority, including nullable identity
-fields; only exported capsules enrich local linkage, after raw-authority validation. Restore provenance binds the exact local state and historical session;
-recapture validates those projections and all retained content before reusing
-original portable session facts (including absence). Synthetic local sessions
-never become new portable metadata. Existing-copy restore hashes under the shared
-root gate and source lock, then rechecks POSIX inode/change-time and membership
-witnesses plus exact session metadata under the short exclusive gate. Witnesses
-only detect changes after checksum verification; they do not replace checksums.
-
-`chats_rows(root, chats)` is one selected pass. Its mapping retains each chat's row
-order; `.ordered` retains global interleaving for cross-chat decisions. Never sort
-these rows by timestamps. `SessionBindings` reads through this seam and publishes
-one grouped `append_chat_rows` batch (one durable append/fsync).
-`SessionBindings.commit` groups rows by chat, so order across chats within one
-commit batch is not kept; bind rows are compared only within a chat.
-#418's per-chat journals replace these bodies, including the cross-chat stable
-merge, and consolidate lock epochs.
-Bulk reads still outside the seam: `list_all_session_records`,
-`list_session_generations`, and `legacy_native_import.py`'s raw reads.
-
-## Search
-
-`native-search-v1.sqlite3` is a separate disposable projection. It stores native
-keys, locators, freshness witnesses and normalized display entries, never chat
-IDs. Search inverts accepted bindings from the session authority, validates
-file/OpenCode witnesses, refreshes stale sources, then uses FTS5 trigrams only
-to nominate candidates. Python's exact substring predicate decides matches.
-Parser-version changes invalidate rows. Unsearched sources carry coverage reasons;
-no index may select a chat's native source. Rebuild refreshes search unless
-`--metadata-only`; status reports fresh/stale/unindexed counts and bytes.
-
-Metadata activity uses spawn/session facts and sealed snapshot observations, not
-runner-stream tails. The index holds no transcript content: `session browse` reads
-a transcript through `session_transcript.py` once per detail view.
+KB `architecture/state-system/portable-history.md` covers the full design.

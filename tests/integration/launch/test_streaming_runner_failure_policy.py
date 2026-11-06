@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,10 @@ from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import pi_drain as pi_drain_module
+from meridian.lib.streaming import resident_drain as resident_drain_module
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
@@ -190,27 +193,31 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
         launch_mode="foreground",
         status="queued",
     )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="test-chat-resident-deadline-child",
-        parent_id=str(parent_id),
-        model=str(run.model),
-        agent="",
-        harness=HarnessId.CODEX.value,
-        kind="streaming",
-        prompt="child",
-        spawn_id=SpawnId("r-resident-deadline-child"),
-        launch_mode="background",
-        status="running",
-        # A lockless row with no runner PID counts as starting for 15 s; this child's runner
-        # is long gone, so the deadline cleanup must not wait that out.
-        started_at="2026-01-01T00:00:00Z",
-    )
-    request = _build_request()
-    exit_code = await asyncio.wait_for(
-        _execute_with_context(
+    # The child's runner holds its launch lock until SIGTERM, so the tree cannot finish
+    # before the answer window runs out, however long that takes, and cleanup ends it at once.
+    child_id = SpawnId("r-resident-deadline-child")
+    with LaunchSlot() as child_lock:
+        spawn_store.start_spawn(
+            runtime_root,
+            chat_id="test-chat-resident-deadline-child",
+            parent_id=str(parent_id),
+            model=str(run.model),
+            agent="",
+            harness=HarnessId.CODEX.value,
+            kind="streaming",
+            prompt="child",
+            spawn_id=child_id,
+            launch_mode="background",
+            status="running",
+            launch_lock=child_lock,
+        )
+        child_runner = subprocess.Popen(["sleep", "60"], pass_fds=(child_lock.handle.fd,))
+    spawn_store.update_spawn(runtime_root, child_id, runner_pid=child_runner.pid)
+    monkeypatch.setattr(resident_drain_module, "_IDLE_NUDGE_ANSWER_SECONDS", 0.05)
+    try:
+        exit_code = await _execute_with_context(
             run,
-            request=request,
+            request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
             registry=registry,
@@ -222,11 +229,13 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
                     "codex": {"wait_yield_seconds": 2.0},
                 },
             },
-        ),
-        timeout=15.0,
-    )
+        )
+    finally:
+        child_runner.kill()
+        child_runner.wait()
 
     row = spawn_store.get_spawn(runtime_root, parent_id)
+    child = spawn_store.get_spawn(runtime_root, child_id)
     assert exit_code == 1
     assert _ResidentDeadlineConnection.starts == 1
     assert _ResidentDeadlineConnection.resident_deadlines == [0.01]
@@ -234,6 +243,8 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 1
     assert row.terminal.error == "resident_deadline_expired"
+    assert child is not None
+    assert child.status == "cancelled"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,3 @@
   and `test_rootless_tool_commands.py` repeat subprocess/env plumbing. Build one
   filesystem-observing launch fixture in support and delete the copies. Keep the
   scenario-specific race gates local so their ordering stays visible.
-- `integration/launch/test_signal_canceller.py::test_signal_canceller_runnerless_cancel_preserves_running_row`
-  spends ~5 s per gate on a production-length poll budget. It has an injectable grace interval;
-  use it so the refusal-to-fabricate-terminal-state assertion stays cheap.

@@ -12,6 +12,7 @@ from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import consume_spawn_signal
 from meridian.lib.streaming.completion_contracts import (
+    COMPLETION_NUDGE_INTERVAL_SECONDS,
     AssessmentTrigger,
     CompletionDirectives,
     CompletionEvaluation,
@@ -29,11 +30,10 @@ from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
-COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
 PI_COMPLETION_NUDGE_MESSAGE = (
     "If you are finished, run `meridian spawn done`; your reply to this message is the "
     "report, so make it complete."
@@ -123,7 +123,10 @@ class PiCompletionProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return True
 
-    def refresh_deadline_after_event(self) -> bool:
+    def refresh_deadline_after_event(
+        self, state: CompletionState, semantics: EventSemantics
+    ) -> bool:
+        del state, semantics
         return True
 
     def candidate_transition(self) -> AbstractContextManager[None]:
@@ -264,7 +267,8 @@ class PiCompletionProfile:
         self._refresh_done_nudge_state()
         return self.next_done_nudge_monotonic
 
-    async def send_nudge(self) -> None:
+    async def send_nudge(self, state: CompletionState) -> None:
+        del state
         try:
             if self.send_done_nudge_callback is not None:
                 await self.send_done_nudge_callback(PI_COMPLETION_NUDGE_MESSAGE)

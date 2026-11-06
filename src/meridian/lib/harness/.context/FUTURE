@@ -1,23 +1,4 @@
-- `projections/*`: `ResolvedLaunchSpec.claude_runtime` (formerly `claude_plugin_dirs`) is Claude-only but
-  forced a `_DELEGATED_FIELDS` edit in six non-Claude projections, following the
-  `disallowed_tools` / `pi_extension_entrypoints` / `opencode_version`
-  precedent. That is the 10-file-edit smell from `AGENTS.md`; the next
-  harness-specific spec field should go on a per-harness spec extension rather
-  than another row in every projection (thermo F7).
-- `codex_idle.py` and `../notify/label.py`: two separate `tmux` subprocess helpers. One
-  `capture_pane(pane, timeout)` in `lib/platform/` (or a harness-level
-  `tmux.py`) serves the sensor and the label (thermo F10).
-- `opencode_idle.py`: two dialects (frozen V1, V2) now share
-  `_OpenCodeIdleSensorBase` in one module; V2's running-work tracker already
-  lives in `opencode_running_work.py`. When V2 grows again,
-  move the V2 sensor to `opencode_v2_idle.py` with the base in `opencode_idle.py`,
-  mirroring the `connections/opencode_http.py` / `opencode_v2_http.py` split.
-  The factory `primary_idle_sensor` must then move too, or it imports V2 in a cycle.
-- `connections/opencode_http.py`: split `events()` into a per-response drain that
-  reports its close reason and small outer policies for spawn and primary-observer
-  lifetimes; the current shared loop intentionally keeps the review fold bounded.
-- `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `spawn message` can report "held for approval" or "refused" instead of just "posted" (`work:claude-mod-inject` D7).
-- `../claude_runtime/meridian-idle/`: a TUI primary could also show child-spawn status through `$.ui.status`, and get native `done`/`rearm` tools via `$.tool.register`. Both were proven in probe p8415. They're left out because `spawn done`/`rearm` act only on resident spawns, and a user ends a TUI primary. Add them to the existing idle mod if primaries gain a resident/completion contract (`work:claude-mod-inject` D7).
+- `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `spawn message` can report "held for approval" or "refused" instead of just "posted".
 - `projections/project_opencode_subprocess.py`: an OpenCode 2 black-box fallback that
   resumes a session committed to another agent gets no Meridian prompt, because the v2
   bare TUI rejects `--agent`. Fresh fallback sessions take `default_agent`. To close it,
@@ -33,3 +14,4 @@
   package `mcp/<name>/mcp.toml` definitions during sync. OpenCode config can carry local
   definitions under `mcp.servers`, but Meridian must not reconstruct commands from tool
   permission names.
+

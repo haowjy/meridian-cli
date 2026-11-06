@@ -1,18 +1,8 @@
 # Bundled Meridian skills
 
-These skills ship with the binary whose behavior they explain. Unlike prompt-package
-skills, they should name the real Meridian commands and the flags needed to act; keep
-that syntax aligned with the command help. When trimming, cut flag syntax that only
-restates `-h`, and keep the judgment: what to try first, which fix fits which symptom,
-why, and what to tell the human. Likewise, where a skill explains a Mars file format,
-link Mars's reference for the field schema and keep only what the schema doesn't show.
+Keep actionable command syntax aligned with help, and retain judgment that help
+cannot provide. Name skills with the `__meridian` suffix for Mars collision
+handling. Avoid dependencies on package-specific agent or skill names.
 
-Every `SKILL.md` requires `name` and a trigger-shaped `description` beginning with
-"When". Optional `metadata.mode: primary` limits its trigger line to profiles whose
-declared mode is `primary`; omit it when every profile should see it. It sits under
-`metadata:` because Mars warns on unknown top-level skill keys and `mars provide`
-forwards the warning; Meridian reads no top-level `mode`.
-Bundled skill folders and frontmatter names end in `__meridian`, matching Mars's
-`name__source` collision spelling. Bundled skills must not depend on package-specific
-agent or skill names: describe the role conditionally and state any load-bearing rule
-inline.
+Use `metadata.mode: primary` for primary-only triggers: Mars warns on unknown
+top-level keys and Meridian does not read top-level `mode`.
