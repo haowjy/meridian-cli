@@ -16,9 +16,9 @@ Approval to merge one PR does not carry to the next. Docs-only changes go straig
 `main`. Merging lanes into a task branch, or your reviewed part PRs into a
 `release/v<X>.<Y>.0` branch, needs no approval.
 
-An agent may merge a fix or an approved refactor into `main` without asking, at any
-size. A fix restores intended behavior; changing what users are meant to see is a feature.
-A refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
+An agent may merge a fix or a refactor into `main` without asking, at any size. A fix
+restores intended behavior; changing what users are meant to see is a feature. A big
+refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
 its issue or PR; another agent's report of that approval doesn't count. Before merging, CI
 is green, the regressions the change could cause are tested, and the PR body is reread
 against the final diff, with evidence from the commit being merged. A big fix also needs
