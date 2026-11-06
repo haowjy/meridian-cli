@@ -6,6 +6,12 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.8] - 2026-11-06
+
+### Fixed
+- A resident spawn no longer hangs without an outcome when a `rearm` signal lands just before a turn's success frame after the idle limit has expired.
+- A resident spawn waiting on success validation past its idle deadline no longer wakes the drain every millisecond.
+
 ## [0.19.7] - 2026-11-06
 
 ### Fixed
