@@ -379,8 +379,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         wire = json.dumps(payload, separators=(",", ":")) + "\n"
         trace_wire_send(self._tracer, "stdin_write", wire, bytes=len(wire.encode("utf-8")))
         async with self._send_lock:
-            process.stdin.write(wire.encode("utf-8"))
-            await process.stdin.drain()
+            try:
+                process.stdin.write(wire.encode("utf-8"))
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                # The only reader is gone: the line was never read.
+                raise TransportDead("Claude subprocess closed its stdin.") from exc
 
     async def _signal_process(self, sig: signal.Signals) -> None:
         child = self._child

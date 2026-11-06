@@ -24,7 +24,7 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -1328,6 +1328,56 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 "OpenCode effective configuration overrides the selected model"
             )
 
+    async def _add_committed_target(self, payload: dict[str, object]) -> None:
+        """Copy the session's committed agent and model into *payload*; the reads write nothing."""
+
+        native = await self._native_json(f"/session/{self._require_session_id()}")
+        native = cast("dict[str, object]", native) if isinstance(native, dict) else {}
+        choice = native.get("model")
+        agent = self._agent_name or native.get("agent")
+        if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
+            messages = await self._native_json(f"/session/{self._require_session_id()}/message")
+            if isinstance(messages, list):
+                for item in reversed(cast("list[object]", messages)):
+                    info = (
+                        cast("dict[str, object]", item).get("info")
+                        if isinstance(item, dict)
+                        else None
+                    )
+                    if not isinstance(info, dict):
+                        continue
+                    info = cast("dict[str, object]", info)
+                    if info.get("role") != "user":
+                        continue
+                    latest = info.get("model")
+                    if isinstance(latest, dict):
+                        latest = cast("dict[str, object]", latest)
+                        choice = {
+                            "id": latest.get("modelID"),
+                            "providerID": latest.get("providerID"),
+                            "variant": latest.get("variant", "default"),
+                        }
+                        agent = self._agent_name or info.get("agent")
+                    break
+        if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
+            raise HarnessCapabilityMismatch(
+                "OpenCode has no observable committed agent/model for this injection"
+            )
+        choice = cast("dict[str, object]", choice)
+        provider, model_id = choice.get("providerID"), choice.get("id")
+        if (
+            not isinstance(provider, str)
+            or not isinstance(model_id, str)
+            or not provider
+            or not model_id
+        ):
+            raise HarnessCapabilityMismatch("OpenCode returned an invalid committed model")
+        payload["agent"] = agent
+        payload["model"] = {"providerID": provider, "modelID": model_id}
+        variant = choice.get("variant")
+        if isinstance(variant, str):
+            payload["variant"] = variant
+
     async def _post_session_message(
         self, text: str, *, fresh: bool = False, model: str | None = None
     ) -> None:
@@ -1339,52 +1389,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if self._agent_name:
                 payload["agent"] = self._agent_name
         else:
-            native = await self._native_json(f"/session/{self._require_session_id()}")
-            native = cast("dict[str, object]", native) if isinstance(native, dict) else {}
-            choice = native.get("model")
-            agent = self._agent_name or native.get("agent")
-            if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
-                messages = await self._native_json(f"/session/{self._require_session_id()}/message")
-                if isinstance(messages, list):
-                    for item in reversed(cast("list[object]", messages)):
-                        info = (
-                            cast("dict[str, object]", item).get("info")
-                            if isinstance(item, dict)
-                            else None
-                        )
-                        if not isinstance(info, dict):
-                            continue
-                        info = cast("dict[str, object]", info)
-                        if info.get("role") != "user":
-                            continue
-                        latest = info.get("model")
-                        if isinstance(latest, dict):
-                            latest = cast("dict[str, object]", latest)
-                            choice = {
-                                "id": latest.get("modelID"),
-                                "providerID": latest.get("providerID"),
-                                "variant": latest.get("variant", "default"),
-                            }
-                            agent = self._agent_name or info.get("agent")
-                        break
-            if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
-                raise HarnessCapabilityMismatch(
-                    "OpenCode has no observable committed agent/model for this injection"
-                )
-            choice = cast("dict[str, object]", choice)
-            provider, model_id = choice.get("providerID"), choice.get("id")
-            if (
-                not isinstance(provider, str)
-                or not isinstance(model_id, str)
-                or not provider
-                or not model_id
-            ):
-                raise HarnessCapabilityMismatch("OpenCode returned an invalid committed model")
-            payload["agent"] = agent
-            payload["model"] = {"providerID": provider, "modelID": model_id}
-            variant = choice.get("variant")
-            if isinstance(variant, str):
-                payload["variant"] = variant
+            try:
+                await self._add_committed_target(payload)
+            except (HarnessCapabilityMismatch, aiohttp.ClientError, TimeoutError) as exc:
+                # Only reads have run: nothing was posted.
+                raise DeliveryRefused(str(exc)) from exc
         await self._post_session_action(
             path_templates=self._MESSAGE_PATH_TEMPLATES,
             payload_variants=(payload,),
@@ -1407,12 +1416,16 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         for template in path_templates:
             path = template.format(session_id=session_id)
             for payload in payload_variants:
-                status, body, content_type = await self._post_json(
-                    path,
-                    payload,
-                    skip_body_on_statuses=accepted_statuses,
-                    tolerate_incomplete_body=True,
-                )
+                try:
+                    status, body, content_type = await self._post_json(
+                        path,
+                        payload,
+                        skip_body_on_statuses=accepted_statuses,
+                        tolerate_incomplete_body=True,
+                    )
+                except aiohttp.ClientConnectorError as exc:
+                    # No connection was made, so nothing was sent.
+                    raise TransportDead(f"OpenCode server unreachable: {exc}") from exc
                 if self._accepted(status, content_type, accepted_statuses):
                     return
                 if status in self._PAYLOAD_RETRY_STATUSES:

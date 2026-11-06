@@ -670,7 +670,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             async with asyncio.timeout(self._timing.prompt_ack_timeout_seconds):
                 await process.stdin.drain()
         except (BrokenPipeError, ConnectionResetError) as exc:
-            raise RuntimeError("pi_rpc_write_failed: delivery uncertain") from exc
+            # The only reader is gone: the line was never read.
+            raise TransportDead("pi_rpc_write_failed: Pi closed its stdin") from exc
         except TimeoutError as exc:
             raise RuntimeError("pi_rpc_write_timeout: delivery uncertain") from exc
 

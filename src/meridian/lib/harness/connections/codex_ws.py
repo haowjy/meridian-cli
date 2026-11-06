@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -556,6 +556,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         after the write propagates, never a second send.
         """
         self._require_connected(operation)
+        if self._ws is None or not _ws_is_open(self._ws):
+            # A send on a closed websocket writes nothing.
+            raise TransportDead("Codex websocket is closed")
         self._signal_in_flight = False
         thread_id = self._require_thread_id(operation)
         if self._current_turn_id:
