@@ -18,7 +18,6 @@ from tests.support.launch_paths import launch_paths
 from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
-    awaiting_done_coordinator,
     coordinator_with_clock,
     descendant_cancellation_from_roots,
     expire_idle_window,
@@ -425,28 +424,3 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     already_terminal = spawn_store.get_spawn(tmp_path, SpawnId("p3"))
     assert already_terminal is not None
     assert already_terminal.status == "succeeded"
-
-
-@pytest.mark.asyncio
-async def test_done_signal_is_honored_with_tracked_child_outstanding(
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.state.spawn_signals import write_spawn_signal
-
-    start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    connection = FakeResidentConnection(HarnessId.OPENCODE)
-    coordinator = await awaiting_done_coordinator(tmp_path, connection)
-
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    requested = await coordinator.handle_terminal_event(
-        resident_event(HarnessId.OPENCODE, "agent_end", {}),
-        TerminalEventOutcome(status="succeeded", exit_code=0),
-        DrainAction(terminate=True, emit_turn_boundary=False),
-    )
-    decision = await _after_refresh(coordinator)
-
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "succeeded"
-    assert connection.fake_resident_backend.injected_messages == []

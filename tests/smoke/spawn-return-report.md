@@ -5,10 +5,6 @@ This is a small live boundary probe for foreground output, background wait, and
 harness and may spend money. Use a disposable project and an eligible cheap
 model only after deliberately supplying credentials.
 
-The maintained output variants and report assertions live in
-[`tests/integration/ops/test_spawn_execute_report_output.py`](../integration/ops/test_spawn_execute_report_output.py);
-this guide only checks the real process boundary.
-
 ## Setup
 
 ```bash

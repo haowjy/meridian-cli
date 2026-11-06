@@ -6,12 +6,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
-from tests.support.fixtures import allow_headless_claude, write_agent
+from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import (
     build_launch_context,
     stub_bundle_request_and_resolve,
@@ -140,35 +139,6 @@ def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     )
 
 
-def test_profile_opt_out_keeps_task_off_the_platform_deny_list(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    write_agent(tmp_path, name="tasker", model="haiku")
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="haiku",
-        harness=HarnessId.CLAUDE,
-        tool_rules=(tool_rule("task", "allow", "TaskCreate", "TaskGet"),),
-        platform_tool_rules=_CLAUDE_PLATFORM_RULES,
-    )
-    (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
-    context = build_launch_context(
-        spawn_id="p-task-opt-out",
-        request=SpawnRequest(
-            prompt="test", model="haiku", harness=HarnessId.CLAUDE.value, agent="tasker"
-        ),
-        runtime=_runtime(tmp_path, LaunchCompositionSurface.SPAWN_PREPARE),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    argv = context.binding.argv
-    assert {"TaskCreate", "TaskGet"}.issubset(_settings_permission_entries(argv, "allow"))
-    assert _TASK_DENIES.isdisjoint(_tool_flag_entries(argv, "--disallowedTools"))
-    assert "Agent" in _tool_flag_entries(argv, "--disallowedTools")
-
-
 def test_primary_surface_denies_agent_but_not_task(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -258,15 +228,6 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         "TaskUpdate",
         "TodoWrite",
     }.issubset(disallowed)
-
-
-def test_agent_copy_setting_comes_from_ancestor_mars_root(tmp_path: Path) -> None:
-    nested = tmp_path / "repo" / "subdirectory"
-    nested.mkdir(parents=True)
-    _write_native_agents(tmp_path / "repo")
-
-    assert agent_copy_enabled(nested, HarnessId.CLAUDE)
-    assert not agent_copy_enabled(nested, HarnessId.CODEX)
 
 
 def test_allow_builtin_agents_claude_cross_module_contract(

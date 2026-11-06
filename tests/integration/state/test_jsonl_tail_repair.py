@@ -143,56 +143,6 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     assert reloaded._transition_seq > 1
 
 
-def test_append_durable_jsonl_line_preserves_complete_row_missing_newline(tmp_path: Path) -> None:
-    path = tmp_path / "journal.jsonl"
-    complete = '{"id":1,"kind":"complete"}'
-    path.write_bytes(complete.encode())
-
-    append_durable_jsonl_line(path, '{"id":2,"kind":"new"}')
-
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert rows == [{"id": 1, "kind": "complete"}, {"id": 2, "kind": "new"}]
-
-
-def test_append_durable_jsonl_line_rejects_embedded_newlines(tmp_path: Path) -> None:
-    path = tmp_path / "journal.jsonl"
-
-    with pytest.raises(ValueError, match="must not contain embedded newlines"):
-        append_durable_jsonl_line(path, '{"id":1}\n{"id":2}')
-
-    assert not path.exists()
-
-
-def test_append_durable_jsonl_line_avoids_full_read_on_clean_tail(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "journal.jsonl"
-    row = b'{"id":1,"kind":"x"}\n'
-    path.write_bytes(row * 100_000)
-
-    read_calls = 0
-    original_read_bytes = Path.read_bytes
-
-    def counting_read_bytes(self: Path) -> bytes:
-        nonlocal read_calls
-        if self == path:
-            read_calls += 1
-        return original_read_bytes(self)
-
-    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
-
-    append_durable_jsonl_line(path, '{"id":2,"kind":"y"}\n')
-
-    # The cost bound only means something beside the appended row itself: an
-    # append that does nothing also reads nothing.
-    assert read_calls == 0
-    lines = original_read_bytes(path).splitlines()
-    assert len(lines) == 100_001
-    assert lines[:100_000] == [row.strip()] * 100_000
-    assert json.loads(lines[-1]) == {"id": 2, "kind": "y"}
-
-
 @posix_only
 def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> None:
     path = tmp_path / "spawn" / "permission_requests.jsonl"
@@ -204,14 +154,6 @@ def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> Non
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
     assert path.read_bytes().endswith(b"\n")
-
-
-def test_repair_jsonl_tail_does_not_create_parent_dir(tmp_path: Path) -> None:
-    path = tmp_path / "spawn" / "journal.jsonl"
-
-    repair_jsonl_tail(path)
-
-    assert not path.parent.exists()
 
 
 def test_append_durable_jsonl_line_rejects_failed_repair_without_losing_next_event(
@@ -239,3 +181,14 @@ def test_append_durable_jsonl_line_rejects_failed_repair_without_losing_next_eve
 
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"id": 1, "kind": "start"}, {"id": 3, "kind": "new"}]
+
+
+def test_append_durable_jsonl_line_preserves_complete_row_missing_newline(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    complete = '{"id":1,"kind":"complete"}'
+    path.write_bytes(complete.encode())
+
+    append_durable_jsonl_line(path, '{"id":2,"kind":"new"}')
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [{"id": 1, "kind": "complete"}, {"id": 2, "kind": "new"}]

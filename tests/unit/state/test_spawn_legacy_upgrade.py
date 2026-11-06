@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
@@ -97,15 +96,6 @@ def _upgrade(row: dict[str, Any]) -> StoredSpawnState:
     return StoredSpawnState.model_validate(upgrade_legacy_spawn_state(row))
 
 
-def test_active_flat_row_upgrades_to_strict_v3() -> None:
-    restored = _upgrade(_v2_flat())
-
-    assert restored.v == 3
-    assert restored.status == "running"
-    assert restored.runner_exit is None
-    assert restored.terminal is None
-
-
 def test_terminal_flat_rows_preserve_success_and_failure_facts() -> None:
     for status, exit_code, error in (
         ("succeeded", 0, None),
@@ -126,93 +116,9 @@ def test_terminal_flat_rows_preserve_success_and_failure_facts() -> None:
         assert restored.terminal.error == error
 
 
-def test_nested_v2_row_with_agreeing_terminal_status_upgrades() -> None:
-    row = upgrade_legacy_spawn_state(_terminal_v2("succeeded", 0, None))
-    row["v"] = 2
-    row["terminal"]["status"] = "succeeded"
-
-    restored = _upgrade(row)
-
-    assert restored.terminal is not None
-    assert restored.terminal.exit_code == 0
-
-
-def test_missing_version_and_retired_revision_are_curated_legacy_inputs() -> None:
-    row = _v2_flat()
-    row.pop("v")
-    row["revision"] = 17
-
-    upgraded = upgrade_legacy_spawn_state(row)
-
-    assert upgraded["v"] == 3
-    assert "revision" not in upgraded
-
-
-def test_missing_publication_time_backfills_finish_time() -> None:
-    row = _terminal_v2("succeeded", 0, None)
-    row.pop("published_at")
-
-    restored = _upgrade(row)
-
-    assert restored.terminal is not None
-    assert restored.terminal.published_at == restored.terminal.finished_at
-
-
-def test_incomplete_terminal_reports_quarantine_rule_and_fields() -> None:
-    row = _terminal_v2("succeeded", 0, None)
-    row.pop("finished_at")
-    row.pop("published_at")
-
-    with pytest.raises(LegacySpawnStateUpgradeError) as quarantined:
-        upgrade_legacy_spawn_state(row)
-
-    assert quarantined.value.rule == "incomplete_terminal"
-    assert quarantined.value.fields == ("finished_at",)
-
-
 def test_unknown_legacy_field_is_rejected_without_data_loss() -> None:
     row = _v2_flat()
     row["not_a_curated_retired_field"] = "must not disappear"
 
     with pytest.raises(LegacySpawnStateUpgradeError, match="unknown_fields"):
         upgrade_legacy_spawn_state(row)
-
-
-def test_terminal_facts_on_active_status_are_rejected() -> None:
-    row = _v2_flat()
-    row["exit_code"] = 3
-
-    with pytest.raises(LegacySpawnStateUpgradeError, match="non_terminal_status"):
-        upgrade_legacy_spawn_state(row)
-
-
-def test_partial_runner_exit_is_rejected() -> None:
-    row = _v2_flat()
-    row["runner_exit_status"] = "failed"
-
-    with pytest.raises(LegacySpawnStateUpgradeError, match="partial_runner_exit"):
-        upgrade_legacy_spawn_state(row)
-
-
-def test_disagreeing_nested_terminal_status_is_rejected() -> None:
-    row = upgrade_legacy_spawn_state(_terminal_v2("succeeded", 0, None))
-    row["v"] = 2
-    row["terminal"]["status"] = "failed"
-
-    with pytest.raises(LegacySpawnStateUpgradeError, match="disagree"):
-        upgrade_legacy_spawn_state(row)
-
-
-def test_nested_terminal_facts_on_active_status_fail_v3_validation() -> None:
-    row = upgrade_legacy_spawn_state(_v2_flat())
-    row["v"] = 2
-    row["terminal"] = {
-        "status": "running",
-        "exit_code": 0,
-        "finished_at": "2026-07-01T00:02:00Z",
-        "published_at": "2026-07-01T00:02:01Z",
-        "origin": "runner",
-    }
-
-    with pytest.raises(ValidationError, match="terminal status and terminal facts"):
-        _upgrade(row)

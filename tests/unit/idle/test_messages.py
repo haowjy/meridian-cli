@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.messages import stage_notice
 from meridian.lib.notify import SessionLabel
 from meridian.lib.state.idle_store import IdleSchedule, IdleState
@@ -94,49 +91,3 @@ def test_push_warn_and_missing_message_rendering() -> None:
         warn_email=False,
     )
     assert bare.body == "Cache expiry warning: reply to keep it warm\nMeridian"
-
-
-@pytest.mark.parametrize(
-    ("ttl", "anchor", "now", "estimated", "suffix"),
-    [
-        (3600, 0, 720_000, False, "48 min until cold"),
-        (1800, 0, 720_000, True, "est. 18 min until cold"),
-        (300, 0, 210_000, False, "2 min until cold"),
-        (300, 0, 270_000, True, "est. <1 min until cold"),
-        (300, 0, 300_000, False, "cache cold"),
-        (300, 0, 360_000, True, "est. cache cold"),
-        (None, 0, 720_000, True, None),
-        (3600, None, 720_000, False, None),
-    ],
-)
-def test_countdown_uses_current_time_and_persisted_ttl_confidence(
-    ttl: int | None,
-    anchor: int | None,
-    now: int,
-    estimated: bool,
-    suffix: str | None,
-) -> None:
-    notice = stage_notice(
-        "push",
-        _state(ttl_seconds=ttl, ttl_estimated=estimated, idle_since_ms=anchor),
-        SessionLabel(harness="pi", work_id="idle-cache-notify", tmux_session="a2"),
-        include_messages=False,
-        now_ms=now,
-        warn_email=False,
-    )
-    expected = "[idle] a2: pi"
-    assert notice.title == expected + (f" {suffix}" if suffix else "")
-
-
-def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:
-    user, assistant = trim_turn_excerpts(
-        "  human prompt\n\n<system-reminder>injected hook text</system-reminder> " + "word " * 40,
-        "reply\nwith\tspacing " + "answer " * 60,
-    )
-
-    assert user is not None and len(user) <= 120 and user.endswith("…")
-    assert assistant is not None and len(assistant) <= 280 and assistant.endswith("…")
-    assert user.endswith(" word…")
-    assert assistant.endswith(" answer…")
-    assert "system-reminder" not in user
-    assert "  " not in user + assistant

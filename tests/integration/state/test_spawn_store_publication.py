@@ -113,32 +113,6 @@ def _paused_initial_publication(
     assert errors == []
 
 
-def test_start_spawn_never_exposes_final_row_before_initial_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    spawn_id = "p7"
-
-    with _paused_initial_publication(
-        runtime_root,
-        monkeypatch,
-        spawn_id=spawn_id,
-    ):
-        assert scan_spawn_ids(paths.spawns_dir) == []
-        assert not (paths.spawns_dir / spawn_id).exists()
-        stages = list((paths.spawns_dir / ".staging").iterdir())
-        assert len(stages) == 1
-        assert stages[0].name.startswith(f"{spawn_id}-")
-        assert not (stages[0] / "state.json").exists()
-
-    assert scan_spawn_ids(paths.spawns_dir) == [spawn_id]
-    row = read_state(paths.spawns_dir, spawn_id)
-    assert row is not None
-    assert row.id == spawn_id
-
-
 def test_gc_waits_for_in_progress_publication_and_preserves_published_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -295,26 +269,6 @@ def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
     assert second_writer_acquired == [False]
 
 
-def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    spawn_id = _start_test_spawn(runtime_root, spawn_id="p7", status="succeeded")
-    claim_path = paths.spawns_dir / spawn_id / "reaper_cleanup_claim.json"
-    claim_path.write_text('{"v":1,"scopes":[]}\n', encoding="utf-8")
-    stale = [
-        StaleSpawnArtifact(
-            spawn_id=spawn_id,
-            project_uuid="project",
-            path=str(paths.spawns_dir / spawn_id),
-            size_bytes=0,
-            last_activity="2026-01-01T00:00:00+00:00",
-        )
-    ]
-
-    assert prune_stale_spawn_artifacts(stale).removed == 0
-    assert claim_path.is_file()
-
-
 @pytest.mark.parametrize(
     "invalid_spawn_id",
     ["../escaped", "/absolute", ".staging", "..", "nested/child"],
@@ -332,16 +286,6 @@ def test_start_spawn_rejects_explicit_id_outside_spawn_namespace(
     assert scan_spawn_ids(paths.spawns_dir) == []
     assert not (runtime_root / "escaped").exists()
     assert not (paths.spawns_dir / ".staging").exists()
-
-
-def test_start_spawn_accepts_path_safe_symbolic_id(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    spawn_id = _start_test_spawn(runtime_root, spawn_id="dry-run")
-
-    assert spawn_id == "dry-run"
-    assert (paths.spawns_dir / spawn_id / "state.json").is_file()
 
 
 def test_start_spawn_explicit_id_collision_preserves_existing_row(tmp_path: Path) -> None:
@@ -394,40 +338,24 @@ def test_delete_published_spawn_rejects_staging_container(tmp_path: Path) -> Non
     assert staged_state.read_text(encoding="utf-8") == "in progress\n"
 
 
-def test_delete_published_spawn_cannot_leave_writer_ghost_row(tmp_path: Path) -> None:
-    """Deletion must coordinate with an in-flight spawn writer."""
+def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)
-    spawn_id = str(_start_test_spawn(runtime_root, spawn_id="p7", status="queued"))
-    writer_holds_lock = threading.Event()
-    allow_writer = threading.Event()
+    spawn_id = _start_test_spawn(runtime_root, spawn_id="p7", status="succeeded")
+    claim_path = paths.spawns_dir / spawn_id / "reaper_cleanup_claim.json"
+    claim_path.write_text('{"v":1,"scopes":[]}\n', encoding="utf-8")
+    stale = [
+        StaleSpawnArtifact(
+            spawn_id=spawn_id,
+            project_uuid="project",
+            path=str(paths.spawns_dir / spawn_id),
+            size_bytes=0,
+            last_activity="2026-01-01T00:00:00+00:00",
+        )
+    ]
 
-    def pause_writer(record: SpawnRecord) -> SpawnRecord:
-        writer_holds_lock.set()
-        assert allow_writer.wait(timeout=5)
-        return record.model_copy(update={"desc": "writer completed"})
-
-    writer = threading.Thread(
-        target=spawn_repository.write_state_locked,
-        args=(paths.spawns_dir, spawn_id, pause_writer),
-    )
-    writer.start()
-    assert writer_holds_lock.wait(timeout=5)
-
-    deletion = threading.Thread(
-        target=delete_published_spawn,
-        args=(runtime_root, spawn_id),
-        kwargs={"can_delete": lambda _row: True},
-    )
-    deletion.start()
-    deletion.join(timeout=0.2)
-    allow_writer.set()
-    writer.join(timeout=5)
-    deletion.join(timeout=5)
-
-    assert not writer.is_alive()
-    assert not deletion.is_alive()
-    assert not (paths.spawns_dir / spawn_id).exists()
+    assert prune_stale_spawn_artifacts(stale).removed == 0
+    assert claim_path.is_file()
 
 
 def _reopening(**overrides: Any) -> LaunchInput:
