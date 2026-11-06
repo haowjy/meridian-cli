@@ -39,7 +39,7 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
 
-type PermissionMode = Literal["acceptEdits", "manual", "dontAsk"]
+type PermissionMode = Literal["acceptEdits", "auto", "manual", "dontAsk"]
 
 _BUILTIN_AGENT_PATTERNS: tuple[str, ...] = (
     "Explore",
@@ -444,7 +444,7 @@ def _approval_mode(policy: PermissionPolicy) -> tuple[bool, PermissionMode | Non
     if policy.approval in ("yolo", "never"):
         return True, None
     if policy.approval == "auto":
-        return False, "acceptEdits"
+        return False, "auto"
     if policy.approval == "confirm":
         return False, "manual"
     return False, None
@@ -740,6 +740,11 @@ def _approval_line(
         note += (
             "; acceptEdits would run its unmatched calls (edits, or file commands such as "
             "touch and rm), so edits the rules do not allow need approval too"
+        )
+    if policy.approval == "auto":
+        note += (
+            "; --permission-mode auto would let Claude's classifier approve those calls "
+            "instead of leaving them to the rules"
         )
     if policy.approval in ("never", "yolo"):
         note += (

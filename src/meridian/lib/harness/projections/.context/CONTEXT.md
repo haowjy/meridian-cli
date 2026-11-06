@@ -131,9 +131,12 @@ written by the policy) and gates the capability through the permission mode inst
 mode in which unmatched calls need approval, which a headless spawn refuses. `--tools`
 under a whole allowlist is `PermissionPolicy.allowed_tools` plus Bash for the Meridian command
 grants: the tools, not the permission spellings, so `write(src/*)` keeps `Write` callable.
-`approval: auto|never|yolo` gates with `acceptEdits` (edits keep running; it also runs file
+A gate cannot use `--permission-mode auto`, the mode a plain `approval: auto` compiles to:
+its classifier approves unmatched calls instead of refusing them. So `approval: auto|never|yolo`
+with a gate uses `acceptEdits` (edits keep running; it also runs file
 commands such as `touch`, `rm` and redirects inside the working directories), unless an
 edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
+Plain deny and ask rules stay authoritative under `auto` (checked live).
 `dontAsk` is reserved for a whole-policy allowlist (`*: deny`), which also limits
 `--tools`; it refuses every tool not allowed, so it would turn a bash allowlist into a
 whole-policy one. Ask rules hold under every mode, bypass included, so they do not change

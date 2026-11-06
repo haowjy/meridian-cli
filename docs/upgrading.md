@@ -1,5 +1,37 @@
 # Upgrade notes
 
+## `approval: auto` uses each harness's own auto
+
+`approval: auto` (`--approval auto`) used to compile to the nearest prompt-free setting. It now
+asks for the harness's own auto mode on Claude and Codex:
+
+| Harness | Before | Now |
+|---|---|---|
+| Claude | `--permission-mode acceptEdits` | `--permission-mode auto` |
+| Codex | `approval_policy="on-request"`, plus whatever `~/.codex/config.toml` set | `approval_policy="on-request"` and `approvals_reviewer="auto_review"`, on `codex exec` and `codex app-server` |
+| Cursor, OpenCode, Pi | unchanged | unchanged |
+
+What changes for an agent with `approval: auto`:
+
+- **Claude.** Claude's classifier now approves or refuses the calls `acceptEdits` used to leave
+  unmatched. Most calls run: edits and Bash outside the working directories, commits, pushes,
+  `meridian spawn`. The classifier can refuse a call it judges risky, and a refused call is not
+  retried. `deny` and `ask` rules still hold; on a scratch project a `deny` on `git revert *` and an
+  `ask` on web tools both refused under `auto`. A profile that gates a tool through the mode (a
+  plain `deny` or `ask` beside scoped allows of the same tool) or carries a whole-policy allowlist keeps
+  `acceptEdits` or `dontAsk`, because the classifier would approve what those modes refuse. The
+  permission report names the mode it chose.
+- **Codex.** A reviewer model now answers sandbox escalations, so a request to write outside
+  `workspace-write` or reach the network can be approved. Before, the launch inherited the reviewer
+  from the user's `~/.codex/config.toml`, or had none and the spawn refused the request. Meridian sets
+  both values on every launch, so the result no longer depends on that file. The reviewer's tokens do
+  not appear in `codex exec --json` usage or in Meridian's usage totals. `approval: confirm` is
+  unchanged: Meridian sets no reviewer, and a spawn refuses every approval request.
+- **`--approve-for-me` is not used.** Codex's flag refuses `--sandbox`, forces `workspace-write` and does
+  not exist on `codex app-server`, so the profile's sandbox would be lost.
+
+To keep the old Claude behavior, pass `--permission-mode acceptEdits` as a passthrough argument.
+
 ## A primary launch exits with the harness's status
 
 `meridian`, `meridian --continue`, `--fork`, `--from` and `meridian bootstrap` used to exit `0`

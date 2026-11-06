@@ -128,8 +128,8 @@ def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edi
     )
 
     assert preview.resolved_request.execution_policy.approval == "auto"
-    assert "--permission-mode" in preview.binding.argv
-    assert "acceptEdits" in preview.binding.argv
+    argv = list(preview.binding.argv)
+    assert argv[argv.index("--permission-mode") + 1] == "auto"
 
 
 @pytest.mark.parametrize(

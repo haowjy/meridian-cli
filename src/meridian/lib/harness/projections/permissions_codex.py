@@ -47,6 +47,12 @@ _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "yolo": "never",
 }
 
+# Codex's own auto: ``on-request`` plus the guardian reviewer. Set explicitly so a launch does
+# not inherit the reviewer (or its absence) from ``~/.codex/config.toml``. ``codex exec
+# --approve-for-me`` is not used: it refuses ``--sandbox``, forces workspace-write, and
+# app-server has no such flag.
+_APPROVALS_REVIEWER_BY_MODE: dict[ApprovalMode, str] = {"auto": "auto_review"}
+
 _SANDBOX_MODE_BY_MODE: dict[SandboxMode, str | None] = {
     "default": None,
     "read-only": "read-only",
@@ -76,6 +82,7 @@ class CodexPermissions:
     sandbox_mode: str | None
     network: CodexNetworkSettings
     approval_policy: str | None
+    approvals_reviewer: str | None
     shell_tool: bool | None
     web_search: bool | None
     view_image: bool | None
@@ -192,6 +199,7 @@ def _compile_codex_permission_values(
             sandbox_mode=_SANDBOX_MODE_BY_MODE[policy.sandbox],
             network=network.native,
             approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
+            approvals_reviewer=_APPROVALS_REVIEWER_BY_MODE.get(policy.approval),
             shell_tool=switches["shell_tool"],
             web_search=switches["web_search"],
             view_image=switches["view_image"],
@@ -426,6 +434,11 @@ def _codex_report(
         )
     if permissions.approval_policy is not None:
         note = f"approval_policy={permissions.approval_policy}"
+        if permissions.approvals_reviewer is not None:
+            note += (
+                f", approvals_reviewer={permissions.approvals_reviewer}: Codex's reviewer "
+                "decides escalations and can approve one"
+            )
         if policy.approval == "confirm":
             lines.append(
                 ReportLine(
