@@ -154,7 +154,11 @@ SessionStart-published inbox socket for that exact child PID appears in the laun
 boundary journal; each send re-reads the journal and writes the wire frame to the
 inbox, which is `DeliveryKind.POSTED`. The socket is unbound with the launcher's
 lexical block, so no PID-reuse check is needed. A harness with no port (Codex,
-OpenCode, Pi until their routes land) serves nothing.
+OpenCode until their routes land) serves nothing. Pi has no port either, because its
+route is not in the launcher: the `meridian-message` extension binds the same path
+(`_MERIDIAN_PI_CONTROL_SOCKET`, set for primaries only) from `session_start` in TUI mode
+and unlinks any stale file first, so the launcher never serves a Pi primary's socket and
+`control_actions.jsonl` does not record its messages.
 
 ### `HarnessContract` as Inspectable Surface
 

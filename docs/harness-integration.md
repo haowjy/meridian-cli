@@ -225,7 +225,7 @@ remain validated fail-closed.
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
 | Spawned | `pi --mode rpc`; native skills, context files, and prompt templates remain enabled; suppress ambient extensions unless `load_all_pi_extensions = true` |
 
-Both roles load the stable bundles listed below where enabled; `meridian-idle` loads only for interactive primaries:
+Both roles load the stable bundles listed below where enabled; `meridian-idle` and `meridian-message` load only for interactive primaries:
 
 - **managed-bash**, when `harness.pi.background_tasks.enabled` is true and
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
@@ -241,6 +241,14 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` l
 - **meridian-idle**, interactive primaries only: translates Pi idle/input events
   into core idle push and warning decisions. It never loads in spawned RPC
   sessions.
+- **meridian-message**, interactive primaries only: serves the primary's control socket
+  (`spawn message`) from inside Pi, at the path the launcher passes in
+  `_MERIDIAN_PI_CONTROL_SOCKET`, and only in TUI mode. A message becomes a user turn
+  through `pi.sendUserMessage`, steering when a turn is running. Pi's call returns
+  nothing, so the reply is `posted`, never `acknowledged`; during compaction the extension
+  refuses, because Pi rejects the prompt and shows the rejection only as an extension
+  error. The launcher serves no socket for a Pi primary, so `control_actions.jsonl`
+  does not record its messages.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
 quiescence: parent idle, reconciled transitive descendants finished, private work
