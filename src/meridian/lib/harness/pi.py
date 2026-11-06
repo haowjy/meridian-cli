@@ -111,10 +111,12 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_status import read_derived
+from meridian.lib.streaming.control_socket import control_socket_path
 
 logger = structlog.get_logger(__name__)
 
 PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
+PI_CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET"
 
 
 def _pi_owed_parent_ids(
@@ -412,6 +414,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
             if owed_parents:
                 env_overrides[PI_OWED_PARENT_IDS_ENV] = ",".join(owed_parents)
+            env_overrides[PI_CONTROL_SOCKET_ENV] = str(control_socket_path(runtime_root, spawn_id))
 
         _write_pi_runtime_metadata_sidecar(
             launch=launch,
