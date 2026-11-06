@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+import threading
+
 _bootstrapped = False
+_bootstrap_in_progress = False
 _bootstrap_imports: tuple[object, ...] = ()
+_bootstrap_lock = threading.RLock()
 
 # Adding one bundle-backed streaming harness requires touching the
 # harness-specific seams below. Generic dispatch helpers such as
@@ -49,10 +53,22 @@ def _run_bootstrap() -> None:
     """Execute the load-bearing harness bootstrap sequence exactly once."""
 
     global _bootstrapped
+    global _bootstrap_in_progress
     global _bootstrap_imports
 
     if _bootstrapped:
         return
+
+    _bootstrap_in_progress = True
+    try:
+        _bootstrap_adapters()
+    finally:
+        _bootstrap_in_progress = False
+
+
+def _bootstrap_adapters() -> None:
+    global _bootstrapped
+    global _bootstrap_imports
 
     # Import order is load-bearing.
     #
@@ -118,9 +134,10 @@ def ensure_bootstrap() -> None:
 
     if _bootstrapped:
         return
-    _run_bootstrap()
+    with _bootstrap_lock:
+        if _bootstrapped or _bootstrap_in_progress:
+            return
+        _run_bootstrap()
 
-
-_run_bootstrap()
 
 __all__ = ["HARNESS_EXTENSION_TOUCHPOINTS", "ensure_bootstrap"]

@@ -57,8 +57,10 @@ Pi-specific extension, runtime, and quiescence details live in
 
 ### Bootstrap Sequence
 
-`__init__.py:_run_bootstrap()` runs exactly once on package import. Import order
-is load-bearing:
+`ensure_bootstrap()` runs `_run_bootstrap()` exactly once, on first call, not on
+package import. Importing the package or `adapter` must not load adapter
+implementations: that cycle races a thread that imports `adapter` while bootstrap
+imports `claude`. Import order inside `_run_bootstrap()` is load-bearing:
 1. Adapter modules register `HarnessBundle` entries as side effects.
 2. Projection modules execute import-time drift guards.
 3. Extractor modules bind `Protocol` implementations.

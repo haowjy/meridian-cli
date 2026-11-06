@@ -262,6 +262,9 @@ def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
 def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
     """Look up one registered harness bundle."""
 
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
     try:
         return _REGISTRY[harness_id]
     except KeyError as exc:
@@ -276,9 +279,6 @@ def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
     except ValueError:
         return None
 
-    from meridian.lib.harness import ensure_bootstrap
-
-    ensure_bootstrap()
     return get_harness_bundle(harness_id).primary_inbox
 
 
@@ -307,6 +307,9 @@ def post_to_primary(
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
     """Return the active harness bundle registry mapping."""
 
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
     return MappingProxyType(_REGISTRY)
 
 

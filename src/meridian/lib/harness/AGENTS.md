@@ -19,12 +19,15 @@ dialect by DB schema, never by the installed binary or env var.
 
 ## Bootstrap Is Load-Bearing
 
-`__init__.py:_run_bootstrap()` runs once on package import: adapters register
-`HarnessBundle`s as side effects, projection modules run drift guards, then
-`_enforce_spawn_params_accounting()` requires each adapter's `handled_fields` to equal
-`SpawnParams` fields exactly (raises `ImportError` otherwise). Don't import individual
-adapter modules before `ensure_bootstrap()` completes: the guard sees a partial set and
-raises falsely. Ignoring a `SpawnParams` field is a decision; list it in
+`ensure_bootstrap()` runs `_run_bootstrap()` once, on first call, not on package
+import: adapters register `HarnessBundle`s as side effects, projection modules run
+drift guards, then `_enforce_spawn_params_accounting()` requires each adapter's
+`handled_fields` to equal `SpawnParams` fields exactly (raises `ImportError` otherwise).
+Package import only defines `ensure_bootstrap`; importing `adapter` (or any other
+submodule) must not load the adapter implementations, or a thread that imports
+`adapter` while another loads `claude` can see a half-initialized module. Don't import
+individual adapter modules before `ensure_bootstrap()` completes: the guard sees a
+partial set and raises falsely. Ignoring a `SpawnParams` field is a decision; list it in
 `explicitly_ignored_fields` only when the projection has no use for it. Each
 `projections/project_<harness>_*.py` declares `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`;
 a spec field in neither fails startup.

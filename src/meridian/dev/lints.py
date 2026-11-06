@@ -26,6 +26,9 @@ DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[2]
 
 _PACKAGE_PREFIX = "meridian/"
 _HARNESS_PREFIX = "meridian/lib/harness/"
+_HARNESS_INIT = "meridian/lib/harness/__init__.py"
+_HARNESS_ADAPTER_MODULES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
+_HARNESS_BOOTSTRAP_CALLS = frozenset({"_run_bootstrap", "ensure_bootstrap"})
 
 # Vendored dependency trees are not ours.
 _SKIPPED_PARTS = frozenset({"node_modules", "dist"})
@@ -322,6 +325,82 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
+def _call_name(function: ast.expr) -> str | None:
+    if isinstance(function, ast.Name):
+        return function.id
+    if isinstance(function, ast.Attribute):
+        return function.attr
+    return None
+
+
+def _is_harness_adapter_import(node: ast.Import | ast.ImportFrom) -> bool:
+    if isinstance(node, ast.Import):
+        return any(
+            alias.name == f"meridian.lib.harness.{name}"
+            or alias.name.startswith(f"meridian.lib.harness.{name}.")
+            for alias in node.names
+            for name in _HARNESS_ADAPTER_MODULES
+        )
+    if node.module == "meridian.lib.harness":
+        return any(alias.name in _HARNESS_ADAPTER_MODULES for alias in node.names)
+    if node.module is not None and node.module.startswith("meridian.lib.harness."):
+        return node.module.removeprefix("meridian.lib.harness.").split(".", 1)[0] in (
+            _HARNESS_ADAPTER_MODULES
+        )
+    if node.level == 1 and node.module in _HARNESS_ADAPTER_MODULES:
+        return True
+    return bool(
+        node.level == 1
+        and node.module is None
+        and any(alias.name in _HARNESS_ADAPTER_MODULES for alias in node.names)
+    )
+
+
+class _EagerHarnessBootstrapVisitor(ast.NodeVisitor):
+    """Module-level adapter imports and bootstrap calls in harness/__init__.py."""
+
+    def __init__(self) -> None:
+        self.hits: list[tuple[int, str]] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Import(self, node: ast.Import) -> None:
+        if _is_harness_adapter_import(node):
+            self.hits.append((node.lineno, "import"))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if _is_harness_adapter_import(node):
+            self.hits.append((node.lineno, "import"))
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = _call_name(node.func)
+        if name in _HARNESS_BOOTSTRAP_CALLS:
+            self.hits.append((node.lineno, "call"))
+        self.generic_visit(node)
+
+
+def harness_eager_bootstrap_violations(sources: Sources) -> list[Violation]:
+    """Reject harness package import that bootstraps adapters."""
+
+    module = next((item for item in sources.python_modules if item.path == _HARNESS_INIT), None)
+    if module is None or not module.mentions(*_HARNESS_BOOTSTRAP_CALLS, *_HARNESS_ADAPTER_MODULES):
+        return []
+    visitor = _EagerHarnessBootstrapVisitor()
+    visitor.visit(module.tree)
+    message = (
+        "harness package import must not run adapter bootstrap or import adapter "
+        "implementations; call ensure_bootstrap() from the code that needs registered bundles."
+    )
+    return [Violation(_HARNESS_INIT, line, message) for line, _kind in visitor.hits]
+
+
 # --- per-launch paths ------------------------------------------------------
 # Per-launch files are named, and launches constructed, only in `paths.py`: the
 # spawn directory layout has one owner. A path built from a name held in a variable
@@ -479,6 +558,7 @@ CHECKS: tuple[Check, ...] = (
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
+    harness_eager_bootstrap_violations,
     launch_path_violations,
 )
 
