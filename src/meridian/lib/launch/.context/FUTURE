@@ -54,3 +54,10 @@
   under a live session moves it. A dead shim is silent where a caller discards errors
   (Mars `context-autosync/run.sh`). `-P` breaks an uninstalled `cd src && python -m
   meridian` launch. Old `bin/<hash>/` directories are never cleaned.
+- [#764] Launching-build shim, two more limits. The primary preview bind
+  (`launch/__init__.py`) passes no `plan_overrides`, so it ignores `config.env`: a project
+  `[env] PATH` that puts an old build first makes the real launch skewed where the preview
+  saw none, and the refusal warning is silent. Passing the same config env to the preview
+  closes it. A refusal leaves an inherited shim in place: a nested launch whose roots cover
+  the shim home, under a parent whose roots did not, still has the shim first on PATH, and
+  `write_pinned_shim` rewrites it into the refused root if it was deleted.

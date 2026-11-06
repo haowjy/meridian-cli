@@ -279,7 +279,8 @@ launch code rather than in `env.py`: it needs `get_user_home` and `atomic_replac
   PATH alone. If the shim is already the `meridian` found, return. Otherwise PATH becomes
   the shim directory plus the old PATH (a plain prepend). A relative `meridian` found on
   PATH counts as skew. It writes nothing, so previews and `--dry-run` are free, and a
-  primary launch (which shows only the preview bind's warnings) reports the refusal.
+  primary launch (which shows only the preview bind's warnings) reports the refusal,
+  except where `config.env` changes PATH, which the preview ignores (`.context/FUTURE`).
 - **Write, in `materialize_launch_context`, real launches only:** `write_pinned_shim`
   writes `$MERIDIAN_HOME/bin/<sha of shim text>/meridian` (`exec <sys.executable> -P -m
   meridian "$@"`, mode 755) when it is first on PATH and missing. A failed write logs
