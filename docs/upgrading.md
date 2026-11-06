@@ -40,6 +40,8 @@ What changes for an agent with `approval: auto`:
   totals. `approval: confirm` now sets `approvals_reviewer="user"`: a spawn refuses every approval
   request, even from a Codex home that sets `auto_review` or a thread forked from an `auto` one.
   Before, such a home or fork let the reviewer approve a `confirm` spawn's escalation.
+  `auto_review` needs Codex 0.125.0 or later: 0.120.0 fails at launch with an unknown-variant
+  config error, and 0.100.0 or older ignores the key, so no reviewer is applied.
 - **`--approve-for-me` is not used.** Codex's flag refuses `--sandbox`, forces `workspace-write` and does
   not exist on `codex app-server`, so the profile's sandbox would be lost.
 

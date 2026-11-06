@@ -107,11 +107,14 @@ class ClaudeFold(AttemptFold):
             actual = payload.get("permissionMode")
             expected = self.expected_permission_mode
             if expected is not None and isinstance(actual, str) and actual != expected:
-                facts.warnings.append(
+                warning = (
                     f"Claude ran with permissionMode {actual}, not the {expected} the launch "
                     "asked for. It falls back when the model or the account does not offer "
                     "that mode, so calls the profile expected to run may have been refused."
                 )
+                # Claude emits an init event on every turn.
+                if warning not in facts.warnings:
+                    facts.warnings.append(warning)
         if kind == "result":
             text = extract_text(payload.get("result"))
             if text:

@@ -419,6 +419,7 @@ def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
 def _compile_sandbox(
     policy: PermissionPolicy,
     channels: _Channels,
+    mode: PermissionMode | None,
     network: ClaudeNetworkSettings | None,
 ) -> ClaudeSandboxSettings | None:
     if policy.sandbox == "default":
@@ -429,12 +430,7 @@ def _compile_sandbox(
     return ClaudeSandboxSettings(
         enabled=True,
         deny_write=policy.sandbox_write_roots if policy.sandbox == "read-only" else (),
-        auto_allow_bash=(
-            policy.approval == "auto"
-            and not policy.is_allowlist
-            and not channels.gates
-            and not channels.ask
-        ),
+        auto_allow_bash=mode == "auto" and not channels.ask,
         excluded_commands=_outside_sandbox_commands(policy),
         network=network,
     )
@@ -882,8 +878,8 @@ def compile_claude_permissions(
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, effective, passthrough)
     network = project_claude_network(policy, native_config=spec.native_config)
-    sandbox = _compile_sandbox(policy, channels, network.native)
     policy_mode = _policy_mode(policy, channels)
+    sandbox = _compile_sandbox(policy, channels, policy_mode[1], network.native)
     # A passthrough mode is the launcher's own choice; Claude takes the last one, so
     # Meridian omits its mode rather than silently overriding it.
     skip_prompts, permission_mode = (False, None) if passthrough.overrides_mode else policy_mode
