@@ -598,6 +598,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._events_exited = False
         self._event_queue = asyncio.Queue()
         self._queue_waiter = None
         self._pending_requests = {}
