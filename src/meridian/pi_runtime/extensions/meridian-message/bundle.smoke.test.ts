@@ -19,7 +19,7 @@ describe.skipIf(!existsSync(bundlePath))("meridian-message bundle smoke", () => 
     expect(events).toEqual([]);
   });
 
-  it("registers only the session lifecycle and compaction hooks when a path is set", async () => {
+  it("registers only the session lifecycle, agent_start and compaction hooks when a path is set", async () => {
     const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
     const events: string[] = [];
     process.env._MERIDIAN_PI_CONTROL_SOCKET = "/tmp/never-bound.sock";
@@ -32,6 +32,7 @@ describe.skipIf(!existsSync(bundlePath))("meridian-message bundle smoke", () => 
 
     expect(events).toEqual([
       "session_start",
+      "agent_start",
       "session_before_compact",
       "session_compact",
       "session_compact_failed",

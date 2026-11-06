@@ -2,10 +2,12 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Path computed by the launcher (`control_socket_path`), so the hash lives in one language.
 const CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET";
+// Set by the launcher when it passes a launch prompt: bind only after that prompt starts.
+const LAUNCH_PROMPT_ENV = "_MERIDIAN_PI_LAUNCH_PROMPT";
 // Same limit and read timeout as the Python ControlSocketServer.
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 const REQUEST_READ_TIMEOUT_MS = 10_000;
@@ -29,11 +31,15 @@ function unlinkIfPresent(file: string): void {
   }
 }
 
+// fatal rejects invalid UTF-8 like the Python server; ignoreBOM keeps a BOM in the
+// output, so JSON.parse rejects it too.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 function decodeRequest(raw: Buffer): { text: string } | { error: string } {
   if (raw.length === 0) return { error: "empty request" };
   let payload: unknown;
   try {
-    payload = JSON.parse(raw.toString("utf8"));
+    payload = JSON.parse(UTF8.decode(raw));
   } catch {
     return { error: "invalid JSON request" };
   }
@@ -61,13 +67,19 @@ export class MessageListener {
     this.compacting = value;
   }
 
-  start(ctx: ExtensionContext): void {
+  // onError runs once if the server fails to listen or accept.
+  start(onError: (error: Error) => void): void {
     this.stop();
     prepareSocketDirectory(path.dirname(this.socketPath));
     // A crash exit skips session_shutdown and leaves the file behind.
     unlinkIfPresent(this.socketPath);
-    const server = net.createServer((socket) => this.serve(socket, ctx));
-    server.on("error", () => {});
+    const server = net.createServer((socket) => this.serve(socket));
+    let reported = false;
+    server.on("error", (error) => {
+      if (reported || this.server !== server) return;
+      reported = true;
+      onError(error);
+    });
     server.listen(this.socketPath);
     // An open listener must not keep Pi alive past its own exit.
     server.unref();
@@ -84,7 +96,7 @@ export class MessageListener {
     server?.close();
   }
 
-  private serve(socket: net.Socket, ctx: ExtensionContext): void {
+  private serve(socket: net.Socket): void {
     this.connections.add(socket);
     socket.unref();
     socket.on("close", () => this.connections.delete(socket));
@@ -105,7 +117,7 @@ export class MessageListener {
     };
     const handle = (raw: Buffer): void => {
       const request = decodeRequest(raw);
-      finish("error" in request ? { ok: false, error: request.error } : this.deliver(ctx, request.text));
+      finish("error" in request ? { ok: false, error: request.error } : this.deliver(request.text));
     };
 
     socket.on("data", (chunk: Buffer) => {
@@ -129,15 +141,18 @@ export class MessageListener {
     socket.on("close", () => clearTimeout(timer));
   }
 
-  private deliver(ctx: ExtensionContext, text: string): Response {
+  private deliver(text: string): Response {
     if (this.compacting) {
-      // Pi rejects a prompt during compaction, and only as an extension error in the
-      // transcript, so refuse here where the sender can see it.
+      // Pi rejects a prompt during a manual /compact, and only as an extension error in
+      // the transcript, so refuse here where the sender can see it. Auto-compaction
+      // runs inside the active run and queues a steer, so it is not refused.
       return { ok: false, error: "Pi is compacting its context; send the message again once it finishes" };
     }
-    // sendUserMessage returns nothing: a later rejection is shown only as an extension
-    // error in the TUI, so "posted" is all this can promise.
-    this.pi.sendUserMessage(text, { deliverAs: ctx.isIdle() ? undefined : "steer" });
+    // deliverAs is read only while a run is streaming, so "steer" also starts a turn
+    // when idle. Checking isIdle() first would race a run that starts before Pi's
+    // async prompt() re-checks. sendUserMessage returns nothing: a later rejection is
+    // shown only as an extension error in the TUI, so "posted" is all this can promise.
+    this.pi.sendUserMessage(text, { deliverAs: "steer" });
     return { ok: true, delivery: "posted" };
   }
 }
@@ -148,17 +163,40 @@ export default function meridianMessageExtension(pi: ExtensionAPI): void {
   const listener = new MessageListener(pi, socketPath);
 
   // The factory starts nothing: it also runs for invocations that never open a session.
-  // /new, /resume and /fork replace the runtime, so each session_start rebinds.
-  pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode !== "tui") return;
+  // /new, /resume, /fork and /reload replace the runtime, so each rebinds at session_start.
+  // The first startup with a launch prompt binds at agent_start instead: a message that
+  // started a run first would make Pi reject the launch prompt, which carries the task.
+  let awaitingLaunchPrompt = false;
+  let notify: (message: string, type: "warning") => void = () => {};
+  const bind = (): void => {
+    awaitingLaunchPrompt = false;
+    const off = (message: string): void => notify(`Meridian messaging is off: ${message}`, "warning");
     try {
-      listener.start(ctx);
+      listener.start((error) => off(error.message));
     } catch (error) {
-      ctx.ui.notify(`Meridian messaging is off: ${(error as Error).message}`, "warning");
+      off((error as Error).message);
+    }
+  };
+
+  pi.on("session_start", (event, ctx) => {
+    if (ctx.mode !== "tui") return;
+    notify = (message, type) => ctx.ui.notify(message, type);
+    if (event.reason === "startup" && process.env[LAUNCH_PROMPT_ENV]) {
+      awaitingLaunchPrompt = true;
+    } else {
+      bind();
     }
   });
-  pi.on("session_before_compact", () => listener.setCompacting(true));
+  pi.on("agent_start", () => {
+    if (awaitingLaunchPrompt) bind();
+  });
+  pi.on("session_before_compact", (event) => {
+    if (event.reason === "manual") listener.setCompacting(true);
+  });
   pi.on("session_compact", () => listener.setCompacting(false));
   pi.on("session_compact_failed", () => listener.setCompacting(false));
-  pi.on("session_shutdown", () => listener.stop());
+  pi.on("session_shutdown", () => {
+    awaitingLaunchPrompt = false;
+    listener.stop();
+  });
 }
