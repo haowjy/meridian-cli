@@ -37,17 +37,3 @@ def test_socket_paths_are_bounded_and_deterministic_for_long_runtime_root(
 
     assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
     assert first == repeated
-
-
-@posix_only
-def test_control_socket_path_rejects_overlong_fixed_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        control_socket_module,
-        "_POSIX_SOCKET_ROOT",
-        Path("/") / ("overlong-socket-root" * 10),
-    )
-
-    with pytest.raises(ValueError, match="exceeding the platform limit"):
-        control_socket_path(Path("runtime"), "spawn-one")

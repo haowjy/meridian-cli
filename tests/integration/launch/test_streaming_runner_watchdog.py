@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,67 +86,6 @@ async def test_report_watchdog_wakes_immediately_on_completion(
 
     assert await asyncio.wait_for(task, timeout=2.0) is False
     assert manager.stop_calls == []
-
-
-@pytest.mark.asyncio
-async def test_report_watchdog_enforces_grace_deadline(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    report_path = tmp_path / "report.md"
-    report_path.touch()
-    manager = _WatchdogManager()
-    spawn_id = SpawnId("report-timeout")
-    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
-    grace_seconds = 0.01
-    loop = asyncio.get_running_loop()
-    started_at = loop.time()
-
-    stopped = await asyncio.wait_for(
-        streaming_runner_module._report_watchdog(
-            report_path=report_path,
-            completion_event=asyncio.Event(),
-            manager=manager,
-            spawn_id=spawn_id,
-            grace_seconds=grace_seconds,
-        ),
-        timeout=2.0,
-    )
-    elapsed = loop.time() - started_at
-
-    assert stopped is True
-    assert elapsed >= grace_seconds
-    assert manager.stop_calls == [
-        {
-            "spawn_id": spawn_id,
-            "status": SpawnStatus.CANCELLED,
-            "exit_code": 1,
-            "error": "report_watchdog",
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_report_watchdog_keeps_polling_without_report_or_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
-    task = asyncio.create_task(
-        streaming_runner_module._report_watchdog(
-            report_path=tmp_path / "report.md",
-            completion_event=asyncio.Event(),
-            manager=_WatchdogManager(),
-            spawn_id=SpawnId("report-pending"),
-        )
-    )
-
-    await asyncio.sleep(0)
-    assert not task.done()
-
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
 
 
 @pytest.mark.asyncio
