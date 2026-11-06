@@ -10,8 +10,11 @@ from meridian.lib.harness.semantics import TerminalEventOutcome
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
+    from meridian.lib.harness.semantics import EventSemantics
     from meridian.lib.streaming.drain_policy import DrainAction
 
+# Minimum gap between completion nudges that a rearm loop may cause.
+COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
 
 CompletionPhase = Literal[
     "running",
@@ -113,6 +116,7 @@ class CompletionState:
     deadline_at: float | None
     stabilization_at: float | None
     stabilization_generation: int | None
+    active_turn: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,10 +128,11 @@ class CompletionEvaluation:
     now: float
     directives: CompletionDirectives
     assessment: WorkAssessment
+    # The resident hold ignores this latch (it outlives an event-driven renewal) and
+    # reads ``state.deadline_at``; only profiles that never renew rely on it.
     deadline_expired: bool = False
     stabilization_elapsed: bool = False
     profile_timer_due: bool = False
-    active_turn: bool = False
     candidate: TerminalEventOutcome | None = None
     terminal_outcome: TerminalEventOutcome | None = None
     terminal_action: DrainAction | None = None
@@ -240,7 +245,9 @@ class CompletionProfile(Protocol):
         """Return policy that is pure and stable for the coordinator's lifetime."""
         ...
 
-    def refresh_deadline_after_event(self) -> bool: ...
+    def refresh_deadline_after_event(
+        self, state: CompletionState, semantics: EventSemantics
+    ) -> bool: ...
 
     def candidate_transition(self) -> AbstractContextManager[None]: ...
 
@@ -264,7 +271,7 @@ class CompletionProfile(Protocol):
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None: ...
 
-    async def send_nudge(self) -> None: ...
+    async def send_nudge(self, state: CompletionState) -> None: ...
 
     def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None: ...
 
@@ -280,6 +287,7 @@ class CompletionCleanup(Protocol):
 
 
 __all__ = [
+    "COMPLETION_NUDGE_INTERVAL_SECONDS",
     "AssessmentTrigger",
     "CleanupReport",
     "CompletionCleanup",

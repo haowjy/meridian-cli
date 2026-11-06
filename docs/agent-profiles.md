@@ -241,7 +241,7 @@ for a launch; Meridian reads it from the installed profile.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
+| `resident-rearm-budget` | int | — | Maximum `spawn rearm` grants; omitted means unlimited |
 | `capabilities` | map | — | Meridian runtime capabilities. `spawn: false` withholds spawning even when `subagents:` is non-empty |
 
 ```yaml

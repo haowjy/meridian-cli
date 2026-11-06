@@ -783,7 +783,7 @@ class _ClaudeSemantics(HarnessSemantics):
 CLAUDE_SEMANTICS = _ClaudeSemantics(
     events={
         # Load-bearing: clears awaiting-done and resets the resident nudge timer.
-        "assistant": EventSemantics(activity="turn_active"),
+        "assistant": EventSemantics(activity="turn_active", work=True),
         "result": EventSemantics(clears_signal=True),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },

@@ -94,7 +94,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 | `MERIDIAN_AUTOCOMPACT` | Context-token compaction threshold (int, minimum 1000). Overrides the model alias's `autocompact`; see [Compaction by harness](../agent-profiles.md#compaction-by-harness) |
 | `MERIDIAN_AUTOCOMPACT_PCT` | Context-window percentage that triggers compaction (int 1–100) |
 | `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
-| `MERIDIAN_RESIDENT_REARM_BUDGET` | Maximum resident deadline extensions (int >= 0; unset is unlimited) |
+| `MERIDIAN_RESIDENT_REARM_BUDGET` | Maximum `spawn rearm` grants (int >= 0; unset is unlimited) |
 
 ## Config Overrides
 

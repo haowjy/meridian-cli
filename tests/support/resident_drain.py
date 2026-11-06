@@ -33,6 +33,9 @@ from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
 )
+from meridian.lib.streaming.resident_drain import (
+    _IDLE_NUDGE_ANSWER_SECONDS as IDLE_NUDGE_ANSWER_SECONDS,
+)
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -231,6 +234,20 @@ def resident_event(
     return RawHarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
 
 
+async def start_turn(
+    coordinator: ResidentDrainCoordinator,
+    harness_id: HarnessId = HarnessId.CODEX,
+) -> None:
+    """The child starts a turn and works in it: the shape of an answer to a nudge."""
+    for event_type, payload in (
+        ("turn/started", {}),
+        ("item/started", {"item": {"type": "agentMessage"}}),
+    ):
+        await coordinator.observe_event(
+            normalize_event(resident_event(harness_id, event_type, payload))
+        )
+
+
 async def next_turn_boundary(
     subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
 ) -> RawHarnessEvent:
@@ -303,6 +320,14 @@ async def start_manager(
         drain_policy=drain_policy,
     )
     return manager
+
+
+async def expire_idle_window(coordinator: ResidentDrainCoordinator, clock: Any) -> Any:
+    """Run a past-deadline timeout: the nudge it sends, then the unanswered cleanup."""
+    nudged = await coordinator.handle_timeout()
+    assert nudged.recorded_outcome is None
+    clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
+    return await coordinator.handle_timeout()
 
 
 async def coordinator_with_clock(
