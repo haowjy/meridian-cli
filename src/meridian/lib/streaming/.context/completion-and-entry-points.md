@@ -2,11 +2,13 @@
 
 Moved from `AGENTS.md`; look up when changing completion, drain plans or the module list. Generic drain runtime: [CONTEXT.md](CONTEXT.md).
 
-### Completion and Absolute Timeout Models
+### Completion and Idle-Limit Models
 
-Hold completion uses an absolute deadline per arm. Only an explicit
-`rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
-Rearm grants are unlimited by default. `--resident-rearm-budget`,
+Hold completion uses an idle limit. The window arms at the first turn end and renews on
+a harness event whose semantics mark `turn_active` (heartbeats and Claude's background
+Agent frames are unmarked) and on an explicit `rearm`. Meridian's own nudges never reach
+`turn_active`; the child's reply does, and that is its answer. Descendant activity
+renews nothing. Rearm grants are unlimited by default and the budget caps only rearms. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile
 `harness-overrides.meridian-cli.resident-rearm-budget`, or
 `timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.
@@ -17,11 +19,18 @@ wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordi
 activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
-Native-task activity never renews the deadline. Explicit done authorizes completion
+Explicit done authorizes completion
 with leftover native tasks; managed-scope teardown stops them. With a writable
 completion-signal channel, a successful candidate gets one best-effort confirmation
-turn: `done` accepts, `rearm` opens another fixed window and waits for a genuinely new
-successful/idle candidate, and silence accepts only after evidence is ready. A hold
+turn: `done` accepts, `rearm` opens another window and waits for a genuinely new
+successful/idle candidate, and silence accepts only after evidence is ready. A rearm that
+saw blockers snapshots them: later turn ends are not nudged while the outstanding blockers
+are all in the snapshot (Claude's own `awaiting_followup_result` follow-up does not count
+as a change), and a new blocker or a clear nudges again. A rearm with no blockers is
+nudged at the next turn end. Compare blockers, not `generation`: Claude bumps it on
+every `result`. At expiry a hold that accepts signals sends one nudge and waits
+`_IDLE_NUDGE_ANSWER_SECONDS` (300 s) for a turn to start, then cleans up; a hold without
+signals cleans up at expiry. A hold
 without that channel skips confirmation and reads no signals, but keeps the same
 evidence, blocker, and deadline policy. This no-signal path is live for read-only Codex
 without spawn capability (no `subagents`, e.g. explorer), and for spawn-capable read-only
@@ -76,7 +85,7 @@ session drains that keep the harness alive across turns.
   immutable categorized snapshots
 - `resident_drain.py` — `HoldEvidence`, shared hold profile, cleanup, and the hold
   coordinator builder/adapter
-- `rearm_window.py` — shared resident/native absolute deadline and persisted rearm budget
+- `rearm_window.py` — shared resident/native idle-limit arithmetic and persisted rearm budget
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
   observation and exact public-message admission fencing; consumption uses the shared

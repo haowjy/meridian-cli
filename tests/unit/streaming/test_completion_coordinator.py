@@ -133,7 +133,7 @@ class _Profile:
     def allows_evaluation_without_candidate(self) -> bool:
         return self.candidate_free
 
-    def refresh_deadline_after_event(self) -> bool:
+    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
         return False
 
     def candidate_transition(self):  # type: ignore[no-untyped-def]

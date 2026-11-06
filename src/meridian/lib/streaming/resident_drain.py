@@ -53,6 +53,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+# How long a child gets to start a turn after an idle-expiry nudge.
+_IDLE_NUDGE_ANSWER_SECONDS = 300.0
+
 _BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
     status=SpawnStatus.FAILED,
     exit_code=1,
@@ -172,14 +175,19 @@ class _HoldProfile:
         self._confirmation_failed = False
         self._done_requested = False
         self._rearmed = False
+        # Blockers at the latest rearm: while they hold, turn ends are not nudged.
+        self._rearm_blockers: frozenset[DiagnosticBlocker] | None = None
+        # An idle-expiry nudge is out; the answer window runs until a turn starts.
+        self._idle_nudge_outstanding = False
         self._confirmation_grace_at: float | None = None
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
         return self._rearmed
 
-    def refresh_deadline_after_event(self) -> bool:
-        return False
+    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
+        # Only real work renews the idle limit, and only once a turn end armed it.
+        return transition == "turn_active" and state.deadline_at is not None
 
     def candidate_transition(self) -> AbstractContextManager[None]:
         return published_artifact_lock(self._runtime_root, self._spawn_id)
@@ -211,6 +219,8 @@ class _HoldProfile:
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
         if decision.action not in {"wait", "stabilize", "complete", "abandon_candidate"}:
             return None
+        if self._idle_nudge_outstanding:
+            return now + _IDLE_NUDGE_ANSWER_SECONDS
         return self._window.deadline_for(now)
 
     def stabilization_seconds(self) -> float:
@@ -277,6 +287,7 @@ class _HoldProfile:
     def observe_activity_transition(self, transition: str | None) -> None:
         if transition != "turn_active":
             return
+        self._idle_nudge_outstanding = False
         self.set_awaiting_done(False)
         if self._confirmation_requested:
             self._confirmation_turn_started = True
@@ -289,6 +300,8 @@ class _HoldProfile:
         self._confirmation_turn_started = False
         self._confirmation_failed = False
         self._rearmed = False
+        self._rearm_blockers = None
+        self._idle_nudge_outstanding = False
         self._confirmation_grace_at = None
         self._blockers = ()
 
@@ -314,9 +327,8 @@ class _HoldProfile:
                 context.candidate is not None
                 and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
             ):
-                if context.deadline_expired:
-                    self.clear()
-                    return self._window.timeout_decision()
+                if self._expired(context):
+                    return self._on_expiry(emit_turn_boundary=True)
                 if context.assessment.disposition == "ready":
                     return self._propose_success(context.candidate, context.now)
                 if context.assessment.disposition == "unknown" or (
@@ -346,9 +358,8 @@ class _HoldProfile:
                 self._enter_wait()
                 return ProfileDecision(action="wait", emit_turn_boundary=True)
             return self._propose_success(context.candidate or outcome, context.now)
-        if context.deadline_expired:
-            self.clear()
-            return self._window.timeout_decision()
+        if self._expired(context):
+            return self._on_expiry(emit_turn_boundary=True)
         # A successful event after rearm is the next completion candidate.
         self._rearmed = False
         if context.assessment.disposition == "unknown":
@@ -363,7 +374,7 @@ class _HoldProfile:
         return ProfileDecision(
             action="wait",
             emit_turn_boundary=True,
-            nudge=True,
+            nudge=not self._rearm_blockers_hold(),
         )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -382,14 +393,13 @@ class _HoldProfile:
             self._confirmation_grace_at = None
             self._confirmation_failed = True
         if candidate is None:
-            if context.deadline_expired:
-                self.clear()
-                return self._window.timeout_decision()
+            if self._expired(context):
+                return self._on_expiry()
             self._enter_wait()
             return ProfileDecision(action="wait")
         if context.directives.done:
             if context.assessment.disposition == "unknown":
-                if context.deadline_expired:
+                if self._expired(context):
                     self.clear()
                     return ProfileDecision(
                         action="fail",
@@ -400,17 +410,21 @@ class _HoldProfile:
                         ),
                     )
                 return ProfileDecision(action="wait")
-            if context.active_turn and not context.deadline_expired:
+            if context.active_turn and not self._expired(context):
                 return ProfileDecision(action="wait")
             return self._propose_success(candidate, context.now)
-        if context.deadline_expired:
-            self.clear()
-            return self._window.timeout_decision()
+        if self._expired(context):
+            return self._on_expiry()
         if context.active_turn:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
-        if self._accepted_signals and not self._confirmation_requested and not self._rearmed:
+        if (
+            self._accepted_signals
+            and not self._confirmation_requested
+            and not self._rearmed
+            and not self._rearm_blockers_hold()
+        ):
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
         if context.assessment.disposition == "ready" and self._confirmation_settled:
@@ -421,7 +435,45 @@ class _HoldProfile:
         self._enter_wait()
         return ProfileDecision(action="wait")
 
+    @staticmethod
+    def _expired(context: CompletionEvaluation) -> bool:
+        # Read the live deadline: the coordinator's latch outlives an event-driven renewal.
+        deadline_at = context.state.deadline_at
+        return deadline_at is not None and context.now >= deadline_at
+
+    def _on_expiry(self, *, emit_turn_boundary: bool = False) -> ProfileDecision:
+        """Nudge once, then clean up if no turn starts within the answer window."""
+        if self._accepted_signals and not self._idle_nudge_outstanding:
+            self._idle_nudge_outstanding = True
+            self._enter_wait()
+            return ProfileDecision(
+                action="wait",
+                emit_turn_boundary=emit_turn_boundary,
+                nudge=True,
+                reset_deadline=True,
+            )
+        self.clear()
+        return self._window.timeout_decision()
+
+    def _rearm_blockers_hold(self) -> bool:
+        """True while the blockers a rearm answered are all that is outstanding.
+
+        The follow-up result Claude sends on its own does not count as a change.
+        """
+        held = self._rearm_blockers
+        if held is None:
+            return False
+        if self._blockers and all(
+            blocker in held or blocker.code == "awaiting_followup_result"
+            for blocker in self._blockers
+        ):
+            return True
+        self._rearm_blockers = None
+        return False
+
     def _mark_rearmed(self) -> None:
+        self._rearm_blockers = frozenset(self._blockers) or None
+        self._idle_nudge_outstanding = False
         self._confirmation_requested = False
         self._confirmation_turn_started = False
         self._confirmation_failed = False

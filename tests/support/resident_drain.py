@@ -32,6 +32,9 @@ from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
 )
+from meridian.lib.streaming.resident_drain import (
+    _IDLE_NUDGE_ANSWER_SECONDS as IDLE_NUDGE_ANSWER_SECONDS,
+)
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -301,6 +304,14 @@ async def start_manager(
         drain_policy=drain_policy,
     )
     return manager
+
+
+async def expire_idle_window(coordinator: ResidentDrainCoordinator, clock: Any) -> Any:
+    """Run a past-deadline timeout: the nudge it sends, then the unanswered cleanup."""
+    nudged = await coordinator.handle_timeout()
+    assert nudged.recorded_outcome is None
+    clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
+    return await coordinator.handle_timeout()
 
 
 async def coordinator_with_clock(

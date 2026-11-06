@@ -40,7 +40,7 @@ async def _wait_for_descendant_evidence(plan: Any) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scenario",
-    ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop"],
+    ["natural", "done_midturn", "done_poll", "done_no_result", "no_result", "stop", "rearm_quiet"],
 )
 async def test_claude_waits_for_background_snapshot_and_followup_result(
     tmp_path: Path,
@@ -93,10 +93,32 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 assert close is not None
                 assert close.error == "stream_closed_while_awaiting_done"
                 return
+            if scenario == "rearm_quiet":
+                # #872: a rearm answers the nudge while the task still runs, so
+                # later turn ends are not nudged again (it was one per turn end).
+                while not messages:
+                    await asyncio.sleep(0.001)
+                rearm = spawn_signal_path(launch_paths(tmp_path, spawn_id), "rearm")
+                rearm.parent.mkdir(parents=True, exist_ok=True)
+                rearm.touch()
+                for _ in range(5):
+                    yield frame("assistant", message={"content": []})
+                    while rearm.exists():
+                        await asyncio.sleep(0.001)
+                    yield frame("result", subtype="success", result="Still running")
+                    await asyncio.sleep(0.05)
+                assert len(messages) == 1
+                assert not outcomes
+                return
             if scenario == "no_result":
-                # A stuck active native turn without done is bounded by the deadline.
+                # A stuck active native turn without done is bounded: one nudge at
+                # the idle limit, then cleanup when no turn answers it.
                 yield frame("assistant", message={"content": []})
                 clock.advance(3600)
+                while not messages:
+                    await asyncio.sleep(0.001)
+                assert not outcomes
+                clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
@@ -166,6 +188,8 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         )
     except TimeoutError:
         pytest.fail("drain hung")
+    if scenario == "rearm_quiet":
+        return
     if scenario == "stop":
         assert len(outcomes) == 1
         assert outcomes[0].error == "stream_closed_while_awaiting_done"

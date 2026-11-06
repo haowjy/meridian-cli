@@ -21,6 +21,7 @@ from tests.support.resident_drain import (
     awaiting_done_coordinator,
     coordinator_with_clock,
     descendant_cancellation_from_roots,
+    expire_idle_window,
     resident_event,
 )
 
@@ -319,7 +320,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     coordinator.observe_activity_transition("turn_active")
 
     clock.advance(10.0)
-    decision = await coordinator.handle_timeout()
+    decision = await expire_idle_window(coordinator, clock)
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
@@ -354,7 +355,7 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     )
     clock.advance(10.0)
 
-    decision = await coordinator.handle_timeout()
+    decision = await expire_idle_window(coordinator, clock)
 
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
@@ -410,7 +411,7 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     )
     clock.advance(10.0)
 
-    decision = await coordinator.handle_timeout()
+    decision = await expire_idle_window(coordinator, clock)
 
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"

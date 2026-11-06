@@ -108,8 +108,8 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `timeouts.startup_minutes` | float | Startup-phase timeout for backend boot, connection, and session handshake (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
 | `timeouts.pi_child_wave_timeout_seconds` | float | Pi spawn-watch tracked-child wave timeout (seconds; default 300 when unset) |
-| `timeouts.resident_deadline_seconds` | float | Child completion-window deadline (seconds; defaults to the calling harness's wait-yield interval) |
-| `timeouts.resident_rearm_budget` | int | Maximum resident deadline extensions (nonnegative; unlimited when unset) |
+| `timeouts.resident_deadline_seconds` | float | Child idle limit (seconds without harness activity before one nudge; defaults to the calling harness's wait-yield interval) |
+| `timeouts.resident_rearm_budget` | int | Maximum `spawn rearm` grants (nonnegative; unlimited when unset) |
 | `timeouts.pi_task_ping_interval_seconds` | float | Pi background-task ping interval (seconds; extension default when unset) |
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |

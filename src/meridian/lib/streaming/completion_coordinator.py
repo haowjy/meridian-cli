@@ -161,7 +161,9 @@ class CompletionCoordinator:
         transition = normalized_event.semantics.activity
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
-        if not decision.duplicate_canonical_event and self._profile.refresh_deadline_after_event():
+        if not decision.duplicate_canonical_event and self._profile.refresh_deadline_after_event(
+            self.state, transition
+        ):
             self._refresh_profile_deadline()
         return None if decision.duplicate_canonical_event else normalized_event
 

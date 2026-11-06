@@ -123,7 +123,8 @@ class PiCompletionProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return True
 
-    def refresh_deadline_after_event(self) -> bool:
+    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
+        del state, transition
         return True
 
     def candidate_transition(self) -> AbstractContextManager[None]:

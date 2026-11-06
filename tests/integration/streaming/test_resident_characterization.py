@@ -19,6 +19,7 @@ from tests.support.launch_paths import launch_paths
 from tests.support.resident_drain import (
     FakeResidentConnection,
     descendant_cancellation_from_roots,
+    expire_idle_window,
     resident_event,
     start_row,
 )
@@ -211,7 +212,7 @@ async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     clock.advance(5.0)
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
-    at_reset_deadline = await coordinator.handle_timeout()
+    at_reset_deadline = await expire_idle_window(coordinator, clock)
     assert at_reset_deadline.recorded_outcome is not None
     assert at_reset_deadline.recorded_outcome.status == "timed_out"
     assert at_reset_deadline.recorded_outcome.exit_code == 1
@@ -243,7 +244,7 @@ async def test_resident_rearm_budget_exhaustion_ignores_signal_and_times_out_dis
 
     clock.advance(10.0)
     write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
-    expired = await coordinator.handle_timeout()
+    expired = await expire_idle_window(coordinator, clock)
 
     assert expired.recorded_outcome is not None
     assert expired.recorded_outcome.status == "timed_out"
@@ -268,7 +269,7 @@ async def test_zero_resident_rearm_budget_expires_without_grant(
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
 
     clock.advance(10.0)
-    expired = await coordinator.handle_timeout()
+    expired = await expire_idle_window(coordinator, clock)
 
     assert expired.recorded_outcome is not None
     assert expired.recorded_outcome.status == "timed_out"
@@ -368,12 +369,13 @@ async def test_expired_deadline_beats_freshly_ready_tree(
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
-    terminal_at_deadline = await coordinator.handle_terminal_event(
+    nudged_at_deadline = await coordinator.handle_terminal_event(
         _EVENT,
         _SUCCESS,
         _TERMINATE,
     )
-    outcome = terminal_at_deadline.recorded_outcome
+    assert nudged_at_deadline.recorded_outcome is None
+    outcome = (await expire_idle_window(coordinator, clock)).recorded_outcome
     assert outcome is not None
     assert outcome.status == "timed_out"
     assert outcome.exit_code == 1
@@ -456,7 +458,7 @@ async def test_plain_terminal_deadline_is_not_reset_by_later_polls(
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(1.0)
-    deadline = await coordinator.handle_timeout()
+    deadline = await expire_idle_window(coordinator, clock)
     assert deadline.recorded_outcome is not None
     assert deadline.recorded_outcome.status == "timed_out"
     assert deadline.recorded_outcome.error == "resident_deadline_expired"
@@ -526,7 +528,7 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
         service.cancel_descendants(SpawnId("p1")),
     )
     await first_cancel_entered.wait()
-    decision = await coordinator.handle_timeout()
+    decision = await expire_idle_window(coordinator, clock)
     exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
     request = exit_decision.post_publication_cleanup
     assert request is not None

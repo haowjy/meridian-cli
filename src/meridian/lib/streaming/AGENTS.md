@@ -29,10 +29,11 @@ reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion
 
-Hold completion uses an absolute deadline per arm; only an explicit `rearm.signal` grants
-a new window, never ordinary harness or descendant activity. `--timeout` /
+Hold completion uses an idle limit: a harness event marked `turn_active` or an explicit
+`rearm` renews the window, Meridian's own nudges do not. An expired window gets one nudge
+and a 300 s answer window, then cleanup. `--timeout` /
 `MERIDIAN_TIMEOUT` is the opt-in absolute ceiling (outer attempt timer in
-`streaming_runner.py`); rearms and Pi waves cannot reset it. Pi completion is
+`streaming_runner.py`); rearms, work and Pi waves cannot reset it. Pi completion is
 descendant-quiescence-driven with no default wall-clock bound, by design. Models, rearm
 budget, no-signal holds:
 [.context/completion-and-entry-points.md](.context/completion-and-entry-points.md).
