@@ -46,3 +46,10 @@
   `WorkspaceProjectionDiagnostic` and the diagnostics branch in `context.py`
   (`bind_launch_context`) have no producer or consumer. Collapse to
   `workspace_applicability(harness_id, roots)` and delete the rest (thermo p8773 L6).
+- [#764] Launching-build shim (`cli_shim.py`) known limits: login shells rewrite PATH, so
+  Codex (`bash -lc`) and a profile that resets PATH drop the shim from the model's shell.
+  Meridian-dispatched lifecycle hooks run in the launcher's `os.environ` (`runner.py:72`)
+  and never get it. The shim pins the interpreter, not the build, so `uv tool upgrade`
+  under a live session moves it. A dead shim is silent where a caller discards errors
+  (Mars `context-autosync/run.sh`). `-P` breaks an uninstalled `cd src && python -m
+  meridian` launch. Old `bin/<hash>/` directories are never cleaned.

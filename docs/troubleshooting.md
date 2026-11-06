@@ -39,6 +39,18 @@ export MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS=240
 
 Run `uv tool update-shell` and restart your shell. If using a virtual environment, activate it first.
 
+## `which meridian` inside a harness shows `~/.meridian/bin/<hash>/meridian`
+
+When another `meridian` comes first on PATH, such as an older install, a launch from a
+build that is not first on PATH puts a one-line shim for the launching build at the front
+of the harness's PATH. Hooks, extensions and the agent's shell then call that build. The
+shim runs `python -m meridian` from the build that launched the session. Nothing is
+written when PATH already resolves to the launching build. If the build is deleted while
+a session runs, `meridian` in that session exits 127 naming the missing interpreter;
+relaunch. Login shells (Codex runs `bash -lc`) rebuild PATH from the profile and may
+drop the shim. A `MERIDIAN_HOME` inside `/tmp` or the project is refused with a warning,
+because sandboxes can write there.
+
 ## Harness not found
 
 `meridian doctor` reports missing harnesses when the harness binary is not on `$PATH`.

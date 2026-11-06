@@ -266,6 +266,22 @@ original env input. `env.py:undo_direnv` uses direnv's own reversal, with a boun
 subprocess only when `DIRENV_DIFF` exists; captured environment and stderr must
 never appear in errors or artifacts. This does not prevent tools reloading `.env`.
 
+### The Launching Build on the Child PATH
+
+`cli_shim.py:pin_launching_build` runs in `bind_launch_context` right after
+`build_env_plan`, on the final env, and skips dry runs. When `meridian` on the child
+PATH is not this build, it prepends `$MERIDIAN_HOME/bin/<hash of sys.executable>/`
+holding one `meridian` shim (`exec <sys.executable> -P -m meridian`). Hooks, Pi
+extensions and the model's shell reach `meridian` by name, so no caller changes. A
+launch where PATH already resolves to this build (release install, `uv run`) changes
+nothing and writes nothing; nested and `--bg` launches see the shim first and leave PATH
+alone. The directory sits under the user home on purpose: it is not a projected root, so a
+sandboxed agent cannot rewrite a file that `meridian spawn` runs unsandboxed. When
+`MERIDIAN_HOME` lands inside a projected root (e.g. under `/tmp`), bind warns and leaves
+PATH unchanged. `-P` stops a project's own `meridian/` directory from shadowing the
+package. A dead interpreter fails loud (exit 127); never fall back to the next
+`meridian`, which reintroduces the skew.
+
 ### Harness Profile Env Projection at Bind
 
 Config-resolved harness profile values that the child must observe are baked into
