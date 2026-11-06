@@ -171,7 +171,7 @@ class CodexIdleSensor:
         _ = event
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        # Codex's observer stream closes when its TUI takes over the endpoint.
+        # Turn ends arrive through the native notify hook, so this stream stays empty.
         if False:
             yield
 
