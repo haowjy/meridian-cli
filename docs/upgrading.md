@@ -1,5 +1,28 @@
 # Upgrade notes
 
+## Scoped shell rules on Codex need Codex 0.129.0 or newer
+
+A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`) or a per-capability `bash`
+allowlist used to launch with those rules reported `unsupported` and not enforced. Meridian now
+enforces them with a `PreToolUse` hook it adds to the `codex app-server` command line, and the
+report marks scoped denies `partial` and allowlists `native`. Before the first turn, Meridian asks
+Codex (`hooks/list`) whether the hook is loaded and trusted, and it refuses the launch if not.
+
+What changes for you:
+
+- **Codex older than 0.129.0.** A launch whose profile has such a rule fails with "The shell-rule
+  hook is not running" (or "this Codex does not answer hooks/list"). Upgrade Codex, or drop the
+  scoped rules from the profile. Profiles with no scoped `bash` rule launch as before.
+- **A passthrough that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a
+  `hooks.state` override) now stops those launches the same way.
+- **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
+  `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
+  (`bash(rg *)`, `bash(cat *)`).
+- **Gaps that remain.** The hook checks the command string. It does not see `sh script.sh`,
+  `python -c`, commands built at run time, or an option between a program and its subcommand
+  (`git -C <dir> reset --hard`); `apply_patch` and MCP calls never reach it. A hook that times out
+  (10 seconds) lets that one call run and logs a warning.
+
 ## Messages to a primary go through its launcher
 
 `meridian spawn message` reaches a primary through a control socket its launcher serves, as it
