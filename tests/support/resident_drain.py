@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -58,7 +58,7 @@ class FakeResidentBackendControl:
 
     async def begin_followup_turn(self, message: str) -> None:
         if self.fail_inject:
-            raise RuntimeError("inject failed")
+            raise DeliveryRefused("inject failed")
         self.injected_messages.append(message)
 
 
