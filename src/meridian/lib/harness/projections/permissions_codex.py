@@ -17,6 +17,7 @@ from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     project_codex_native_config,
 )
+from meridian.lib.harness.projections.tool_extension_policy import ExtensionPolicy
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
@@ -79,6 +80,9 @@ class CodexPermissions:
     ``builtin_agents_disabled``: Codex's own multi-agent tools are invisible to Meridian,
     and v2 tells a lone spawn it is `/root` of a team, so it can message itself and wait
     forever.
+
+    ``tool_hook``: the rules Codex's ``PreToolUse`` hook enforces on its shell tool, for
+    scoped shell rules the process-level switches cannot express.
     """
 
     sandbox_mode: str | None
@@ -89,6 +93,7 @@ class CodexPermissions:
     web_search: bool | None
     view_image: bool | None
     builtin_agents_disabled: bool
+    tool_hook: ExtensionPolicy | None
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
@@ -208,6 +213,7 @@ def _compile_codex_permission_values(
             builtin_agents_disabled=any(
                 rule.kind == "builtin-agents" for rule in policy.platform_rules
             ),
+            tool_hook=None,
         ),
         network,
     )
