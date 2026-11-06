@@ -58,6 +58,7 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.liveness import (
     BackendLivenessPolicy,
     EventStreamLivenessTimeout,
+    LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
@@ -749,21 +750,26 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         try:
-            ws_iter = ws.__aiter__()
             while True:
                 try:
-                    raw_message = await self._liveness.wait_for_activity(ws_iter.__anext__())
-                except StopAsyncIteration:
-                    return
+                    # Not ``async for``: the liveness wait cancels a pending read, and
+                    # cancelling the iterator's async generator ends it for good.
+                    # ``recv`` is cancellation-safe, so a quiet observer keeps reading.
+                    raw_message = await self._liveness.wait_for_activity(ws.recv())
                 except EventStreamLivenessTimeout:
+                    if (
+                        self._primary_observer_mode
+                        and self._liveness.evaluate() is not LivenessDecision.BACKEND_DEAD
+                    ):
+                        # An idle primary is quiet, not failed, and this connection is
+                        # the route a sender needs: only a dead backend ends it.
+                        self._liveness.mark_activity()
+                        continue
                     message = (
                         "Codex event stream liveness timeout after "
                         f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
                     )
-                    logger.log(
-                        logging.DEBUG if self._primary_observer_mode else logging.WARNING,
-                        message,
-                    )
+                    logger.warning(message)
                     await self._emit_connection_closed_once({"message": message})
                     return
                 except Exception as exc:
@@ -1427,10 +1433,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
         thread_id = _extract_thread_id(payload)
-        if method == "thread/start":
-            if thread_id is not None:
-                self._thread_id = thread_id
-        elif thread_id is not None and thread_id != self._thread_id:
+        if thread_id is not None and thread_id != self._thread_id:
             # The app-server announces its own helper threads (titles, memory) to every
             # client, and the TUI may open others: only this connection's thread counts.
             return
