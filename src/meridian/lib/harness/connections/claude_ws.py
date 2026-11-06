@@ -215,15 +215,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         self._ensure_connected()
         self._signal_in_flight = True
-        previous = self._state
-        if previous != "stopping":
-            self._set_state("stopping")
+        self._set_state("stopping")
         try:
             await self._signal_process(signal.SIGINT)
-        except BaseException:
+        except Exception:
             self._signal_in_flight = False
-            if previous == "connected" and self._state == "stopping":
-                self._set_state("connected")
+            self._set_state("connected")
             raise
         self._cancel_requested = True
 

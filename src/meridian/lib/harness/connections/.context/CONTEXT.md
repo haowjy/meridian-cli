@@ -50,7 +50,7 @@ Initial-prompt rejection remains spawn-fatal.
 
 Required abstract methods — every subclass must implement all of these:
 
-- `state` property → `ConnectionState` (`created → starting → connected → stopping → stopped / failed`)
+- `state` property → `ConnectionState` (`created → starting → connected → stopping → stopped / failed`; OpenCode and Claude also allow `stopping → connected`, only to undo a `send_cancel` whose send failed, and OpenCode skips that undo once `events()` has exited or `stop()` holds the lock)
 - `harness_id`, `spawn_id`, `capabilities` properties
 - `session_id` → `str | None` (None until the transport delivers a session identifier)
 - `subprocess_pid` → `int | None`

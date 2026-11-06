@@ -142,6 +142,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
     _MESSAGE_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/prompt",)
     _EVENT_PATHS: ClassVar[tuple[str, ...]] = ("/api/event",)
     _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/interrupt",)
+    _CANCEL_PAYLOAD_VARIANTS: ClassVar[tuple[dict[str, object], ...]] = ({},)
     # 2.x answers the stall probe from the active-session listing instead of the
     # 1.x status map, and encodes the session id differently in the response.
     _SESSION_RUNNING_PROBE_PATH: ClassVar[str] = "/api/session/active"
@@ -400,30 +401,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 )
 
         raise RuntimeError(last_error or "OpenCode V2 session action failed")
-
-    async def send_cancel(self) -> None:
-        if self._cancel_requested:
-            return
-        if self._state in {"stopping", "stopped", "failed"}:
-            self._cancel_requested = True
-            return
-        self._require_connected()
-        self._signal_in_flight = True
-        self._liveness.signal_request_in_flight("cancel")
-        self._transition("stopping")
-        try:
-            await self._post_session_action(
-                path_templates=self._CANCEL_PATH_TEMPLATES,
-                payload_variants=({},),
-                accepted_statuses=self._ACTION_SUCCESS_STATUSES,
-            )
-        except BaseException:
-            self._signal_in_flight = False
-            self._liveness.signal_request_resolved("cancel")
-            if self._state == "stopping":
-                self._transition("connected")
-            raise
-        self._cancel_requested = True
 
     async def respond_request(
         self,
