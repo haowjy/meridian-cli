@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from meridian.lib.core.delivery import Deliver, DeliveryRefused, TransportDead
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
@@ -35,6 +34,7 @@ from meridian.lib.streaming.descendant_evidence import (
     ReconciledDescendantEvidence,
 )
 from meridian.lib.streaming.hold_state import (
+    BACKEND_DEAD_OUTCOME,
     HoldFacts,
     HoldState,
     SendResult,
@@ -43,7 +43,10 @@ from meridian.lib.streaming.hold_state import (
     after_send,
     after_signals,
     decide,
+    defers_close,
+    next_deadline,
     next_wake,
+    outcome_at_close,
 )
 from meridian.lib.streaming.rearm_window import RearmWindow
 
@@ -54,15 +57,6 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 
 logger = structlog.get_logger()
-
-# How long a child gets to work after an idle-expiry nudge.
-_IDLE_NUDGE_ANSWER_SECONDS = 300.0
-
-_BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
-    status=SpawnStatus.FAILED,
-    exit_code=1,
-    error="backend_dead_while_awaiting_done",
-)
 
 
 class HoldEvidence:
@@ -242,11 +236,9 @@ class _HoldProfile:
         return step.decision
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
-        if decision.action not in {"wait", "stabilize", "complete", "abandon_candidate"}:
-            return None
-        if self._state.answer is not None:
-            return now + _IDLE_NUDGE_ANSWER_SECONDS
-        return self._window.deadline_for(now)
+        return next_deadline(
+            self._state, decision.action, now=now, window_ends=self._window.deadline_for(now)
+        )
 
     def stabilization_seconds(self) -> float:
         return 0.0
@@ -254,39 +246,11 @@ class _HoldProfile:
     def close_outcome(
         self, state: CompletionState, intentional_stop: bool
     ) -> TerminalEventOutcome | None:
-        if state.candidate is None:
-            return None
-        if state.assessment is not None and state.assessment.disposition == "ready":
-            return state.candidate
-        if intentional_stop:
-            return TerminalEventOutcome(
-                status=SpawnStatus.FAILED,
-                exit_code=1,
-                error="stream_closed_while_awaiting_done",
-            )
-        if self._backend_dead():
-            return _BACKEND_DEAD_WHILE_AWAITING_DONE
-        return TerminalEventOutcome(
-            status=SpawnStatus.FAILED,
-            exit_code=1,
-            error="stream_closed_while_awaiting_done",
-        )
+        return outcome_at_close(state, intentional_stop=intentional_stop, dead=self._backend_dead())
 
     def should_defer_close(self, state: CompletionState) -> bool:
-        # Asked only once the stream has closed. A dead backend will not speak again, so
-        # waiting for its descendants would only run out the deadline.
-        if self._backend_dead():
-            return False
-        if self._state.rearmed:
-            return True
-        return (
-            state.candidate is not None
-            and state.assessment is not None
-            and state.assessment.disposition == "blocked"
-            and any(
-                blocker.source == "persisted_descendant" for blocker in state.assessment.blockers
-            )
-        )
+        # Asked only once the stream has closed.
+        return defers_close(self._state, state, dead=self._backend_dead())
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del assessment
@@ -333,9 +297,7 @@ class _HoldProfile:
         return ProfileExitDecision(
             recorded_outcome=recorded_outcome,
             cleanup_reason=(
-                _BACKEND_DEAD_WHILE_AWAITING_DONE.error
-                if recorded_outcome is _BACKEND_DEAD_WHILE_AWAITING_DONE
-                else None
+                BACKEND_DEAD_OUTCOME.error if recorded_outcome is BACKEND_DEAD_OUTCOME else None
             ),
         )
 

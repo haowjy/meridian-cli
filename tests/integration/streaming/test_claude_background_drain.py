@@ -23,6 +23,7 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
+from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
@@ -124,7 +125,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 while not messages:
                     await asyncio.sleep(0.001)
                 assert not outcomes
-                clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
+                clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
@@ -140,7 +141,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                     while not messages:
                         await asyncio.sleep(0.001)
                     assert not outcomes
-                    clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
+                    clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
                     await asyncio.sleep(3600)
                 if scenario == "done_poll":
                     # The done signal alone must not publish while the turn is active.

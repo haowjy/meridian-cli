@@ -33,9 +33,7 @@ from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
 )
-from meridian.lib.streaming.resident_drain import (
-    _IDLE_NUDGE_ANSWER_SECONDS as IDLE_NUDGE_ANSWER_SECONDS,
-)
+from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock

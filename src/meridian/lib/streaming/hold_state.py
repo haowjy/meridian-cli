@@ -14,7 +14,9 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     COMPLETION_NUDGE_INTERVAL_SECONDS,
+    CompletionState,
     DiagnosticBlocker,
+    ProfileAction,
     ProfileDecision,
     WorkAssessment,
 )
@@ -22,6 +24,14 @@ from meridian.lib.streaming.drain_policy import DrainAction
 
 _UNREADABLE = TerminalEventOutcome(
     status=SpawnStatus.FAILED, exit_code=1, error="resident_evidence_unreadable"
+)
+IDLE_NUDGE_ANSWER_SECONDS = 300.0  # how long a child gets to work after an expiry ask
+_TURN_CUT_OFF = "transport_closed_during_turn"
+_STREAM_CLOSED = TerminalEventOutcome(
+    status=SpawnStatus.FAILED, exit_code=1, error="stream_closed_while_awaiting_done"
+)
+BACKEND_DEAD_OUTCOME = TerminalEventOutcome(
+    status=SpawnStatus.FAILED, exit_code=1, error="backend_dead_while_awaiting_done"
 )
 
 
@@ -121,10 +131,17 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
             facts.candidate is not None
             and end.outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
         ):
-            if disposition == "ready":
+            if disposition == "ready" and not facts.active_turn:
                 return _publish(state, facts)
             if facts.expired:
                 return _timeout(facts)
+            if facts.active_turn:
+                # The turn outdated the candidate, and nothing that follows can vouch for
+                # it, so no later row may publish: end here, without orphaning descendants.
+                decision = ProfileDecision(
+                    action="cleanup", outcome=end.outcome, cleanup_reason=_TURN_CUT_OFF
+                )
+                return HoldStep(HoldState(), decision)
             if disposition == "unknown" or _descendant_blocked(facts.assessment):
                 ask = AskPhase.SETTLED if state.ask is AskPhase.SENT else state.ask
                 return _wait(replace(state, ask=ask), facts)
@@ -165,6 +182,40 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     if disposition == "ready" and _settled(state, facts):
         return _publish(state, facts)
     return _wait(state, facts)
+
+
+def outcome_at_close(
+    state: CompletionState, *, intentional_stop: bool, dead: bool
+) -> TerminalEventOutcome | None:
+    """What a closed stream publishes. A turn still running outdates the candidate."""
+    if state.candidate is None:
+        return None
+    assessment = state.assessment
+    if assessment is not None and assessment.disposition == "ready" and not state.active_turn:
+        return state.candidate
+    return BACKEND_DEAD_OUTCOME if dead and not intentional_stop else _STREAM_CLOSED
+
+
+def defers_close(hold: HoldState, state: CompletionState, *, dead: bool) -> bool:
+    """Keep waiting on a closed stream? A dead backend will not speak again."""
+    if dead:
+        return False
+    if hold.rearmed:
+        return True
+    return (
+        state.candidate is not None
+        and state.assessment is not None
+        and _descendant_blocked(state.assessment)
+    )
+
+
+def next_deadline(
+    state: HoldState, action: ProfileAction, *, now: float, window_ends: float
+) -> float | None:
+    """The idle deadline a decision sets; an open `answer` gets its own, shorter one."""
+    if action not in {"wait", "complete", "abandon_candidate"}:
+        return None
+    return window_ends if state.answer is None else now + IDLE_NUDGE_ANSWER_SECONDS
 
 
 def next_wake(state: HoldState, grace_seconds: float, *, has_candidate: bool) -> float | None:
@@ -285,6 +336,8 @@ def _descendant_blocked(assessment: WorkAssessment) -> bool:
 
 
 __all__ = [
+    "BACKEND_DEAD_OUTCOME",
+    "IDLE_NUDGE_ANSWER_SECONDS",
     "AnswerWindow",
     "AskPhase",
     "HeldLease",
@@ -298,5 +351,8 @@ __all__ = [
     "after_send",
     "after_signals",
     "decide",
+    "defers_close",
+    "next_deadline",
     "next_wake",
+    "outcome_at_close",
 ]

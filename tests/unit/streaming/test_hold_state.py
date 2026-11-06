@@ -10,13 +10,16 @@ import pytest
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
+    CompletionState,
     DiagnosticBlocker,
     EvidenceFailure,
+    ProfileAction,
     ProfileDecision,
     WorkAssessment,
 )
 from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.hold_state import (
+    BACKEND_DEAD_OUTCOME,
     AnswerWindow,
     AskPhase,
     HeldLease,
@@ -29,7 +32,10 @@ from meridian.lib.streaming.hold_state import (
     after_send,
     after_signals,
     decide,
+    defers_close,
+    next_deadline,
     next_wake,
+    outcome_at_close,
 )
 
 GOOD = TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
@@ -71,6 +77,9 @@ ASK = ProfileDecision(action="wait", nudge=True)
 ASK_END = ProfileDecision(action="wait", emit_turn_boundary=True, nudge=True)
 EXPIRY_ASK = ProfileDecision(action="wait", nudge=True, reset_deadline=True)
 PUBLISH = ProfileDecision(action="complete", outcome=GOOD)
+CUT_OFF = ProfileDecision(
+    action="cleanup", outcome=CLOSED, cleanup_reason="transport_closed_during_turn"
+)
 
 
 def facts(**overrides: Any) -> HoldFacts:
@@ -100,11 +109,29 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         RESET,
     ),
     ("A2", SENT, {"end": CLOSED_END}, PUBLISH, None),
+    # Past the deadline a turn cut off by the close is an ordinary timeout.
+    ("A3", SENT, {"end": CLOSED_END, "active_turn": True, "expired": True}, TIMEOUT, RESET),
     (
         "A3",
         SENT,
         {"end": CLOSED_END, "assessment": BLOCKED, "expired": True},
         TIMEOUT,
+        RESET,
+    ),
+    # A turn cut off by the close outdates the candidate, whatever the evidence says.
+    ("A3b", SENT, {"end": CLOSED_END, "active_turn": True}, CUT_OFF, RESET),
+    (
+        "A3b",
+        SENT,
+        {"end": CLOSED_END, "active_turn": True, "assessment": BLOCKED},
+        CUT_OFF,
+        RESET,
+    ),
+    (
+        "A3b",
+        SENT,
+        {"end": CLOSED_END, "active_turn": True, "assessment": UNKNOWN},
+        CUT_OFF,
         RESET,
     ),
     (
@@ -320,6 +347,69 @@ def test_grace_starts_when_the_send_ends() -> None:
     assert decide(folded, facts()).decision == WAIT
 
 
+def completion(**overrides: Any) -> CompletionState:
+    defaults: dict[str, Any] = {
+        "phase": "waiting",
+        "candidate": GOOD,
+        "assessment": READY,
+        "deadline_at": None,
+        "stabilization_at": None,
+        "stabilization_generation": None,
+    }
+    return CompletionState(**(defaults | overrides))
+
+
+TASK_BLOCKED = WorkAssessment(disposition="blocked", blockers=(TASK,), generation=0)
+STREAM_CLOSED = TerminalEventOutcome(
+    status=SpawnStatus.FAILED, exit_code=1, error="stream_closed_while_awaiting_done"
+)
+# coordinator state, intentional stop, dead, outcome
+CLOSES: list[tuple[dict[str, Any], bool, bool, TerminalEventOutcome | None]] = [
+    ({"candidate": None}, False, False, None),
+    ({"candidate": None}, True, True, None),
+    # An idle child with a ready report, even when cancelled or dead.
+    ({}, False, False, GOOD),
+    ({}, True, False, GOOD),
+    ({}, False, True, GOOD),
+    # Never over a running turn.
+    ({"active_turn": True}, True, False, STREAM_CLOSED),
+    ({"active_turn": True}, False, False, STREAM_CLOSED),
+    ({"active_turn": True}, False, True, BACKEND_DEAD_OUTCOME),
+    ({"active_turn": True}, True, True, STREAM_CLOSED),
+    ({"assessment": BLOCKED}, False, False, STREAM_CLOSED),
+    ({"assessment": BLOCKED}, True, True, STREAM_CLOSED),
+    ({"assessment": BLOCKED}, False, True, BACKEND_DEAD_OUTCOME),
+    ({"assessment": None}, False, False, STREAM_CLOSED),
+]
+
+
+@pytest.mark.parametrize(("state", "intentional", "dead", "outcome"), CLOSES)
+def test_close(
+    state: dict[str, Any], intentional: bool, dead: bool, outcome: TerminalEventOutcome | None
+) -> None:
+    closed = outcome_at_close(completion(**state), intentional_stop=intentional, dead=dead)
+    assert closed == outcome
+
+
+# hold state, coordinator state, dead, defers
+DEFERS: list[tuple[HoldState, dict[str, Any], bool, bool]] = [
+    (RESET, {}, False, False),
+    (RESET, {"assessment": BLOCKED}, False, True),
+    (RESET, {"assessment": BLOCKED}, True, False),
+    (RESET, {"assessment": TASK_BLOCKED}, False, False),
+    (RESET, {"assessment": BLOCKED, "candidate": None}, False, False),
+    (RESET, {"assessment": None}, False, False),
+    (HoldState(rearmed=True), {}, False, True),
+    (HoldState(rearmed=True), {"candidate": None}, False, True),
+    (HoldState(rearmed=True), {}, True, False),
+]
+
+
+@pytest.mark.parametrize(("hold", "state", "dead", "defers"), DEFERS)
+def test_defer_close(hold: HoldState, state: dict[str, Any], dead: bool, defers: bool) -> None:
+    assert defers_close(hold, completion(**state), dead=dead) is defers
+
+
 # state, done, rearm, has a candidate, state after, rearm stands
 CLOSING = HoldState(closing=True)
 SIGNALS: list[tuple[HoldState, bool, bool, bool, HoldState, bool]] = [
@@ -364,6 +454,23 @@ WAKES: list[tuple[HoldState, bool, float | None]] = [
 @pytest.mark.parametrize(("state", "has_candidate", "wake"), WAKES)
 def test_wake(state: HoldState, has_candidate: bool, wake: float | None) -> None:
     assert next_wake(state, 5.0, has_candidate=has_candidate) == wake
+
+
+# state, action, deadline: 300 s after now while `answer` is open, otherwise the window
+DEADLINES: list[tuple[HoldState, ProfileAction, float | None]] = [
+    (RESET, "wait", 900.0),
+    (RESET, "complete", 900.0),
+    (RESET, "abandon_candidate", 900.0),
+    (HoldState(answer=OPEN), "wait", 400.0),
+    (HoldState(answer=OPEN), "fail", None),
+    (RESET, "cleanup", None),
+    (RESET, "clear", None),
+]
+
+
+@pytest.mark.parametrize(("state", "action", "deadline"), DEADLINES)
+def test_deadline(state: HoldState, action: ProfileAction, deadline: float | None) -> None:
+    assert next_deadline(state, action, now=100.0, window_ends=900.0) == deadline
 
 
 def test_events() -> None:
