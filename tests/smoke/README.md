@@ -5,9 +5,10 @@ default safety boundary is **disposable state, no network, no harness process, a
 no paid model**.
 
 Most files are markdown guides. A few are pytest modules outside `testpaths`, so
-only an explicit `tests/` path collects them: `native_identity_golden.py` is run
-directly, and `test_mars_agents_query.py` exercises the installed `mars` binary
-and skips when it is absent.
+only an explicit path collects them. `test_mars_agents_query.py` exercises the
+installed `mars` binary and skips when it is absent. `test_overlay_resume.py`
+starts a session through Meridian, then resumes it with `claude` alone. It uses
+your real Claude login and a Haiku-class model, and costs about a cent a run.
 
 ## Tiers
 
