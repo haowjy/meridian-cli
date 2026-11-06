@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Protocol
 
 from meridian.lib.harness.connections.liveness import BackendLivenessPolicy, LivenessDecision
@@ -12,8 +12,9 @@ class ResidentBackendControl(Protocol):
     """Control surface for resident-until-done backends.
 
     This is intentionally narrower than ``HarnessConnection``: the resident drain
-    loop needs structured liveness, descendant-wait signaling, and idle follow-up
-    turns without knowing transport internals or optional implementation fields.
+    loop needs structured liveness and descendant-wait signaling without knowing
+    transport internals or optional implementation fields. Nudges go through
+    ``SpawnManager.deliver`` like every other user message.
     """
 
     def health_status(self) -> LivenessDecision:
@@ -22,10 +23,6 @@ class ResidentBackendControl(Protocol):
 
     def set_awaiting_done(self, awaiting: bool) -> None:
         """Tell backend liveness that Meridian is intentionally awaiting child work."""
-        ...
-
-    async def begin_followup_turn(self, message: str) -> None:
-        """Start a new user turn on an already-resident idle backend."""
         ...
 
 
@@ -37,11 +34,9 @@ class LivenessResidentBackendControl:
         *,
         liveness: BackendLivenessPolicy,
         backend_dead: Callable[[], bool],
-        begin_followup_turn: Callable[[str], Awaitable[None]],
     ) -> None:
         self._liveness = liveness
         self._backend_dead = backend_dead
-        self._begin_followup_turn = begin_followup_turn
 
     def health_status(self) -> LivenessDecision:
         try:
@@ -59,9 +54,6 @@ class LivenessResidentBackendControl:
 
     def set_awaiting_done(self, awaiting: bool) -> None:
         self._liveness.set_awaiting_done(awaiting)
-
-    async def begin_followup_turn(self, message: str) -> None:
-        await self._begin_followup_turn(message)
 
 
 __all__ = [

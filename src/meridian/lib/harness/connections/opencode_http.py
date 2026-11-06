@@ -670,7 +670,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         return LivenessResidentBackendControl(
             liveness=self._liveness,
             backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
         )
 
     def health(self) -> bool:
@@ -681,13 +680,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         await self._post_session_message(text)
         return DeliveryKind.ACKNOWLEDGED
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        self._require_connected()
-        if self._signal_in_flight:
-            raise DeliveryRefused("OpenCode follow-up turns require an idle backend")
-        self._signal_in_flight = False
-        await self._post_session_message(message)
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:

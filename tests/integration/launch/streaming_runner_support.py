@@ -71,9 +71,6 @@ class _IdleResidentBackend:
     def set_awaiting_done(self, awaiting: bool) -> None:
         _ = awaiting
 
-    async def begin_followup_turn(self, message: str) -> None:
-        _ = message
-
 
 class _ReportThenHangConnection:
     completion_signals_available = True
@@ -400,9 +397,6 @@ class _ResidentDeadlineConnection:
 
     def set_awaiting_done(self, awaiting: bool) -> None:
         _ = awaiting
-
-    async def begin_followup_turn(self, message: str) -> None:
-        _ = message
 
     async def events(self):  # type: ignore[no-untyped-def]
         yield RawHarnessEvent(

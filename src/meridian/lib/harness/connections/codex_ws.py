@@ -536,31 +536,24 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return LivenessResidentBackendControl(
             liveness=self._liveness,
             backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
         )
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
     async def send_user_message(self, text: str) -> DeliveryKind:
-        return await self._send_input(text, "send_user_message")
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        await self._send_input(message, "begin_followup_turn")
-
-    async def _send_input(self, text: str, operation: str) -> DeliveryKind:
         """Steer the running turn, else start one; a steer racing a turn end starts one.
 
         Only a JSON-RPC error (the server refused, nothing delivered) falls back, and a
         refused ``turn/start`` is ``DeliveryRefused``; a timeout or transport failure
         after the write propagates, never a second send.
         """
-        self._require_connected(operation)
+        self._require_connected("send_user_message")
         if self._ws is None or not _ws_is_open(self._ws):
             # A send on a closed websocket writes nothing.
             raise TransportDead("Codex websocket is closed")
         self._signal_in_flight = False
-        thread_id = self._require_thread_id(operation)
+        thread_id = self._require_thread_id("send_user_message")
         if self._current_turn_id:
             try:
                 await self._request(

@@ -528,11 +528,15 @@ def build_side(
     launch = launch_paths(tmp, SpawnId(spawn_id))
     backend = FakeResidentBackendControl()
     evidence = ScriptedEvidence(world)
+
+    async def send_nudge(message: str) -> None:
+        backend.record_send(message)
+
     profile = profile_cls(
         launch=launch,
         backend=None if cfg.backend_none else backend,
         health=lambda: backend.status != LivenessDecision.BACKEND_DEAD,
-        send_nudge=backend.begin_followup_turn,
+        send_nudge=send_nudge,
         deadline_seconds=cfg.deadline_seconds,
         poll_seconds=cfg.poll_seconds,
         rearm_budget=cfg.rearm_budget,

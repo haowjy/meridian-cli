@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.core.delivery import DeliveryRefused, TransportDead
+from meridian.lib.core.delivery import Deliver, DeliveryRefused, TransportDead
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
@@ -151,7 +151,7 @@ class _HoldProfile:
         launch: LaunchPaths,
         backend: ResidentBackendControl | None,
         health: Callable[[], bool],
-        send_nudge: Callable[[str], Awaitable[None]],
+        send_nudge: Deliver,
         deadline_seconds: float,
         poll_seconds: float,
         rearm_budget: int | None,
@@ -490,7 +490,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
         cls,
         *,
         launch: LaunchPaths,
-        send_nudge: Callable[[str], Awaitable[None]],
+        send_nudge: Deliver,
         completion_signals_available: bool,
         backend: ResidentBackendControl | None,
         health: Callable[[], bool],

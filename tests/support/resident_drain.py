@@ -57,7 +57,7 @@ class FakeResidentBackendControl:
     def set_awaiting_done(self, awaiting: bool) -> None:
         self.awaiting_done_values.append(awaiting)
 
-    async def begin_followup_turn(self, message: str) -> None:
+    def record_send(self, message: str) -> None:
         self.inject_attempts += 1
         if self.inject_error is not None:
             raise self.inject_error
@@ -137,7 +137,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._state == "connected"
 
     async def send_user_message(self, text: str) -> DeliveryKind:
-        _ = text
+        self._resident_backend.record_send(text)
         return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
@@ -202,7 +202,7 @@ async def awaiting_done_coordinator(
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=resident_backend,
         health=connection.health,
@@ -343,7 +343,7 @@ async def coordinator_with_clock(
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
         health=connection.health,
