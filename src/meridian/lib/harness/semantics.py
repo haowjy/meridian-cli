@@ -182,11 +182,8 @@ def normalize_event(
     except ValueError:
         return NormalizedHarnessEvent(event, EventSemantics())
 
-    # Lazy imports preserve the load-bearing adapter bootstrap order.
-    from meridian.lib.harness import ensure_bootstrap
     from meridian.lib.harness.bundle import get_harness_bundle
 
-    ensure_bootstrap()
     semantics = get_harness_bundle(harness_id).semantics.normalize(
         event,
         primary_event_scope=primary_event_scope,

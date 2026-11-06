@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
@@ -344,8 +345,8 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        async def _send_message() -> None:
-            await session.connection.send_user_message(message)
+        async def _send_message() -> DeliveryKind:
+            return await session.connection.send_user_message(message)
 
         outcome = await session.control_actions.run_action(
             action=ControlActionType.INJECT,
@@ -362,6 +363,7 @@ class SpawnManager:
         result = InjectResult(
             success=True,
             inbound_seq=outcome.submission_seq,
+            delivery=outcome.delivery,
         )
         if on_result is not None:
             on_result(result)

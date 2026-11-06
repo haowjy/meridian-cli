@@ -434,6 +434,14 @@ A profile has four separate permission fields:
 - `approval` supplies the harness's fallback prompt behavior for calls that `tools` does not
   decide. It does not widen an allowlist or turn an explicit `ask` into `allow`.
 
+These fields keep a cooperative agent inside its job: a reviewer that can't edit files, or a
+worker that can't write outside the project by mistake. They are not a security boundary
+against an agent trying to break out. `meridian spawn` has to run outside the harness sandbox
+to start children, and it loads things a sandboxed agent can change, such as project hooks,
+a project `.venv` or `PYTHONPATH`. An agent that plants code there gets it run unsandboxed the
+next time `meridian spawn` runs. Don't rely on these fields to contain an untrusted agent or
+project.
+
 These fields are not substitutes for one another. `edit: deny` removes edit tools, but an
 allowed shell can still write with redirection. Use a sandbox for filesystem confinement;
 where the table says the sandbox is partial or not enforced, also restrict every tool that

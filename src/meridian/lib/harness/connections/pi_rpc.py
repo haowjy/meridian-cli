@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -302,8 +303,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         child = self._child
         return self._state == "connected" and child is not None and child.returncode is None
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         await self._send_prompt(text, wait_for_ack=True)
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _send_prompt(self, text: str, *, wait_for_ack: bool) -> None:
         kind = "inject" if wait_for_ack else "prompt"
@@ -322,14 +324,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         ack = asyncio.get_running_loop().create_future()
         self._pending_prompt_acks[command_id] = ack
         try:
-            try:
-                async with asyncio.timeout(self._timing.prompt_ack_timeout_seconds):
-                    await self._send_rpc_message(payload, event="prompt")
-                    await ack
-            except TimeoutError as exc:
-                # Delivery may have succeeded. A RuntimeError is intentionally not
-                # retryable by the control-action coordinator.
-                raise RuntimeError("pi_rpc_prompt_ack_timeout: delivery uncertain") from exc
+            async with asyncio.timeout(self._timing.prompt_ack_timeout_seconds):
+                await self._send_rpc_message(payload, event="prompt")
+                await ack
         finally:
             self._pending_prompt_acks.pop(command_id, None)
             if not ack.done():

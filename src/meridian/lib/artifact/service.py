@@ -26,6 +26,7 @@ from meridian.lib.artifact.store import (
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.python_module import module_argv
 from meridian.lib.platform.terminate import terminate_tree_sync
 
 DEFAULT_TTL_SECONDS = 2 * 60 * 60
@@ -166,14 +167,7 @@ def launch_http_server(directory: Path, port: int, slug: str) -> subprocess.Pope
     else:
         kwargs["start_new_session"] = True
     return subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "meridian.lib.artifact._serve_dir",
-            str(directory),
-            str(port),
-            slug,
-        ],
+        module_argv("meridian.lib.artifact._serve_dir", str(directory), str(port), slug),
         **kwargs,
     )
 

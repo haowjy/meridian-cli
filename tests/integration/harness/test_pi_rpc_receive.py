@@ -184,7 +184,7 @@ async def test_missing_ack_has_deadline_and_late_ack_is_still_control_evidence(
         prompt_ack_timeout_seconds=0.05, abort_grace_seconds=0.05, kill_grace_seconds=0.05
     )
     async with rpc_process(tmp_path, body, timing=timing) as connection:
-        with pytest.raises(RuntimeError, match=r"pi_rpc_prompt_ack_timeout.*delivery uncertain"):
+        with pytest.raises(TimeoutError):
             await asyncio.wait_for(connection.send_user_message("nudge"), 0.5)
         events = connection.events()
         try:

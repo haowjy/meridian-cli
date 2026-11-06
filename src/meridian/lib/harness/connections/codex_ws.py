@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -541,14 +542,18 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
-    async def send_user_message(self, text: str) -> None:
-        await self._send_input(text, "send_user_message")
+    async def send_user_message(self, text: str) -> DeliveryKind:
+        return await self._send_input(text, "send_user_message")
 
     async def _begin_followup_turn(self, message: str) -> None:
         await self._send_input(message, "begin_followup_turn")
 
-    async def _send_input(self, text: str, operation: str) -> None:
-        """Steer the running turn, else start one; a steer racing a turn end starts one."""
+    async def _send_input(self, text: str, operation: str) -> DeliveryKind:
+        """Steer the running turn, else start one; a steer racing a turn end starts one.
+
+        Only a JSON-RPC error (the server refused, nothing delivered) falls back; a
+        timeout or transport failure after the write propagates, never a second send.
+        """
         self._require_connected(operation)
         self._signal_in_flight = False
         thread_id = self._require_thread_id(operation)
@@ -562,7 +567,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         "expectedTurnId": self._current_turn_id,
                     },
                 )
-                return
+                return DeliveryKind.ACKNOWLEDGED
             except _CodexRpcError:
                 # The turn ended as the steer went out (expectedTurnId no longer matches).
                 # An idle thread starts a turn; app-server 0.166.0 joins a busy thread's turn.
@@ -571,6 +576,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             "turn/start",
             {"threadId": thread_id, "input": _build_text_user_input(text)},
         )
+        return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:
