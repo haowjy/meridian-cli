@@ -316,6 +316,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
         project_scoped=True,
     ),
     _internal_handle(
+        "_MERIDIAN_PI_LAUNCH_PROMPT",
+        "Set when a Pi primary's launch passes a prompt; meridian-message binds after it starts.",
+    ),
+    _internal_handle(
         "_MERIDIAN_PI_OWED_PARENT_IDS",
         "Resolved Pi result-delivery parent scope for the launch's spawn watcher.",
         project_scoped=True,

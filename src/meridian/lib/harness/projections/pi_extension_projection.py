@@ -98,6 +98,11 @@ def resolve_pi_extension_entrypoints(
     """Resolve Meridian ``-e`` bundle paths for one launch."""
 
     entrypoints: list[str] = []
+    if profile.interactive:
+        # Pi runs session_shutdown handlers one at a time in load order. Loaded first,
+        # meridian-message closes its socket before a slow handler (managed-bash waits on
+        # background tasks) can leave it accepting messages for a session being replaced.
+        entrypoints.extend(resolve_pi_message_entrypoint())
     if profile.background_tasks_enabled:
         entrypoints.extend(resolve_pi_managed_bash_entrypoint())
     if profile.spawn_watch_enabled:
@@ -108,7 +113,6 @@ def resolve_pi_extension_entrypoints(
         )
     if profile.interactive:
         entrypoints.extend(resolve_pi_idle_entrypoint())
-        entrypoints.extend(resolve_pi_message_entrypoint())
     return tuple(entrypoints)
 
 

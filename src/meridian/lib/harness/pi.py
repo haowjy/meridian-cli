@@ -117,6 +117,7 @@ logger = structlog.get_logger(__name__)
 
 PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
 PI_CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET"
+PI_LAUNCH_PROMPT_ENV = "_MERIDIAN_PI_LAUNCH_PROMPT"
 
 
 def _pi_owed_parent_ids(
@@ -535,7 +536,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        overrides = (
+            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        )
+        if spec.interactive and spec.prompt:
+            # Same condition as the prompt argument in project_pi_native_tui: the
+            # meridian-message extension binds only after that prompt has started.
+            overrides[PI_LAUNCH_PROMPT_ENV] = "1"
+        return overrides
 
     def resolve_session_file(
         self,
