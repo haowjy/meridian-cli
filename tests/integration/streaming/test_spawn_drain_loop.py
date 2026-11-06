@@ -19,7 +19,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-from meridian.lib.harness.semantics import NormalizedHarnessEvent
+from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -293,7 +293,9 @@ class _StabilizingProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return False
 
-    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
+    def refresh_deadline_after_event(
+        self, state: CompletionState, semantics: EventSemantics
+    ) -> bool:
         return False
 
     def candidate_transition(self):  # type: ignore[no-untyped-def]

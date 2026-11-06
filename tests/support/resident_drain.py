@@ -48,6 +48,8 @@ class FakeResidentBackendControl:
         self.status: LivenessDecision = LivenessDecision.CONTINUE
         self.injected_messages: list[str] = []
         self.fail_inject: bool = False
+        # Codex refuses a follow-up turn while a turn is running.
+        self.turn_running: bool = False
 
     def health_status(self) -> LivenessDecision:
         return self.status
@@ -56,7 +58,7 @@ class FakeResidentBackendControl:
         self.awaiting_done_values.append(awaiting)
 
     async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject:
+        if self.fail_inject or self.turn_running:
             raise RuntimeError("inject failed")
         self.injected_messages.append(message)
 
@@ -230,6 +232,20 @@ def resident_event(
             "properties": {"sessionID": "ses-resident"},
         }
     return RawHarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
+
+
+async def start_turn(
+    coordinator: ResidentDrainCoordinator,
+    harness_id: HarnessId = HarnessId.CODEX,
+) -> None:
+    """The child starts a turn and works in it: the shape of an answer to a nudge."""
+    for event_type, payload in (
+        ("turn/started", {}),
+        ("item/started", {"item": {"type": "agentMessage"}}),
+    ):
+        await coordinator.observe_event(
+            normalize_event(resident_event(harness_id, event_type, payload))
+        )
 
 
 async def next_turn_boundary(

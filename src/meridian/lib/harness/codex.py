@@ -68,6 +68,7 @@ from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     EventSemantics,
     HarnessSemantics,
+    PrimaryEventScope,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -590,7 +591,38 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
     )
 
 
-CODEX_SEMANTICS = HarnessSemantics(
+# Items and output deltas are the child's own work. ``turn/started`` is not: a
+# Meridian nudge starts a turn too. Heartbeat-like events (token usage, rate
+# limits, thread status, hooks) stay unmarked.
+_CODEX_WORK_EVENTS = (
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+    "item/commandExecution/outputDelta",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+)
+
+
+class _CodexSemantics(HarnessSemantics):
+    def normalize(
+        self,
+        event: RawHarnessEvent,
+        *,
+        primary_event_scope: PrimaryEventScope | None = None,
+    ) -> EventSemantics:
+        # The app-server echoes Meridian's own nudge back as a userMessage item.
+        if event.event_type in {"item/started", "item/completed"}:
+            item = event.payload.get("item")
+            if (
+                isinstance(item, dict)
+                and cast("dict[str, object]", item).get("type") == "userMessage"
+            ):
+                return EventSemantics()
+        return super().normalize(event, primary_event_scope=primary_event_scope)
+
+
+CODEX_SEMANTICS = _CodexSemantics(
     events={
         "turn/started": EventSemantics(activity="turn_active"),
         "turn/completed": EventSemantics(
@@ -598,13 +630,14 @@ CODEX_SEMANTICS = HarnessSemantics(
             clears_signal=True,
             terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
         ),
+        **{name: EventSemantics(work=True) for name in _CODEX_WORK_EVENTS},
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
     payload_resolvers={
         "turn/completed": _resolve_codex_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_codex_terminal,
     },
-    scoped_events=frozenset({"turn/started", "turn/completed"}),
+    scoped_events=frozenset({"turn/started", "turn/completed", *_CODEX_WORK_EVENTS}),
     scope_id_resolver=extract_codex_thread_id,
 )
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -133,7 +133,9 @@ class _Profile:
     def allows_evaluation_without_candidate(self) -> bool:
         return self.candidate_free
 
-    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
+    def refresh_deadline_after_event(
+        self, state: CompletionState, semantics: EventSemantics
+    ) -> bool:
         return False
 
     def candidate_transition(self):  # type: ignore[no-untyped-def]

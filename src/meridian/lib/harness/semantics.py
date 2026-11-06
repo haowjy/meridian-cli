@@ -59,6 +59,11 @@ class EventSemantics:
     """All semantic meaning derived from one raw harness event."""
 
     activity: ActivityState | None = None
+    # Proof the child is doing its own work: renews a resident idle limit and
+    # answers an idle nudge. Distinct from ``activity``: Meridian's own prompts
+    # start turns (``turn/started``) without being work, and late items after a
+    # turn end must not count as an active turn.
+    work: bool = False
     clears_signal: bool = False
     terminal: TerminalEventOutcome | None = None
 
@@ -144,6 +149,7 @@ class HarnessSemantics:
             return descriptor
         return EventSemantics(
             activity=descriptor.activity,
+            work=descriptor.work,
             clears_signal=descriptor.clears_signal,
             terminal=payload_resolver(event),
         )

@@ -127,10 +127,14 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 signal.touch()
                 yield frame("assistant", message={"content": []})
                 if scenario == "done_no_result":
-                    # done with the deadline expired publishes success even though the
-                    # active follow-up turn never produced a result.
+                    # done waits out an active follow-up turn, but a turn idle for the
+                    # whole window is nudged once and cleaned up, not published as success.
                     await _wait_for_descendant_evidence(plan)
                     clock.advance(3600)
+                    while not messages:
+                        await asyncio.sleep(0.001)
+                    assert not outcomes
+                    clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
                     await asyncio.sleep(3600)
                 if scenario == "done_poll":
                     # The done signal alone must not publish while the turn is active.
@@ -196,7 +200,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         return
     if scenario in {"done_no_result", "no_result"}:
         assert len(outcomes) == 1
-        assert outcomes[0].status == ("succeeded" if scenario == "done_no_result" else "timed_out")
+        assert outcomes[0].status == "timed_out"
         reports = [
             event.raw.payload["result"] for event in delivered if event.raw.event_type == "result"
         ]

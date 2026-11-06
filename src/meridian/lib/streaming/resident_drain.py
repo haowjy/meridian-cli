@@ -12,11 +12,16 @@ import structlog
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
-from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
+from meridian.lib.harness.semantics import (
+    EventSemantics,
+    TerminalEventOutcome,
+    TerminalOutcomeCause,
+)
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import published_artifact_lock
 from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
+    COMPLETION_NUDGE_INTERVAL_SECONDS,
     AssessmentTrigger,
     CleanupReport,
     CompletionCleanupRequest,
@@ -177,17 +182,24 @@ class _HoldProfile:
         self._rearmed = False
         # Blockers at the latest rearm: while they hold, turn ends are not nudged.
         self._rearm_blockers: frozenset[DiagnosticBlocker] | None = None
-        # An idle-expiry nudge is out; the answer window runs until a turn starts.
+        # An idle-expiry nudge is out; the answer window runs until the child works.
         self._idle_nudge_outstanding = False
+        self._last_nudge_at: float | None = None
+        # After a rearm with no visible blockers (OpenCode shells, Codex tasks), the
+        # next nudge waits this long past the previous one so a rearm loop stays slow.
+        self._nudge_not_before: float | None = None
         self._confirmation_grace_at: float | None = None
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
         return self._rearmed
 
-    def refresh_deadline_after_event(self, state: CompletionState, transition: str | None) -> bool:
-        # Only real work renews the idle limit, and only once a turn end armed it.
-        return transition == "turn_active" and state.deadline_at is not None
+    def refresh_deadline_after_event(
+        self, state: CompletionState, semantics: EventSemantics
+    ) -> bool:
+        # Only the child's own work renews the idle limit, and only once a turn end
+        # armed it. A Meridian nudge starts a turn but is not work.
+        return semantics.work and state.deadline_at is not None
 
     def candidate_transition(self) -> AbstractContextManager[None]:
         return published_artifact_lock(self._runtime_root, self._spawn_id)
@@ -201,7 +213,7 @@ class _HoldProfile:
         if not self._accepted_signals:
             return CompletionDirectives()
         signals = consume_resident_signals(self._launch)
-        if state.candidate is None:
+        if state.candidate is None and not self._confirmation_requested:
             self._done_requested = False
             return CompletionDirectives()
         if self._window.grant_rearm(signals.rearm):
@@ -260,20 +272,33 @@ class _HoldProfile:
         )
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
-        del state, assessment
-        return self._confirmation_grace_at
+        del assessment
+        due = [self._confirmation_grace_at]
+        if state.candidate is not None and self._nudge_not_before is not None:
+            due.append(self._nudge_not_before if self._nudge_not_before > self._clock() else None)
+        return min((at for at in due if at is not None), default=None)
 
     async def send_nudge(self) -> None:
+        expiry_nudge = self._idle_nudge_outstanding
+        confirmation_requested = self._confirmation_requested
         self._confirmation_requested = True
         self._confirmation_failed = False
-        self._confirmation_grace_at = self._clock() + self._confirmation_grace_seconds
+        self._last_nudge_at = self._clock()
+        self._confirmation_grace_at = self._last_nudge_at + self._confirmation_grace_seconds
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+            # An outstanding expiry nudge on a dead backend is cleaned up by the next evaluation.
             self._confirmation_failed = True
             raise RuntimeError("completion handshake backend is unavailable")
         try:
             await self._send_nudge(self._nudge_message())
         except Exception:
             self._confirmation_failed = True
+            if expiry_nudge:
+                # A refused expiry nudge (Codex mid-turn) must not spend the one nudge.
+                self._idle_nudge_outstanding = False
+                self._confirmation_requested = confirmation_requested
+                self._confirmation_failed = False
+                self._confirmation_grace_at = None
             raise
 
     def stream_exit_decision(
@@ -284,10 +309,12 @@ class _HoldProfile:
         del state
         return ProfileExitDecision(recorded_outcome=recorded_outcome)
 
-    def observe_activity_transition(self, transition: str | None) -> None:
-        if transition != "turn_active":
+    def observe_event(self, semantics: EventSemantics) -> None:
+        if semantics.work:
+            # Before the deadline refresh: the answer window ends as work renews the limit.
+            self._idle_nudge_outstanding = False
+        if semantics.activity != "turn_active":
             return
-        self._idle_nudge_outstanding = False
         self.set_awaiting_done(False)
         if self._confirmation_requested:
             self._confirmation_turn_started = True
@@ -301,6 +328,8 @@ class _HoldProfile:
         self._confirmation_failed = False
         self._rearmed = False
         self._rearm_blockers = None
+        self._nudge_not_before = None
+        self._last_nudge_at = None
         self._idle_nudge_outstanding = False
         self._confirmation_grace_at = None
         self._blockers = ()
@@ -327,10 +356,12 @@ class _HoldProfile:
                 context.candidate is not None
                 and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
             ):
-                if self._expired(context):
-                    return self._on_expiry(emit_turn_boundary=True)
                 if context.assessment.disposition == "ready":
                     return self._propose_success(context.candidate, context.now)
+                if self._expired(context):
+                    # Nothing can answer a nudge on a closed transport.
+                    self.clear()
+                    return self._window.timeout_decision()
                 if context.assessment.disposition == "unknown" or (
                     context.assessment.disposition == "blocked"
                     and any(
@@ -374,10 +405,16 @@ class _HoldProfile:
         return ProfileDecision(
             action="wait",
             emit_turn_boundary=True,
-            nudge=not self._rearm_blockers_hold(),
+            nudge=not self._nudge_held(context.now),
         )
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
+        if self._idle_nudge_outstanding and self._resident_health_status() == (
+            LivenessDecision.BACKEND_DEAD
+        ):
+            # The expiry nudge went to a dead backend: nothing can answer it.
+            self.clear()
+            return self._window.timeout_decision()
         candidate = context.candidate
         rearmed = context.directives.rearm
         if rearmed:
@@ -410,7 +447,11 @@ class _HoldProfile:
                         ),
                     )
                 return ProfileDecision(action="wait")
-            if context.active_turn and not self._expired(context):
+            if context.active_turn:
+                # Done waits out a running turn; a turn idle for a whole window is
+                # asked once, not ended as a success it never finished.
+                if self._expired(context):
+                    return self._on_expiry()
                 return ProfileDecision(action="wait")
             return self._propose_success(candidate, context.now)
         if self._expired(context):
@@ -423,7 +464,7 @@ class _HoldProfile:
             self._accepted_signals
             and not self._confirmation_requested
             and not self._rearmed
-            and not self._rearm_blockers_hold()
+            and not self._nudge_held(context.now)
         ):
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
@@ -443,7 +484,11 @@ class _HoldProfile:
 
     def _on_expiry(self, *, emit_turn_boundary: bool = False) -> ProfileDecision:
         """Nudge once, then clean up if no turn starts within the answer window."""
-        if self._accepted_signals and not self._idle_nudge_outstanding:
+        if (
+            self._accepted_signals
+            and not self._idle_nudge_outstanding
+            and self._resident_health_status() != LivenessDecision.BACKEND_DEAD
+        ):
             self._idle_nudge_outstanding = True
             self._enter_wait()
             return ProfileDecision(
@@ -454,6 +499,12 @@ class _HoldProfile:
             )
         self.clear()
         return self._window.timeout_decision()
+
+    def _nudge_held(self, now: float) -> bool:
+        """True while a rearm still answers the nudge: blockers unchanged, or too soon."""
+        if self._rearm_blockers_hold():
+            return True
+        return self._nudge_not_before is not None and now < self._nudge_not_before
 
     def _rearm_blockers_hold(self) -> bool:
         """True while the blockers a rearm answered are all that is outstanding.
@@ -473,6 +524,11 @@ class _HoldProfile:
 
     def _mark_rearmed(self) -> None:
         self._rearm_blockers = frozenset(self._blockers) or None
+        self._nudge_not_before = (
+            None
+            if self._rearm_blockers is not None or self._last_nudge_at is None
+            else self._last_nudge_at + COMPLETION_NUDGE_INTERVAL_SECONDS
+        )
         self._idle_nudge_outstanding = False
         self._confirmation_requested = False
         self._confirmation_turn_started = False
@@ -659,12 +715,8 @@ class ResidentDrainCoordinator:
         self._profile.clear()
         await self._coordinator.stop()
 
-    def observe_activity_transition(self, transition: str | None) -> None:
-        self._profile.observe_activity_transition(transition)
-        self._coordinator.note_activity_transition(transition)
-
     async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
-        self._profile.observe_activity_transition(event.semantics.activity)
+        self._profile.observe_event(event.semantics)
         return await self._coordinator.observe_event(event)
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:

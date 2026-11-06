@@ -23,6 +23,7 @@ from tests.support.resident_drain import (
     descendant_cancellation_from_roots,
     expire_idle_window,
     resident_event,
+    start_turn,
 )
 
 
@@ -190,7 +191,7 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
 
         await coordinator.wait_for_aux_wake()
         await coordinator.handle_aux_wake()
-        coordinator.observe_activity_transition("turn_active")
+        await start_turn(coordinator)
         await coordinator.handle_terminal_event(
             resident_event(HarnessId.CODEX, "turn/completed", {}),
             terminal,
@@ -259,7 +260,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert (await coordinator.handle_timeout()).recorded_outcome is None
     assert connection.fake_resident_backend.injected_messages == []
 
-    coordinator.observe_activity_transition("turn_active")
+    await start_turn(coordinator)
     next_candidate = await coordinator.handle_terminal_event(
         resident_event(HarnessId.CODEX, "turn/completed", {}),
         terminal,
@@ -272,7 +273,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert "meridian spawn done" in injected
     assert "meridian spawn rearm" in injected
 
-    coordinator.observe_activity_transition("turn_active")
+    await start_turn(coordinator)
     await coordinator.wait_for_aux_wake()
     await coordinator.handle_aux_wake()
 
@@ -317,7 +318,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
-    coordinator.observe_activity_transition("turn_active")
+    await start_turn(coordinator)
 
     clock.advance(10.0)
     decision = await expire_idle_window(coordinator, clock)

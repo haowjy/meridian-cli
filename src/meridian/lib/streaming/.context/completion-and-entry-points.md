@@ -5,10 +5,21 @@ Moved from `AGENTS.md`; look up when changing completion, drain plans or the mod
 ### Completion and Idle-Limit Models
 
 Hold completion uses an idle limit. The window arms at the first turn end and renews on
-a harness event whose semantics mark `turn_active` (heartbeats and Claude's background
-Agent frames are unmarked) and on an explicit `rearm`. Meridian's own nudges never reach
-`turn_active`; the child's reply does, and that is its answer. Descendant activity
-renews nothing. Rearm grants are unlimited by default and the budget caps only rearms. `--resident-rearm-budget`,
+a harness event whose semantics set `work` and on an explicit `rearm`. `work` is separate
+from `activity`: Codex `turn/started` is a turn start but not work, because a Meridian
+nudge starts a turn too, and Codex's echo of the nudge (`item/started` with a `userMessage`
+item) is filtered. Heartbeats, usage and rate-limit updates and Claude's background Agent
+frames are unmarked. The child's own items, deltas and tool or shell progress are work and
+also answer an outstanding expiry nudge. A late item after `turn/completed` can extend the
+window once; it cannot stall completion because it is not `turn_active`. A single command
+that stays silent for a whole window is still idle. Descendant activity renews nothing.
+After a rearm, no nudge goes out while the blockers the rearm answered are unchanged. If
+no blocker was visible (OpenCode and Codex background shells), the next nudge waits
+`COMPLETION_NUDGE_INTERVAL_SECONDS` past the previous one. A Codex nudge sent mid-turn goes through `turn/steer` (`turn/start` when idle, and when the
+steer races a turn end). A nudge that fails for any reason does not count as the one nudge; on a dead backend, or a transport close at
+expiry with no ready tree, the hold cleans up without nudging. A `done` waits out an
+active turn but a turn idle for the whole window is nudged once, not published as success.
+Rearm grants are unlimited by default and the budget caps only rearms. `--resident-rearm-budget`,
 `MERIDIAN_RESIDENT_REARM_BUDGET`, profile
 `harness-overrides.meridian-cli.resident-rearm-budget`, or
 `timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.

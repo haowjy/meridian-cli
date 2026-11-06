@@ -194,6 +194,10 @@ async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
     return _AiohttpWebSocketCompat(session, ws)
 
 
+class _CodexRpcError(RuntimeError):
+    """The app-server answered a request with a JSON-RPC error."""
+
+
 class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     """JSON-RPC 2.0 bridge between Meridian and Codex app-server."""
 
@@ -538,39 +542,34 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return not self._resident_backend_dead() and self._liveness.healthy
 
     async def send_user_message(self, text: str) -> None:
-        self._require_connected("send_user_message")
-        self._signal_in_flight = False
-
-        if self._current_turn_id:
-            await self._request(
-                "turn/steer",
-                {
-                    "threadId": self._require_thread_id("turn/steer"),
-                    "input": _build_text_user_input(text),
-                    "expectedTurnId": self._current_turn_id,
-                },
-            )
-            return
-
-        await self._request(
-            "turn/start",
-            {
-                "threadId": self._require_thread_id("turn/start"),
-                "input": _build_text_user_input(text),
-            },
-        )
+        await self._send_input(text, "send_user_message")
 
     async def _begin_followup_turn(self, message: str) -> None:
-        self._require_connected("begin_followup_turn")
-        if self._current_turn_id is not None:
-            raise ConnectionNotReady("Codex follow-up turns require an idle backend")
+        await self._send_input(message, "begin_followup_turn")
+
+    async def _send_input(self, text: str, operation: str) -> None:
+        """Steer the running turn, else start one; a steer racing a turn end starts one."""
+        self._require_connected(operation)
         self._signal_in_flight = False
+        thread_id = self._require_thread_id(operation)
+        if self._current_turn_id:
+            try:
+                await self._request(
+                    "turn/steer",
+                    {
+                        "threadId": thread_id,
+                        "input": _build_text_user_input(text),
+                        "expectedTurnId": self._current_turn_id,
+                    },
+                )
+                return
+            except _CodexRpcError:
+                # The turn ended as the steer went out (expectedTurnId no longer matches).
+                # An idle thread takes turn/start; a thread that is still busy refuses it.
+                pass
         await self._request(
             "turn/start",
-            {
-                "threadId": self._require_thread_id("begin_followup_turn"),
-                "input": _build_text_user_input(message),
-            },
+            {"threadId": thread_id, "input": _build_text_user_input(text)},
         )
 
     async def send_cancel(self) -> None:
@@ -708,7 +707,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             error_payload = cast("dict[str, object]", error_obj)
             code = error_payload.get("code")
             message = error_payload.get("message")
-            raise RuntimeError(f"Codex JSON-RPC error for {method}: code={code} message={message}")
+            raise _CodexRpcError(
+                f"Codex JSON-RPC error for {method}: code={code} message={message}"
+            )
 
         result_obj = response.get("result")
         result = cast("dict[str, object]", result_obj) if isinstance(result_obj, dict) else {}

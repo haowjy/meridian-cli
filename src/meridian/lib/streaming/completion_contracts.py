@@ -10,8 +10,11 @@ from meridian.lib.harness.semantics import TerminalEventOutcome
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
+    from meridian.lib.harness.semantics import EventSemantics
     from meridian.lib.streaming.drain_policy import DrainAction
 
+# Minimum gap between completion nudges that a rearm loop may cause.
+COMPLETION_NUDGE_INTERVAL_SECONDS = 270.0
 
 CompletionPhase = Literal[
     "running",
@@ -124,6 +127,8 @@ class CompletionEvaluation:
     now: float
     directives: CompletionDirectives
     assessment: WorkAssessment
+    # The resident hold ignores this latch (it outlives an event-driven renewal) and
+    # reads ``state.deadline_at``; only profiles that never renew rely on it.
     deadline_expired: bool = False
     stabilization_elapsed: bool = False
     profile_timer_due: bool = False
@@ -241,7 +246,7 @@ class CompletionProfile(Protocol):
         ...
 
     def refresh_deadline_after_event(
-        self, state: CompletionState, transition: str | None
+        self, state: CompletionState, semantics: EventSemantics
     ) -> bool: ...
 
     def candidate_transition(self) -> AbstractContextManager[None]: ...
@@ -282,6 +287,7 @@ class CompletionCleanup(Protocol):
 
 
 __all__ = [
+    "COMPLETION_NUDGE_INTERVAL_SECONDS",
     "AssessmentTrigger",
     "CleanupReport",
     "CompletionCleanup",
