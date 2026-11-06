@@ -1426,10 +1426,14 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return method_obj, cast("dict[str, object]", payload_obj)
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
-        if method in {"thread/start", "thread/started"}:
-            thread_id = _extract_thread_id(payload)
+        thread_id = _extract_thread_id(payload)
+        if method == "thread/start":
             if thread_id is not None:
                 self._thread_id = thread_id
+        elif thread_id is not None and thread_id != self._thread_id:
+            # The app-server announces its own helper threads (titles, memory) to every
+            # client, and the TUI may open others: only this connection's thread counts.
+            return
 
         turn_id = _extract_turn_id(payload)
         # A background terminal's delta carries the finished turn's id: only a start
