@@ -63,7 +63,7 @@ def _coordinator(
         send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,

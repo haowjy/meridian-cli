@@ -12,7 +12,6 @@ import structlog
 from meridian.lib.core.delivery import Deliver, DeliveryRefused, TransportDead
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import published_artifact_lock
@@ -149,7 +148,7 @@ class _HoldProfile:
         *,
         launch: LaunchPaths,
         backend: ResidentBackendControl | None,
-        health: Callable[[], bool],
+        backend_dead: Callable[[], bool],
         send_nudge: Deliver,
         deadline_seconds: float,
         poll_seconds: float,
@@ -167,7 +166,7 @@ class _HoldProfile:
             rearm_budget=rearm_budget,
         )
         self._backend = backend
-        self._health = health
+        self._backend_dead = backend_dead
         self._send_nudge = send_nudge
         self._accepted_signals: frozenset[SpawnSignalKind] = (
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
@@ -227,7 +226,7 @@ class _HoldProfile:
                 candidate=context.candidate,
                 assessment=context.assessment,
                 rearm=context.directives.rearm,
-                dead=self._resident_health_status() == LivenessDecision.BACKEND_DEAD,
+                dead=self._backend_dead(),
                 accepts_signals=bool(self._accepted_signals),
                 grace_seconds=self._confirmation_grace_seconds,
                 timeout=self._window.timeout_decision(),
@@ -265,7 +264,7 @@ class _HoldProfile:
                 exit_code=1,
                 error="stream_closed_while_awaiting_done",
             )
-        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+        if self._backend_dead():
             return _BACKEND_DEAD_WHILE_AWAITING_DONE
         return TerminalEventOutcome(
             status=SpawnStatus.FAILED,
@@ -276,7 +275,7 @@ class _HoldProfile:
     def should_defer_close(self, state: CompletionState) -> bool:
         # Asked only once the stream has closed. A dead backend will not speak again, so
         # waiting for its descendants would only run out the deadline.
-        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+        if self._backend_dead():
             return False
         if self._state.rearmed:
             return True
@@ -300,7 +299,7 @@ class _HoldProfile:
     async def send_nudge(self, state: CompletionState) -> None:
         result = SendResult.SENT
         failure: Exception | None = None
-        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+        if self._backend_dead():
             result = SendResult.DEAD
             failure = RuntimeError("completion handshake backend is unavailable")
         else:
@@ -412,17 +411,6 @@ class _HoldProfile:
             self._backend.set_awaiting_done(awaiting_done)
         self._awaiting_done = awaiting_done
 
-    def _resident_health_status(self) -> LivenessDecision:
-        if self._backend is None:
-            # No backend liveness policy: the connection's own health is the evidence.
-            # A send that found the transport gone (TransportDead) leaves it unhealthy,
-            # so the evaluation that follows takes the dead-backend cleanup.
-            return LivenessDecision.CONTINUE if self._health() else LivenessDecision.BACKEND_DEAD
-        try:
-            return self._backend.health_status()
-        except Exception:
-            return LivenessDecision.BACKEND_DEAD
-
 
 class _ResidentCompletionCleanup:
     """Cancel resident descendants through the canonical application service."""
@@ -477,7 +465,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
         send_nudge: Deliver,
         completion_signals_available: bool,
         backend: ResidentBackendControl | None,
-        health: Callable[[], bool],
+        backend_dead: Callable[[], bool],
         native: NativeTaskSource | None,
         deadline_seconds: float,
         poll_seconds: float | None,
@@ -506,7 +494,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
         profile = _HoldProfile(
             launch=launch,
             backend=backend,
-            health=health,
+            backend_dead=backend_dead,
             send_nudge=send_nudge,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,

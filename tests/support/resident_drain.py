@@ -51,11 +51,8 @@ class FakeResidentBackendControl:
         self.inject_error: Exception | None = None
         self.inject_attempts = 0
 
-    def health_status(self) -> LivenessDecision:
-        return self.status
-
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        self.awaiting_done_values.append(awaiting)
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        self.awaiting_done_values.append(awaiting_done)
 
     def record_send(self, message: str) -> None:
         self.inject_attempts += 1
@@ -136,6 +133,9 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
+    def backend_dead(self) -> bool:
+        return self._resident_backend.status is LivenessDecision.BACKEND_DEAD
+
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._resident_backend.record_send(text)
         return DeliveryKind.ACKNOWLEDGED
@@ -205,7 +205,7 @@ async def awaiting_done_coordinator(
         send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -346,7 +346,7 @@ async def coordinator_with_clock(
         send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,

@@ -58,15 +58,13 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.liveness import (
     BackendLivenessPolicy,
     EventStreamLivenessTimeout,
+    LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
-    ResidentBackendControl,
-)
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -531,13 +529,17 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def resident_backend(self) -> ResidentBackendControl:
-        return LivenessResidentBackendControl(
-            liveness=self._liveness,
-            backend_dead=self._resident_backend_dead,
-        )
+        return self._liveness
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
+
+    def backend_dead(self) -> bool:
+        # A silent but living process is stalled, which `health` counts and this does not.
+        return (
+            self._resident_backend_dead()
+            or self._liveness.classify_close_stream() is LivenessDecision.BACKEND_DEAD
+        )
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         """Steer the running turn, else start one; a steer racing a turn end starts one.

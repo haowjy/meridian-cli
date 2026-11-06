@@ -95,7 +95,7 @@ def build_drain_plan(
             send_nudge=partial(deliver, spawn_id, source="completion_nudge"),
             completion_signals_available=receiver.completion_signals_available,
             backend=resident_backend,
-            health=receiver.health,
+            backend_dead=receiver.backend_dead,
             native=native,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,
