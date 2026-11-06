@@ -207,7 +207,8 @@ class _Profile:
         del state, assessment
         return None
 
-    async def send_nudge(self) -> None:
+    async def send_nudge(self, state: CompletionState) -> None:
+        del state
         return None
 
     def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None:

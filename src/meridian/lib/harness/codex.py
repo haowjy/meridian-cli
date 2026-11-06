@@ -599,6 +599,10 @@ _CODEX_WORK_EVENTS = (
     "item/completed",
     "item/agentMessage/delta",
     "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/fileChange/outputDelta",
+    "item/mcpToolCall/progress",
+    "item/plan/delta",
     "item/reasoning/summaryTextDelta",
     "item/reasoning/textDelta",
 )

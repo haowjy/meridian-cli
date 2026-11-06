@@ -116,6 +116,7 @@ class CompletionState:
     deadline_at: float | None
     stabilization_at: float | None
     stabilization_generation: int | None
+    active_turn: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,6 @@ class CompletionEvaluation:
     deadline_expired: bool = False
     stabilization_elapsed: bool = False
     profile_timer_due: bool = False
-    active_turn: bool = False
     candidate: TerminalEventOutcome | None = None
     terminal_outcome: TerminalEventOutcome | None = None
     terminal_action: DrainAction | None = None
@@ -271,7 +271,7 @@ class CompletionProfile(Protocol):
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None: ...
 
-    async def send_nudge(self) -> None: ...
+    async def send_nudge(self, state: CompletionState) -> None: ...
 
     def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None: ...
 

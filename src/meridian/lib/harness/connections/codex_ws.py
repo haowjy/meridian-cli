@@ -565,7 +565,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 return
             except _CodexRpcError:
                 # The turn ended as the steer went out (expectedTurnId no longer matches).
-                # An idle thread takes turn/start; a thread that is still busy refuses it.
+                # An idle thread starts a turn; app-server 0.166.0 joins a busy thread's turn.
                 pass
         await self._request(
             "turn/start",
@@ -1431,7 +1431,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._thread_id = thread_id
 
         turn_id = _extract_turn_id(payload)
-        if turn_id is not None:
+        # A background terminal's delta carries the finished turn's id: only a start
+        # makes a turn current.
+        if turn_id is not None and (
+            method in {"turn/start", "turn/started"} or turn_id == self._current_turn_id
+        ):
             if self._current_turn_id is not None and self._current_turn_id != turn_id:
                 self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id

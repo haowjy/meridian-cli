@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from meridian.lib.harness.semantics import TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
-    CleanupReport,
     CompletionCleanup,
     CompletionCleanupRequest,
     CompletionDirectives,
@@ -67,7 +66,6 @@ class CompletionCoordinator:
         self._cleanup_attempted = False
         self._cleanup_executed = False
         self._post_publication_cleanup: CompletionCleanupRequest | None = None
-        self._cleanup_report: CleanupReport | None = None
         self._terminal_published = False
         self._pending_evidence_activity: EvidenceActivity | None = None
         self._pending_evidence_failure: EvidenceFailure | None = None
@@ -82,6 +80,7 @@ class CompletionCoordinator:
             deadline_at=self._deadline_at,
             stabilization_at=self._stabilization_at,
             stabilization_generation=self._stabilization_generation,
+            active_turn=self._active_turn,
         )
 
     @property
@@ -264,16 +263,9 @@ class CompletionCoordinator:
             return
         self._cleanup_executed = True
         try:
-            self._cleanup_report = await self._cleanup.cleanup(
-                request.assessment,
-                request.reason,
-            )
-        except Exception as exc:
+            await self._cleanup.cleanup(request.assessment, request.reason)
+        except Exception:
             logger.exception("Completion cleanup failed.")
-            self._cleanup_report = CleanupReport(
-                attempted_categories=(request.reason,),
-                failures=(EvidenceFailure(code="cleanup_exception", detail=str(exc)),),
-            )
 
     async def _evaluate_terminal(
         self,
@@ -307,7 +299,6 @@ class CompletionCoordinator:
                 deadline_expired=self._deadline_latched,
                 stabilization_elapsed=self._stabilization_elapsed(now),
                 profile_timer_due=self._profile_timer_due(now),
-                active_turn=self._active_turn,
                 candidate=self._candidate,
                 terminal_outcome=outcome,
                 terminal_action=action,
@@ -346,7 +337,6 @@ class CompletionCoordinator:
                 deadline_expired=self._deadline_latched,
                 stabilization_elapsed=self._stabilization_elapsed(now),
                 profile_timer_due=self._profile_timer_due(now),
-                active_turn=self._active_turn,
                 candidate=self._candidate,
                 evidence_activity=self._pending_evidence_activity,
                 evidence_failure=self._pending_evidence_failure,
@@ -367,7 +357,6 @@ class CompletionCoordinator:
                 deadline_expired=self._deadline_latched,
                 stabilization_elapsed=self._stabilization_elapsed(now),
                 profile_timer_due=self._profile_timer_due(now),
-                active_turn=self._active_turn,
                 candidate=self._candidate,
                 evidence_activity=self._pending_evidence_activity,
                 evidence_failure=self._pending_evidence_failure,
@@ -480,7 +469,7 @@ class CompletionCoordinator:
             self._deadline_at = self._profile.deadline_for(decision, now)
         if decision.nudge:
             try:
-                await self._profile.send_nudge()
+                await self._profile.send_nudge(self.state)
             except Exception:
                 logger.exception("Completion nudge failed.")
                 # Nudge delivery is completion evidence: profiles that make the
@@ -537,7 +526,6 @@ class CompletionCoordinator:
         self._cleanup_attempted = False
         self._cleanup_executed = False
         self._post_publication_cleanup = None
-        self._cleanup_report = None
         self._terminal_published = False
         self._success_validation = None
         self._clear_pending_evidence_decision()

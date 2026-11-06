@@ -407,7 +407,7 @@ async def _settle(coordinator: ResidentDrainCoordinator) -> None:
 
 
 @pytest.mark.asyncio
-async def test_refused_expiry_nudge_does_not_spend_the_one_nudge(
+async def test_refused_expiry_nudge_gets_one_retry_then_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -420,17 +420,18 @@ async def test_refused_expiry_nudge_does_not_spend_the_one_nudge(
     write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     await coordinator.handle_timeout()
     await start_turn(coordinator)
-    backend.turn_running = True
+    backend.fail_inject = True
 
     clock.advance(10.0)
     assert (await coordinator.handle_timeout()).recorded_outcome is None
-    assert len(backend.injected_messages) == 1
-
-    # The deadline reset; the turn ended; the next expiry still gets its nudge.
-    backend.turn_running = False
     clock.advance(301.0)
     assert (await coordinator.handle_timeout()).recorded_outcome is None
-    assert len(backend.injected_messages) == 2
+    assert len(backend.injected_messages) == 1
+
+    clock.advance(301.0)
+    decision = await coordinator.handle_timeout()
+    assert decision.recorded_outcome is not None
+    assert decision.recorded_outcome.status == "timed_out"
 
 
 @pytest.mark.asyncio
@@ -516,15 +517,16 @@ async def test_transport_close_at_expiry_cleans_up_without_a_nudge(
 
 
 @pytest.mark.parametrize(
-    ("event_type", "payload", "renews"),
+    ("event_type", "payload", "in_turn", "renews"),
     [
-        ("item/started", {"item": {"type": "agentMessage"}}, True),
-        ("item/completed", {"item": {"type": "commandExecution"}}, True),
-        ("item/commandExecution/outputDelta", {}, True),
-        ("item/started", {"item": {"type": "userMessage"}}, False),
-        ("turn/started", {}, False),
-        ("thread/tokenUsage/updated", {}, False),
-        ("account/rateLimits/updated", {}, False),
+        ("item/started", {"item": {"type": "agentMessage"}}, True, True),
+        ("item/completed", {"item": {"type": "commandExecution"}}, True, True),
+        ("item/commandExecution/outputDelta", {}, True, True),
+        ("item/commandExecution/outputDelta", {}, False, False),
+        ("item/started", {"item": {"type": "userMessage"}}, True, False),
+        ("turn/started", {}, False, False),
+        ("thread/tokenUsage/updated", {}, True, False),
+        ("account/rateLimits/updated", {}, True, False),
     ],
 )
 @pytest.mark.asyncio
@@ -533,13 +535,18 @@ async def test_codex_events_renew_the_idle_window_only_for_work(
     monkeypatch: pytest.MonkeyPatch,
     event_type: str,
     payload: dict[str, object],
+    in_turn: bool,
     renews: bool,
 ) -> None:
-    """Replay of live Codex frames: Meridian's own nudge and heartbeats are not work."""
+    """Replay of live Codex frames: nudges, heartbeats and background output are not work."""
     coordinator, _, clock = _coordinator(tmp_path, monkeypatch)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     clock.advance(5.0)
+    if in_turn:
+        await coordinator.observe_event(
+            normalize_event(resident_event(HarnessId.CODEX, "turn/started", {}))
+        )
 
     await coordinator.observe_event(
         normalize_event(resident_event(HarnessId.CODEX, event_type, payload))

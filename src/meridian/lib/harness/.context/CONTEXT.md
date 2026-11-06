@@ -240,7 +240,7 @@ model observed or executed the message.
 | Harness | What a successful return means |
 |---|---|
 | Claude | The NDJSON user frame was written to subprocess stdin and `drain()` completed. Claude sends no correlated acknowledgment; busy-turn acceptance remains an open runtime question. |
-| Codex | The app-server returned a successful JSON-RPC result for `turn/steer` or `turn/start`. A JSON-RPC error raises instead of becoming a harness terminal event. |
+| Codex | The app-server returned a successful JSON-RPC result for `turn/steer` or `turn/start`. A steer that gets a JSON-RPC error falls back to `turn/start`; an error from `turn/start` raises instead of becoming a harness terminal event. |
 | OpenCode | A session-message HTTP endpoint returned an accepted success status. This does not prove that an assistant turn was scheduled or executed. |
 | Cursor | Unsupported; `send_user_message()` raises. |
 | Pi | The matching prompt-command RPC response reported success. Initial prompt delivery is intentionally not acknowledgment-blocking. |

@@ -58,8 +58,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# How long a child gets to start a turn after an idle-expiry nudge.
+# How long a child gets to work after an idle-expiry nudge.
 _IDLE_NUDGE_ANSWER_SECONDS = 300.0
+# Sends one idle stretch may use: the nudge and one retry if it is refused.
+_IDLE_NUDGE_SENDS = 2
 
 _BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
     status=SpawnStatus.FAILED,
@@ -182,8 +184,9 @@ class _HoldProfile:
         self._rearmed = False
         # Blockers at the latest rearm: while they hold, turn ends are not nudged.
         self._rearm_blockers: frozenset[DiagnosticBlocker] | None = None
-        # An idle-expiry nudge is out; the answer window runs until the child works.
-        self._idle_nudge_outstanding = False
+        # Expiry nudge sends this idle stretch; delivery spends them all. While any
+        # are used the answer window runs, until the child works.
+        self._idle_nudge_sends = 0
         self._last_nudge_at: float | None = None
         # After a rearm with no visible blockers (OpenCode shells, Codex tasks), the
         # next nudge waits this long past the previous one so a rearm loop stays slow.
@@ -197,9 +200,13 @@ class _HoldProfile:
     def refresh_deadline_after_event(
         self, state: CompletionState, semantics: EventSemantics
     ) -> bool:
-        # Only the child's own work renews the idle limit, and only once a turn end
-        # armed it. A Meridian nudge starts a turn but is not work.
-        return semantics.work and state.deadline_at is not None
+        # Only the child's own work inside a turn renews the idle limit and answers
+        # an expiry nudge. A nudge starts a turn but is not work, and output from a
+        # background process after the turn ended is not the child working.
+        if not (semantics.work and state.active_turn):
+            return False
+        self._idle_nudge_sends = 0
+        return state.deadline_at is not None
 
     def candidate_transition(self) -> AbstractContextManager[None]:
         return published_artifact_lock(self._runtime_root, self._spawn_id)
@@ -278,7 +285,7 @@ class _HoldProfile:
             due.append(self._nudge_not_before if self._nudge_not_before > self._clock() else None)
         return min((at for at in due if at is not None), default=None)
 
-    async def send_nudge(self) -> None:
+    async def send_nudge(self, state: CompletionState) -> None:
         expiry_nudge = self._idle_nudge_outstanding
         confirmation_requested = self._confirmation_requested
         self._confirmation_requested = True
@@ -290,16 +297,17 @@ class _HoldProfile:
             self._confirmation_failed = True
             raise RuntimeError("completion handshake backend is unavailable")
         try:
-            await self._send_nudge(self._nudge_message())
+            await self._send_nudge(self._nudge_message(report_kept=state.candidate is not None))
         except Exception:
             self._confirmation_failed = True
             if expiry_nudge:
-                # A refused expiry nudge (Codex mid-turn) must not spend the one nudge.
-                self._idle_nudge_outstanding = False
+                # The child was not asked, so the next expiry retries, once.
                 self._confirmation_requested = confirmation_requested
-                self._confirmation_failed = False
                 self._confirmation_grace_at = None
             raise
+        if expiry_nudge:
+            self._idle_nudge_sends = _IDLE_NUDGE_SENDS
+            self._confirmation_turn_started = False
 
     def stream_exit_decision(
         self,
@@ -310,9 +318,6 @@ class _HoldProfile:
         return ProfileExitDecision(recorded_outcome=recorded_outcome)
 
     def observe_event(self, semantics: EventSemantics) -> None:
-        if semantics.work:
-            # Before the deadline refresh: the answer window ends as work renews the limit.
-            self._idle_nudge_outstanding = False
         if semantics.activity != "turn_active":
             return
         self.set_awaiting_done(False)
@@ -330,7 +335,7 @@ class _HoldProfile:
         self._rearm_blockers = None
         self._nudge_not_before = None
         self._last_nudge_at = None
-        self._idle_nudge_outstanding = False
+        self._idle_nudge_sends = 0
         self._confirmation_grace_at = None
         self._blockers = ()
 
@@ -447,7 +452,7 @@ class _HoldProfile:
                         ),
                     )
                 return ProfileDecision(action="wait")
-            if context.active_turn:
+            if context.state.active_turn:
                 # Done waits out a running turn; a turn idle for a whole window is
                 # asked once, not ended as a success it never finished.
                 if self._expired(context):
@@ -456,7 +461,7 @@ class _HoldProfile:
             return self._propose_success(candidate, context.now)
         if self._expired(context):
             return self._on_expiry()
-        if context.active_turn:
+        if context.state.active_turn:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
@@ -464,15 +469,13 @@ class _HoldProfile:
             self._accepted_signals
             and not self._confirmation_requested
             and not self._rearmed
+            and not self._idle_nudge_outstanding
             and not self._nudge_held(context.now)
         ):
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
         if context.assessment.disposition == "ready" and self._confirmation_settled:
             return self._propose_success(candidate, context.now)
-        if confirmation_grace_expired:
-            self._enter_wait()
-            return ProfileDecision(action="wait")
         self._enter_wait()
         return ProfileDecision(action="wait")
 
@@ -483,13 +486,13 @@ class _HoldProfile:
         return deadline_at is not None and context.now >= deadline_at
 
     def _on_expiry(self, *, emit_turn_boundary: bool = False) -> ProfileDecision:
-        """Nudge once, then clean up if no turn starts within the answer window."""
+        """Nudge once, then clean up if the child does not work in the answer window."""
         if (
             self._accepted_signals
-            and not self._idle_nudge_outstanding
+            and self._idle_nudge_sends < _IDLE_NUDGE_SENDS
             and self._resident_health_status() != LivenessDecision.BACKEND_DEAD
         ):
-            self._idle_nudge_outstanding = True
+            self._idle_nudge_sends += 1
             self._enter_wait()
             return ProfileDecision(
                 action="wait",
@@ -529,12 +532,16 @@ class _HoldProfile:
             if self._rearm_blockers is not None or self._last_nudge_at is None
             else self._last_nudge_at + COMPLETION_NUDGE_INTERVAL_SECONDS
         )
-        self._idle_nudge_outstanding = False
+        self._idle_nudge_sends = 0
         self._confirmation_requested = False
         self._confirmation_turn_started = False
         self._confirmation_failed = False
         self._rearmed = True
         self._confirmation_grace_at = None
+
+    @property
+    def _idle_nudge_outstanding(self) -> bool:
+        return self._idle_nudge_sends > 0
 
     @property
     def _confirmation_settled(self) -> bool:
@@ -551,7 +558,7 @@ class _HoldProfile:
     def _enter_wait(self) -> None:
         self.set_awaiting_done(True)
 
-    def _nudge_message(self) -> str:
+    def _nudge_message(self, *, report_kept: bool) -> str:
         descendants = [
             blocker.identity
             for blocker in self._blockers
@@ -583,11 +590,21 @@ class _HoldProfile:
             message = " ".join(details) + " "
         else:
             message = "Before this spawn closes, confirm whether you are actually finished. "
+        if report_kept:
+            message += (
+                "Your previous reply is kept as this spawn's report. If it is the final report, "
+                "run `meridian spawn done` and end the turn. "
+            )
+        else:
+            # Codex and OpenCode take this nudge into the running turn, so the child's
+            # answer becomes the report: a "Done." here would replace it.
+            message += (
+                "No report is kept for this spawn yet. If you are finished, run "
+                "`meridian spawn done`, then make your last message the complete report. "
+            )
         message += (
-            "Your previous reply is kept as this spawn's report. If it is the final report, "
-            "run `meridian spawn done` and end the turn. If more work remains, including "
-            "waiting on background tasks or spawns, run `meridian spawn rearm` first, then "
-            "finish with a complete report."
+            "If more work remains, including waiting on background tasks or spawns, run "
+            "`meridian spawn rearm` first, then finish with a complete report."
         )
         return message
 

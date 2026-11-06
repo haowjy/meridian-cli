@@ -267,7 +267,8 @@ class PiCompletionProfile:
         self._refresh_done_nudge_state()
         return self.next_done_nudge_monotonic
 
-    async def send_nudge(self) -> None:
+    async def send_nudge(self, state: CompletionState) -> None:
+        del state
         try:
             if self.send_done_nudge_callback is not None:
                 await self.send_done_nudge_callback(PI_COMPLETION_NUDGE_MESSAGE)

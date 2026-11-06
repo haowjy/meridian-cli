@@ -48,8 +48,6 @@ class FakeResidentBackendControl:
         self.status: LivenessDecision = LivenessDecision.CONTINUE
         self.injected_messages: list[str] = []
         self.fail_inject: bool = False
-        # Codex refuses a follow-up turn while a turn is running.
-        self.turn_running: bool = False
 
     def health_status(self) -> LivenessDecision:
         return self.status
@@ -58,7 +56,7 @@ class FakeResidentBackendControl:
         self.awaiting_done_values.append(awaiting)
 
     async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject or self.turn_running:
+        if self.fail_inject:
             raise RuntimeError("inject failed")
         self.injected_messages.append(message)
 

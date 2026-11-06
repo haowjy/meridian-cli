@@ -29,7 +29,7 @@ reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
 
 ## Completion
 
-Hold completion uses an idle limit: a harness event marked `work` or an explicit
+Hold completion uses an idle limit: a harness event marked `work` inside a turn or an explicit
 `rearm` renews the window, Meridian's own nudges (even though they start turns) do not. An expired window gets one nudge
 and a 300 s answer window, then cleanup. `--timeout` /
 `MERIDIAN_TIMEOUT` is the opt-in absolute ceiling (outer attempt timer in

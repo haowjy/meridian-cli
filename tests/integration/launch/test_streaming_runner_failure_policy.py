@@ -25,6 +25,7 @@ from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import pi_drain as pi_drain_module
+from meridian.lib.streaming import resident_drain as resident_drain_module
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
@@ -202,10 +203,10 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
         spawn_id=SpawnId("r-resident-deadline-child"),
         launch_mode="background",
         status="running",
-        # A lockless row with no runner PID counts as starting for 15 s; this child's runner
-        # is long gone, so the deadline cleanup must not wait that out.
-        started_at="2026-01-01T00:00:00Z",
     )
+    # A fresh lockless row counts as starting, so the tree stays blocked through the
+    # answer window: the fake child never answers the nudge.
+    monkeypatch.setattr(resident_drain_module, "_IDLE_NUDGE_ANSWER_SECONDS", 0.05)
     request = _build_request()
     exit_code = await asyncio.wait_for(
         _execute_with_context(

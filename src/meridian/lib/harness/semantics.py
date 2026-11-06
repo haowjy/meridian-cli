@@ -59,9 +59,9 @@ class EventSemantics:
     """All semantic meaning derived from one raw harness event."""
 
     activity: ActivityState | None = None
-    # Proof the child is doing its own work: renews a resident idle limit and
+    # The child's own work: inside a turn it renews a resident idle limit and
     # answers an idle nudge. Distinct from ``activity``: Meridian's own prompts
-    # start turns (``turn/started``) without being work, and late items after a
+    # start turns (``turn/started``) without being work, and a late item after a
     # turn end must not count as an active turn.
     work: bool = False
     clears_signal: bool = False
