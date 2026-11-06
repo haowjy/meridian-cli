@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.core.delivery import DeliveryRefused
+from meridian.lib.core.delivery import DeliveryRefused, TransportDead
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
@@ -193,6 +193,8 @@ class _HoldProfile:
         # next nudge waits this long past the previous one so a rearm loop stays slow.
         self._nudge_not_before: float | None = None
         self._confirmation_grace_at: float | None = None
+        # A nudge found the transport gone: the backend counts as dead from then on.
+        self._transport_dead = False
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
@@ -309,6 +311,9 @@ class _HoldProfile:
                 else:
                     # Gone, or the nudge may have arrived: never resend it.
                     self._idle_nudge_sends = _IDLE_NUDGE_SENDS
+                    # Gone also ends the answer window: the evaluation that follows
+                    # takes the dead-backend cleanup.
+                    self._transport_dead = isinstance(exc, TransportDead)
             raise
         if expiry_nudge:
             self._idle_nudge_sends = _IDLE_NUDGE_SENDS
@@ -621,6 +626,8 @@ class _HoldProfile:
         self._awaiting_done = awaiting_done
 
     def _resident_health_status(self) -> LivenessDecision:
+        if self._transport_dead:
+            return LivenessDecision.BACKEND_DEAD
         if self._backend is None:
             return LivenessDecision.CONTINUE
         try:
