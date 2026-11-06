@@ -28,6 +28,7 @@ from meridian.lib.streaming.hold_state import (
     after_event,
     after_send,
     decide,
+    next_wake,
 )
 
 GOOD = TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
@@ -224,13 +225,9 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         ASK,
         RESET,
     ),
-    (
-        "E4",
-        HoldState(lease=SpacedLease(100.0), rearmed=False),
-        {},
-        ASK,
-        None,
-    ),
+    # `decide` retires a lease at its time, so a past-due one cannot stay a wake.
+    ("E4", HoldState(lease=SpacedLease(100.0)), {}, ASK, RESET),
+    ("E6", replace(SENT, lease=SpacedLease(100.0)), {}, WAIT, SENT),
     ("E5", SETTLED, {}, PUBLISH, None),
     ("E5", SETTLED, {"end": GOOD_END}, PUBLISH, None),
     ("E5", RESET, {"accepts_signals": False}, PUBLISH, None),
@@ -320,6 +317,25 @@ def test_grace_starts_when_the_send_ends() -> None:
     folded = after_send(RESET, SendResult.SENT, now=100.0)
     assert folded.asked_at == 100.0
     assert decide(folded, facts()).decision == WAIT
+
+
+# state, has a candidate, wake. The grace is 5 s.
+WAKES: list[tuple[HoldState, bool, float | None]] = [
+    (RESET, True, None),
+    (SETTLED, True, None),
+    (SENT, True, 104.0),
+    (SENT, False, 104.0),
+    (HoldState(lease=SpacedLease(200.0)), True, 200.0),
+    (HoldState(lease=SpacedLease(200.0)), False, None),
+    (replace(SENT, lease=SpacedLease(101.0)), True, 101.0),
+    (replace(SENT, lease=SpacedLease(200.0)), True, 104.0),
+    (HoldState(lease=HeldLease(frozenset({CHILD}))), True, None),
+]
+
+
+@pytest.mark.parametrize(("state", "has_candidate", "wake"), WAKES)
+def test_wake(state: HoldState, has_candidate: bool, wake: float | None) -> None:
+    assert next_wake(state, 5.0, has_candidate=has_candidate) == wake
 
 
 def test_events() -> None:

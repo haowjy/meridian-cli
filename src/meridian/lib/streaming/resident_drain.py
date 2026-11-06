@@ -40,12 +40,11 @@ from meridian.lib.streaming.hold_state import (
     HoldFacts,
     HoldState,
     SendResult,
-    SpacedLease,
     TurnEnd,
     after_event,
     after_send,
     decide,
-    grace_ends,
+    next_wake,
 )
 from meridian.lib.streaming.rearm_window import RearmWindow
 
@@ -294,17 +293,11 @@ class _HoldProfile:
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del assessment
-        due: list[float] = []
-        if self._state.ask is AskPhase.SENT:
-            due.append(grace_ends(self._state, self._confirmation_grace_seconds))
-        lease = self._state.lease
-        if (
-            state.candidate is not None
-            and isinstance(lease, SpacedLease)
-            and lease.not_before > self._clock()
-        ):
-            due.append(lease.not_before)
-        return min(due, default=None)
+        return next_wake(
+            self._state,
+            self._confirmation_grace_seconds,
+            has_candidate=state.candidate is not None,
+        )
 
     async def send_nudge(self, state: CompletionState) -> None:
         result = SendResult.SENT

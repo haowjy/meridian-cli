@@ -105,8 +105,11 @@ class HoldStep:
 
 def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     """Run the table: the first matching row wins."""
-    if state.ask is AskPhase.SENT and facts.now >= grace_ends(state, facts.grace_seconds):
+    # Timers past due end here, so neither can stay a wake.
+    if state.ask is AskPhase.SENT and facts.now >= _grace_ends(state, facts.grace_seconds):
         state = replace(state, ask=AskPhase.SETTLED)
+    if isinstance(state.lease, SpacedLease) and facts.now >= state.lease.not_before:
+        state = replace(state, lease=None)
     end = facts.end
     disposition = facts.assessment.disposition
 
@@ -156,18 +159,22 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         facts.accepts_signals
         and not state.rearmed
         and (state.ask is AskPhase.UNASKED or (state.ask is AskPhase.REFUSED and end is not None))
+        and not _lease_quiet(state.lease, facts.assessment)
     ):
-        quiet, state = _lease_quiet(state, facts)
-        if not quiet:
-            return _wait(state, facts, nudge=True)
+        return _wait(replace(state, lease=None), facts, nudge=True)
     if disposition == "ready" and _settled(state, facts):
         return _publish(state, facts)
     return _wait(state, facts)
 
 
-def grace_ends(state: HoldState, grace_seconds: float) -> float:
-    assert state.asked_at is not None
-    return state.asked_at + grace_seconds
+def next_wake(state: HoldState, grace_seconds: float, *, has_candidate: bool) -> float | None:
+    """When the table next changes its answer with no event: both timers end in `decide`."""
+    due: list[float] = []
+    if state.ask is AskPhase.SENT:
+        due.append(_grace_ends(state, grace_seconds))
+    if has_candidate and isinstance(state.lease, SpacedLease):
+        due.append(state.lease.not_before)
+    return min(due, default=None)
 
 
 def after_event(state: HoldState, *, turn_started: bool, work_in_turn: bool) -> HoldState:
@@ -233,19 +240,17 @@ def _settled(state: HoldState, facts: HoldFacts) -> bool:
     return not facts.accepts_signals or state.ask in {AskPhase.SETTLED, AskPhase.REFUSED}
 
 
-def _lease_quiet(state: HoldState, facts: HoldFacts) -> tuple[bool, HoldState]:
-    lease = state.lease
+def _grace_ends(state: HoldState, grace_seconds: float) -> float:
+    assert state.asked_at is not None
+    return state.asked_at + grace_seconds
+
+
+def _lease_quiet(lease: HeldLease | SpacedLease | None, assessment: WorkAssessment) -> bool:
     if isinstance(lease, HeldLease):
-        blockers = facts.assessment.blockers
-        if blockers and all(
-            blocker in lease.blockers or blocker.code == "awaiting_followup_result"
-            for blocker in blockers
-        ):
-            return True, state
-        return False, replace(state, lease=None)
-    if isinstance(lease, SpacedLease):
-        return facts.now < lease.not_before, state
-    return False, state
+        blockers = assessment.blockers
+        held = (b in lease.blockers or b.code == "awaiting_followup_result" for b in blockers)
+        return bool(blockers) and all(held)
+    return lease is not None  # `decide` retires a SpacedLease at `not_before`
 
 
 def _after_rearm(state: HoldState, assessment: WorkAssessment) -> HoldState:
@@ -277,5 +282,5 @@ __all__ = [
     "after_event",
     "after_send",
     "decide",
-    "grace_ends",
+    "next_wake",
 ]
