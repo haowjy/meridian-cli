@@ -143,7 +143,7 @@ class HoldEvidence:
 
 
 class _HoldProfile:
-    """Own the shared descendant/native completion handshake and deadline."""
+    """Gather facts for `decide`, apply its step, and own the send and the signals."""
 
     def __init__(
         self,
