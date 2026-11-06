@@ -2,7 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // Path computed by the launcher (`control_socket_path`), so the hash lives in one language.
 const CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET";
@@ -53,7 +53,7 @@ function decodeRequest(raw: Buffer): { text: string } | { error: string } {
   return { text };
 }
 
-export class MessageListener {
+class MessageListener {
   private server: net.Server | null = null;
   private readonly connections = new Set<net.Socket>();
   private compacting = false;
@@ -67,38 +67,32 @@ export class MessageListener {
     this.compacting = value;
   }
 
+  // A listener is single-use: Pi builds a new extension instance for every runtime.
   // onError runs once if the server fails to listen or accept.
   start(onError: (error: Error) => void): void {
-    this.stop();
     prepareSocketDirectory(path.dirname(this.socketPath));
     // A crash exit skips session_shutdown and leaves the file behind.
     unlinkIfPresent(this.socketPath);
     const server = net.createServer((socket) => this.serve(socket));
     let reported = false;
     server.on("error", (error) => {
-      if (reported || this.server !== server) return;
+      if (reported) return;
       reported = true;
       onError(error);
     });
     server.listen(this.socketPath);
-    // An open listener must not keep Pi alive past its own exit.
-    server.unref();
     this.server = server;
   }
 
   stop(): void {
     const server = this.server;
-    this.server = null;
-    this.compacting = false;
     for (const socket of this.connections) socket.destroy();
-    this.connections.clear();
     // Closing a unix server unlinks its path.
     server?.close();
   }
 
   private serve(socket: net.Socket): void {
     this.connections.add(socket);
-    socket.unref();
     socket.on("close", () => this.connections.delete(socket));
     socket.on("error", () => {});
 
@@ -163,14 +157,14 @@ export default function meridianMessageExtension(pi: ExtensionAPI): void {
   const listener = new MessageListener(pi, socketPath);
 
   // The factory starts nothing: it also runs for invocations that never open a session.
-  // /new, /resume, /fork and /reload replace the runtime, so each rebinds at session_start.
+  // /new, /resume, /fork and /reload replace the runtime (and call this factory again),
+  // so each binds at its own session_start.
   // The first startup with a launch prompt binds at agent_start instead: a message that
   // started a run first would make Pi reject the launch prompt, which carries the task.
-  let awaitingLaunchPrompt = false;
-  let notify: (message: string, type: "warning") => void = () => {};
-  const bind = (): void => {
-    awaitingLaunchPrompt = false;
-    const off = (message: string): void => notify(`Meridian messaging is off: ${message}`, "warning");
+  let cancelPendingBind: (() => void) | null = null;
+  const bind = (ctx: ExtensionContext): void => {
+    const off = (message: string): void =>
+      ctx.ui.notify(`Meridian messaging is off: ${message}`, "warning");
     try {
       listener.start((error) => off(error.message));
     } catch (error) {
@@ -180,15 +174,16 @@ export default function meridianMessageExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", (event, ctx) => {
     if (ctx.mode !== "tui") return;
-    notify = (message, type) => ctx.ui.notify(message, type);
     if (event.reason === "startup" && process.env[LAUNCH_PROMPT_ENV]) {
-      awaitingLaunchPrompt = true;
+      const unsubscribe = pi.on("agent_start", (_event, agentCtx) => {
+        unsubscribe();
+        cancelPendingBind = null;
+        bind(agentCtx);
+      });
+      cancelPendingBind = unsubscribe;
     } else {
-      bind();
+      bind(ctx);
     }
-  });
-  pi.on("agent_start", () => {
-    if (awaitingLaunchPrompt) bind();
   });
   pi.on("session_before_compact", (event) => {
     if (event.reason === "manual") listener.setCompacting(true);
@@ -196,7 +191,7 @@ export default function meridianMessageExtension(pi: ExtensionAPI): void {
   pi.on("session_compact", () => listener.setCompacting(false));
   pi.on("session_compact_failed", () => listener.setCompacting(false));
   pi.on("session_shutdown", () => {
-    awaitingLaunchPrompt = false;
+    cancelPendingBind?.();
     listener.stop();
   });
 }
