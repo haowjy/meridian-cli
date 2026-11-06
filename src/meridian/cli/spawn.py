@@ -841,9 +841,7 @@ def _spawn_list(
         str | None,
         Parameter(
             name="--status",
-            help=(
-                "Filter by status: running, succeeded, failed, cancelled, timed_out."
-            ),
+            help=("Filter by status: running, succeeded, failed, cancelled, timed_out."),
         ),
     ] = None,
     view: Annotated[
