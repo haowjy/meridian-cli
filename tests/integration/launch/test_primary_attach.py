@@ -1171,11 +1171,11 @@ async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_
     assert installed_handlers[0] not in (signal.SIG_DFL, signal.SIG_IGN)
     assert signal.getsignal(signal.SIGINT) not in (signal.SIG_DFL, signal.SIG_IGN)
 
-    launcher._request_signal_cancel()
+    launcher._request_signal_cancel(signal.SIGTERM)
     outcome = await run_task
 
     assert outcome.cancelled is True
-    assert outcome.exit_code == 130
+    assert outcome.exit_code == 143
     assert terminated_scopes == ["tui:signal_cancelled"]
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup
@@ -1201,7 +1201,7 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
 
     async def _fail_after_signal(*, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = (config, spec)
-        launcher._request_signal_cancel()
+        launcher._request_signal_cancel(signal.SIGTERM)
         raise PrimaryAttachError("startup failed")
 
     monkeypatch.setattr(
@@ -1216,7 +1216,7 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
     )
 
     assert outcome.cancelled is True
-    assert outcome.exit_code == 130
+    assert outcome.exit_code == 143
     assert process_launcher.launch_commands == []
 
 

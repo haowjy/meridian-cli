@@ -60,7 +60,11 @@ from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
-from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
+from meridian.lib.launch.signals import (
+    SignalCallbackReceiver,
+    signal_coordinator,
+    signal_to_exit_code,
+)
 from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
@@ -231,13 +235,13 @@ def run_primary_process_with_capture(
     on_child_started: Callable[[ProcessIdentity], None],
     launcher_diagnostics_path: Path,
 ) -> PrimaryProcessResult:
-    cancelled = False
+    received_signal: signal.Signals | None = None
     wait_completed = False
 
-    def request_cancel(_signum: signal.Signals) -> None:
-        nonlocal cancelled
-        if not wait_completed:
-            cancelled = True
+    def request_cancel(signum: signal.Signals) -> None:
+        nonlocal received_signal
+        if not wait_completed and received_signal is None:
+            received_signal = signum
 
     cancel_receiver = SignalCallbackReceiver(
         target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -289,10 +293,10 @@ def run_primary_process_with_capture(
             try:
                 wait_thread.start()
                 while not wait_finished.wait(0.1):
-                    if cancelled and not terminate_requested:
+                    if received_signal is not None and not terminate_requested:
                         terminate_requested = True
                         running.terminate()
-                    if cancelled and not cancel_wait_requested:
+                    if received_signal is not None and not cancel_wait_requested:
                         cancel_wait_requested = True
                         running.cancel_wait()
             except BaseException:
@@ -315,11 +319,12 @@ def run_primary_process_with_capture(
     finally:
         coordinator.unregister_receiver(cancel_receiver)
 
+    signal_exit_code = signal_to_exit_code(received_signal)
     return PrimaryProcessResult(
-        exit_code=130 if cancelled else launched.exit_code,
+        exit_code=launched.exit_code if signal_exit_code is None else signal_exit_code,
         pid=launched.pid,
         launcher_diagnostics_path=window.captured_path,
-        cancelled=cancelled,
+        cancelled=signal_exit_code is not None,
     )
 
 
@@ -1124,87 +1129,100 @@ def run_harness_process(
                         primary_spawn_id,
                         exit_code=exit_code,
                     )
+            except KeyboardInterrupt:
+                # SIGINT that reaches Meridian is a cancel: record what the shell will see.
+                exit_code = signal_to_exit_code(signal.SIGINT)
+                cancelled = True
+                raise
             except NativeIdentityError as exc:
                 identity_error = exc
                 exit_code = 1
             finally:
-                try:
-                    if (
-                        native_run is not None
-                        and primary_spawn_id is not None
-                        and lifecycle is not None
-                    ):
-                        outcome = conclude_native_run(
-                            native_run,
-                            harness_adapter,
-                            context=runtime_context,
-                            spawn_id=primary_spawn_id,
-                            child_env=child_env,
-                            child_cwd=launch_child_cwd,
-                            pid=native_primary_tui_pid,
-                            started=native_primary_tui_pid is not None,
-                            started_at_epoch=primary_started_epoch or None,
-                            prior_error=identity_error,
-                            prior_error_phase=identity_error_phase,
-                            facts=facts,
-                            connection_session_id=None,
-                            lifecycle=lifecycle,
-                            probe_turn=True,
-                        )
-                        identity_error = outcome.error
-                        resolved_harness_session_id = outcome.harness_session_id or ""
-                        turn_observed = outcome.turn_observed
-                    elif identity_error is not None and lifecycle is not None:
-                        record_identity_failure(
-                            identity_error, phase="pre_exec", lifecycle=lifecycle
-                        )
-                    if identity_error is not None:
-                        exit_code = 1
-                    exit_code = _finalize_lifecycle(
-                        launch=launch,
-                        exit_code=exit_code,
-                        harness_adapter=harness_adapter,
-                        project_root=control_root,
-                        model_id=session_metadata.model,
-                        primary_started=primary_started,
-                        spawn_service=spawn_service,
-                        facts=facts,
-                        native_key=native_run.entry.complete() if native_run else None,
-                        cancellation_observed=cancelled,
-                        native_identity_error=identity_error.failure_code
-                        if identity_error
-                        else None,
-                    )
-                    if write_native_primary_metadata and launch is not None:
-                        _write_native_primary_metadata(
-                            launch=launch,
-                            command=native_primary_metadata_command,
-                            launch_cwd=launch_child_cwd,
-                            launcher_pid=os.getpid(),
-                            tui_pid=native_primary_tui_pid,
-                            activity="finalizing",
-                            started_at_epoch=(
-                                primary_started_epoch if primary_started_epoch > 0 else None
-                            ),
-                            ended_at_epoch=time.time(),
-                            exit_code=exit_code,
-                            harness_session_id=resolved_harness_session_id,
-                            runtime_metadata=native_primary_runtime_metadata,
-                        )
-                finally:
-                    if primary_spawn_id is not None:
-                        try:
-                            harness_adapter.cleanup_prelaunch(
-                                runtime_root=runtime_root,
+                # Hold the mask from here through the terminal write: the exit path and the
+                # recorded outcome are decided in this block, and a signal between them would
+                # leave the spawn reading as crashed. A signal it defers is a cancel.
+                with signal_coordinator().mask_termination():
+                    try:
+                        if (
+                            native_run is not None
+                            and primary_spawn_id is not None
+                            and lifecycle is not None
+                        ):
+                            outcome = conclude_native_run(
+                                native_run,
+                                harness_adapter,
+                                context=runtime_context,
                                 spawn_id=primary_spawn_id,
-                                chat_id=managed.chat_id,
-                                state=prelaunch_state,
+                                child_env=child_env,
+                                child_cwd=launch_child_cwd,
+                                pid=native_primary_tui_pid,
+                                started=native_primary_tui_pid is not None,
+                                started_at_epoch=primary_started_epoch or None,
+                                prior_error=identity_error,
+                                prior_error_phase=identity_error_phase,
+                                facts=facts,
+                                connection_session_id=None,
+                                lifecycle=lifecycle,
+                                probe_turn=True,
                             )
-                        except Exception:
-                            logger.warning(
-                                "Failed to clean up adapter prelaunch state for primary spawn",
-                                exc_info=True,
+                            identity_error = outcome.error
+                            resolved_harness_session_id = outcome.harness_session_id or ""
+                            turn_observed = outcome.turn_observed
+                        elif identity_error is not None and lifecycle is not None:
+                            record_identity_failure(
+                                identity_error, phase="pre_exec", lifecycle=lifecycle
                             )
+                        deferred_signal = signal_coordinator().deferred_signal()
+                        if deferred_signal is not None and not cancelled:
+                            exit_code = signal_to_exit_code(deferred_signal)
+                            cancelled = True
+                        if identity_error is not None:
+                            exit_code = 1
+                        exit_code = _finalize_lifecycle(
+                            launch=launch,
+                            exit_code=exit_code,
+                            harness_adapter=harness_adapter,
+                            project_root=control_root,
+                            model_id=session_metadata.model,
+                            primary_started=primary_started,
+                            spawn_service=spawn_service,
+                            facts=facts,
+                            native_key=native_run.entry.complete() if native_run else None,
+                            cancellation_observed=cancelled,
+                            native_identity_error=identity_error.failure_code
+                            if identity_error
+                            else None,
+                        )
+                        if write_native_primary_metadata and launch is not None:
+                            _write_native_primary_metadata(
+                                launch=launch,
+                                command=native_primary_metadata_command,
+                                launch_cwd=launch_child_cwd,
+                                launcher_pid=os.getpid(),
+                                tui_pid=native_primary_tui_pid,
+                                activity="finalizing",
+                                started_at_epoch=(
+                                    primary_started_epoch if primary_started_epoch > 0 else None
+                                ),
+                                ended_at_epoch=time.time(),
+                                exit_code=exit_code,
+                                harness_session_id=resolved_harness_session_id,
+                                runtime_metadata=native_primary_runtime_metadata,
+                            )
+                    finally:
+                        if primary_spawn_id is not None:
+                            try:
+                                harness_adapter.cleanup_prelaunch(
+                                    runtime_root=runtime_root,
+                                    spawn_id=primary_spawn_id,
+                                    chat_id=managed.chat_id,
+                                    state=prelaunch_state,
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "Failed to clean up adapter prelaunch state for primary spawn",
+                                    exc_info=True,
+                                )
     except FileNotFoundError:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2

@@ -70,7 +70,8 @@ start through the wait. A closed terminal sends SIGHUP and a killed launcher (pa
 `systemctl stop` of its scope) sends SIGTERM. Catching them lets the launcher stop the
 TUI and finalize normally instead of dying at the default disposition with no runner
 exit and no session stop (#623). Both paths report the latch as
-`PrimaryExecutionResult.cancelled`, which feeds `cancellation_observed`, and exit 130.
+`PrimaryExecutionResult.cancelled`, which feeds `cancellation_observed`, and exit `128+signal`
+(143 for SIGTERM, 129 for SIGHUP). Each path latches the signal itself, not a bool plus a code.
 
 **Receivers run in handler context.** Python runs the callback on the main thread
 between bytecodes. A callback that takes a non-reentrant lock the main thread already
@@ -87,7 +88,7 @@ shape.
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for the `SignalCallbackReceiver`s of both launchers.
 - Managed attach: a SIGTERM/SIGHUP latched when the main task resumes from the TUI
-  wait yields cancelled/130 even if the TUI exits zero. Black-box: a signal latched
+  wait yields cancelled/`128+signal` even if the TUI exits zero. Black-box: a signal latched
   before the wait thread reports completion does the same. Later signals do not change
   the result; a signal concurrent with exit may be classified either way (accepted).
 - Both receivers use `escalate_on_repeat` with a grace window: the first signal requests
@@ -96,12 +97,19 @@ shape.
   terminal close delivers SIGHUP **twice** (~1 ms apart), often with a TERM; escalating
   inside that burst would kill the launcher before finalize, so a burst routes to the
   (idempotent) callback while a deliberate later repeat still force-quits a wedged wait.
-- Both receivers are unregistered **before** `_finalize_lifecycle()`. A TERM/HUP during
-  finalize still kills the launcher at the default disposition, and the run stays
-  active (the #623 bug in a smaller window). Both paths also replace the child's raw
-  exit code with 130 at the process layer. Identity-v2 PR 4 owns both seams: hold a
-  latch-only receiver across the sole outcome write, and carry raw code + `cancelled`
-  to the writer, mapping to 130 there.
+- Both receivers are unregistered when the process layer returns. From there to the top of
+  `run_harness_process`'s `finally` (a few statements and `record_exited`), a TERM/HUP still
+  takes the default disposition: the run stays active (the #623 bug in a much smaller window).
+  The `finally` holds `mask_termination()` from its first line through
+  `_finalize_lifecycle()` and the metadata write. A SIGINT/TERM/HUP it defers is read with
+  `deferred_signal()` just before the finalize and recorded as `128+signal` `cancelled`; the
+  signal is re-delivered when the mask exits, so the shell exit matches. A repeat 1s or more
+  after the first escapes the mask (a wedged hook or lock stays force-quittable). Both paths
+  replace the child's raw exit code with `128+signal` at the process layer. Identity-v2 PR 4
+  owns what remains: hold a latch-only receiver across the sole outcome write, and carry raw
+  code + `cancelled` to the writer, mapping to `128+signal` there. A signal that arrives
+  *during* `finalize_spawn` itself is not in the recorded result: shell 130, stored result
+  unchanged.
 - Both TUI drivers enter `native_sigint_shield()` on the main thread alongside
   `tui_terminal_window()`. Only native launchers register the SIGINT receiver;
   interception ends before backend teardown. Backend-startup Ctrl+C propagates.

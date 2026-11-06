@@ -75,7 +75,7 @@ def test_signal_during_blackbox_wait_cancels_zero_exit(tmp_path: Path) -> None:
         sender.join(timeout=1)
 
     assert result.cancelled is True
-    assert result.exit_code == 130
+    assert result.exit_code == 143
     assert running.terminate_calls == 1
 
 

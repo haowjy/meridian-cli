@@ -11,7 +11,9 @@ status Meridian recorded for the session:
 | clean quit (`/exit`, Ctrl-D) | `0` |
 | exits with code N | `N` |
 | killed by signal N | `128+N` |
-| cancelled by a signal to Meridian (Ctrl-C, SIGTERM, SIGHUP) | `130` |
+| cancelled by SIGTERM to Meridian | `143` |
+| cancelled by SIGHUP to Meridian (closing terminal) | `129` |
+| SIGINT reaching Meridian | `130` |
 | Meridian could not record the session | nonzero |
 | `--dry-run` | `0` |
 
@@ -25,6 +27,23 @@ runs a primary launch under `set -e`, `&&` or `||` now stops or branches on a fa
 relied on the old `0`, add `|| true` after the launch, or read the status explicitly with `rc=$?`.
 `meridian session` browse re-runs `meridian --continue`, so it now returns the resumed harness's
 status too.
+
+A supervisor stop used to read as Ctrl-C: SIGTERM and SIGHUP to Meridian exited `130` and stored
+`130`. They now exit and store `143` and `129`. A wrapper that treated `130` as "the user cancelled"
+should also accept `143` and `129`; a spawn that Meridian cancelled has status `cancelled` whichever
+number it carries. Spawns recorded earlier with `130` stay valid and read as before. A harness that
+ends itself with SIGTERM also gives `143`; read the spawn's status to tell it from a cancel.
+
+`meridian spawn cancel` sends SIGTERM, so every cancel it records is now `143`, not `130`: a live
+spawn, `--force` on a live primary, and a spawn whose runner is already gone. A live spawn stored
+`130` before.
+
+A SIGINT that reaches a black-box primary (`kill -INT`, or a redirected stdin) now stores `130` and
+ends `cancelled`; before, it exited `130` but stored `2` and ended `failed`. A native primary's TUI
+shields SIGINT, so `kill -INT` during the TUI does nothing; outside the shield, in the seconds after
+the harness exits, it is a cancel. A terminal Ctrl-C normally goes to the harness, not Meridian, so
+the result is the harness's own. Once Meridian is writing the final result, a signal waits until the
+write and the `spawn.finished` hooks are done; a second one at least a second later ends it at once.
 
 This change writes no new on-disk state. Rollback has not been probed.
 

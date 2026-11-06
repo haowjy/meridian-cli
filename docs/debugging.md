@@ -9,7 +9,7 @@ Read this only when something looks wrong: a spawn seems stuck, expected output 
 | `crashed` | The runner's lifetime lock was freed before it wrote an outcome | Check `report.md`; the work may still be usable. Relaunch or use `--continue`. A pending cancel request produces `cancelled` instead. |
 | `missing_spawn_dir` | Crash during launch before spawn artifacts stabilized | Relaunch the spawn |
 | Exit 127 or 2 with empty report | Harness binary missing from `$PATH` | Install or fix PATH for the selected harness |
-| Exit 143 or 137 | Process terminated externally | Check `meridian spawn show <id>` first; if status is `succeeded`, signal hit during cleanup and no retry is needed. Otherwise check host logs for OOM or external kill, then retry |
+| Exit 143 or 137 | Process terminated externally | Check `meridian spawn show <id>` first; if status is `succeeded`, signal hit during cleanup and no retry is needed; if `cancelled`, it was deliberate (`spawn cancel` records 143), so do not retry. Otherwise check host logs for OOM or external kill, then retry |
 | `timed_out` status | Runtime budget exceeded | Increase timeout or split task into smaller spawns |
 | Model/API error in `stderr.log` | Model unavailable or API rejected request | Check `meridian mars models list` and provider credentials |
 

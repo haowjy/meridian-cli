@@ -48,8 +48,9 @@ the spawn-identity-v2 design's "Cancel on the lock" (work item `spawn-identity-v
   `(pid, birth)` read in step 1. `CancelOutcome.launch_number` is K, and a result shown to
   the caller is consumed as `(spawn, K)`.
 - Every runner's terminal write goes through `SpawnLifecycleService.finalize`, which defers
-  SIGTERM and SIGHUP (`signal_coordinator().mask_termination()`: main thread only, re-delivered
-  on unmask) across the store write and the `spawn.finished` hooks. A hangup can't turn a
+  SIGINT, SIGTERM and SIGHUP (`signal_coordinator().mask_termination()`: main thread only,
+  re-delivered once on unmask; a repeat 1s or more after the first escapes to the previous
+  handler) across the store write and the `spawn.finished` hooks. A hangup can't turn a
   finished spawn into `crashed`, and a cancel that races the finish still lets `spawn.finished` hooks run. The
   signal fires as soon as that mask exits, so a caller with its own steps after `finalize`
   must hold an outer mask: the streaming runner masks from `complete_execution` through

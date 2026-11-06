@@ -331,7 +331,7 @@ def test_spawn_cancel_allows_dead_managed_primary_without_lease(
     )
 
     assert output.status == "cancelled"
-    assert output.exit_code == 130
+    assert output.exit_code == 143
     assert _get_spawn(runtime_root, spawn_id).status == "cancelled"
 
 
@@ -384,7 +384,7 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
     )
 
     assert output.status == "cancelled"
-    assert output.exit_code == 130
+    assert output.exit_code == 143
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"
     assert latest.cancel_intent is None  # a v4 row's request lives in its launch directory
@@ -468,7 +468,7 @@ def test_spawn_cancel_managed_primary_without_runner_converges_to_terminal(
     )
 
     assert output.status == "cancelled"
-    assert output.exit_code == 130
+    assert output.exit_code == 143
     assert terminated_pids == []
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"
