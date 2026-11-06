@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -537,7 +538,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected("send_user_message")
         self._signal_in_flight = False
 
@@ -550,7 +551,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     "expectedTurnId": self._current_turn_id,
                 },
             )
-            return
+            return DeliveryKind.ACKNOWLEDGED
 
         await self._request(
             "turn/start",
@@ -559,6 +560,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "input": _build_text_user_input(text),
             },
         )
+        return DeliveryKind.ACKNOWLEDGED
 
     async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected("begin_followup_turn")

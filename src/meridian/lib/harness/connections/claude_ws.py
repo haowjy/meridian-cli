@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -89,7 +90,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         "created": {"starting", "stopping", "stopped", "failed"},
         "starting": {"connected", "stopping", "stopped", "failed"},
         "connected": {"stopping", "failed"},
-        "stopping": {"stopped", "failed"},
+        "stopping": {"connected", "stopped", "failed"},
         "failed": {"stopped"},
         "stopped": set(),
     }
@@ -201,10 +202,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
         self._signal_in_flight = False
         await self._send_user_turn(text)
+        # Claude replies to no stdin frame: the write finishing is all we know.
+        return DeliveryKind.POSTED
 
     async def send_cancel(self) -> None:
         """Signal cancellation by transitioning state and sending SIGINT."""
@@ -214,11 +217,15 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = True
             return
         self._ensure_connected()
-        self._cancel_requested = True
         self._signal_in_flight = True
-        if self._state != "stopping":
-            self._set_state("stopping")
-        await self._signal_process(signal.SIGINT)
+        self._set_state("stopping")
+        try:
+            await self._signal_process(signal.SIGINT)
+        except Exception:
+            self._signal_in_flight = False
+            self._set_state("connected")
+            raise
+        self._cancel_requested = True
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         """Yield RawHarnessEvent objects read line-by-line from Claude stdout."""

@@ -240,19 +240,31 @@ become observable before fake iterator exhaustion. Clean EOF is a different cont
 
 ### Inject Acknowledgment
 
-`send_user_message()` success is a transport-level delivery claim, not proof that the
-model observed or executed the message.
+`send_user_message()` returns a `DeliveryKind` (`core/delivery.py`, stdlib only so
+every layer can import it without running `harness/__init__`): `acknowledged` when the harness answered the request that
+carried the message, `posted` when the write finished and the harness confirmed nothing.
+Neither proves the model observed or executed the message. A failure raises, and the
+error text says whether delivery is unknown (a timeout after the write may still have
+arrived).
 
-| Harness | What a successful return means |
-|---|---|
-| Claude | The NDJSON user frame was written to subprocess stdin and `drain()` completed. Claude sends no correlated acknowledgment; busy-turn acceptance remains an open runtime question. |
-| Codex | The app-server returned a successful JSON-RPC result for `turn/steer` or `turn/start`. A JSON-RPC error raises instead of becoming a harness terminal event. |
-| OpenCode | A session-message HTTP endpoint returned an accepted success status. This does not prove that an assistant turn was scheduled or executed. |
-| Cursor | Unsupported; `send_user_message()` raises. |
-| Pi | The matching prompt-command RPC response reported success. Initial prompt delivery is intentionally not acknowledgment-blocking. |
+| Harness | Kind | What a successful return means |
+|---|---|---|
+| Claude | posted | The NDJSON user frame was written to subprocess stdin and `drain()` completed. Claude sends no correlated acknowledgment; busy-turn acceptance remains an open runtime question. |
+| Codex | acknowledged | The app-server returned a successful JSON-RPC result for `turn/steer` or `turn/start`. A JSON-RPC error raises instead of becoming a harness terminal event. |
+| OpenCode V2 | acknowledged | A session-message HTTP endpoint returned an accepted success status, and an HTML response is rejected. This does not prove that an assistant turn was scheduled or executed. |
+| OpenCode V1 | acknowledged | Marked from reading the code only, never run against a 1.x server. It returns on the status alone and lacks V2's HTML guard. |
+| Cursor | none | Unsupported; `send_user_message()` raises. |
+| Pi | acknowledged | The matching prompt-command RPC response reported success. Initial prompt delivery is intentionally not acknowledgment-blocking. |
 
-The generic control endpoint acknowledges only after the applicable connection method
-returns. Do not describe that acknowledgment as semantic execution evidence.
+The kind travels: `ControlActionCoordinator.run_action` → `InjectResult.delivery` →
+the control-socket response's `delivery` field → `meridian spawn message`, which prints
+"Message delivered" for `acknowledged` and "Message posted … (no receipt)" for `posted`.
+A response without `delivery` comes from an older launcher that does not say how far
+the message got, so the CLI claims only `posted`. A posted inject ends at `posted` in
+`control_actions.jsonl` and an acknowledged one at `acknowledged`; a launcher that died
+mid-write leaves `sent` as the last status. For non-inject actions (an interrupt, for
+example), `acknowledged` only means `send` returned. Readers ignore statuses they do
+not know.
 
 Codex keeps a conservative unscoped fallback: if a `turn/completed` event has no
 thread ID, it still counts as terminal for the parent. OpenCode does not use that

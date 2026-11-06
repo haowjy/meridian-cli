@@ -532,6 +532,44 @@ def launch_path_violations(sources: Sources) -> list[Violation]:
     return found
 
 
+# --- interpreter re-launch argv ---------------------------------------------
+
+# Product code re-launches this package through `module_argv`, which adds `-P`.
+# `meridian.dev` builds its own argv and is exempt (lib/platform/AGENTS.md).
+_SYS_EXECUTABLE_OWNERS = frozenset(
+    {
+        "meridian/lib/platform/python_module.py",
+        "meridian/lib/harness/claude.py",  # hands the interpreter to a stdlib hook script
+        "meridian/lib/catalog/mars_roots.py",  # finds the scripts dir beside the interpreter
+        "meridian/lib/launch/cli_shim.py",  # compares PATH's `meridian` to this build's
+    }
+)
+_DEV_PREFIX = "meridian/dev/"
+
+
+def sys_executable_violations(sources: Sources) -> list[Violation]:
+    """Reject `sys.executable` outside the modules that may name the interpreter."""
+
+    return [
+        Violation(
+            module.path,
+            node.lineno,
+            "sys.executable outside its owners: build a re-launch argv with "
+            "meridian.lib.platform.python_module.module_argv, or add the module to "
+            "_SYS_EXECUTABLE_OWNERS with a reason.",
+        )
+        for module in sources.python_modules
+        if module.path not in _SYS_EXECUTABLE_OWNERS
+        and not module.path.startswith(_DEV_PREFIX)
+        and module.mentions("executable")
+        for node in ast.walk(module.tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "executable"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    ]
+
+
 CHECKS: tuple[Check, ...] = (
     raw_write_violations,
     stale_raw_write_allowlist,
@@ -539,6 +577,7 @@ CHECKS: tuple[Check, ...] = (
     harness_idle_import_violations,
     import_time_bootstrap_violations,
     launch_path_violations,
+    sys_executable_violations,
 )
 
 

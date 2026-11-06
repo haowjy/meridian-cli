@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -216,8 +217,9 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         def health(self) -> bool:
             return True
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None
@@ -552,12 +554,13 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
             self.call_order.append("inject:start")
             self.inject_started.set()
             await self.allow_inject_send.wait()
             self.call_order.append("inject:end")
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             self.call_order.append("interrupt")
