@@ -27,6 +27,7 @@ from meridian.lib.streaming.hold_state import (
     TurnEnd,
     after_event,
     after_send,
+    after_signals,
     decide,
     next_wake,
 )
@@ -317,6 +318,33 @@ def test_grace_starts_when_the_send_ends() -> None:
     folded = after_send(RESET, SendResult.SENT, now=100.0)
     assert folded.asked_at == 100.0
     assert decide(folded, facts()).decision == WAIT
+
+
+# state, done, rearm, has a candidate, state after, rearm stands
+CLOSING = HoldState(closing=True)
+SIGNALS: list[tuple[HoldState, bool, bool, bool, HoldState, bool]] = [
+    (RESET, False, False, True, RESET, False),
+    (RESET, True, False, True, CLOSING, False),
+    (CLOSING, False, False, True, CLOSING, False),
+    (RESET, False, True, True, RESET, True),
+    (RESET, True, True, True, RESET, True),
+    (CLOSING, False, True, True, RESET, True),
+    # First turn: nothing to answer, and an earlier `done` is dropped too.
+    (RESET, True, True, False, RESET, False),
+    (CLOSING, False, False, False, RESET, False),
+    (REFUSED, True, True, False, REFUSED, False),
+    # An ask is out: the child may answer it before any candidate.
+    (SENT, True, False, False, replace(SENT, closing=True), False),
+    (SETTLED, False, True, False, SETTLED, True),
+]
+
+
+@pytest.mark.parametrize(("before", "done", "rearm", "candidate", "after", "stands"), SIGNALS)
+def test_signals(
+    before: HoldState, done: bool, rearm: bool, candidate: bool, after: HoldState, stands: bool
+) -> None:
+    folded = after_signals(before, done=done, rearm=rearm, has_candidate=candidate)
+    assert folded == (after, stands)
 
 
 # state, has a candidate, wake. The grace is 5 s.

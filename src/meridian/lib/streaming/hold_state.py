@@ -89,7 +89,7 @@ class HoldFacts:
     expired: bool
     candidate: TerminalEventOutcome | None
     assessment: WorkAssessment
-    rearm: bool  # already granted by RearmWindow
+    rearm: bool  # signalled and within budget; only row B2 charges it
     dead: bool  # connection health says BACKEND_DEAD
     accepts_signals: bool
     grace_seconds: float
@@ -175,6 +175,21 @@ def next_wake(state: HoldState, grace_seconds: float, *, has_candidate: bool) ->
     if has_candidate and isinstance(state.lease, SpacedLease):
         due.append(state.lease.not_before)
     return min(due, default=None)
+
+
+def after_signals(
+    state: HoldState, *, done: bool, rearm: bool, has_candidate: bool
+) -> tuple[HoldState, bool]:
+    """Fold one read of the signal files; return the state and whether a rearm stands.
+
+    `rearm` means signalled and within budget. With no candidate and no ask, the child is
+    in its first turn and there is nothing to answer, so a signal is dropped.
+    """
+    if not has_candidate and state.ask in _NOTHING_ASKED:
+        return replace(state, closing=False), False
+    if rearm:
+        return replace(state, closing=False), True
+    return replace(state, closing=state.closing or done), False
 
 
 def after_event(state: HoldState, *, turn_started: bool, work_in_turn: bool) -> HoldState:
@@ -281,6 +296,7 @@ __all__ = [
     "TurnEnd",
     "after_event",
     "after_send",
+    "after_signals",
     "decide",
     "next_wake",
 ]

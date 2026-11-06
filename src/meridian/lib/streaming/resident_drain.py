@@ -36,13 +36,13 @@ from meridian.lib.streaming.descendant_evidence import (
     ReconciledDescendantEvidence,
 )
 from meridian.lib.streaming.hold_state import (
-    AskPhase,
     HoldFacts,
     HoldState,
     SendResult,
     TurnEnd,
     after_event,
     after_send,
+    after_signals,
     decide,
     next_wake,
 )
@@ -203,19 +203,15 @@ class _HoldProfile:
         if not self._accepted_signals:
             return CompletionDirectives()
         signals = consume_resident_signals(self._launch)
-        if state.candidate is None and self._state.ask in {AskPhase.UNASKED, AskPhase.REFUSED}:
-            self._state = replace(self._state, closing=False)
-            return CompletionDirectives()
-        if self._window.grant_rearm(signals.rearm):
-            self._state = replace(self._state, closing=False)
-            return CompletionDirectives(rearm=True)
-        closing = self._state.closing or signals.done
-        self._state = replace(self._state, closing=closing)
-        return CompletionDirectives(done=closing)
+        self._state, rearm = after_signals(
+            self._state,
+            done=signals.done,
+            rearm=signals.rearm and self._window.can_rearm(),
+            has_candidate=state.candidate is not None,
+        )
+        return CompletionDirectives(rearm=rearm)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
-        if context.directives.rearm:
-            self._window.persist_count()
         end = None
         if context.terminal_action is not None and context.terminal_outcome is not None:
             end = TurnEnd(context.terminal_outcome, context.terminal_action)
@@ -238,6 +234,8 @@ class _HoldProfile:
             ),
         )
         self._state = step.state
+        if step.decision.action == "abandon_candidate":
+            self._window.charge_rearm()
         if step.decision.action in {"clear", "fail", "cleanup"}:
             self.set_awaiting_done(False)
         elif not step.leave_awaiting:
