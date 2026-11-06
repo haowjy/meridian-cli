@@ -16,14 +16,14 @@ behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
 plain/resident/Pi choice and injects manager capabilities for event emission,
-serialized injection, and application-service descendant cleanup into both Pi and
+serialized delivery, and application-service descendant cleanup into both Pi and
 resident policy. Drain collaborators must not construct application services.
 
 **Do not key resident behavior off harness ids.** A connection exposes a native task
 source (`native_task_source()`) independently of resident backend control. Both feed
 one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`:
 resident backend control nudges through `begin_followup_turn`; Claude supplies its
-native task source and is nudged through serialized inject. Every hold also reads
+native task source and is nudged through serialized delivery. Every hold also reads
 persisted descendants. Select the profile once from these capabilities; evidence
 reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
 
@@ -68,8 +68,8 @@ fail, or clear signals for the parent.
 ## Key Rules
 
 **Never call `connection.send_user_message()` directly.** Always use
-`SpawnManager.inject()`. The `ControlActionCoordinator` serializes concurrent
-inject, interrupt, permission reply, and user-input-reply actions. Calling the
+`SpawnManager.deliver()`. The `ControlActionCoordinator` serializes concurrent
+message deliveries and interrupts. Calling the
 connection directly breaks this serialization.
 
 **Spawn-owned journals share the spawn row's lifetime.** Permission and control-action

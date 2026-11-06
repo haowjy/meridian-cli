@@ -256,22 +256,53 @@ values to force-kill any surviving process tree.
 
 ## Control Socket
 
-Inject flows through the control socket:
+A message flows through the control socket:
 
 ```
 meridian spawn message <id> --message "..."
   → fixed per-user POSIX directory / hashed control socket
   → ControlSocketServer._handle_client()
-  → SpawnManager.inject()
-    → ControlActionCoordinator.run_action()  — journals and serializes the action
+  → MessageRoute.deliver → SpawnManager.deliver()
+    → ControlActionCoordinator.deliver()  — journals and serializes the action
     → connection.send_user_message(message)
 ```
 
-Both the server and inject client derive the same bounded POSIX socket path from
+### Wire format
+
+A client that does not share this code (the Pi extension, a script) needs only this. The
+transport is a Unix stream socket at the bounded path described below.
+
+- **One request per connection.** Connect, send one line, read one line, close. The server
+  closes after it answers.
+- **Request:** one UTF-8 JSON object ending in `\n`:
+  `{"type":"user_message","text":"<message>"}`. `text` must be a string. Any other `type`
+  is an error. Escape non-ASCII as `\uXXXX` or send raw UTF-8; the size limit counts
+  encoded bytes.
+- **Success:** `{"ok":true,"delivery":"posted"|"acknowledged"}` plus an optional
+  `"note":"<text>"`. `acknowledged` means the harness answered the request that carried
+  the message. `posted` means the write finished and the harness sends no receipt, so it
+  may still be dropped. Show `note` to the sender after the confirmation; it states a
+  fact of the route.
+- **Failure:** `{"ok":false,"error":"<text>"}`. The text says whether the message may have
+  arrived ("...may have arrived and was not resent"); without that phrase nothing was
+  written. Malformed requests get the same shape (`invalid JSON request`, `request must be
+  a JSON object`, `missing request type`, `unsupported request type: ...`,
+  `user_message requires text`, `empty request`, `no request received`).
+- **Size limit:** the request line is at most `MAX_REQUEST_BYTES` (16 MiB) including the
+  newline; above it the server answers `{"ok":false,"error":"message is over the 16 MiB
+  limit"}`.
+- **Timeouts:** the server waits 10 s for the request line. A send that has not finished
+  after `SEND_TIMEOUT_SECONDS` (33 s) fails with a "no answer" error, and the CLI waits
+  that plus 2 s for the response. A client should wait at least 35 s.
+- **A socket file means a route.** A primary binds only once its harness has a route, so
+  connection refused or a missing file means the receiver is not running; the CLI polls
+  30 s for the file before giving up.
+
+Both the server and the sending CLI derive the same bounded POSIX socket path from
 the resolved runtime root and spawn ID. The socket lives in the mode-0700, UID-scoped
 directory `/tmp/meridian-<uid>`, independent of either process's `TMPDIR`, so
 runtime/project path depth cannot exceed `sockaddr_un.sun_path` and concurrent spawns
-remain isolated. Control injection is POSIX-only; the server's legacy native-Windows
+remain isolated. Message delivery over the socket is POSIX-only; the server's legacy native-Windows
 branch has no supported client.
 
 Startup sweeps only current-user `control-<32 hex>.sock` files older than 120 seconds.
@@ -295,7 +326,7 @@ files are needed. Recovery runs on the next spawn start, not a timer.
 Test isolation crosses interpreter boundaries; see the
 [test guidance](../../../../../tests/AGENTS.md).
 
-All control actions (inject, interrupt, permission reply, user input reply) are
+Control actions (inject and interrupt) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
 do not call `connection.send_user_message()` directly.
 
@@ -321,7 +352,7 @@ the connection exposes the needed seam.
 
 ## Anti-Patterns
 
-- **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.inject()` so the action coordinator serializes it.
+- **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.deliver()` so the action coordinator serializes it.
 - **Do not gate hooks or delivery on writer existence.** Facts and subscribers must work without runner-history persistence.
 - **Don't share a manager across concurrent event loops** — the session dict is not thread-safe.
 

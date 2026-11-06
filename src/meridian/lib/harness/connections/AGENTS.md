@@ -2,4 +2,6 @@
 
 Use `reap_on_ownership_transfer_failure()` during startup and registration: repeated cancellation can otherwise strand a child between owners.
 
+`send_user_message` raises `DeliveryRefused` (alive, nothing written; retried once), `TransportDead` (gone, nothing written; `not_ready(state, text)` in `base.py` picks between them) or any other exception (may have arrived; never resent). See `lib/core/delivery.py`.
+
 [Transport contracts](.context/CONTEXT.md)

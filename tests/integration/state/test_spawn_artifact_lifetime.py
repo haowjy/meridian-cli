@@ -9,10 +9,10 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.clock import RealClock
+from meridian.lib.core.delivery import DeliveryError, DeliveryRefused
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
-    ConnectionNotReady,
     HarnessConnection,
     HarnessRequest,
 )
@@ -95,7 +95,7 @@ async def test_control_action_ack_does_not_recreate_deleted_spawn(tmp_path: Path
     send_started = asyncio.Event()
     finish_send = asyncio.Event()
 
-    async def _send() -> object:
+    async def _send() -> None:
         send_started.set()
         await finish_send.wait()
         return None
@@ -116,9 +116,7 @@ async def test_control_action_ack_does_not_recreate_deleted_spawn(tmp_path: Path
     )
     finish_send.set()
 
-    result = await action
-
-    assert result.success is True
+    assert await action is None
     assert not spawn_dir.exists()
 
 
@@ -142,38 +140,37 @@ async def test_regression_failure_after_send_is_not_resent_and_warns_sender(
     coordinator = ControlActionCoordinator(launch=launch_paths(runtime_root, "p1"))
     sends = 0
 
-    async def _send() -> object:
+    async def _send() -> None:
         nonlocal sends
         sends += 1
         raise failure
 
-    result = await coordinator.run_action(
-        action=ControlActionType.INJECT, payload={"text": "x"}, source="test", send=_send
-    )
+    with pytest.raises(DeliveryError, match=r"may have arrived and was not resent"):
+        await coordinator.run_action(
+            action=ControlActionType.INJECT, payload={"text": "x"}, source="test", send=_send
+        )
 
     assert sends == 1
-    assert result.error is not None
-    assert "may have arrived and was not resent" in result.error
 
 
 @pytest.mark.asyncio
-async def test_connection_not_ready_is_retried_with_plain_text(tmp_path: Path) -> None:
+async def test_delivery_refused_is_retried_with_plain_text(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     _start_test_spawn(runtime_root, "p1", status="running")
     coordinator = ControlActionCoordinator(launch=launch_paths(runtime_root, "p1"))
     sends = 0
 
-    async def _send() -> object:
+    async def _send() -> None:
         nonlocal sends
         sends += 1
-        raise ConnectionNotReady("not ready")
+        raise DeliveryRefused("not ready")
 
-    result = await coordinator.run_action(
-        action=ControlActionType.INJECT, payload={"text": "x"}, source="test", send=_send
-    )
+    with pytest.raises(DeliveryRefused, match=r"^not ready$"):
+        await coordinator.run_action(
+            action=ControlActionType.INJECT, payload={"text": "x"}, source="test", send=_send
+        )
 
     assert sends == 2
-    assert result.error == "not ready"
 
 
 @pytest.mark.asyncio

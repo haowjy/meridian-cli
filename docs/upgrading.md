@@ -1,5 +1,13 @@
 # Upgrade notes
 
+## Messages to a primary go through its launcher
+
+`meridian spawn message` reaches a primary through a control socket its launcher serves, as it
+does a spawned session. A primary started by an older build never served one: relaunch it (or
+`--continue` it) to receive messages. Until then the command waits 30 seconds, then fails saying
+the session has no message route. Claude primaries that publish no inbox (`--bare`, `--safe-mode`,
+`--print`) still have none.
+
 ## `approval: auto` uses each harness's own auto
 
 `approval: auto` (`--approval auto`) used to compile to the nearest prompt-free setting. It now

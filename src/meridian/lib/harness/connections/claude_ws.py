@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -22,12 +22,12 @@ from meridian.lib.harness.claude_version import claude_version
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     RawHarnessEvent,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -200,7 +200,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return StopResult()
 
     def health(self) -> bool:
-        return self._state == "connected"
+        child = self._child
+        process = None if child is None else child.process
+        return self._state == "connected" and (process is None or process.returncode is None)
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
@@ -298,8 +300,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _ensure_connected(self) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"Claude connection is not ready (state={self._state}); expected 'connected'."
+            raise not_ready(
+                self._state,
+                f"Claude connection is not ready (state={self._state}); expected 'connected'.",
             )
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
@@ -370,14 +373,18 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _send_json(self, payload: dict[str, object]) -> None:
         child = self._child
         process = None if child is None else child.process
-        if process is None or process.stdin is None:
-            raise ConnectionNotReady("Claude subprocess stdin is not available.")
+        if process is None or process.stdin is None or process.returncode is not None:
+            raise TransportDead("Claude subprocess stdin is not available.")
 
         wire = json.dumps(payload, separators=(",", ":")) + "\n"
         trace_wire_send(self._tracer, "stdin_write", wire, bytes=len(wire.encode("utf-8")))
         async with self._send_lock:
-            process.stdin.write(wire.encode("utf-8"))
-            await process.stdin.drain()
+            try:
+                process.stdin.write(wire.encode("utf-8"))
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                # The only reader is gone: the line was never read.
+                raise TransportDead("Claude subprocess closed its stdin.") from exc
 
     async def _signal_process(self, sig: signal.Signals) -> None:
         child = self._child

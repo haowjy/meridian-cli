@@ -296,9 +296,9 @@ human-facing spawn output.
 the message with a `[Meridian]` line naming the sender and, when the sender's active
 record has a route the post can reach, the
 `meridian spawn message <sender chat>` command that answers it. The frame asks the
-route the post uses: a child's control socket must exist, and a Claude primary must have
-published a live inbox socket (`resolve_primary_inbox`, shared with the post), so a bare
-or pre-2.1.224 primary gets "no reply route here". The check reads the sender's record's
+route the post uses: the sender's control socket file must exist. A Claude primary's
+launcher binds it only once Claude has published its inbox, so a bare or pre-2.1.224
+primary gets "no reply route here". The check reads the sender's record's
 own runtime root, which differs from the receiver's under `-C`. The reply names the
 sender's current chat (`continue_chat_id`, so the address survives a `/clear`),
 which is the chat the sender's primary runs in. The chat id comes from
@@ -322,8 +322,8 @@ same occupant question, then falls back to the chat's owner (`ops/.context/CONTE
 "Session Reference Resolution"). `spawn message` additionally refuses a chat with no
 running session, and refuses `@` selectors, which name finished spawns.
 
-The frame is message text, built once in the CLI, so the control-socket and
-primary-inbox routes carry it identically and every harness renders it. Do not
+The frame is message text, built once in the CLI, so every route carries it
+identically and every harness renders it. Do not
 move it into a harness wire field: Claude's peer-message envelope carries
 `from`/`from-mode`, and Meridian forges neither (KB
 `decisions/primary-inject.md#d-claude-primary-inbox` — the same reason a

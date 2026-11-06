@@ -48,7 +48,8 @@ class FakeResidentBackendControl:
         self.awaiting_done_values: list[bool] = []
         self.status: LivenessDecision = LivenessDecision.CONTINUE
         self.injected_messages: list[str] = []
-        self.fail_inject: bool = False
+        self.inject_error: Exception | None = None
+        self.inject_attempts = 0
 
     def health_status(self) -> LivenessDecision:
         return self.status
@@ -57,8 +58,9 @@ class FakeResidentBackendControl:
         self.awaiting_done_values.append(awaiting)
 
     async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject:
-            raise RuntimeError("inject failed")
+        self.inject_attempts += 1
+        if self.inject_error is not None:
+            raise self.inject_error
         self.injected_messages.append(message)
 
 
@@ -203,6 +205,7 @@ async def awaiting_done_coordinator(
         send_nudge=resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=resident_backend,
+        health=connection.health,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -343,6 +346,7 @@ async def coordinator_with_clock(
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
+        health=connection.health,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,

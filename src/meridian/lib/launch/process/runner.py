@@ -83,6 +83,7 @@ from meridian.lib.state.session_store import (
     update_session_spawn_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE, SpawnRecord
+from meridian.lib.streaming.control_socket import control_socket_path
 
 from ..context import (
     LaunchContext,
@@ -102,6 +103,7 @@ from .ports import (
     ProcessLauncher,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
+from .primary_control_socket import primary_control_socket
 from .selector import select_process_launcher
 from .session import (
     build_session_metadata,
@@ -484,32 +486,37 @@ def _execute_primary_process(
     if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(launch.stderr_log)
 
-    def record_blackbox_started(identity: ProcessIdentity) -> None:
-        captured = output_log_path is not None
-        record_scope(
-            launch,
-            scope_from_identity(
-                identity,
-                scope_id="stdio" if captured else "tui",
-                role="harness_stdio" if captured else "harness_tui",
-                owner_policy="spawn_owned",
-                owner_id=str(launch.spawn_id),
-            ),
-        )
-        on_running(identity)
+    with primary_control_socket(
+        launch, get_harness_bundle(harness_id).primary_message_route
+    ) as serve_control_socket:
 
-    blackbox_result = _execute_via_blackbox(
-        command=command,
-        launch_cwd=launch_cwd,
-        child_env=blackbox_env,
-        output_log_path=output_log_path,
-        process_launcher=select_process_launcher(
-            output_log_path, terminal_surface_mode=terminal_surface_mode
-        ),
-        launcher_diagnostics_path=launcher_diagnostics_path,
-        run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-        on_running=record_blackbox_started,
-    )
+        def record_blackbox_started(identity: ProcessIdentity) -> None:
+            captured = output_log_path is not None
+            record_scope(
+                launch,
+                scope_from_identity(
+                    identity,
+                    scope_id="stdio" if captured else "tui",
+                    role="harness_stdio" if captured else "harness_tui",
+                    owner_policy="spawn_owned",
+                    owner_id=str(launch.spawn_id),
+                ),
+            )
+            on_running(identity)
+            serve_control_socket(identity.pid)
+
+        blackbox_result = _execute_via_blackbox(
+            command=command,
+            launch_cwd=launch_cwd,
+            child_env=blackbox_env,
+            output_log_path=output_log_path,
+            process_launcher=select_process_launcher(
+                output_log_path, terminal_surface_mode=terminal_surface_mode
+            ),
+            launcher_diagnostics_path=launcher_diagnostics_path,
+            run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
+            on_running=record_blackbox_started,
+        )
     fold = get_harness_bundle(harness_id).extractor.create_fold(usage_seed)
     if output_log_path is not None and output_log_path.is_file():
         fold.fold_stdout(output_log_path, harness_id)
@@ -837,6 +844,10 @@ def run_harness_process(
     )
     try:
         if hold is not None:
+            # The hold is the launch lock: any control socket here is a dead launcher's.
+            # Removing it before the spawn reads as active sends a sender to the
+            # normal poll instead of a refused connection.
+            control_socket_path(runtime_root, reserved_spawn_id).unlink(missing_ok=True)
             reopened = lifecycle_service.reopen(
                 primary_reservation(
                     chat_id=resume_chat_id,

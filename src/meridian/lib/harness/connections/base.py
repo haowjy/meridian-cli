@@ -11,7 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryError, DeliveryKind, DeliveryRefused, TransportDead
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 from meridian.lib.state.paths import LaunchPaths
@@ -92,8 +92,12 @@ ConnectionState = Literal["created", "starting", "connected", "stopping", "stopp
 PiSessionRole = Literal["primary", "spawned"]
 
 
-class ConnectionNotReady(RuntimeError):
-    """Raised when send operations are attempted before connection readiness."""
+def not_ready(state: ConnectionState, text: str) -> DeliveryError:
+    """The error for a send attempted outside ``connected``: dead once stopping, else refused."""
+
+    if state in ("stopping", "stopped", "failed"):
+        return TransportDead(text)
+    return DeliveryRefused(text)
 
 
 @dataclass(frozen=True)
@@ -456,7 +460,7 @@ class HarnessConnection(Generic[SpecT], ABC):
 
     @abstractmethod
     async def send_user_message(self, text: str) -> DeliveryKind:
-        """Hand one user message to the harness and say how far it got."""
+        """Hand one user message to the harness; a failure raises ``DeliveryError``."""
         ...
 
     @abstractmethod
@@ -472,7 +476,6 @@ __all__ = [
     "AutoAcceptHandler",
     "ConnectionCapabilities",
     "ConnectionConfig",
-    "ConnectionNotReady",
     "ConnectionState",
     "HarnessConnection",
     "HarnessRequest",
@@ -486,5 +489,6 @@ __all__ = [
     "ServerRequestHandler",
     "StopProgressCallback",
     "StopResult",
+    "not_ready",
     "validate_prompt_size",
 ]

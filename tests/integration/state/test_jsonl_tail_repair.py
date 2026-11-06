@@ -118,7 +118,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     coordinator = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, "s-1"))
     assert coordinator._transition_seq == 1
 
-    async def _noop_send() -> object:
+    async def _noop_send() -> None:
         return None
 
     await coordinator.run_action(
@@ -126,7 +126,6 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
         payload={"text": "hello"},
         source="test",
         send=_noop_send,
-        fence_on_interrupt=False,
     )
 
     rows = [

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
@@ -153,6 +154,7 @@ class _HoldProfile:
         *,
         launch: LaunchPaths,
         backend: ResidentBackendControl | None,
+        health: Callable[[], bool],
         send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
         poll_seconds: float,
@@ -170,6 +172,7 @@ class _HoldProfile:
             rearm_budget=rearm_budget,
         )
         self._backend = backend
+        self._health = health
         self._send_nudge = send_nudge
         self._accepted_signals: frozenset[SpawnSignalKind] = (
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
@@ -267,6 +270,10 @@ class _HoldProfile:
         )
 
     def should_defer_close(self, state: CompletionState) -> bool:
+        # Asked only once the stream has closed. A dead backend will not speak again, so
+        # waiting for its descendants would only run out the deadline.
+        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+            return False
         if self._rearmed:
             return True
         return (
@@ -298,12 +305,16 @@ class _HoldProfile:
             raise RuntimeError("completion handshake backend is unavailable")
         try:
             await self._send_nudge(self._nudge_message(report_kept=state.candidate is not None))
-        except Exception:
+        except Exception as exc:
             self._confirmation_failed = True
             if expiry_nudge:
-                # The child was not asked, so the next expiry retries, once.
-                self._confirmation_requested = confirmation_requested
-                self._confirmation_grace_at = None
+                if isinstance(exc, DeliveryRefused):
+                    # The child was not asked, so the next expiry retries, once.
+                    self._confirmation_requested = confirmation_requested
+                    self._confirmation_grace_at = None
+                else:
+                    # Gone, or the nudge may have arrived: never resend it.
+                    self._idle_nudge_sends = _IDLE_NUDGE_SENDS
             raise
         if expiry_nudge:
             self._idle_nudge_sends = _IDLE_NUDGE_SENDS
@@ -315,7 +326,15 @@ class _HoldProfile:
         recorded_outcome: TerminalEventOutcome | None,
     ) -> ProfileExitDecision:
         del state
-        return ProfileExitDecision(recorded_outcome=recorded_outcome)
+        # The hold ends without the deadline cleanup; a dead backend's descendants go too.
+        return ProfileExitDecision(
+            recorded_outcome=recorded_outcome,
+            cleanup_reason=(
+                _BACKEND_DEAD_WHILE_AWAITING_DONE.error
+                if recorded_outcome is _BACKEND_DEAD_WHILE_AWAITING_DONE
+                else None
+            ),
+        )
 
     def observe_event(self, semantics: EventSemantics) -> None:
         if semantics.activity != "turn_active":
@@ -617,7 +636,10 @@ class _HoldProfile:
 
     def _resident_health_status(self) -> LivenessDecision:
         if self._backend is None:
-            return LivenessDecision.CONTINUE
+            # No backend liveness policy: the connection's own health is the evidence.
+            # A send that found the transport gone (TransportDead) leaves it unhealthy,
+            # so the evaluation that follows takes the dead-backend cleanup.
+            return LivenessDecision.CONTINUE if self._health() else LivenessDecision.BACKEND_DEAD
         try:
             return self._backend.health_status()
         except Exception:
@@ -675,6 +697,7 @@ class ResidentDrainCoordinator:
         send_nudge: Callable[[str], Awaitable[None]],
         completion_signals_available: bool,
         backend: ResidentBackendControl | None,
+        health: Callable[[], bool],
         native: NativeTaskSource | None,
         deadline_seconds: float,
         poll_seconds: float | None,
@@ -703,6 +726,7 @@ class ResidentDrainCoordinator:
         profile = _HoldProfile(
             launch=launch,
             backend=backend,
+            health=health,
             send_nudge=send_nudge,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,

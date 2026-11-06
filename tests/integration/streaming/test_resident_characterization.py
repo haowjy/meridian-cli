@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.semantics import (
     TerminalEventOutcome,
@@ -62,6 +63,7 @@ def _coordinator(
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
+        health=connection.health,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
@@ -420,7 +422,7 @@ async def test_refused_expiry_nudge_gets_one_retry_then_cleanup(
     write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     await coordinator.handle_timeout()
     await start_turn(coordinator)
-    backend.fail_inject = True
+    backend.inject_error = DeliveryRefused("inject failed")
 
     clock.advance(10.0)
     assert (await coordinator.handle_timeout()).recorded_outcome is None

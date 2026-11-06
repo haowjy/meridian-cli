@@ -16,7 +16,6 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     HarnessRequest,
     RawHarnessEvent,
 )
@@ -69,8 +68,8 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
     runtime_root = resolve_runtime_paths(project_root).root_dir
 
     class FakeControlSocketServer:
-        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:
@@ -217,169 +216,6 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_coordinator_retries_connection_not_ready_for_permission_reply(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
-
-    class FakeControlSocketServer:
-        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
-            _ = spawn_id, manager
-            self.socket_path = socket_path
-
-        async def start(self) -> None:
-            self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-
-        async def stop(self) -> None:
-            return None
-
-    class FakeConnection:
-        def __init__(self, request_handler: object | None = None) -> None:
-            self._spawn_id = SpawnId("")
-            self._request_handler = request_handler
-            self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
-            self.state = "created"
-            self.respond_attempts = 0
-
-        @property
-        def capabilities(self) -> ConnectionCapabilities:
-            return ConnectionCapabilities(
-                mid_turn_injection="interrupt_restart",
-                supports_steer=True,
-                supports_cancel=True,
-                runtime_model_switch=False,
-                structured_reasoning=True,
-                supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
-            )
-
-        @property
-        def harness_id(self) -> HarnessId:
-            return HarnessId.CODEX
-
-        @property
-        def spawn_id(self) -> SpawnId:
-            return self._spawn_id
-
-        @property
-        def session_id(self) -> str | None:
-            return None
-
-        @property
-        def subprocess_pid(self) -> int | None:
-            return None
-
-        @property
-        def primary_event_scope(self) -> None:
-            return None
-
-        def observe_event_semantics(self, semantics: object) -> None:
-            _ = semantics
-
-        def native_task_source(self) -> None:
-            return None
-
-        @property
-        def resident_backend(self) -> None:
-            return None
-
-        async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-            _ = spec
-            self._spawn_id = config.launch.spawn_id
-            self.state = "connected"
-            if self._request_handler is None:
-                raise AssertionError("expected runtime HITL request handler")
-            await cast("Any", self._request_handler).handle_request(
-                self,
-                HarnessRequest(
-                    request_id="approval-1",
-                    request_type="approval",
-                    method="item/commandExecution/requestApproval",
-                    payload={"command": "echo hi"},
-                ),
-            )
-
-        async def stop(self) -> None:
-            self.state = "stopped"
-            await self._events.put(None)
-
-        def health(self) -> bool:
-            return self.state == "connected"
-
-        async def send_user_message(self, text: str) -> DeliveryKind:
-            _ = text
-            return DeliveryKind.ACKNOWLEDGED
-
-        async def send_cancel(self) -> None:
-            return None
-
-        async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
-            await self._events.put(event)
-
-        async def respond_request(
-            self,
-            request_id: str,
-            decision: str,
-            payload: dict[str, object] | None = None,
-        ) -> None:
-            _ = payload
-            self.respond_attempts += 1
-            # Attempt 1 is the auto-reject from PermissionBroker (succeeds).
-            # Attempt 2 is the manager's first explicit call (fails, triggering retry).
-            # Attempt 3 is the coordinator's retry (succeeds).
-            if self.respond_attempts == 2:
-                raise ConnectionNotReady("retryable send failure")
-            callback = getattr(self._request_handler, "on_request_resolved", None)
-            if callback is not None:
-                await cast("Any", callback)(request_id, resolution={"decision": decision})
-
-        async def respond_user_input(self, request_id: str, answers: dict[str, object]) -> None:
-            _ = request_id, answers
-
-        async def events(self):  # type: ignore[no-untyped-def]
-            while True:
-                event = await self._events.get()
-                if event is None:
-                    return
-                yield event
-
-    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
-    monkeypatch.setattr(
-        "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: FakeConnection,
-    )
-
-    spawn_id = start_spawn(
-        runtime_root,
-        chat_id="c-hitl-retry",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="codex",
-        kind="streaming",
-        prompt="hello",
-        launch_mode="foreground",
-        status="running",
-    ).spawn_id
-    manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
-    await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
-
-    try:
-        await manager.respond_request(
-            spawn_id,
-            request_id="approval-1",
-            decision="accept",
-            source="test",
-        )
-        connection = cast("Any", manager.get_connection(spawn_id))
-        assert connection is not None
-        assert connection.respond_attempts == 3
-        assert _read_permission_statuses(runtime_root, spawn_id) == ["pending", "resolved"]
-    finally:
-        await manager.stop_spawn(spawn_id)
-
-
-@pytest.mark.asyncio
 async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_agents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -388,8 +224,8 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
     runtime_root = resolve_runtime_paths(project_root).root_dir
 
     class FakeControlSocketServer:
-        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:

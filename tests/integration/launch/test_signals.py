@@ -35,8 +35,8 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     ).run_streaming_spawn
 
     class _FakeControlSocketServer:
-        def __init__(self, spawn_id: str, socket_path: Path, manager: object) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:

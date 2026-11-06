@@ -10,11 +10,20 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
-from meridian.lib.core.delivery import DeliveryKind
-from meridian.lib.harness.connections.base import ConnectionNotReady
+from meridian.lib.core.delivery import (
+    SEND_TIMEOUT_SECONDS,
+    Deliver,
+    DeliveryError,
+    DeliveryKind,
+    DeliveryRefused,
+)
 from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+
+# One retry of a refused send, after a short pause.
+_MAX_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 0.05
 
 
 class ControlActionType(StrEnum):
@@ -22,8 +31,6 @@ class ControlActionType(StrEnum):
 
     INTERRUPT = "interrupt"
     INJECT = "inject"
-    PERMISSION_REPLY = "permission_reply"
-    USER_INPUT_REPLY = "user_input_reply"
 
 
 class ControlActionStatus(StrEnum):
@@ -37,18 +44,6 @@ class ControlActionStatus(StrEnum):
 
 
 @dataclass(frozen=True)
-class ControlActionResult:
-    """Result envelope returned by the coordinator."""
-
-    success: bool
-    action_id: str
-    submission_seq: int
-    error: str | None = None
-    delivery: DeliveryKind | None = None
-    """Set when ``send`` returned one (inject); None for other actions."""
-
-
-@dataclass(frozen=True)
 class _CounterState:
     transition_seq: int
     action_seq: int
@@ -57,30 +52,24 @@ class _CounterState:
     interrupt_fence_submission: int
 
 
-def _failure_text(exc: Exception) -> str:
-    """Text for the sender: never blank; any failure but ConnectionNotReady may follow the write."""
+def _failure(exc: Exception, action: ControlActionType) -> DeliveryError:
+    """The error for the sender: a ``DeliveryError`` passes through; others may follow the write."""
 
+    if isinstance(exc, DeliveryError):
+        return exc
     text = str(exc) or type(exc).__name__
-    if isinstance(exc, ConnectionNotReady):
-        return text
-    return f"{text}; the message may have arrived and was not resent"
+    if action is ControlActionType.INTERRUPT:
+        return DeliveryError(text)
+    return DeliveryError(f"{text}; the message may have arrived and was not resent")
 
 
 class ControlActionCoordinator:
     """Serialize and persist runtime control actions for one active session."""
 
-    def __init__(
-        self,
-        *,
-        launch: LaunchPaths,
-        default_max_attempts: int = 2,
-        retry_delay_secs: float = 0.05,
-    ) -> None:
+    def __init__(self, *, launch: LaunchPaths) -> None:
         self._spawn_id = launch.spawn_id
         self._actions_path = launch.control_actions
         self._runtime_root = launch.runtime_root
-        self._default_max_attempts = max(1, int(default_max_attempts))
-        self._retry_delay_secs = max(0.0, float(retry_delay_secs))
         self._lock = asyncio.Lock()
         state = self._load_counter_state()
         self._transition_seq = state.transition_seq
@@ -89,20 +78,29 @@ class ControlActionCoordinator:
         self._interrupt_epoch = state.interrupt_epoch
         self._interrupt_fence_submission = state.interrupt_fence_submission
 
-    async def run_action(
+    async def deliver(self, send: Deliver, text: str, *, source: str) -> DeliveryKind:
+        """Journal and serialize one user message; a failure raises ``DeliveryError``."""
+
+        return await self.run_action(
+            action=ControlActionType.INJECT,
+            payload={"text": text},
+            source=source,
+            send=lambda: send(text),
+        )
+
+    async def run_action[T: DeliveryKind | None](
         self,
         *,
         action: ControlActionType,
         payload: dict[str, object],
         source: str,
-        send: Callable[[], Awaitable[DeliveryKind | None]],
-        fence_on_interrupt: bool = True,
-    ) -> ControlActionResult:
+        send: Callable[[], Awaitable[T]],
+    ) -> T:
         """Run one action via serialized send + durable transition records.
 
-        Only ``ConnectionNotReady`` is retried: connections raise it before
-        writing anything. Any other failure may follow the write, so a retry
-        could repeat the action (a second Codex turn); it is reported once.
+        Only ``DeliveryRefused`` is retried: a connection raises it before writing
+        anything. Any other failure may follow the write, so a retry could repeat the
+        action (a second Codex turn); it is journaled FAILED and raised once.
         """
 
         submission_seq = self._reserve_submission_seq()
@@ -128,7 +126,6 @@ class ControlActionCoordinator:
 
             if (
                 action is not ControlActionType.INTERRUPT
-                and fence_on_interrupt
                 and submission_seq < self._interrupt_fence_submission
             ):
                 error_text = "stale_after_interrupt"
@@ -143,12 +140,7 @@ class ControlActionCoordinator:
                     attempt=0,
                     error=error_text,
                 )
-                return ControlActionResult(
-                    success=False,
-                    action_id=action_id,
-                    submission_seq=submission_seq,
-                    error=error_text,
-                )
+                raise DeliveryRefused(error_text)
 
             attempt = 0
             while True:
@@ -163,13 +155,20 @@ class ControlActionCoordinator:
                     payload=payload,
                     attempt=attempt,
                 )
+                bound = asyncio.timeout(SEND_TIMEOUT_SECONDS)
                 try:
-                    delivery = await send()
+                    async with bound:
+                        delivery = await send()
                 except Exception as exc:
-                    error_text = _failure_text(exc)
-                    if attempt < self._default_max_attempts and isinstance(exc, ConnectionNotReady):
-                        await asyncio.sleep(self._retry_delay_secs)
+                    if attempt < _MAX_ATTEMPTS and isinstance(exc, DeliveryRefused):
+                        await asyncio.sleep(_RETRY_DELAY_SECONDS)
                         continue
+                    failure = _failure(
+                        TimeoutError(f"no answer within {SEND_TIMEOUT_SECONDS:g}s")
+                        if bound.expired()
+                        else exc,
+                        action,
+                    )
                     await self._append_transition(
                         action_id=action_id,
                         action=action,
@@ -179,24 +178,18 @@ class ControlActionCoordinator:
                         source=source,
                         payload=payload,
                         attempt=attempt,
-                        error=error_text,
+                        error=str(failure),
                     )
-                    return ControlActionResult(
-                        success=False,
-                        action_id=action_id,
-                        submission_seq=submission_seq,
-                        error=error_text,
-                    )
+                    raise failure from exc
 
                 # ``posted``: the write finished but no harness confirmed it. A launcher
                 # that died mid-write leaves ``sent`` as the last status instead.
+                posted = delivery is DeliveryKind.POSTED
                 await self._append_transition(
                     action_id=action_id,
                     action=action,
                     status=(
-                        ControlActionStatus.POSTED
-                        if delivery is DeliveryKind.POSTED
-                        else ControlActionStatus.ACKNOWLEDGED
+                        ControlActionStatus.POSTED if posted else ControlActionStatus.ACKNOWLEDGED
                     ),
                     submission_seq=submission_seq,
                     interrupt_epoch=interrupt_epoch,
@@ -204,12 +197,7 @@ class ControlActionCoordinator:
                     payload=payload,
                     attempt=attempt,
                 )
-                return ControlActionResult(
-                    success=True,
-                    action_id=action_id,
-                    submission_seq=submission_seq,
-                    delivery=delivery,
-                )
+                return delivery
 
     def _reserve_submission_seq(self) -> int:
         submission_seq = self._submission_seq
@@ -322,7 +310,6 @@ class ControlActionCoordinator:
 
 __all__ = [
     "ControlActionCoordinator",
-    "ControlActionResult",
     "ControlActionStatus",
     "ControlActionType",
 ]

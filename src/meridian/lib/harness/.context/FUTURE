@@ -15,3 +15,4 @@
   definitions under `mcp.servers`, but Meridian must not reconstruct commands from tool
   permission names.
 
+- `control_action.py`: every journal row in `control_actions.jsonl` repeats the full message text, so a large message (up to the 16 MiB socket limit) costs three durable writes, each fsynced. Keeping the text on the `requested` row alone, with later rows referring to it by action id, would cut that to one.

@@ -53,8 +53,8 @@ def _pi_extension_projection_fixture(
 
 
 class _FakeControlSocketServer:
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: object) -> None:
-        _ = spawn_id, manager
+    def __init__(self, socket_path: Path, route: object) -> None:
+        _ = route
         self.socket_path = socket_path
 
     async def start(self) -> None:

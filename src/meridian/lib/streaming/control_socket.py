@@ -14,16 +14,12 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
+from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
-from meridian.lib.streaming.types import InjectResult
-
-if TYPE_CHECKING:
-    from meridian.lib.streaming.spawn_manager import SpawnManager
-
 
 # sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
 # callers can validate before asyncio reaches the less actionable bind error.
@@ -31,6 +27,12 @@ UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 # Runner and client processes may have different TMPDIR values; the shared
 # discovery path must not depend on either process's environment.
 _POSIX_SOCKET_ROOT = Path("/tmp")
+# One request is one line; asyncio's 64 KiB default would cap messages far below what
+# the harnesses accept.
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
+# A client that connects and stays silent must not pin a handler, or hang stop().
+_REQUEST_READ_TIMEOUT_SECONDS = 10.0
+_STOP_WAIT_SECONDS = 5.0
 # bind() creates the file before the kernel publishes the bound socket.
 _STALE_SOCKET_AGE_SECONDS = 120
 
@@ -122,13 +124,12 @@ def _sweep_stale_sockets(own_path: Path) -> None:
 
 
 class ControlSocketServer:
-    """Handle one control socket endpoint for one active spawn."""
+    """Serve one control socket endpoint: each request is one message for the route."""
 
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager):
-        self._spawn_id = spawn_id
+    def __init__(self, socket_path: Path, route: MessageRoute):
         self._socket_path = socket_path
         self._port_file = socket_path.with_suffix(".port")
-        self._manager = manager
+        self._route = route
         self._server: asyncio.AbstractServer | None = None
         self._port: int | None = None
 
@@ -156,6 +157,7 @@ class ControlSocketServer:
                 self._handle_client,
                 host="127.0.0.1",
                 port=0,
+                limit=MAX_REQUEST_BYTES,
             )
             sockets = self._server.sockets or ()
             if not sockets:
@@ -178,23 +180,32 @@ class ControlSocketServer:
         # The runner holds this spawn's launch.lock for the endpoint lifetime.
         self._socket_path.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
-            self._handle_client, path=str(self._socket_path)
+            self._handle_client, path=str(self._socket_path), limit=MAX_REQUEST_BYTES
         )
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        """Read one request, route to the manager, and write one response."""
+        """Read one request, deliver it through the route, and write one response."""
 
         response: dict[str, object]
         try:
-            raw = await reader.readline()
-            if not raw:
-                response = {"ok": False, "error": "empty request"}
-            else:
-                response = await self._handle_request(raw)
-        except Exception as exc:
-            response = {"ok": False, "error": str(exc)}
+            raw = await asyncio.wait_for(reader.readline(), _REQUEST_READ_TIMEOUT_SECONDS)
+        except TimeoutError:
+            response = {"ok": False, "error": "no request received"}
+        except ValueError:
+            response = {
+                "ok": False,
+                "error": f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit",
+            }
+        else:
+            try:
+                if raw:
+                    response = await self._handle_request(raw)
+                else:
+                    response = {"ok": False, "error": "empty request"}
+            except Exception as exc:
+                response = {"ok": False, "error": str(exc)}
 
         encoded = (
             json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
@@ -225,94 +236,32 @@ class ControlSocketServer:
         if not isinstance(message_type, str):
             return {"ok": False, "error": "missing request type"}
 
-        result: InjectResult
-        if message_type == "user_message":
-            text = payload.get("text")
-            if not isinstance(text, str):
-                return {"ok": False, "error": "user_message requires text"}
-            response: dict[str, object] | None = None
-
-            def _on_result(inject_result: InjectResult) -> None:
-                nonlocal response
-                response = self._result_to_response(inject_result)
-
-            result = await self._manager.inject(
-                self._spawn_id,
-                message=text,
-                source="control_socket",
-                on_result=_on_result,
-            )
-            return response or self._result_to_response(result)
-        if message_type == "interrupt":
-            await self._manager.interrupt(self._spawn_id, source="control_socket")
-            return {"ok": True}
-        if message_type == "permission_reply":
-            request_id = payload.get("request_id")
-            decision = payload.get("decision")
-            reply_payload = payload.get("payload")
-            if not isinstance(request_id, str) or not request_id:
-                return {"ok": False, "error": "permission_reply requires request_id"}
-            if not isinstance(decision, str) or not decision:
-                return {"ok": False, "error": "permission_reply requires decision"}
-            if reply_payload is not None and not isinstance(reply_payload, dict):
-                return {"ok": False, "error": "permission_reply payload must be an object"}
-            typed_payload = (
-                cast("dict[str, object]", reply_payload)
-                if isinstance(reply_payload, dict)
-                else None
-            )
-            await self._manager.respond_request(
-                self._spawn_id,
-                request_id=request_id,
-                decision=decision,
-                payload=typed_payload,
-                source="control_socket",
-            )
-            return {"ok": True}
-        if message_type == "user_input_reply":
-            request_id = payload.get("request_id")
-            answers = payload.get("answers")
-            if not isinstance(request_id, str) or not request_id:
-                return {"ok": False, "error": "user_input_reply requires request_id"}
-            if not isinstance(answers, dict):
-                return {"ok": False, "error": "user_input_reply requires answers object"}
-            typed_answers = cast("dict[str, object]", answers)
-            await self._manager.respond_user_input(
-                self._spawn_id,
-                request_id=request_id,
-                answers=typed_answers,
-                source="control_socket",
-            )
-            return {"ok": True}
-        else:
+        if message_type != "user_message":
             return {"ok": False, "error": f"unsupported request type: {message_type}"}
-
-    @staticmethod
-    def _result_to_response(result: InjectResult) -> dict[str, object]:
-        response: dict[str, object]
-        if result.success:
-            response = {"ok": True}
-        else:
-            response = {"ok": False, "error": result.error or "request failed"}
-        if result.inbound_seq is not None:
-            response["inbound_seq"] = result.inbound_seq
-        if result.delivery is not None:
-            response["delivery"] = result.delivery.value
+        text = payload.get("text")
+        if not isinstance(text, str):
+            return {"ok": False, "error": "user_message requires text"}
+        delivery = await self._route.deliver(text)
+        response: dict[str, object] = {"ok": True, "delivery": delivery.value}
+        if self._route.note is not None:
+            response["note"] = self._route.note
         return response
 
     async def stop(self) -> None:
         """Close the server and remove its discovery artifact."""
 
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+        # Unlink first: a client that keeps its connection open can delay wait_closed.
         if IS_WINDOWS:
             self._port = None
             self._port_file.unlink(missing_ok=True)
-            return
-
-        self._socket_path.unlink(missing_ok=True)
+        else:
+            self._socket_path.unlink(missing_ok=True)
+        if server is not None:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(server.wait_closed(), _STOP_WAIT_SECONDS)
 
 
 __all__ = [

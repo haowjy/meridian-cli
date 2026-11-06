@@ -170,10 +170,11 @@ sessions load only session-boundary.
 
 ### Primary message delivery and Claude's inbound gate
 
-`meridian [-C <root>] spawn message <primary chat ID>` posts to the messaging socket that
-meridian-session-boundary recorded at SessionStart, which is Claude Code's
-cross-session peer lane. Claude decides delivery, not Meridian, and the command
-can only report that the message was posted. Address a primary by its chat ID or its spawn ID; both survive a
+`meridian [-C <root>] spawn message <primary chat ID>` connects to the control socket the
+primary's launcher serves. The launcher binds it once Claude has published its messaging
+socket, which meridian-session-boundary records at SessionStart and which is Claude Code's
+cross-session peer lane, and forwards each message there. Claude decides delivery, not
+Meridian, and the command can only report that the message was posted. Address a primary by its chat ID or its spawn ID; both survive a
 `--continue`. `-C <root>` reaches a primary in another project.
 
 Claude's `crossSessionInbound` setting picks the policy:

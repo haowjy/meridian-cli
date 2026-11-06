@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind, TransportDead
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -29,7 +29,6 @@ from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_teardown import DEFAULT_DRAIN_SESSION_TEARDOWN
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager, SpawnSession
-from meridian.lib.streaming.types import InjectResult
 from meridian.lib.telemetry import init_telemetry
 from tests.support.async_determinism import assert_still_pending
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
@@ -149,8 +148,8 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     release_cleanup = asyncio.Event()
 
     class FakeControlSocketServer:
-        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:
@@ -268,11 +267,8 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         # Session cleanup removes live connection before cleanup fully drains.
         assert manager.get_connection(spawn_id) is None
 
-        inject_result = await manager.inject(spawn_id, "late message")
-        assert inject_result == InjectResult(
-            success=False,
-            error=f"Spawn {spawn_id} is not active",
-        )
+        with pytest.raises(TransportDead, match=f"Spawn {spawn_id} is not active"):
+            await manager.deliver(spawn_id, "late message", source="test")
         assert "item.completed" in [event.event_type for event in observed]
 
         release_cleanup.set()
@@ -481,8 +477,8 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
     runtime_root = resolve_runtime_paths(project_root).root_dir
 
     class FakeControlSocketServer:
-        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:
@@ -497,7 +493,6 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             self.state = "created"
             self.inject_started = asyncio.Event()
             self.allow_inject_send = asyncio.Event()
-            self.call_order: list[str] = []
             self.capabilities = ConnectionCapabilities(
                 mid_turn_injection="interrupt_restart",
                 supports_steer=True,
@@ -556,27 +551,12 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
-            self.call_order.append("inject:start")
             self.inject_started.set()
             await self.allow_inject_send.wait()
-            self.call_order.append("inject:end")
             return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
-            self.call_order.append("interrupt")
-
-        async def respond_request(
-            self,
-            request_id: str,
-            decision: str,
-            payload: dict[str, object] | None = None,
-        ) -> None:
-            _ = payload
-            self.call_order.append(f"approve:{request_id}:{decision}")
-
-        async def respond_user_input(self, request_id: str, answers: dict[str, object]) -> None:
-            _ = answers
-            self.call_order.append(f"input:{request_id}")
+            return None
 
         async def events(self):  # type: ignore[no-untyped-def]
             while self.state != "stopped":
@@ -608,7 +588,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
     )
 
     try:
-        inject_task = asyncio.create_task(manager.inject(spawn_id, "hello", source="test"))
+        inject_task = asyncio.create_task(manager.deliver(spawn_id, "hello", source="test"))
         await connection.inject_started.wait()
 
         interrupt_task = asyncio.create_task(manager.interrupt(spawn_id, source="test"))
@@ -616,9 +596,8 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         await assert_still_pending(interrupt_task)
 
         connection.allow_inject_send.set()
-        inject_result = await inject_task
+        assert await inject_task is DeliveryKind.ACKNOWLEDGED
         await interrupt_task
-        assert inject_result.success is True
 
         spawn_dir = runtime_root / "spawns" / str(spawn_id)
         control_actions_path = launch_paths(runtime_root, spawn_id).control_actions
@@ -652,7 +631,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             for record in records
             if record["action"] == "inject" and record["status"] == "requested"
         )
-        assert inject_result.inbound_seq == inject_requested["submission_seq"] == 0
+        assert inject_requested["submission_seq"] == 0
         assert inject_ack_index is not None
         assert interrupt_requested_index is not None
         assert inject_ack_index < interrupt_requested_index

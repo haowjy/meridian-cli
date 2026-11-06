@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -24,7 +25,6 @@ from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
-from meridian.lib.streaming.types import InjectResult
 from tests.support.fakes import FakeClock
 from tests.support.launch_paths import launch_paths
 from tests.support.pi import start_row
@@ -57,11 +57,11 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     messages: list[str] = []
     start_row(tmp_path, str(spawn_id), HarnessId.CLAUDE, None)
 
-    async def inject(
-        _id: SpawnId, message: str, source: str = "control_socket", **_: object
-    ) -> InjectResult:
+    async def deliver(
+        _id: SpawnId, message: str, *, source: str = "control_socket"
+    ) -> DeliveryKind:
         messages.append(message)
-        return InjectResult(success=True)
+        return DeliveryKind.ACKNOWLEDGED
 
     def frame(kind: str, **payload: object) -> RawHarnessEvent:
         return RawHarnessEvent(event_type=kind, harness_id="claude", payload=payload)
@@ -72,6 +72,9 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         completion_signals_available = True
         native_task_source = ClaudeConnection.native_task_source
         primary_event_scope = None
+
+        def health(self) -> bool:
+            return True
 
         def observe_event_semantics(self, semantics: object) -> None:
             pass
@@ -154,7 +157,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         launch=launch_paths(tmp_path, spawn_id),
         project_root=tmp_path,
         emit_event=lambda *_: None,
-        inject=inject,
+        deliver=deliver,
         build_spawn_application_service=cast("Any", None),
         receiver=receiver,
         config=ConnectionConfig(
