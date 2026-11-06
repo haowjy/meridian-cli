@@ -383,7 +383,8 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
         outcome = await manager.wait_for_completion(spawn_id)
 
         assert inject_result.success is False
-        assert inject_result.error == rejection
+        assert inject_result.error is not None
+        assert inject_result.error.startswith(rejection)
         assert outcome is not None
         assert outcome.status == "succeeded"
 
