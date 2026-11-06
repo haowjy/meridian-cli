@@ -254,6 +254,8 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         RESET,
     ),
     # `decide` retires a lease at its time, so a past-due one cannot stay a wake.
+    # Blockers cleared: the lease is over.
+    ("E4", HoldState(lease=HeldLease(frozenset({CHILD}))), {}, ASK, RESET),
     ("E4", HoldState(lease=SpacedLease(100.0)), {}, ASK, RESET),
     ("E6", replace(SENT, lease=SpacedLease(100.0)), {}, WAIT, SENT),
     ("E5", SETTLED, {}, PUBLISH, None),
