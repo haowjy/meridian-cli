@@ -90,7 +90,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         "created": {"starting", "stopping", "stopped", "failed"},
         "starting": {"connected", "stopping", "stopped", "failed"},
         "connected": {"stopping", "failed"},
-        "stopping": {"stopped", "failed"},
+        "stopping": {"connected", "stopped", "failed"},
         "failed": {"stopped"},
         "stopped": set(),
     }
@@ -217,11 +217,15 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = True
             return
         self._ensure_connected()
-        self._cancel_requested = True
         self._signal_in_flight = True
-        if self._state != "stopping":
-            self._set_state("stopping")
-        await self._signal_process(signal.SIGINT)
+        self._set_state("stopping")
+        try:
+            await self._signal_process(signal.SIGINT)
+        except Exception:
+            self._signal_in_flight = False
+            self._set_state("connected")
+            raise
+        self._cancel_requested = True
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         """Yield RawHarnessEvent objects read line-by-line from Claude stdout."""

@@ -11,7 +11,7 @@ import math
 import os
 import socket
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
 from enum import StrEnum
 from io import BufferedWriter
@@ -149,7 +149,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         "created": frozenset(("starting", "stopping", "failed")),
         "starting": frozenset(("connected", "stopping", "failed")),
         "connected": frozenset(("stopping", "failed")),
-        "stopping": frozenset(("stopped", "failed")),
+        "stopping": frozenset(("connected", "stopped", "failed")),
         "stopped": frozenset(("starting",)),
         "failed": frozenset(("starting", "stopping", "stopped")),
     }
@@ -164,6 +164,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         "/event",
     )
     _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/session/{session_id}/abort",)
+    _CANCEL_PAYLOAD_VARIANTS: ClassVar[tuple[dict[str, object], ...]] = (
+        {"response": "abort"},
+        {"reason": "cancel"},
+        {"type": "cancel"},
+        {},
+    )
     # Asked only on a liveness stall, to tell a long tool from a dead stream.
     _SESSION_RUNNING_PROBE_PATH: ClassVar[str] = "/session/status"
     _PATH_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((404, 405))
@@ -249,6 +255,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
+        # True once ``events()`` has returned: nothing reads the stream, so a
+        # failed cancel must leave ``stopping`` in place (see ``send_cancel``).
+        self._events_exited = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
@@ -590,6 +599,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._events_exited = False
         self._event_queue = asyncio.Queue()
         self._queue_waiter = None
         self._pending_requests = {}
@@ -686,20 +696,33 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = True
             return
         self._require_connected()
-        self._cancel_requested = True
+        # ``stopping`` goes up before the POST: the first chunk after it ends
+        # the SSE read, so a later terminal (V1 ``session.idle`` reads as
+        # SUCCEEDED and outranks ``cancel_sent``) is never read. A failed POST
+        # undoes it, so a retry sends again.
         self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
-        await self._post_session_action(
-            path_templates=self._CANCEL_PATH_TEMPLATES,
-            payload_variants=(
-                {"response": "abort"},
-                {"reason": "cancel"},
-                {"type": "cancel"},
-                {},
-            ),
-            accepted_statuses=self._ACTION_SUCCESS_STATUSES,
-        )
+        try:
+            await self._post_session_action(
+                path_templates=self._CANCEL_PATH_TEMPLATES,
+                payload_variants=self._CANCEL_PAYLOAD_VARIANTS,
+                accepted_statuses=self._ACTION_SUCCESS_STATUSES,
+            )
+        except BaseException:
+            self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
+            # Roll back only while the drain is alive and ``stop()`` has not
+            # taken over: otherwise ``stopping`` is the truth (no reader, or a
+            # teardown that cannot go ``connected -> stopped``).
+            if (
+                self._state == "stopping"
+                and not self._events_exited
+                and not self._stop_lock.locked()
+            ):
+                self._transition("connected")
+            raise
+        self._cancel_requested = True
 
     async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
         """Return a terminal event missed by the prompt-before-subscribe window.
@@ -849,6 +872,15 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         return self._stall_failure_event(message), _StallAction.STOP
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
+        self._events_exited = False
+        try:
+            async with contextlib.aclosing(self._read_events()) as stream:
+                async for event in stream:
+                    yield event
+        finally:
+            self._events_exited = True
+
+    async def _read_events(self) -> AsyncGenerator[RawHarnessEvent, None]:
         if self._state not in ("connected", "stopping"):
             return
         if self._session_id is None:
