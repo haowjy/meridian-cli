@@ -288,13 +288,6 @@ def _primary_bundle(record: SpawnRecord) -> HarnessBundle[Any] | None:
     return get_harness_bundle(harness_id)
 
 
-def primary_inbox(record: SpawnRecord) -> PrimaryInbox | None:
-    """Return this primary's inbox port, or None when its harness has none."""
-
-    bundle = _primary_bundle(record)
-    return None if bundle is None else bundle.primary_inbox
-
-
 def primary_accepts_messages(record: SpawnRecord, *, runtime_root: Path) -> bool:
     """True when a post to this primary would find a live route, by the post's own check.
 
@@ -302,10 +295,8 @@ def primary_accepts_messages(record: SpawnRecord, *, runtime_root: Path) -> bool
     """
 
     bundle = _primary_bundle(record)
-    if bundle is None or bundle.primary_inbox is None:
+    if bundle is None or bundle.primary_inbox_route is None:
         return False
-    if bundle.primary_inbox_route is None:
-        return True
     try:
         bundle.primary_inbox_route(runtime_root=runtime_root, record=record)
     except PrimaryInboxError:
@@ -321,7 +312,8 @@ def post_to_primary(
 ) -> str:
     """Dispatch one primary inbox post through its harness bundle."""
 
-    inbox = primary_inbox(record)
+    bundle = _primary_bundle(record)
+    inbox = None if bundle is None else bundle.primary_inbox
     if inbox is None:
         raise PrimaryInboxError(
             f"{record.harness or 'unknown'} primaries have no message route yet (see #498)"
