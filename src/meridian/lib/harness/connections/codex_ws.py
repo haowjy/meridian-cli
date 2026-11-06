@@ -551,8 +551,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _send_input(self, text: str, operation: str) -> DeliveryKind:
         """Steer the running turn, else start one; a steer racing a turn end starts one.
 
-        Only a JSON-RPC error (the server refused, nothing delivered) falls back; a
-        timeout or transport failure after the write propagates, never a second send.
+        Only a JSON-RPC error (the server refused, nothing delivered) falls back, and a
+        refused ``turn/start`` is ``DeliveryRefused``; a timeout or transport failure
+        after the write propagates, never a second send.
         """
         self._require_connected(operation)
         self._signal_in_flight = False
@@ -572,10 +573,13 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 # The turn ended as the steer went out (expectedTurnId no longer matches).
                 # An idle thread starts a turn; app-server 0.166.0 joins a busy thread's turn.
                 pass
-        await self._request(
-            "turn/start",
-            {"threadId": thread_id, "input": _build_text_user_input(text)},
-        )
+        try:
+            await self._request(
+                "turn/start",
+                {"threadId": thread_id, "input": _build_text_user_input(text)},
+            )
+        except _CodexRpcError as exc:
+            raise DeliveryRefused(str(exc)) from exc
         return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
@@ -675,7 +679,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         ws = self._ws
         if ws is None:
-            raise RuntimeError("Codex websocket is not connected")
+            raise not_ready(self._state, "Codex websocket is not connected")
 
         payload: dict[str, object] = {
             "jsonrpc": "2.0",

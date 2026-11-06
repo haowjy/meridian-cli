@@ -1424,12 +1424,16 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         f"status={status} body={summarize_body(body)}"
                     )
                     break
-                raise RuntimeError(
+                raise http_rejection(
+                    status,
                     f"OpenCode session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}",
                 )
 
-        raise RuntimeError(last_error or "OpenCode session action failed")
+        # ``last_error`` is only set for 4xx statuses: the server answered and acted on nothing.
+        if last_error:
+            raise DeliveryRefused(last_error)
+        raise RuntimeError("OpenCode session action failed")
 
     async def _post_json(
         self,
@@ -1984,6 +1988,12 @@ def find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def http_rejection(status: int, text: str) -> RuntimeError:
+    """A 4xx answered a POST and acted on nothing; a 5xx may have acted, so it stays unknown."""
+
+    return DeliveryRefused(text) if 400 <= status < 500 else RuntimeError(text)
 
 
 def summarize_body(body: object | None) -> str:

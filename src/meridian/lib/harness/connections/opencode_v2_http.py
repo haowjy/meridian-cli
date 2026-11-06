@@ -26,6 +26,7 @@ from typing import ClassVar, cast
 
 import aiohttp
 
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_backend_command
@@ -44,6 +45,7 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
     SessionNotReadyError,
     find_free_port,
+    http_rejection,
     map_approval_decision,
     permission_liveness_key,
     summarize_body,
@@ -395,12 +397,16 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                         f"OpenCode V2 session action returned an HTML fallback on {path}: "
                         f"status={status} content_type={content_type}"
                     )
-                raise RuntimeError(
+                raise http_rejection(
+                    status,
                     f"OpenCode V2 session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}",
                 )
 
-        raise RuntimeError(last_error or "OpenCode V2 session action failed")
+        # ``last_error`` is only set for 4xx statuses: the server answered and acted on nothing.
+        if last_error:
+            raise DeliveryRefused(last_error)
+        raise RuntimeError("OpenCode V2 session action failed")
 
     async def respond_request(
         self,
