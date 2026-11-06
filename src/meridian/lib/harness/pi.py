@@ -63,10 +63,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.harness.projections.permissions_pi import (
-    PI_PERMISSION_POLICY_ENV,
-    compile_pi_permissions,
-)
+from meridian.lib.harness.projections.permissions_pi import compile_pi_permissions
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
     default_extra_extension_path,
@@ -79,6 +76,7 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
 )
+from meridian.lib.harness.projections.tool_extension_policy import TOOL_POLICY_ENV
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     PI_CANCELLED_STOP_REASONS,
@@ -532,7 +530,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        return {TOOL_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
 
     def resolve_session_file(
         self,

@@ -10,12 +10,12 @@ const bundlePath = join(
 );
 
 afterEach(() => {
-  delete process.env._MERIDIAN_PI_PERMISSION_POLICY;
+  delete process.env._MERIDIAN_TOOL_POLICY;
 });
 
 describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", () => {
   it("registers only the policy hooks", async () => {
-    process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify({
+    process.env._MERIDIAN_TOOL_POLICY = JSON.stringify({
       version: 1,
       rules: [],
       meridian_commands: [],
@@ -31,7 +31,7 @@ describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", ()
   });
 
   it("throws instead of loading without a usable policy", async () => {
-    process.env._MERIDIAN_PI_PERMISSION_POLICY = "";
+    process.env._MERIDIAN_TOOL_POLICY = "";
     const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
 
     expect(() => bundle.default({ on: () => undefined })).toThrow(

@@ -5,7 +5,7 @@ import type {
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, parse, resolve, sep } from "node:path";
 
-const POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY";
+const POLICY_ENV = "_MERIDIAN_TOOL_POLICY";
 const DENIAL_PREFIX = "Blocked by Meridian policy: ";
 const SIMPLE_COMMAND_REASON = `${DENIAL_PREFIX}restricted bash accepts only simple commands; run simple commands without expansion, redirection, or backgrounding.`;
 const PATH_TOOLS = new Set(["read", "edit", "write", "grep", "find", "ls"]);

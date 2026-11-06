@@ -29,7 +29,6 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.tools import ToolRule
 
-PI_PERMISSION_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
 # Pi's tool-selection flags and their short forms; under a bound policy the compile owns them.
 _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
     ("--tools", "-t"),
@@ -278,7 +277,6 @@ def project_pi_permission_args(permissions: PiPermissions) -> tuple[str, ...]:
 
 
 __all__ = [
-    "PI_PERMISSION_POLICY_ENV",
     "PiPermissions",
     "compile_pi_permissions",
     "project_pi_permission_args",

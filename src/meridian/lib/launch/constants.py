@@ -30,8 +30,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         # Names one launch's starting-prompt file; a launch that delivers no prompt
         # through the mod must not inherit its parent's.
         "_MERIDIAN_CLAUDE_FIRST_TURN_PATH",
-        # Pi permission policy is compiled afresh for each launch.
-        "_MERIDIAN_PI_PERMISSION_POLICY",
+        # The scoped-tool policy is compiled afresh for each launch.
+        "_MERIDIAN_TOOL_POLICY",
         # Each Pi launch derives its own delivery-parent scope from its caller.
         "_MERIDIAN_PI_OWED_PARENT_IDS",
         # Set by the Pi managed-bash task that ran this launcher; a harness child has its own.

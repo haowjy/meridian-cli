@@ -14,6 +14,9 @@ from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.safety.policy import ALLOWLIST_ORIGIN, PermissionPolicy, PlatformCommand
 from meridian.lib.tools import ToolAction, ToolRule, split_native
 
+# Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
+# so a nested launch never inherits it (see ``child=False`` in env_registry).
+TOOL_POLICY_ENV = "_MERIDIAN_TOOL_POLICY"
 _STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
 
@@ -128,6 +131,7 @@ def needs_extension(
 
 
 __all__ = [
+    "TOOL_POLICY_ENV",
     "ExtensionPolicy",
     "ExtensionRule",
     "bash_fails_closed",

@@ -118,7 +118,7 @@ denies.
 | Codex | sandbox mode, approval policy, shell/web/image switches | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
 | OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
-| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_PI_PERMISSION_POLICY` (extension rules) |
+| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_TOOL_POLICY` (extension rules) |
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
