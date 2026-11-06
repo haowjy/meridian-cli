@@ -87,24 +87,22 @@ def facts(**overrides: Any) -> HoldFacts:
     return HoldFacts(**(defaults | overrides))
 
 
-# row, state before, facts, decision, state after (None: unchanged), enter_wait
-ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | None, bool]] = [
+# row, state before, facts, decision, state after (None: unchanged)
+ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | None]] = [
     (
         "A1",
         SETTLED,
         {"end": TurnEnd(BAD, DrainAction(terminate=False, emit_turn_boundary=True))},
         ProfileDecision(action="clear", emit_turn_boundary=True),
         RESET,
-        False,
     ),
-    ("A2", SENT, {"end": CLOSED_END}, PUBLISH, None, True),
+    ("A2", SENT, {"end": CLOSED_END}, PUBLISH, None),
     (
         "A3",
         SENT,
         {"end": CLOSED_END, "assessment": BLOCKED, "expired": True},
         TIMEOUT,
         RESET,
-        False,
     ),
     (
         "A4",
@@ -112,16 +110,14 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"end": CLOSED_END, "assessment": UNKNOWN},
         WAIT_END,
         replace(SENT, ask=AskPhase.SETTLED),
-        True,
     ),
-    ("A4", RESET, {"end": CLOSED_END, "assessment": BLOCKED}, WAIT_END, RESET, True),
+    ("A4", RESET, {"end": CLOSED_END, "assessment": BLOCKED}, WAIT_END, RESET),
     (
         "A5",
         SETTLED,
         {"end": TurnEnd(BAD, TERMINATE)},
         ProfileDecision(action="fail", outcome=BAD),
         RESET,
-        False,
     ),
     (
         "A5",
@@ -132,18 +128,16 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         },
         ProfileDecision(action="fail", outcome=CLOSED),
         RESET,
-        False,
     ),
-    ("B1", replace(SENT, answer=SPENT), {"dead": True}, TIMEOUT, RESET, False),
+    ("B1", replace(SENT, answer=SPENT), {"dead": True}, TIMEOUT, RESET),
     # Delta 1: B1 sits above B2 and above a turn end's publish.
-    ("B1", replace(SETTLED, answer=SPENT), {"end": GOOD_END, "dead": True}, TIMEOUT, RESET, False),
+    ("B1", replace(SETTLED, answer=SPENT), {"end": GOOD_END, "dead": True}, TIMEOUT, RESET),
     (
         "B1",
         replace(SETTLED, answer=SPENT),
         {"end": GOOD_END, "dead": True, "rearm": True},
         TIMEOUT,
         RESET,
-        False,
     ),
     (
         "B2",
@@ -151,7 +145,6 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
         HoldState(asked_at=90.0, rearmed=True, lease=SpacedLease(360.0)),
-        True,
     ),
     (
         "B2",
@@ -159,7 +152,6 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"rearm": True, "end": GOOD_END, "assessment": BLOCKED},
         ProfileDecision(action="abandon_candidate", emit_turn_boundary=True, reset_deadline=True),
         HoldState(asked_at=90.0, rearmed=True, lease=HeldLease(frozenset({CHILD}))),
-        True,
     ),
     (
         "B2",
@@ -167,7 +159,6 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
         HoldState(rearmed=True),
-        True,
     ),
     (
         "C1",
@@ -175,27 +166,24 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"candidate": None, "expired": True},
         EXPIRY_ASK,
         HoldState(rearmed=True, answer=OPEN),
-        True,
     ),
-    ("C2", HoldState(rearmed=True), {"candidate": None}, WAIT, None, True),
+    ("C2", HoldState(rearmed=True), {"candidate": None}, WAIT, None),
     (
         "D1",
         HoldState(closing=True),
         {"assessment": UNKNOWN, "expired": True},
         ProfileDecision(action="fail", outcome=UNREADABLE),
         RESET,
-        False,
     ),
-    ("D2", HoldState(closing=True), {"assessment": UNKNOWN}, WAIT, None, False),
+    ("D2", HoldState(closing=True), {"assessment": UNKNOWN}, WAIT, None),
     (
         "D2",
         HoldState(closing=True),
         {"assessment": UNKNOWN, "expired": True, "end": GOOD_END},
         WAIT_END,
         None,
-        True,
     ),
-    ("D3", HoldState(closing=True), {}, PUBLISH, None, True),
+    ("D3", HoldState(closing=True), {}, PUBLISH, None),
     # A wedged `done` is asked, not published.
     (
         "E1",
@@ -203,41 +191,37 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {"active_turn": True, "expired": True},
         EXPIRY_ASK,
         HoldState(closing=True, answer=OPEN),
-        True,
     ),
-    ("E1", SETTLED, {"expired": True}, EXPIRY_ASK, replace(SETTLED, answer=OPEN), True),
+    ("E1", SETTLED, {"expired": True}, EXPIRY_ASK, replace(SETTLED, answer=OPEN)),
     (
         "E1",
         replace(SETTLED, answer=OPEN),
         {"expired": True},
         EXPIRY_ASK,
         replace(SETTLED, answer=SPENT),
-        True,
     ),
-    ("E1", replace(SETTLED, answer=SPENT), {"expired": True}, TIMEOUT, RESET, False),
-    ("E1", SETTLED, {"expired": True, "dead": True}, TIMEOUT, RESET, False),
-    ("E1", SETTLED, {"expired": True, "accepts_signals": False}, TIMEOUT, RESET, False),
-    ("E2", HoldState(closing=True), {"active_turn": True}, WAIT, None, False),
-    ("E3", RESET, {"assessment": UNKNOWN}, WAIT, None, False),
+    ("E1", replace(SETTLED, answer=SPENT), {"expired": True}, TIMEOUT, RESET),
+    ("E1", SETTLED, {"expired": True, "dead": True}, TIMEOUT, RESET),
+    ("E1", SETTLED, {"expired": True, "accepts_signals": False}, TIMEOUT, RESET),
+    ("E2", HoldState(closing=True), {"active_turn": True}, WAIT, None),
+    ("E3", RESET, {"assessment": UNKNOWN}, WAIT, None),
     (
         "E3",
         HoldState(rearmed=True),
         {"assessment": UNKNOWN, "end": GOOD_END},
         WAIT_END,
         RESET,
-        True,
     ),
-    ("E4", RESET, {}, ASK, None, True),
-    ("E4", RESET, {"end": GOOD_END}, ASK_END, None, True),
+    ("E4", RESET, {}, ASK, None),
+    ("E4", RESET, {"end": GOOD_END}, ASK_END, None),
     # A refused expiry ask gets one more ask at a turn end, none between them.
-    ("E4", HoldState(answer=OPEN), {"end": GOOD_END}, ASK_END, None, True),
+    ("E4", HoldState(answer=OPEN), {"end": GOOD_END}, ASK_END, None),
     (
         "E4",
         HoldState(lease=HeldLease(frozenset({TASK}))),
         {"assessment": BLOCKED},
         ASK,
         RESET,
-        True,
     ),
     (
         "E4",
@@ -245,12 +229,11 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {},
         ASK,
         None,
-        True,
     ),
-    ("E5", SETTLED, {}, PUBLISH, None, True),
-    ("E5", SETTLED, {"end": GOOD_END}, PUBLISH, None, True),
-    ("E5", RESET, {"accepts_signals": False}, PUBLISH, None, True),
-    ("E5", HoldState(answer=OPEN), {}, PUBLISH, None, True),
+    ("E5", SETTLED, {}, PUBLISH, None),
+    ("E5", SETTLED, {"end": GOOD_END}, PUBLISH, None),
+    ("E5", RESET, {"accepts_signals": False}, PUBLISH, None),
+    ("E5", HoldState(answer=OPEN), {}, PUBLISH, None),
     # The grace ends at decide, so no timer goes past due.
     (
         "E5",
@@ -258,20 +241,18 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         {},
         PUBLISH,
         replace(SENT, ask=AskPhase.SETTLED, asked_at=95.0),
-        True,
     ),
-    ("E6", SENT, {}, WAIT, None, True),
+    ("E6", SENT, {}, WAIT, None),
     # Delta 3: a turn end inside the grace waits and emits a boundary.
-    ("E6", SENT, {"end": GOOD_END}, WAIT_END, None, True),
-    ("E6", SETTLED, {"assessment": BLOCKED}, WAIT, None, True),
-    ("E6", HoldState(rearmed=True), {}, WAIT, None, True),
+    ("E6", SENT, {"end": GOOD_END}, WAIT_END, None),
+    ("E6", SETTLED, {"assessment": BLOCKED}, WAIT, None),
+    ("E6", HoldState(rearmed=True), {}, WAIT, None),
     (
         "E6",
         HoldState(lease=HeldLease(frozenset({CHILD}))),
         {"assessment": BLOCKED},
         WAIT,
         None,
-        True,
     ),
     (
         "E6",
@@ -283,26 +264,23 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         },
         WAIT,
         None,
-        True,
     ),
-    ("E6", HoldState(lease=SpacedLease(101.0)), {}, WAIT, None, True),
+    ("E6", HoldState(lease=SpacedLease(101.0)), {}, WAIT, None),
 ]
 
 
-@pytest.mark.parametrize(("row", "before", "overrides", "decision", "after", "enter"), ROWS)
+@pytest.mark.parametrize(("row", "before", "overrides", "decision", "after"), ROWS)
 def test_row(
     row: str,
     before: HoldState,
     overrides: dict[str, Any],
     decision: ProfileDecision,
     after: HoldState | None,
-    enter: bool,
 ) -> None:
     step = decide(before, facts(**overrides))
-    assert step.row == row
     assert step.decision == decision
     assert step.state == (before if after is None else after)
-    assert step.enter_wait is enter
+    assert step.leave_awaiting is (row in {"D2", "E2", "E3"} and "end" not in overrides)
 
 
 # kind, before the send (ask still as it was, `answer` as `decide` left it), result, after
@@ -349,7 +327,7 @@ def test_grace_starts_when_the_send_ends() -> None:
     started = replace(SENT, asked_at=67.0)
     folded = after_send(started, SendResult.SENT, prior=AskPhase.UNASKED, now=100.0)
     assert folded.asked_at == 100.0
-    assert decide(folded, facts()).row == "E6"
+    assert decide(folded, facts()).decision == WAIT
 
 
 def test_events() -> None:

@@ -95,8 +95,7 @@ class HoldFacts:
 class HoldStep:
     state: HoldState
     decision: ProfileDecision
-    enter_wait: bool
-    row: str
+    leave_awaiting: bool = False  # D2, E2, E3 away from a turn end change nothing
 
 
 def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
@@ -108,46 +107,46 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
 
     if end is not None and not end.action.terminate:
         decision = ProfileDecision(action="clear", emit_turn_boundary=end.action.emit_turn_boundary)
-        return HoldStep(HoldState(), decision, False, "A1")
+        return HoldStep(HoldState(), decision)
     if end is not None and end.outcome.status != "succeeded":
         if (
             facts.candidate is not None
             and end.outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
         ):
             if disposition == "ready":
-                return _publish("A2", state, facts)
+                return _publish(state, facts)
             if facts.expired:
-                return _timeout("A3", facts)
+                return _timeout(facts)
             if disposition == "unknown" or _descendant_blocked(facts.assessment):
                 ask = AskPhase.UNASKED if state.ask is AskPhase.UNASKED else AskPhase.SETTLED
-                return _wait("A4", replace(state, ask=ask), facts)
+                return _wait(replace(state, ask=ask), facts)
         decision = ProfileDecision(action="fail", outcome=end.outcome)
-        return HoldStep(HoldState(), decision, False, "A5")
+        return HoldStep(HoldState(), decision)
     if state.answer is not None and facts.dead:
-        return _timeout("B1", facts)
+        return _timeout(facts)
     if facts.rearm:
         decision = ProfileDecision(
             action="abandon_candidate", emit_turn_boundary=end is not None, reset_deadline=True
         )
-        return HoldStep(_after_rearm(state, facts.assessment), decision, True, "B2")
+        return HoldStep(_after_rearm(state, facts.assessment), decision)
     if facts.candidate is None:
-        return _expiry("C1", state, facts) if facts.expired else _wait("C2", state, facts)
+        return _expiry(state, facts) if facts.expired else _wait(state, facts)
     if state.closing:
         if disposition == "unknown":
             if facts.expired and end is None:
                 decision = ProfileDecision(action="fail", outcome=_UNREADABLE)
-                return HoldStep(HoldState(), decision, False, "D1")
-            return _wait("D2", state, facts, enter=end is not None)
+                return HoldStep(HoldState(), decision)
+            return _wait(state, facts, leave_awaiting=end is None)
         if not facts.active_turn:
-            return _publish("D3", state, facts)
+            return _publish(state, facts)
     if facts.expired:
-        return _expiry("E1", state, facts)
+        return _expiry(state, facts)
     if end is not None:
         state = replace(state, rearmed=False)
     if facts.active_turn:
-        return _wait("E2", state, facts, enter=end is not None)
+        return _wait(state, facts, leave_awaiting=end is None)
     if disposition == "unknown":
-        return _wait("E3", state, facts, enter=end is not None)
+        return _wait(state, facts, leave_awaiting=end is None)
     if (
         facts.accepts_signals
         and state.ask is AskPhase.UNASKED
@@ -156,10 +155,10 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     ):
         quiet, state = _lease_quiet(state, facts)
         if not quiet:
-            return _wait("E4", state, facts, nudge=True)
+            return _wait(state, facts, nudge=True)
     if disposition == "ready" and _settled(state, facts):
-        return _publish("E5", state, facts)
-    return _wait("E6", state, facts)
+        return _publish(state, facts)
+    return _wait(state, facts)
 
 
 def grace_ends(state: HoldState, grace_seconds: float) -> float:
@@ -189,22 +188,22 @@ def after_send(state: HoldState, result: SendResult, *, prior: AskPhase, now: fl
 
 
 def _wait(
-    row: str, state: HoldState, facts: HoldFacts, *, nudge: bool = False, enter: bool = True
+    state: HoldState, facts: HoldFacts, *, nudge: bool = False, leave_awaiting: bool = False
 ) -> HoldStep:
     decision = ProfileDecision(action="wait", emit_turn_boundary=facts.end is not None, nudge=nudge)
-    return HoldStep(state, decision, enter, row)
+    return HoldStep(state, decision, leave_awaiting)
 
 
-def _publish(row: str, state: HoldState, facts: HoldFacts) -> HoldStep:
+def _publish(state: HoldState, facts: HoldFacts) -> HoldStep:
     assert facts.candidate is not None
-    return HoldStep(state, ProfileDecision(action="complete", outcome=facts.candidate), True, row)
+    return HoldStep(state, ProfileDecision(action="complete", outcome=facts.candidate))
 
 
-def _timeout(row: str, facts: HoldFacts) -> HoldStep:
-    return HoldStep(HoldState(), facts.timeout, False, row)
+def _timeout(facts: HoldFacts) -> HoldStep:
+    return HoldStep(HoldState(), facts.timeout)
 
 
-def _expiry(row: str, state: HoldState, facts: HoldFacts) -> HoldStep:
+def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
     """Ask once, then clean up if the child does not work in the answer window."""
     if (
         facts.accepts_signals
@@ -218,8 +217,8 @@ def _expiry(row: str, state: HoldState, facts: HoldFacts) -> HoldStep:
             reset_deadline=True,
         )
         answer = AnswerWindow(retry_left=state.answer is None)
-        return HoldStep(replace(state, answer=answer), decision, True, row)
-    return _timeout(row, facts)
+        return HoldStep(replace(state, answer=answer), decision)
+    return _timeout(facts)
 
 
 def _settled(state: HoldState, facts: HoldFacts) -> bool:

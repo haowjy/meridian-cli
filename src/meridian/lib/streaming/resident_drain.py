@@ -181,9 +181,7 @@ class _HoldProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return self._state.rearmed
 
-    def refresh_deadline_after_event(
-        self, state: CompletionState, semantics: EventSemantics
-    ) -> bool:
+    def observe_event(self, state: CompletionState, semantics: EventSemantics) -> bool:
         # Only the child's own work inside a turn renews the idle limit and answers
         # an expiry nudge. A nudge starts a turn but is not work, and output from a
         # background process after the turn ended is not the child working.
@@ -243,7 +241,7 @@ class _HoldProfile:
         self._state = step.state
         if step.decision.action in {"clear", "fail", "cleanup"}:
             self.set_awaiting_done(False)
-        elif step.enter_wait:
+        elif not step.leave_awaiting:
             self.set_awaiting_done(True)
         return step.decision
 
