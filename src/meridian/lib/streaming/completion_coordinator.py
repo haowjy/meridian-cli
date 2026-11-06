@@ -139,10 +139,20 @@ class CompletionCoordinator:
         ):
             return None
         assessment = self._assessment or _INITIAL_ASSESSMENT
+        now = self._clock()
+        # A past deadline is not a wake while success validation is pending: the
+        # evaluation it triggers returns without acting, so the 1 ms floor would
+        # repeat it until the validation read (bounded by the history index query
+        # timeout) wakes the drain.
+        deadline_at = (
+            None
+            if self._success_validation is not None and self._is_due(self._deadline_at, now)
+            else self._deadline_at
+        )
         candidates = [
             due
             for due in (
-                self._deadline_at,
+                deadline_at,
                 self._stabilization_at,
                 self._evidence.next_due_at(),
                 self._profile.next_nudge_at(self.state, assessment),
@@ -151,7 +161,7 @@ class CompletionCoordinator:
         ]
         if not candidates:
             return None
-        return max(min(candidates) - self._clock(), _TIMEOUT_FLOOR_SECONDS)
+        return max(min(candidates) - now, _TIMEOUT_FLOOR_SECONDS)
 
     async def observe_event(
         self, normalized_event: NormalizedHarnessEvent

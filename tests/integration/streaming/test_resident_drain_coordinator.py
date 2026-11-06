@@ -424,3 +424,36 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     already_terminal = spawn_store.get_spawn(tmp_path, SpawnId("p3"))
     assert already_terminal is not None
     assert already_terminal.status == "succeeded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(10)
+async def test_rearm_granted_at_first_candidate_does_not_deadlock_on_spawn_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisting the grant inside `candidate_transition()` re-took the spawn lock."""
+    from meridian.lib.state.spawn_signals import write_spawn_signal
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    clock = FakeClock(start=0.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
+    turn_end = DrainAction(terminate=True, emit_turn_boundary=False)
+    event = resident_event(HarnessId.CODEX, "turn/completed", {})
+
+    await coordinator.handle_terminal_event(event, terminal, turn_end)
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
+    await coordinator.handle_timeout()  # rearm drops the candidate
+    clock.advance(10.0)
+    await coordinator.handle_timeout()  # the idle limit expires: an ask, no candidate
+    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
+
+    await coordinator.handle_terminal_event(event, terminal, turn_end)
+
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 2
