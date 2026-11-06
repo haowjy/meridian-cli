@@ -13,12 +13,8 @@ def get_connection_class(
     transport_id: TransportId = TransportId.STREAMING,
 ) -> type[HarnessConnection[Any]]:
     """Return one connection class from the typed bundle registry."""
-    # Harness bundles must register transport mappings before this lookup.
-
-    from meridian.lib.harness import ensure_bootstrap
     from meridian.lib.harness.bundle import get_connection_cls
 
-    ensure_bootstrap()
     return get_connection_cls(harness_id, transport_id)
 
 

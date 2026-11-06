@@ -19,12 +19,6 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 
 
-def _ensure_harness_bootstrap() -> None:
-    from meridian.lib.harness import ensure_bootstrap
-
-    ensure_bootstrap()
-
-
 async def dispatch_start(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
@@ -33,7 +27,6 @@ async def dispatch_start(
 
     from meridian.lib.harness.connections import get_connection_class
 
-    _ensure_harness_bootstrap()
     bundle = get_harness_bundle(config.harness_id)
     if not isinstance(spec, bundle.spec_cls):
         raise TypeError(

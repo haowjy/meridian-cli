@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+import threading
+
 _bootstrapped = False
 _bootstrap_imports: tuple[object, ...] = ()
+_bootstrap_lock = threading.RLock()
 
 # Adding one bundle-backed streaming harness requires touching the
 # harness-specific seams below. Generic dispatch helpers such as
@@ -51,9 +54,6 @@ def _run_bootstrap() -> None:
     global _bootstrapped
     global _bootstrap_imports
 
-    if _bootstrapped:
-        return
-
     # Import order is load-bearing.
     #
     # 1) Adapter modules register HarnessBundle entries as module-load side effects.
@@ -88,6 +88,7 @@ def _run_bootstrap() -> None:
     from meridian.lib.harness.extractors import opencode as _opencode_extractor
     from meridian.lib.harness.extractors import pi as _pi_extractor
 
+    from meridian.lib.harness.bundle import registered_bundles
     from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 
     _bootstrap_imports = (
@@ -109,7 +110,8 @@ def _run_bootstrap() -> None:
         _opencode_extractor,
         _pi_extractor,
     )
-    _enforce_spawn_params_accounting()
+    # The public registry accessor would re-enter ensure_bootstrap.
+    _enforce_spawn_params_accounting(registered_bundles())
     _bootstrapped = True
 
 
@@ -118,9 +120,10 @@ def ensure_bootstrap() -> None:
 
     if _bootstrapped:
         return
-    _run_bootstrap()
+    with _bootstrap_lock:
+        if _bootstrapped:
+            return
+        _run_bootstrap()
 
-
-_run_bootstrap()
 
 __all__ = ["HARNESS_EXTENSION_TOUCHPOINTS", "ensure_bootstrap"]
