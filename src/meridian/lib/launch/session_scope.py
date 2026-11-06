@@ -61,6 +61,10 @@ def warm_close_imports() -> threading.Thread:
                         importlib.import_module(module.name)
                 for name in _CLOSE_PATH_MODULES:
                     importlib.import_module(name)
+                # Close-path code reads the adapters the harness bootstrap loads.
+                from meridian.lib.harness import ensure_bootstrap
+
+                ensure_bootstrap()
             except Exception:
                 logging.getLogger(__name__).debug("Close-path warm import failed", exc_info=True)
                 raise

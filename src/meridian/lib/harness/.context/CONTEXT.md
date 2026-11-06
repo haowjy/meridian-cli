@@ -57,15 +57,19 @@ Pi-specific extension, runtime, and quiescence details live in
 
 ### Bootstrap Sequence
 
-`__init__.py:_run_bootstrap()` runs exactly once on package import. Import order
-is load-bearing:
+`ensure_bootstrap()` runs `_run_bootstrap()` exactly once, on first call, not on
+package import. Importing the package or `adapter` must not load adapter
+implementations: that cycle races a thread that imports `adapter` while bootstrap
+imports `claude`. Import order inside `_run_bootstrap()` is load-bearing:
 1. Adapter modules register `HarnessBundle` entries as side effects.
 2. Projection modules execute import-time drift guards.
 3. Extractor modules bind `Protocol` implementations.
 4. `_enforce_spawn_params_accounting()` validates all adapters account for all fields.
 
-Do not import individual adapter modules before `ensure_bootstrap()` completes —
-the accounting guard will run on a partial registration set and fail.
+The accounting guard runs inside the bootstrap after every adapter has loaded, so
+importing an adapter earlier does not trip it. No module may call `ensure_bootstrap`,
+`get_harness_bundle` or `get_bundle_registry` at module level: that waits on the
+bootstrap lock while holding an import lock (enforced by a lint).
 
 ## Contracts
 
@@ -730,8 +734,8 @@ consumer that matches OpenCode event names itself (the idle sensor does) must
 handle both dialects, selected by the connection's `resolved_version`; the shared
 `OPENCODE_SEMANTICS` table covers only consumers that read it.
 
-**Don't call adapter methods before `ensure_bootstrap()`** — the SpawnParams
-accounting guard runs on a partial adapter set and will raise false `ImportError`.
+**Don't call adapter methods before `ensure_bootstrap()`** — the registry is empty
+until it runs.
 
 **Don't skip `consumed_fields` / `explicitly_ignored_fields` declarations** — the
 accounting invariant treats any uncovered field as a bug, not a warning.

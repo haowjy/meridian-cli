@@ -26,6 +26,9 @@ DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[2]
 
 _PACKAGE_PREFIX = "meridian/"
 _HARNESS_PREFIX = "meridian/lib/harness/"
+_BOOTSTRAP_TRIGGER_CALLS = frozenset(
+    {"ensure_bootstrap", "get_harness_bundle", "get_bundle_registry"}
+)
 
 # Vendored dependency trees are not ours.
 _SKIPPED_PARTS = frozenset({"node_modules", "dist"})
@@ -322,6 +325,61 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
+def _call_name(function: ast.expr) -> str | None:
+    if isinstance(function, ast.Name):
+        return function.id
+    if isinstance(function, ast.Attribute):
+        return function.attr
+    return None
+
+
+class _ImportTimeLookupVisitor(ast.NodeVisitor):
+    """Calls that run when a module body runs: function bodies are skipped."""
+
+    def __init__(self) -> None:
+        self.lines: list[int] = []
+
+    def _visit_def(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        # Decorators and defaults run at definition; the body does not.
+        for expr in (
+            *getattr(node, "decorator_list", ()),
+            *node.args.defaults,
+            *(d for d in node.args.kw_defaults if d is not None),
+        ):
+            self.visit(expr)
+
+    visit_FunctionDef = _visit_def
+    visit_AsyncFunctionDef = _visit_def
+    visit_Lambda = _visit_def
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _call_name(node.func) in _BOOTSTRAP_TRIGGER_CALLS:
+            self.lines.append(node.lineno)
+        self.generic_visit(node)
+
+
+def import_time_bootstrap_violations(sources: Sources) -> list[Violation]:
+    """Reject module-level calls that trigger the harness bootstrap.
+
+    A module body that runs one while another thread holds the bootstrap lock waits
+    on that thread, and the bootstrap waits on the import lock this module holds:
+    a hang no deadlock detector reports.
+    """
+
+    message = (
+        "module-level call triggers the harness bootstrap; call it inside a function "
+        "so importing this module cannot wait on the bootstrap lock."
+    )
+    violations: list[Violation] = []
+    for module in sources.python_modules:
+        if not module.mentions(*_BOOTSTRAP_TRIGGER_CALLS):
+            continue
+        visitor = _ImportTimeLookupVisitor()
+        visitor.visit(module.tree)
+        violations.extend(Violation(module.path, line, message) for line in visitor.lines)
+    return violations
+
+
 # --- per-launch paths ------------------------------------------------------
 # Per-launch files are named, and launches constructed, only in `paths.py`: the
 # spawn directory layout has one owner. A path built from a name held in a variable
@@ -517,6 +575,7 @@ CHECKS: tuple[Check, ...] = (
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
+    import_time_bootstrap_violations,
     launch_path_violations,
     sys_executable_violations,
 )

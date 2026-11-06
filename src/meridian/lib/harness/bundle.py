@@ -270,6 +270,9 @@ def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
 def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
     """Look up one registered harness bundle."""
 
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
     try:
         return _REGISTRY[harness_id]
     except KeyError as exc:
@@ -282,9 +285,6 @@ def _primary_bundle(record: SpawnRecord) -> HarnessBundle[Any] | None:
     except ValueError:
         return None
 
-    from meridian.lib.harness import ensure_bootstrap
-
-    ensure_bootstrap()
     return get_harness_bundle(harness_id)
 
 
@@ -321,10 +321,19 @@ def post_to_primary(
     return inbox(runtime_root=runtime_root, record=record, message=message)
 
 
+def registered_bundles() -> Mapping[HarnessId, HarnessBundle[Any]]:
+    """Return what is registered so far, without triggering the bootstrap."""
+
+    return MappingProxyType(_REGISTRY)
+
+
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
     """Return the active harness bundle registry mapping."""
 
-    return MappingProxyType(_REGISTRY)
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
+    return registered_bundles()
 
 
 def get_connection_cls(
@@ -484,4 +493,5 @@ __all__ = [
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
     "register_harness_bundle",
+    "registered_bundles",
 ]
