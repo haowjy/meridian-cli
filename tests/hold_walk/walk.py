@@ -25,6 +25,7 @@ from meridian.lib.harness.semantics import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals, write_spawn_signal
+from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.completion_contracts import (
     CleanupReport,
     DiagnosticBlocker,
@@ -35,11 +36,23 @@ from meridian.lib.streaming.completion_contracts import (
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
 from meridian.lib.streaming.drain_policy import DrainAction
+from meridian.lib.streaming.resident_drain import _HoldProfile as HoldProfile
 from tests.hold_walk.frozen_resident_drain import _HoldProfile
-from tests.hold_walk.hold_profile import HoldProfile
 from tests.support.fakes import FakeClock
 from tests.support.launch_paths import launch_paths
 from tests.support.resident_drain import FakeResidentBackendControl, start_row
+
+_ROWS_SEEN: set[str] = set()
+_real_decide = resident_drain.decide
+
+
+def _traced_decide(state, facts):
+    step = _real_decide(state, facts)
+    _ROWS_SEEN.add(step.row)
+    return step
+
+
+resident_drain.decide = _traced_decide
 
 TICKS = (
     0.001,
@@ -187,7 +200,6 @@ def snapshot(side: Side, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         "defer_close": coord.should_defer_close(),
         "close_unint": _oc(coord.handle_close(intentional_stop=False)),
         "close_int": _oc(coord.handle_close(intentional_stop=True)),
-        "row": getattr(side.profile, "last_row", None),
     }
 
 
@@ -197,7 +209,7 @@ _IGNORE = set(filter(None, os.environ.get("WALK_IGNORE", "").split(",")))
 def diff_snap(old: dict[str, Any], new: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
     out = {}
     for key in old:
-        if key == "row" or key in _IGNORE:
+        if key in _IGNORE:
             continue
         if old[key] != new[key]:
             out[key] = (old[key], new[key])
@@ -770,9 +782,6 @@ async def run_script(
         pairs = await apply_kind(kind, arg, old=old, new=new, world=world, clock=clock)
         for label, so, sn in pairs:
             compared += 1
-            row = sn.get("row")
-            if row:
-                rows.append(str(row))
             d = diff_snap(so, sn)
             if d:
                 return rows, d, [f"{kind}:{arg}", label], compared
@@ -876,11 +885,11 @@ async def main_async(args: argparse.Namespace) -> int:
     for cfg, steps in scripts[:target]:
         walks += 1
         try:
-            rows, diff, where, compared = await run_script(steps, tmp=tmp, cfg=cfg)
+            _, diff, where, compared = await run_script(steps, tmp=tmp, cfg=cfg)
         except Exception as exc:
             diff = {"exception": (type(exc).__name__, traceback.format_exc())}
-            rows, where, compared = [], ["raise"], 0
-        rows_hit.update(rows)
+            where, compared = ["raise"], 0
+        rows_hit.update(_ROWS_SEEN)
         compared_total += compared
         if diff is None:
             clean += 1
