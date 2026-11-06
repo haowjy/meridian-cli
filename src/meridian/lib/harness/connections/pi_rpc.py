@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
-from meridian.lib.core.delivery import DeliveryKind, TransportDead
+from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -608,7 +608,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             detail = (
                 error.strip() if isinstance(error, str) and error.strip() else "pi_prompt_rejected"
             )
-            pending.set_exception(RuntimeError(detail))
+            # Pi answered no: nothing was queued.
+            pending.set_exception(DeliveryRefused(detail))
         return True
 
     def _has_unsupported_lifecycle_schema_version(

@@ -394,7 +394,8 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             if line
         ]
         prompts = [command for command in commands if command["type"] == "prompt"]
-        assert [prompt["message"] for prompt in prompts] == ["FIRST", "SECOND"]
+        # A refusal is retried once, and Pi refuses again.
+        assert [prompt["message"] for prompt in prompts] == ["FIRST", "SECOND", "SECOND"]
         assert all(prompt["streamingBehavior"] == "followUp" for prompt in prompts)
     finally:
         await manager.shutdown()
