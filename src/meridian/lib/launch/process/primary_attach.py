@@ -398,12 +398,12 @@ class PrimaryAttachLauncher:
                         await _start_process_wait(running_process)
                         raise
                     launch_task = _start_process_wait(running_process)
-                    await self._bind_route(route_stack)
                     self._start_idle_sensor(
                         session_id=session_id,
                         env=env,
                         launch_task=launch_task,
                     )
+                    await self._bind_route(route_stack)
                     # The TUI owns the primary. Observer silence is not a quit.
                     launched = await asyncio.shield(launch_task)
                     # A pane close can make the TUI return zero. Observation order,
