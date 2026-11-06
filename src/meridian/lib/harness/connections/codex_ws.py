@@ -23,7 +23,12 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
+from meridian.lib.core.delivery import (
+    TUI_MOVED_MESSAGE,
+    DeliveryKind,
+    DeliveryRefused,
+    TransportDead,
+)
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -251,6 +256,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = False
         self._signal_in_flight = False
         self._primary_observer_mode = False
+        self._tui_left_thread = False
+        self._helper_thread_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._event_stream_ended = False
 
@@ -557,6 +564,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         after the write propagates, never a second send.
         """
         self._require_connected(operation)
+        if self._tui_left_thread:
+            raise DeliveryRefused(TUI_MOVED_MESSAGE)
         if self._ws is None or not _ws_is_open(self._ws):
             # A send on a closed websocket writes nothing.
             raise TransportDead("Codex websocket is closed")
@@ -1165,6 +1174,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> None:
         if method == "serverRequest/resolved":
             await self._resolve_server_request(payload)
+        self._note_tui_thread(method=method, payload=payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
             RawHarnessEvent(
@@ -1430,6 +1440,46 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not isinstance(method_obj, str) or not isinstance(payload_obj, dict):
             raise TypeError("Codex managed-primary bootstrap returned invalid types")
         return method_obj, cast("dict[str, object]", payload_obj)
+
+    def _note_tui_thread(self, *, method: str, payload: dict[str, object]) -> None:
+        """Latch ``_tui_left_thread`` when the TUI opens or resumes another thread.
+
+        The app-server broadcasts lifecycle notifications for every thread to every
+        client, but turn events only to the thread's own client, so the move shows
+        only as these. ``/new`` and ``/fork`` announce a non-ephemeral, parentless
+        ``thread/started``; ``/resume`` of a loaded or unloaded thread sends no
+        ``thread/started``, only a status or goal event naming it. Helper threads
+        (title, memory, subagents) are ephemeral or parented and are announced first.
+        ``thread/closed`` and ``notLoaded`` are unloads, never a move.
+        """
+        if not self._primary_observer_mode or self._tui_left_thread or self._thread_id is None:
+            return
+        thread_id = _extract_thread_id(payload)
+        if thread_id is None or thread_id == self._thread_id:
+            return
+        if method == "thread/started":
+            thread = cast("dict[str, object]", payload.get("thread") or {})
+            if thread.get("ephemeral") or thread.get("parentThreadId"):
+                self._helper_thread_ids.add(thread_id)
+                return
+        elif method == "thread/status/changed":
+            status = payload.get("status")
+            status_type = (
+                cast("dict[str, object]", status).get("type") if isinstance(status, dict) else None
+            )
+            if status_type not in {"idle", "active"}:
+                return
+        elif method != "thread/goal/cleared":
+            return
+        if thread_id in self._helper_thread_ids:
+            return
+        self._tui_left_thread = True
+        logger.warning(
+            "Codex TUI left thread %s for %s (%s); messages are refused",
+            self._thread_id,
+            thread_id,
+            method,
+        )
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
         thread_id = _extract_thread_id(payload)
