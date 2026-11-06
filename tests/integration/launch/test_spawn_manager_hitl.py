@@ -15,6 +15,7 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
+    ConnectionNotReady,
     HarnessRequest,
     RawHarnessEvent,
 )
@@ -325,7 +326,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
             # Attempt 2 is the manager's first explicit call (fails, triggering retry).
             # Attempt 3 is the coordinator's retry (succeeds).
             if self.respond_attempts == 2:
-                raise ConnectionError("retryable send failure")
+                raise ConnectionNotReady("retryable send failure")
             callback = getattr(self._request_handler, "on_request_resolved", None)
             if callback is not None:
                 await cast("Any", callback)(request_id, resolution={"decision": decision})

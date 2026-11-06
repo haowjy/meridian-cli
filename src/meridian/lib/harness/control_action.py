@@ -53,6 +53,18 @@ class _CounterState:
     interrupt_fence_submission: int
 
 
+def _failure_text(exc: Exception) -> str:
+    """Text for the sender: never blank, and honest about what a timeout leaves unknown."""
+
+    if isinstance(exc, TimeoutError):
+        detail = str(exc)
+        return (
+            "timed out after the request was sent; it may have been delivered and was not resent"
+            + (f" ({detail})" if detail else "")
+        )
+    return str(exc) or type(exc).__name__
+
+
 class ControlActionCoordinator:
     """Serialize and persist runtime control actions for one active session."""
 
@@ -86,7 +98,12 @@ class ControlActionCoordinator:
         max_attempts: int | None = None,
         fence_on_interrupt: bool = True,
     ) -> ControlActionResult:
-        """Run one action via serialized send + durable transition records."""
+        """Run one action via serialized send + durable transition records.
+
+        Only ``ConnectionNotReady`` is retried: connections raise it before
+        writing anything. Any other failure may follow the write, so a retry
+        could repeat the action (a second Codex turn); it is reported once.
+        """
 
         submission_seq = self._reserve_submission_seq()
         action_id = self._next_action_id()
@@ -149,9 +166,8 @@ class ControlActionCoordinator:
                 try:
                     await send()
                 except Exception as exc:
-                    last_error = str(exc)
-                    retryable = attempt < attempts and self._is_retryable(exc)
-                    if retryable:
+                    last_error = _failure_text(exc)
+                    if attempt < attempts and isinstance(exc, ConnectionNotReady):
                         await asyncio.sleep(self._retry_delay_secs)
                         continue
                     await self._append_transition(
@@ -209,10 +225,6 @@ class ControlActionCoordinator:
         if max_attempts is None:
             return self._default_max_attempts
         return max(1, int(max_attempts))
-
-    @staticmethod
-    def _is_retryable(exc: Exception) -> bool:
-        return isinstance(exc, (ConnectionNotReady, TimeoutError, ConnectionError, OSError))
 
     async def _append_transition(
         self,
