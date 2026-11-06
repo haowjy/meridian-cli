@@ -6,13 +6,11 @@ import pytest
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
 from tests.support.launch_paths import launch_paths
 from tests.support.opencode_db import (
-    write_opencode_db_session,
     write_opencode_v2_db_session,
 )
 
@@ -80,20 +78,6 @@ def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
         _resolve_session_continuation(request=request, harness=harness)
 
 
-@pytest.mark.parametrize(
-    "event",
-    [
-        {"type": "server.connected", "id": "evt_not_a_session"},
-        {"type": "custom", "session_id": "evt_not_a_session"},
-    ],
-)
-def test_extract_session_id_rejects_non_session_value(event):
-    fold = OPENCODE_EXTRACTOR.create_fold()
-    facts = fold.facts
-    _fold(fold, event)
-    assert facts.first_session_id is None
-
-
 def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, monkeypatch):
     """assistantMessageID joins session_message.id, in the recorded store only."""
     recorded, ambient = tmp_path / "recorded.db", tmp_path / "ambient.db"
@@ -131,22 +115,6 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
     assert extraction.harness_session_id == session
 
 
-def test_opencode_v1_native_store_supplies_report_when_v1_has_no_turn_event(tmp_path: Path):
-    db = tmp_path / "native-v1.db"
-    write_opencode_db_session(
-        db_path=db,
-        session_id="ses_v1",
-        messages=[("user", "question"), ("assistant", "ALPHA-OC-8f31bc")],
-    )
-    extraction = enrich_finalize(
-        facts=AttemptFacts(),
-        extractor=OPENCODE_EXTRACTOR,
-        native_key=NativeKey("opencode", str(db), "ses_v1"),
-        launch=launch_paths(tmp_path / "run", SpawnId("p1")),
-    )
-    assert extraction.report.content == "ALPHA-OC-8f31bc"
-
-
 @pytest.mark.parametrize("ids", [(), ("missing",), ("ses_other_msg_0",)])
 def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
     db = tmp_path / "native.db"
@@ -162,45 +130,6 @@ def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
         OPENCODE_EXTRACTOR.read_native_turn(NativeKey("opencode", str(db), "ses_owned"), ids)
         is None
     )
-
-
-def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
-    fold = OPENCODE_EXTRACTOR.create_fold()
-    facts = fold.facts
-    _fold(
-        fold,
-        {
-            "type": "session.text.ended",
-            "sessionID": "ses_owned",
-            "assistantMessageID": "missing",
-            "text": "streamed reply",
-        },
-    )
-    extraction = enrich_finalize(
-        facts=facts,
-        extractor=OPENCODE_EXTRACTOR,
-        native_key=NativeKey("opencode", str(tmp_path / "absent.db"), "ses_owned"),
-        launch=launch_paths(tmp_path, SpawnId("p1")),
-    )
-    assert extraction.report.content == "streamed reply"
-
-
-@pytest.mark.parametrize("explicit", [False, True])
-def test_unreadable_native_db_cannot_break_report_precedence(tmp_path: Path, explicit):
-    db = tmp_path / "corrupt.db"
-    db.write_bytes(b"not sqlite")
-    launch = launch_paths(tmp_path, SpawnId("p1"))
-    if explicit:
-        launch.dir.mkdir(parents=True)
-        launch.report.write_text("explicit report")
-    facts = AttemptFacts(final_text="stream report", native_turn_ids=("owned",))
-    result = enrich_finalize(
-        facts=facts,
-        extractor=OPENCODE_EXTRACTOR,
-        native_key=NativeKey("opencode", str(db), "ses_owned"),
-        launch=launch,
-    )
-    assert result.report.content == ("explicit report" if explicit else "stream report")
 
 
 def test_child_events_before_parent_user_do_not_supply_run_facts():

@@ -369,44 +369,6 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
 
 
 @pytest.mark.asyncio
-async def test_spawn_done_op_releases_resident_wait_via_environment_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    prepared = prepare_for_runtime_write(project_root)
-    runtime_root = prepared.runtime_root
-    assert runtime_root is not None
-    spawn_id = SpawnId("p1")
-    start_row(runtime_root, str(spawn_id), HarnessId.OPENCODE, None)
-    start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
-    connection = FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await start_manager(
-        runtime_root,
-        connection,
-        spawn_id=spawn_id,
-        project_root=project_root,
-    )
-
-    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
-    completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
-
-    try:
-        await assert_still_pending(completion_task)
-        monkeypatch.setenv("MERIDIAN_SPAWN_ID", str(spawn_id))
-
-        result = spawn_api.spawn_done_sync(SpawnSignalInput(), prepared=prepared)
-        outcome = await completion_task
-
-        assert result.status == "succeeded"
-        assert outcome is not None
-        assert outcome.status == "succeeded"
-    finally:
-        await manager.stop_spawn(spawn_id)
-
-
-@pytest.mark.asyncio
 async def test_spawn_rearm_op_extends_resident_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

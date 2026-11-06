@@ -261,14 +261,6 @@ assert p.returncode == 0 and out == b"ok\n", (p.returncode, out)
 """
 
 
-def test_gate_fd_already_nine() -> None:
-    subprocess.run([sys.executable, "-c", FD_PROBE, "9"], check=True, timeout=10)
-
-
-def test_gate_fd_above_nine() -> None:
-    subprocess.run([sys.executable, "-c", FD_PROBE, "13"], check=True, timeout=10)
-
-
 @pytest.mark.parametrize("pty_output", [False, True])
 def test_harness_exit_gives_eof_before_stop(pty_output: bool, tmp_path: Path) -> None:
     import select

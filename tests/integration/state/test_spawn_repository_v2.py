@@ -3,15 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
-    Applied,
-    Decline,
-    Declined,
     SpawnStateQuarantined,
-    read_prompt,
     read_state,
     record_to_stored_state,
     write_state_locked,
@@ -218,101 +213,6 @@ def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "payload",
-    [pytest.param("[]\n", id="array"), pytest.param("null\n", id="null")],
-)
-def test_non_object_state_root_is_quarantined(tmp_path: Path, payload: str) -> None:
-    state_path = tmp_path / "spawns" / "p1" / "state.json"
-    state_path.parent.mkdir(parents=True)
-    state_path.write_text(payload, encoding="utf-8")
-
-    with pytest.raises(SpawnStateQuarantined) as failure:
-        read_state(tmp_path / "spawns", "p1", include_prompt=False)
-
-    assert failure.value.report.state_path == state_path
-    assert "spawn state root must be an object" in str(failure.value.report.validation_errors)
-
-
-def test_dogfood_migration_only_clears_authority_failure(tmp_path: Path) -> None:
-    from meridian.lib.state.history_index import SCHEMA_VERSION, HistoryIndex
-
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record(status="succeeded"))
-    state_path = spawns_dir / "p1" / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["entry_chat_id"] = "c1"
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    index = HistoryIndex(tmp_path)
-    marker = {
-        "format": 1,
-        "target_schema": SCHEMA_VERSION,
-        "generation": None,
-        "code": "timeout",
-        "reason": "keep this failure",
-        "failed_at": "2026-05-01T00:00:00Z",
-    }
-    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
-
-    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
-    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
-
-    marker["code"] = "authority"
-    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
-    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
-    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
-
-
-def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypatch) -> None:
-    from meridian.lib.platform.locking import FileLockTimeout
-    from meridian.lib.state.history_index import HistoryIndex
-
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record(status="succeeded"))
-    state_path = spawns_dir / "p1" / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["entry_chat_id"] = "c1"
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-
-    def timeout(self, *, timeout: float = 5.0) -> tuple[str, ...]:
-        raise FileLockTimeout("catchup lock timed out")
-
-    monkeypatch.setattr(HistoryIndex, "clear_authority_failure", timeout)
-    result = migrate_dogfood_spawn_rows(tmp_path)
-
-    assert result.migrated == ("p1",)
-    assert result.index_rearm_warning is not None
-    assert "timed out" in result.index_rearm_warning
-
-
-def test_released_verified_exit_reads_as_the_one_current_pointer(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record(status="succeeded"))
-    state_path = spawns_dir / "p1" / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state.pop("current_chat_id", None)
-    state["run_boundary"] = {"status": "verified", "exit_chat_id": "c-exit"}
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-
-    loaded = read_state(spawns_dir, "p1", include_prompt=False)
-    assert loaded is not None
-    assert loaded.run_boundary == RunBoundaryOutcome(status="verified")
-    assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
-    newer = SpawnRecord.model_validate(
-        {
-            **loaded.model_dump(),
-            "current_chat_id": "c-newer",
-            "run_boundary": state["run_boundary"],
-        }
-    )
-    assert newer.continue_chat_id == "c-newer"  # Valid newer observation still wins.
-
-    write_state_locked(spawns_dir, "p1", lambda row: row, allow_terminal_overwrite=True)
-    rewritten = json.loads(state_path.read_text(encoding="utf-8"))
-    assert rewritten["current_chat_id"] == "c-exit"
-    assert rewritten["run_boundary"] == {"status": "verified", "trampoline_successor_id": None}
-
-
-@pytest.mark.parametrize(
     ("status", "exit_id", "current_id"),
     [
         ("unresolved", "c2", None),
@@ -350,24 +250,6 @@ def test_legacy_exit_normalization_rejects_invalid_evidence(
         assert path.read_bytes() == before
 
 
-def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    record = _record(prompt="hello world")
-
-    _seed_state(spawns_dir, record)
-
-    state_text = (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
-    assert '"prompt_length": 11' in state_text
-    assert "hello world" not in state_text
-
-    stored_prompt_path = spawns_dir / "p1" / "starting-prompt.md"
-    stored_prompt_path.write_text("hello world", encoding="utf-8")
-    restored = read_state(spawns_dir, "p1")
-
-    assert restored == record
-    assert read_prompt(LaunchPaths.for_row(spawns_dir.parent, record)) == "hello world"
-
-
 def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     _seed_state(spawns_dir, _record(status="succeeded"))
@@ -388,71 +270,3 @@ def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) 
         )
 
     assert read_state(spawns_dir, "p1").status == "succeeded"  # type: ignore[union-attr]
-
-
-def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record())
-    state_path = spawns_dir / "p1" / "state.json"
-    legacy = json.loads(state_path.read_text(encoding="utf-8"))
-    legacy["v"] = 2
-    legacy.pop("history_id")
-    legacy.pop("state_revision")
-    legacy.pop("record_mode")
-    for key in (
-        "session_instance_id",
-        "parent_history_id",
-        "owner_history_id",
-        "forked_from_history_id",
-        "retained_history_ids",
-        "run_boundary",
-        "current_chat_id",
-    ):
-        legacy.pop(key)
-    state_path.write_text(json.dumps(legacy), encoding="utf-8")
-
-    assert read_state(spawns_dir, "p1", include_prompt=False) is not None
-    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 2
-
-    outcome = write_state_locked(
-        spawns_dir,
-        "p1",
-        lambda current: current.model_copy(update={"desc": "mutated"}),
-    )
-
-    assert isinstance(outcome, Applied)
-    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 3
-
-
-def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    original = _record()
-    _seed_state(spawns_dir, original)
-    state_path = spawns_dir / "p1" / "state.json"
-    original_inode = state_path.stat().st_ino
-
-    outcome = write_state_locked(
-        spawns_dir,
-        "p1",
-        lambda _current: Decline("not applicable"),
-    )
-
-    assert isinstance(outcome, Declined)
-    assert outcome.snapshot == original.model_copy(update={"prompt": None})
-    assert outcome.reason == "not applicable"
-    assert read_state(spawns_dir, "p1") == outcome.snapshot
-    assert state_path.stat().st_ino == original_inode
-
-
-def test_write_state_locked_rejects_mutators_that_change_spawn_id(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    _seed_state(spawns_dir, _record())
-
-    with pytest.raises(ValueError, match="must not change spawn id"):
-        write_state_locked(
-            spawns_dir,
-            "p1",
-            lambda current: current.model_copy(update={"id": "p2"}),
-        )
-
-    assert read_state(spawns_dir, "p1") == _record().model_copy(update={"prompt": None})

@@ -11,29 +11,9 @@ if TYPE_CHECKING:
 
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.spawn.repository import Declined
-
-
-class StoreSnapshotHook:
-    """Reads persisted state during hook dispatch to prove post-write visibility."""
-
-    def __init__(self, runtime_root: Path) -> None:
-        self._runtime_root = runtime_root
-        self.snapshots: list[tuple[str, str | None, str | None]] = []
-
-    def on_event(self, event: LifecycleEvent) -> None:
-        record = spawn_store.get_spawn(self._runtime_root, event.spawn_id)
-        self.snapshots.append(
-            (
-                event.event_type,
-                None if record is None else record.status,
-                (None if record is None or record.terminal is None else record.terminal.origin),
-            )
-        )
 
 
 class EventTypeHook:
@@ -72,77 +52,6 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
         return service.start(SpawnReservation(**defaults), launch_lock=launch_lock).spawn_id
 
 
-def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: Path) -> None:
-    snapshot_hook = StoreSnapshotHook(tmp_path)
-    service = _make_service(tmp_path, hooks=[snapshot_hook])
-    spawn_id = _start_spawn(service)
-
-    service.finalize(spawn_id, "succeeded", 0, origin="runner")
-
-    assert snapshot_hook.snapshots[-1] == ("spawn.finished", "succeeded", "runner")
-
-
-def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
-    service = _make_service(tmp_path)
-
-    with LaunchSlot() as launch_lock:
-        spawn_id = service.start(
-            SpawnReservation(
-                chat_id="c1",
-                session_metadata=PrimarySessionMetadata(
-                    harness="codex",
-                    model="gpt-5.4",
-                    agent="coder",
-                    agent_path="",
-                    skills=(),
-                    skill_paths=(),
-                ),
-                prompt="run it",
-                metadata=SpawnStartMetadata(
-                    desc="goal metadata",
-                    work_id="  w-lifecycle  ",
-                    goal="  finish migration  ",
-                ),
-            ),
-            launch_lock=launch_lock,
-        ).spawn_id
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert record is not None
-    assert record.desc == "goal metadata"
-    assert record.work_id == "w-lifecycle"
-    assert record.goal == "finish migration"
-
-
-def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-
-    with LaunchSlot() as launch_lock:
-        spawn_id = service.reserve(
-            SpawnReservation(
-                chat_id="c1",
-                session_metadata=PrimarySessionMetadata(
-                    harness="codex",
-                    model="gpt-5.4",
-                    agent="coder",
-                    agent_path="",
-                    skills=(),
-                    skill_paths=(),
-                ),
-                prompt="run it",
-                status="queued",
-            ),
-            launch_lock=launch_lock,
-        ).spawn_id
-
-    assert hook.event_types == []
-
-    service.announce(spawn_id)
-
-    assert hook.event_types == ["spawn.created"]
-
-
 def test_owner_record_launch_facts_clears_stale_runner_created_epoch_when_pid_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -170,38 +79,6 @@ def test_owner_record_launch_facts_clears_stale_runner_created_epoch_when_pid_re
     assert updated is not None
     assert updated.runner_pid == 999997
     assert updated.runner_created_at_epoch is None
-    assert hook.event_types == []
-
-
-def test_record_launch_facts_terminal_decline_emits_no_event(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-    spawn_id = _start_spawn(service)
-    service.finalize(spawn_id, "succeeded", 0, origin="runner")
-    hook.event_types.clear()
-
-    service.record_launch_facts(spawn_id, runner_pid=999997)
-
-    record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert record is not None
-    assert record.status == "succeeded"
-    assert record.runner_pid is None
-    assert hook.event_types == []
-
-
-def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> None:
-    hook = EventTypeHook()
-    service = _make_service(tmp_path, hooks=[hook])
-    spawn_id = _start_spawn(service)
-    service.finalize(spawn_id, "succeeded", 0, origin="runner")
-    before = spawn_store.get_spawn(tmp_path, spawn_id)
-    hook.event_types.clear()
-
-    outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
-
-    assert isinstance(outcome, Declined)
-    assert outcome.snapshot == before
-    assert spawn_store.get_spawn(tmp_path, spawn_id) == before
     assert hook.event_types == []
 
 

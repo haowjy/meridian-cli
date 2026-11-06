@@ -7,10 +7,6 @@ set `CODEX_AUTH_FILE`, `CLAUDE_AUTH_FILE` or `OPENCODE_AUTH_FILE` before setup;
 only the named auth file is copied, never the native agent/config tree.
 Run cleanup even after a failed check. This is not automatic smoke.
 
-Keep live fork/session boundaries here. Flag conflicts, environment aliases and
-policy permutations belong to [argv normalization](../unit/cli/test_argv_normalization.py)
-and [continue policy](../integration/ops/test_spawn_continue.py) regression tests.
-
 ## Setup: one completed source session
 
 Set `FORK_MODEL` to an eligible cheap model and `FORK_HARNESS` to its harness

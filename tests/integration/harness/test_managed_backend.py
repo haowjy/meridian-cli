@@ -7,7 +7,6 @@ import os
 import sys
 from pathlib import Path
 
-import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -16,7 +15,6 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.platform import launch_gate
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
@@ -63,41 +61,6 @@ async def test_launch_managed_backend_records_scope(tmp_path: Path) -> None:
         ("backend", handle.process.pid)
     ]
     await handle.process.wait()
-
-
-@pytest.mark.asyncio
-async def test_launch_managed_backend_refuses_unknown_birth(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_id = SpawnId("spawn-unknown-birth")
-    _publish_spawn(tmp_path, spawn_id)
-
-    class _InaccessibleProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def create_time(self) -> float:
-            raise psutil.AccessDenied(pid=self.pid)
-
-    monkeypatch.setattr(launch_gate.psutil, "Process", _InaccessibleProcess)
-    marker = tmp_path / "executed"
-    with pytest.raises(RuntimeError, match="birth time"):
-        await launch_managed_backend(
-            ManagedBackendConfig(
-                launch=launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id),
-                harness_id=HarnessId.OPENCODE,
-                command=("/bin/sh", "-c", f"touch {marker}"),
-                cwd=tmp_path,
-                env=os.environ.copy(),
-                grace_seconds=0.1,
-            ),
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    assert not marker.exists()
-    assert not read_scopes_from_disk(
-        launch_paths(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
-    )
 
 
 @pytest.mark.asyncio

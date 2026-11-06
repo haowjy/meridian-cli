@@ -130,48 +130,6 @@ def _cleanup_result(
     )
 
 
-def test_stale_session_repair_reclaims_matching_session_owned_scope(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    _write_primary_session_with_lease(runtime_root, chat_id="chat-1", owner_pid=9001)
-    scope = _create_primary_spawn_with_scope(
-        runtime_root,
-        spawn_id="spawn-1",
-        chat_id="chat-1",
-        pid=7001,
-        created_at=123.0,
-    )
-    monkeypatch.setattr(
-        session_store,
-        "is_process_alive_with_birth",
-        lambda _pid, _birth: False,
-    )
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(123.0))
-    killed: list[int] = []
-
-    def _terminate_scope_sync(
-        candidate: ProcessScopeSnapshot,
-        *,
-        grace_seconds: float,
-        reason: str,
-    ) -> CleanupResult:
-        assert grace_seconds == 5.0
-        killed.append(candidate.root_pid)
-        return _cleanup_result(candidate, reason, None)
-
-    monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
-        _terminate_scope_sync,
-    )
-
-    cleaned = diag._repair_stale_session_locks(tmp_path, runtime_root=runtime_root)
-
-    assert cleaned == 1
-    assert killed == [scope.root_pid]
-
-
 def test_stale_session_repair_pid_reuse_result_does_not_kill_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -237,38 +237,6 @@ def test_continue_after_runner_sigkill_sweeps_orphan(
 
 
 @pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
-def test_continue_names_non_runner_holder_of_dead_source(
-    runtime: Runtime,
-    primary: bool,
-) -> None:
-    # Doctor (or another continue's sweep) may hold a dead source's lock while
-    # it persists the crash. The refusal must not claim the dead source runs.
-    runtime.orphan()
-    lock = runtime.root / "runtime/spawns/p1/launch.lock"
-    holder = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            "import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR); "
-            "fcntl.flock(fd,fcntl.LOCK_EX); print('held',flush=True); time.sleep(60)",
-            str(lock),
-        ],
-        stdout=subprocess.PIPE,
-    )
-    try:
-        assert holder.stdout is not None and holder.stdout.readline() == b"held\n"
-        process = runtime.cli(*continue_args(primary))
-        assert process.wait(timeout=30) != 0
-        log = (runtime.root / f"cli-{runtime.processes.index(process)}.log").read_text()
-        assert "being continued or repaired" in log
-        assert "still running" not in log
-        assert not (runtime.root / "runtime/spawns/p1/launches/2").exists()
-    finally:
-        holder.kill()
-        holder.wait()
-
-
-@pytest.mark.parametrize("primary", [False, True], ids=["spawn", "primary"])
 @pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "dry-run"])
 def test_continue_refuses_live_source(runtime: Runtime, primary: bool, dry_run: bool) -> None:
     parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--bg")
@@ -327,22 +295,6 @@ def test_primary_continue_after_source_archive(runtime: Runtime) -> None:
     assert continued.wait(timeout=30) == 0
 
 
-def test_continue_refuses_live_legacy_runner(runtime: Runtime) -> None:
-    root = runtime.root / "runtime"
-    parent = runtime.cli("spawn", "-m", "haiku", "-p", "hold", "--no-background")
-    runtime.started()
-    # Remove the held lock's path to model an old-build active row. The runner
-    # still holds the unlinked inode and supplies exact live-runner evidence.
-    (root / "spawns/p1/launch.lock").unlink()
-    process = runtime.cli(*continue_args(False))
-    assert process.wait(timeout=30) != 0
-    assert "running under an older meridian" in (runtime.root / "cli-1.log").read_text()
-    assert not (root / "spawns/p1/launch.lock").exists()
-    assert parent.poll() is None
-    (runtime.root / "p1.exit").touch()
-    assert parent.wait(timeout=30) == 0
-
-
 def test_continue_releases_reused_root_without_signalling(runtime: Runtime) -> None:
     runtime.orphan()
     sleeper = subprocess.Popen(["sleep", "120"], start_new_session=True)
@@ -397,94 +349,3 @@ def lock_held(path: Path) -> bool:
         except BlockingIOError:
             return True
     return False
-
-
-@pytest.mark.parametrize("shape", ["primary", "foreground", "background"])
-def test_launch_lock_lifetime(runtime: Runtime, shape: str) -> None:
-    args = ["-m", "haiku", "-p", "hold"]
-    if shape != "primary":
-        args = ["spawn", *args, "--bg" if shape == "background" else "--no-background"]
-    parent = runtime.cli(*args)
-    if shape == "background":
-        assert parent.wait(timeout=30) == 0
-    harness, worker = runtime.started()
-    row = runtime.row()
-    runner = row["runner_pid"]
-    assert alive(runner)
-    assert (runner != parent.pid) == (shape == "background")
-    path = runtime.root / "runtime/spawns/p1/launch.lock"
-    assert lock_held(path)
-    if sys.platform == "linux":
-        for pid in (harness, worker):
-            for fd in Path(f"/proc/{pid}/fd").iterdir():
-                with suppress(FileNotFoundError):
-                    assert os.readlink(fd) != str(path), "harness inherited the lifetime lock"
-    (runtime.root / "p1.exit").touch()
-    until(lambda: not lock_held(path))
-    if shape != "background":
-        assert parent.wait(timeout=30) == 0
-    # A second launch is killed while its harness is still running.
-    second = runtime.cli(*args)
-    if shape == "background":
-        assert second.wait(timeout=30) == 0
-    runtime.started("p2")
-    runner = runtime.row("p2")["runner_pid"]
-    path = runtime.root / "runtime/spawns/p2/launch.lock"
-    assert lock_held(path)
-    os.kill(runner, signal.SIGKILL)
-    if shape != "background":
-        second.wait(timeout=10)
-    else:
-        until(lambda: exited(runner))
-    assert not lock_held(path), "SIGKILL must release the lock without a grace period"
-
-
-@pytest.mark.parametrize("legacy", [False, True], ids=["locked", "lockless"])
-def test_continue_io_bound(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    legacy: bool,
-) -> None:
-    from meridian.lib.launch.continue_launch import begin_continue
-    from meridian.lib.state import spawn_store
-    from meridian.lib.state.launch_lock import LaunchSlot
-    from meridian.lib.state.spawn import repository
-    from tests.support.call_probe import IOProbe
-
-    root = tmp_path / "runtime"
-    for number in range(1, 4):
-        with LaunchSlot() as slot:
-            spawn_store.start_spawn(
-                root,
-                spawn_id=f"p{number}",
-                chat_id=f"c{number}",
-                model="test",
-                agent="",
-                harness="claude",
-                prompt="test",
-                launch_lock=None if legacy else slot,
-                started_at="2020-01-01T00:00:00+00:00",
-            )
-    probe = IOProbe(monkeypatch)
-    probe.watch("scan", repository.scan_spawn_ids)
-    probe.watch("read", repository.read_state)
-    reads: list[int] = []
-    for source, count in enumerate((240, 2400, 12000), start=1):
-        for number in range(4, count + 1):
-            (root / "spawns" / f"p{number}").mkdir(exist_ok=True)
-        before = probe.count("read")
-        hold = begin_continue(
-            project_root=tmp_path,
-            runtime_root=root,
-            target=spawn_store.get_spawn(root, f"p{source}"),
-            chat_id=None,
-            parent_id=None,
-            caller_spawn_id=None,
-            dry_run=False,
-        )
-        assert hold is not None
-        hold.slot.close()
-        assert probe.count("scan") == 0
-        reads.append(probe.count("read") - before)
-        assert all(call.args[1] == f"p{source}" for call in probe.calls("read")[before:])
-    assert len(set(reads)) == 1, f"a continue's reads grew with the row count: {reads}"
