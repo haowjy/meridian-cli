@@ -52,7 +52,7 @@ These hold however the work is done, including through the Rust rewrite. Change 
 | Meridian never acts beyond what was authorized: it doesn't signal unverified processes, start cancelled work or widen a workspace | Scattered by area |
 | Private content never reaches the wrong recipient: secrets, another session's transcript, turn text that was excluded | Scattered by area |
 | A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
-| Meridian is an overlay on the harness. A session it starts stays a normal native session: the conversation lives in the harness's own store and format, and can be resumed with the harness alone. Removing Meridian leaves the harness and its sessions working. | None yet |
+| Meridian is an overlay on the harness. A session it starts stays a normal native session: the conversation lives in the harness's own store and format, and can be resumed with the harness alone. Removing Meridian leaves the harness and its sessions working. | `tests/smoke/test_overlay_resume.py` (opt-in, paid) |
 
 A restriction is lost when a harness can't express part of a profile. It shows in Mars's default output and in `--dry-run`, not at launch.
 
