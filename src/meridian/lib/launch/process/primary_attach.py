@@ -36,7 +36,11 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
+from meridian.lib.launch.signals import (
+    SignalCallbackReceiver,
+    signal_coordinator,
+    signal_to_exit_code,
+)
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
@@ -221,10 +225,13 @@ class PrimaryAttachLauncher:
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
         self._signal_cancel_requested = False
+        self._signal_exit_code = 130
 
-    def _request_signal_cancel(self) -> None:
+    def _request_signal_cancel(self, signum: signal.Signals) -> None:
         """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
+        if not self._signal_cancel_requested:
+            self._signal_exit_code = signal_to_exit_code(signum) or 130
         self._signal_cancel_requested = True
         running = self._running_process
         if running is not None:
@@ -310,9 +317,10 @@ class PrimaryAttachLauncher:
         if not self._durable:
             self._launch.dir.mkdir(parents=True, exist_ok=True)
         self._signal_cancel_requested = False
+        self._signal_exit_code = 130
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
-            callback=lambda _signum: self._request_signal_cancel(),
+            callback=self._request_signal_cancel,
             escalate_on_repeat=True,
         )
         signal_coordinator().register_receiver(cancel_receiver)
@@ -424,7 +432,7 @@ class PrimaryAttachLauncher:
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
-                exit_code=130 if cancelled else launched.exit_code,
+                exit_code=self._signal_exit_code if cancelled else launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
@@ -442,7 +450,7 @@ class PrimaryAttachLauncher:
                 )
                 return PrimaryAttachOutcome(
                     facts=self._facts,
-                    exit_code=130,
+                    exit_code=self._signal_exit_code,
                     session_id=session_id,
                     tui_pid=None,
                     cancelled=True,

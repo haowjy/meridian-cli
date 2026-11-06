@@ -32,6 +32,8 @@ def signal_to_exit_code(received_signal: signal.Signals | None) -> int | None:
         return 130
     if received_signal == signal.SIGTERM:
         return 143
+    if received_signal == signal.SIGHUP:
+        return 129
     return None
 
 

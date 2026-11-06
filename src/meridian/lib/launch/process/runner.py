@@ -60,7 +60,11 @@ from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
-from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
+from meridian.lib.launch.signals import (
+    SignalCallbackReceiver,
+    signal_coordinator,
+    signal_to_exit_code,
+)
 from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity
@@ -232,12 +236,14 @@ def run_primary_process_with_capture(
     launcher_diagnostics_path: Path,
 ) -> PrimaryProcessResult:
     cancelled = False
+    cancel_exit_code = 130
     wait_completed = False
 
-    def request_cancel(_signum: signal.Signals) -> None:
-        nonlocal cancelled
-        if not wait_completed:
+    def request_cancel(signum: signal.Signals) -> None:
+        nonlocal cancelled, cancel_exit_code
+        if not wait_completed and not cancelled:
             cancelled = True
+            cancel_exit_code = signal_to_exit_code(signum) or 130
 
     cancel_receiver = SignalCallbackReceiver(
         target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -316,7 +322,7 @@ def run_primary_process_with_capture(
         coordinator.unregister_receiver(cancel_receiver)
 
     return PrimaryProcessResult(
-        exit_code=130 if cancelled else launched.exit_code,
+        exit_code=cancel_exit_code if cancelled else launched.exit_code,
         pid=launched.pid,
         launcher_diagnostics_path=window.captured_path,
         cancelled=cancelled,
