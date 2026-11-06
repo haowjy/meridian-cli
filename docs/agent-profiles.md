@@ -434,6 +434,10 @@ A profile has four separate permission fields:
 - `approval` supplies the harness's fallback prompt behavior for calls that `tools` does not
   decide. It does not widen an allowlist or turn an explicit `ask` into `allow`.
 
+These fields guard against accidents, not a hostile agent. `meridian spawn` runs outside the
+harness sandbox and loads files and environment an agent can change, such as project hooks
+or a project `.venv`, so a determined agent can get code run outside the sandbox.
+
 These fields are not substitutes for one another. `edit: deny` removes edit tools, but an
 allowed shell can still write with redirection. Use a sandbox for filesystem confinement;
 where the table says the sandbox is partial or not enforced, also restrict every tool that
