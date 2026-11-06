@@ -26,7 +26,6 @@ from typing import ClassVar, cast
 
 import aiohttp
 
-from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_backend_command
@@ -45,7 +44,6 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
     SessionNotReadyError,
     find_free_port,
-    http_rejection,
     map_approval_decision,
     permission_liveness_key,
     summarize_body,
@@ -355,58 +353,12 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             accepted_statuses=self._SUCCESS_STATUSES,
         )
 
-    async def _post_session_action(
-        self,
-        *,
-        path_templates: tuple[str, ...],
-        payload_variants: tuple[dict[str, object], ...],
-        accepted_statuses: frozenset[int],
-    ) -> None:
-        session_id = self._require_session_id()
-        last_error: str | None = None
-
-        for template in path_templates:
-            path = template.format(session_id=session_id)
-            for payload in payload_variants:
-                status, body, content_type = await self._post_json(
-                    path,
-                    payload,
-                    skip_body_on_statuses=accepted_statuses,
-                    tolerate_incomplete_body=True,
-                )
-                # Unknown routes fall through to the SPA ``200 text/html`` handler,
-                # which would otherwise masquerade as a successful delivery and
-                # silently drop the prompt. Success requires a non-HTML content
-                # type (the same guard ``_switch_session_model`` uses).
-                if status in accepted_statuses and "text/html" not in content_type:
-                    return
-                if status in self._PAYLOAD_RETRY_STATUSES:
-                    last_error = (
-                        f"OpenCode V2 session action rejected payload on {path}: "
-                        f"status={status} body={summarize_body(body)}"
-                    )
-                    continue
-                if status in self._PATH_RETRY_STATUSES:
-                    last_error = (
-                        f"OpenCode V2 session endpoint unavailable on {path}: "
-                        f"status={status} body={summarize_body(body)}"
-                    )
-                    break
-                if status in accepted_statuses:
-                    raise RuntimeError(
-                        f"OpenCode V2 session action returned an HTML fallback on {path}: "
-                        f"status={status} content_type={content_type}"
-                    )
-                raise http_rejection(
-                    status,
-                    f"OpenCode V2 session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}",
-                )
-
-        # ``last_error`` is only set for 4xx statuses: the server answered and acted on nothing.
-        if last_error:
-            raise DeliveryRefused(last_error)
-        raise RuntimeError("OpenCode V2 session action failed")
+    def _accepted(self, status: int, content_type: str, accepted_statuses: frozenset[int]) -> bool:
+        # Unknown routes fall through to the SPA ``200 text/html`` handler, which would
+        # otherwise masquerade as a delivery and silently drop the prompt.
+        return super()._accepted(status, content_type, accepted_statuses) and (
+            "text/html" not in content_type
+        )
 
     async def respond_request(
         self,

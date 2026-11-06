@@ -1391,6 +1391,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             accepted_statuses=self._SUCCESS_STATUSES,
         )
 
+    def _accepted(self, status: int, content_type: str, accepted_statuses: frozenset[int]) -> bool:
+        return status in accepted_statuses
+
     async def _post_session_action(
         self,
         *,
@@ -1399,18 +1402,18 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         accepted_statuses: frozenset[int],
     ) -> None:
         session_id = self._require_session_id()
-        last_error: str | None = None
+        last_error = ""
 
         for template in path_templates:
             path = template.format(session_id=session_id)
             for payload in payload_variants:
-                status, body, _content_type = await self._post_json(
+                status, body, content_type = await self._post_json(
                     path,
                     payload,
                     skip_body_on_statuses=accepted_statuses,
                     tolerate_incomplete_body=True,
                 )
-                if status in accepted_statuses:
+                if self._accepted(status, content_type, accepted_statuses):
                     return
                 if status in self._PAYLOAD_RETRY_STATUSES:
                     last_error = (
@@ -1424,16 +1427,21 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         f"status={status} body={summarize_body(body)}"
                     )
                     break
-                raise http_rejection(
-                    status,
+                detail = (
                     f"OpenCode session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}",
+                    f"status={status} content_type={content_type or '<none>'} "
+                    f"body={summarize_body(body)}"
+                )
+                # A status the loop would accept but ``_accepted`` vetoed (V2's HTML
+                # fallback) was answered by a handler that acted on nothing.
+                raise (
+                    DeliveryRefused(detail)
+                    if status in accepted_statuses
+                    else http_rejection(status, detail)
                 )
 
-        # ``last_error`` is only set for 4xx statuses: the server answered and acted on nothing.
-        if last_error:
-            raise DeliveryRefused(last_error)
-        raise RuntimeError("OpenCode session action failed")
+        # Only 4xx statuses reach here: the server answered and acted on nothing.
+        raise DeliveryRefused(last_error)
 
     async def _post_json(
         self,
