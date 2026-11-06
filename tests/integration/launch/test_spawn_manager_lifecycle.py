@@ -268,7 +268,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         assert manager.get_connection(spawn_id) is None
 
         with pytest.raises(TransportDead, match=f"Spawn {spawn_id} is not active"):
-            await manager.deliver(spawn_id, "late message")
+            await manager.deliver(spawn_id, "late message", source="test")
         assert "item.completed" in [event.event_type for event in observed]
 
         release_cleanup.set()

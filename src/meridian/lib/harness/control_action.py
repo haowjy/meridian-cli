@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import cast
 
 from meridian.lib.core.delivery import (
+    SEND_TIMEOUT_SECONDS,
     Deliver,
     DeliveryError,
     DeliveryKind,
@@ -20,9 +21,9 @@ from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
-# Between the harnesses' own 30 s request timeouts, whose failure text should win, and the
-# CLI's 35 s wait for the reply.
-SEND_TIMEOUT_SECONDS = 33.0
+# One retry of a refused send, after a short pause.
+_MAX_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 0.05
 
 
 class ControlActionType(StrEnum):
@@ -51,30 +52,24 @@ class _CounterState:
     interrupt_fence_submission: int
 
 
-def _failure(exc: Exception) -> DeliveryError:
+def _failure(exc: Exception, action: ControlActionType) -> DeliveryError:
     """The error for the sender: a ``DeliveryError`` passes through; others may follow the write."""
 
     if isinstance(exc, DeliveryError):
         return exc
     text = str(exc) or type(exc).__name__
+    if action is ControlActionType.INTERRUPT:
+        return DeliveryError(text)
     return DeliveryError(f"{text}; the message may have arrived and was not resent")
 
 
 class ControlActionCoordinator:
     """Serialize and persist runtime control actions for one active session."""
 
-    def __init__(
-        self,
-        *,
-        launch: LaunchPaths,
-        default_max_attempts: int = 2,
-        retry_delay_secs: float = 0.05,
-    ) -> None:
+    def __init__(self, *, launch: LaunchPaths) -> None:
         self._spawn_id = launch.spawn_id
         self._actions_path = launch.control_actions
         self._runtime_root = launch.runtime_root
-        self._default_max_attempts = max(1, int(default_max_attempts))
-        self._retry_delay_secs = max(0.0, float(retry_delay_secs))
         self._lock = asyncio.Lock()
         state = self._load_counter_state()
         self._transition_seq = state.transition_seq
@@ -86,22 +81,21 @@ class ControlActionCoordinator:
     async def deliver(self, send: Deliver, text: str, *, source: str) -> DeliveryKind:
         """Journal and serialize one user message; a failure raises ``DeliveryError``."""
 
-        kind = await self.run_action(
+        return await self.run_action(
             action=ControlActionType.INJECT,
             payload={"text": text},
             source=source,
             send=lambda: send(text),
         )
-        return cast("DeliveryKind", kind)
 
-    async def run_action(
+    async def run_action[T: DeliveryKind | None](
         self,
         *,
         action: ControlActionType,
         payload: dict[str, object],
         source: str,
-        send: Callable[[], Awaitable[DeliveryKind | None]],
-    ) -> DeliveryKind | None:
+        send: Callable[[], Awaitable[T]],
+    ) -> T:
         """Run one action via serialized send + durable transition records.
 
         Only ``DeliveryRefused`` is retried: a connection raises it before writing
@@ -166,13 +160,14 @@ class ControlActionCoordinator:
                     async with bound:
                         delivery = await send()
                 except Exception as exc:
-                    if attempt < self._default_max_attempts and isinstance(exc, DeliveryRefused):
-                        await asyncio.sleep(self._retry_delay_secs)
+                    if attempt < _MAX_ATTEMPTS and isinstance(exc, DeliveryRefused):
+                        await asyncio.sleep(_RETRY_DELAY_SECONDS)
                         continue
                     failure = _failure(
                         TimeoutError(f"no answer within {SEND_TIMEOUT_SECONDS:g}s")
                         if bound.expired()
-                        else exc
+                        else exc,
+                        action,
                     )
                     await self._append_transition(
                         action_id=action_id,
@@ -189,13 +184,12 @@ class ControlActionCoordinator:
 
                 # ``posted``: the write finished but no harness confirmed it. A launcher
                 # that died mid-write leaves ``sent`` as the last status instead.
+                posted = delivery is DeliveryKind.POSTED
                 await self._append_transition(
                     action_id=action_id,
                     action=action,
                     status=(
-                        ControlActionStatus.POSTED
-                        if delivery is DeliveryKind.POSTED
-                        else ControlActionStatus.ACKNOWLEDGED
+                        ControlActionStatus.POSTED if posted else ControlActionStatus.ACKNOWLEDGED
                     ),
                     submission_seq=submission_seq,
                     interrupt_epoch=interrupt_epoch,

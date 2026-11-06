@@ -313,9 +313,7 @@ class SpawnManager:
             return None
         return await completion_future
 
-    async def deliver(
-        self, spawn_id: SpawnId, text: str, *, source: str = "control_socket"
-    ) -> DeliveryKind:
+    async def deliver(self, spawn_id: SpawnId, text: str, *, source: str) -> DeliveryKind:
         """Route one user message to the spawn's connection; failures raise ``DeliveryError``."""
 
         record = spawn_store.get_spawn(self._runtime_root, spawn_id)

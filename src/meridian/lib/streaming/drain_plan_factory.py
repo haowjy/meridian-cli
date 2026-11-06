@@ -31,9 +31,7 @@ if TYPE_CHECKING:
 class SerializedDeliver(Protocol):
     """Manager-owned serialized delivery capability."""
 
-    def __call__(
-        self, spawn_id: SpawnId, text: str, *, source: str = "control_socket"
-    ) -> Awaitable[DeliveryKind]: ...
+    def __call__(self, spawn_id: SpawnId, text: str, *, source: str) -> Awaitable[DeliveryKind]: ...
 
 
 class DescendantCancellationService(Protocol):

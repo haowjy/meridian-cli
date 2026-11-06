@@ -16,7 +16,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.core.delivery import DeliveryError, MessageRoute
+from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
@@ -186,7 +186,7 @@ class ControlSocketServer:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        """Read one request, route to the manager, and write one response."""
+        """Read one request, deliver it through the route, and write one response."""
 
         response: dict[str, object]
         try:
@@ -241,10 +241,7 @@ class ControlSocketServer:
         text = payload.get("text")
         if not isinstance(text, str):
             return {"ok": False, "error": "user_message requires text"}
-        try:
-            delivery = await self._route.deliver(text)
-        except DeliveryError as exc:
-            return {"ok": False, "error": str(exc)}
+        delivery = await self._route.deliver(text)
         response: dict[str, object] = {"ok": True, "delivery": delivery.value}
         if self._route.note is not None:
             response["note"] = self._route.note

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 
 from meridian.lib.core.delivery import MessageRoute
@@ -21,7 +21,7 @@ _JOIN_SECONDS = 10.0
 
 
 @asynccontextmanager
-async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncIterator[None]:
+async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncGenerator[None]:
     """Bind the spawn's control socket to *route*, journaled, for the block's duration."""
 
     coordinator = ControlActionCoordinator(launch=launch)

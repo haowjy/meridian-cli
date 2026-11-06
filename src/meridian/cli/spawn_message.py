@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
 import shlex
 import sys
@@ -11,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS, DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.locate import locate_run
@@ -24,8 +23,8 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES, control_socket_path
 
-# Above the 30 s harness request timeouts, so their failure text reaches the sender.
-_RESPONSE_TIMEOUT_SECONDS = 35.0
+# Above the server's send bound, so its failure text reaches the sender.
+_RESPONSE_TIMEOUT_SECONDS = SEND_TIMEOUT_SECONDS + 2.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
@@ -225,12 +224,6 @@ async def send_message(
             f"connection to spawn {normalized_spawn_id} was reset; "
             "the message may not have been delivered and was not resent"
         )
-    except OSError as exc:
-        if exc.errno == errno.ENOENT:
-            _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
-        if exc.errno == errno.ECONNREFUSED:
-            _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
-        raise
 
     if not response_data:
         _fail(f"spawn not running: {normalized_spawn_id} returned no response")

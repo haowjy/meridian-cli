@@ -9,7 +9,6 @@ import socket
 from pathlib import Path
 
 from meridian.lib.core.delivery import (
-    DeliveryError,
     DeliveryKind,
     DeliveryRefused,
     MessageRoute,
@@ -46,13 +45,7 @@ def _post(inbox: Path, text: str) -> None:
             if exc.errno in {errno.ENOENT, errno.ECONNREFUSED}:
                 raise TransportDead("Claude's inbox is gone") from exc
             raise DeliveryRefused(f"Could not reach Claude's inbox: {exc.strerror or exc}") from exc
-        try:
-            client.sendall(wire_message)
-        except OSError as exc:
-            raise DeliveryError(
-                f"Could not post to Claude's inbox: {exc.strerror or exc}; "
-                "the message may have arrived and was not resent"
-            ) from exc
+        client.sendall(wire_message)
 
         try:
             client.shutdown(socket.SHUT_WR)

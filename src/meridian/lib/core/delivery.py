@@ -34,6 +34,10 @@ class TransportDead(DeliveryError):
     """The receiver is gone and nothing was written."""
 
 
+SEND_TIMEOUT_SECONDS = 33.0
+"""How long one send may run. Above the harnesses' own 30 s request timeouts, whose
+failure text should win, and below the CLI's wait for the reply (this plus 2 s)."""
+
 Deliver = Callable[[str], Awaitable[DeliveryKind]]
 
 
@@ -47,6 +51,7 @@ class MessageRoute:
 
 
 __all__ = [
+    "SEND_TIMEOUT_SECONDS",
     "Deliver",
     "DeliveryError",
     "DeliveryKind",
