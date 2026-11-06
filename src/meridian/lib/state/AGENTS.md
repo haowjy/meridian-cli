@@ -22,9 +22,11 @@ Sessions take gate shared, then `sessions.jsonl.flock`, only through
 `session_store.session_writes()`; never take `sessions_flock` alone. `work-store.flock`
 and the session pair are never held together, in either order: a command that changes
 both runs them as sequential steps, work store first (`ops/work_attachment.attach_executions`).
-The one-time native import lock precedes the gate. Cross-leaf composition (spawn lock +
+`ops/legacy_native_import.py` takes `locks/legacy-native-import.lock` before the gate
+during native session import. Cross-leaf composition (spawn lock +
 projection lock) lives in `spawn_aggregate.py`, not in either leaf repository. Pending
-reaper cleanup claims block published-row deletion. Per-spawn mutations never take
+reaper cleanup claims make its published-row deletion seam skip the row until cleanup
+completes or the claim is cleared. Per-spawn mutations never take
 `spawns_flock`.
 
 **Stable lock inodes.** Lock files are unlinked only by `unlink_validated_lock()` under a
@@ -48,8 +50,9 @@ The background worker inherits the same open-file description (`dup`/`pass_fds`)
 restores close-on-exec. Release by closing descriptors; never `LOCK_UN`, which unlocks the
 worker too. Harnesses never inherit it. `LaunchSlot` creates the lock before ID
 allocation; `bind_staged()` returns the `LaunchHandle`. Only low-level `start_spawn`
-permits lockless test seeding. Lock-backed rows have no liveness grace: a free lock derives
-terminal. Details: [.context/CONTEXT.md](.context/CONTEXT.md).
+permits lockless test seeding. For an active lock-backed row, a free lock derives success
+from a durable report, cancellation from a cancel intent, or failure otherwise. Details:
+[.context/CONTEXT.md](.context/CONTEXT.md).
 
 ## Status and reconciliation
 
@@ -75,7 +78,8 @@ retry, ZIP retention, or restore.
 
 ## Sessions
 
-A chat keeps one `(harness, native_store, harness_session_id)` binding;
+A chat keeps one `(harness, native_store, harness_session_id)` binding: absent fields
+can be filled, but bound fields cannot be replaced except by a store `relocate` row.
 `update_session_harness_id` returns `BindOutcome` from `native_binding.bind`, and callers
 mirror its accepted ID. Per-operation session reads and all appends use the keyed seam in
 `session_store.py`; multi-chat reads use one `chats_rows` pass. Unsupported-version rows are skipped with a warning; scoped appends

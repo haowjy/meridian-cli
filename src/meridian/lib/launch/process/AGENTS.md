@@ -1,14 +1,18 @@
 # launch/process/ — Primary Process Executor
 
 Owns the primary harness process lifecycle: launcher selection, session tracking,
-process execution, managed-attach flow, post-exit finalization. This is driving adapter
-#1 (Primary CLI) from `launch/__init__.py`.
+process execution, managed-attach flow, post-exit finalization. `launch/__init__.py`
+calls it for Primary CLI launches.
 
 `run_harness_process()` in `runner.py` is the sole external entry point:
 `session_scope()` → `lifecycle_service.start()` (spawn row) → `select_process_launcher()`
 → managed attach (falls back to black-box on `PrimaryAttachError` when the adapter's
 policy says so: Codex raises, OpenCode falls back) → `conclude_native_run()` →
 `_finalize_lifecycle()`.
+
+Managed attach connects a TUI to a managed backend and observes owned IDs live;
+black-box runs the harness directly and observes artifact IDs after exit. The fallback
+does not run the managed idle sensor.
 
 `selector.py` maps the resolved `TerminalSurfaceMode` to a launcher. Codex/OpenCode
 default to native terminal inheritance; Claude/Pi keep the PTY relay. A TTY alone does
@@ -34,9 +38,9 @@ snapshots. Register any new launcher in `select_process_launcher()`.
   (minted create, verified resume, fork target) binds as `source="assigned"` before the
   child starts; a conflict refuses the launch. Identities without an ID (Claude fork)
   wait for the first owned observation. Observations bind once and never replace the key.
-- **Observation is lexical.** Each driver runs its child inside
-  `with native_run.observing(...)`; leaving the block final-drains and joins the drainer
-  before conclusion and session-scope close.
+- Each driver runs its child inside `with native_run.observing(...)`; leaving the block
+  final-drains and joins the drainer so observed IDs bind before conclusion and
+  session-scope close.
 - **`session_scope()` opens before the spawn row and closes in `finally`**, even if
   `lifecycle_service.start()` fails.
 - **The TUI owns the terminal exclusively** (`terminal_ownership.py` dups the terminal fds,
@@ -44,7 +48,8 @@ snapshots. Register any new launcher in `select_process_launcher()`.
   window and attach the TUI to its yielded fds; run `isatty` checks before it. Detail:
   [.context/CONTEXT.md](.context/CONTEXT.md).
 - **Native job control belongs to the shell.** Drivers enter `native_sigint_shield()`;
-  SIGTSTP is left alone; the native gate sends one root TERM, never a group signal.
+  SIGTSTP is left alone; the native launch gate's guardian sends one TERM to the TUI
+  root process, never a group signal.
 - **Signal receivers only latch.** Every primary path registers a SIGTERM/SIGHUP
   `SignalCallbackReceiver` with `escalate_on_repeat`, reports `cancelled`, exits 130. The
   callback runs between bytecodes, so no non-reentrant lock: no `LaunchGate` call, no
