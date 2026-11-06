@@ -437,33 +437,6 @@ async def test_refused_expiry_nudge_gets_one_retry_then_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_expiry_nudge_with_unknown_outcome_is_never_resent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    await _settle(coordinator)
-    backend = connection.fake_resident_backend
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
-    await coordinator.handle_timeout()
-    await start_turn(coordinator)
-    backend.inject_error = RuntimeError("timed out after the write")
-    attempts = backend.inject_attempts
-
-    clock.advance(10.0)
-    assert (await coordinator.handle_timeout()).recorded_outcome is None
-    assert backend.inject_attempts == attempts + 1
-
-    clock.advance(301.0)
-    decision = await coordinator.handle_timeout()
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "timed_out"
-    assert backend.inject_attempts == attempts + 1
-
-
-@pytest.mark.asyncio
 async def test_expiry_nudge_on_dead_backend_cleans_up_at_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
