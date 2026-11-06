@@ -102,7 +102,7 @@ def build_drain_plan(
         coordinator = ResidentDrainCoordinator.build(
             launch=launch,
             # A resident backend starts its own follow-up turn; other harnesses
-            # take the nudge through the manager's serialized inject.
+            # take the nudge through the manager's serialized delivery.
             send_nudge=send_nudge,
             completion_signals_available=receiver.completion_signals_available,
             backend=resident_backend,

@@ -36,6 +36,7 @@ class _Record(BaseModel):
     transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
     # Typed at lookup, not here: a bad inbox field must never drop the identity record.
     messaging_socket: object = None
+    # Older journals carry it and the model forbids extras; nothing reads it.
     recorded_at: object = None
 
     def observation(self, next_cursor: int) -> NativeObservation:

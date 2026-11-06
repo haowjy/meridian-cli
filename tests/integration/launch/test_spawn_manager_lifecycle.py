@@ -493,7 +493,6 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             self.state = "created"
             self.inject_started = asyncio.Event()
             self.allow_inject_send = asyncio.Event()
-            self.call_order: list[str] = []
             self.capabilities = ConnectionCapabilities(
                 mid_turn_injection="interrupt_restart",
                 supports_steer=True,
@@ -552,27 +551,12 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
-            self.call_order.append("inject:start")
             self.inject_started.set()
             await self.allow_inject_send.wait()
-            self.call_order.append("inject:end")
             return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
-            self.call_order.append("interrupt")
-
-        async def respond_request(
-            self,
-            request_id: str,
-            decision: str,
-            payload: dict[str, object] | None = None,
-        ) -> None:
-            _ = payload
-            self.call_order.append(f"approve:{request_id}:{decision}")
-
-        async def respond_user_input(self, request_id: str, answers: dict[str, object]) -> None:
-            _ = answers
-            self.call_order.append(f"input:{request_id}")
+            return None
 
         async def events(self):  # type: ignore[no-untyped-def]
             while self.state != "stopped":

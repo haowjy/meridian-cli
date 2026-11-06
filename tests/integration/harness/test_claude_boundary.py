@@ -5,7 +5,6 @@ import json
 import os
 import runpy
 import sys
-import time
 from pathlib import Path
 
 from meridian.lib.harness.claude_boundary import (
@@ -143,7 +142,6 @@ def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     saved = path.read_text(encoding="utf-8")
     record = json.loads(next(line for line in saved.splitlines() if line))
     assert record["messaging_socket"] == str(inbox)
-    assert record["recorded_at"] <= time.time()
     assert "must-not-be-recorded" not in saved
     assert "CLAUDE_CODE_MESSAGING_TOKEN" not in saved
     batch = read_observations(path, nonce="nonce", pid=os.getppid(), cursor=0)
@@ -161,7 +159,6 @@ def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     )
     unusable = json.loads(next(line for line in relative.read_text().splitlines() if line))
     assert "messaging_socket" not in unusable
-    assert isinstance(unusable["recorded_at"], float)
 
 
 def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):

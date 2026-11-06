@@ -256,7 +256,7 @@ values to force-kill any surviving process tree.
 
 ## Control Socket
 
-Inject flows through the control socket:
+A message flows through the control socket:
 
 ```
 meridian spawn message <id> --message "..."
@@ -267,11 +267,11 @@ meridian spawn message <id> --message "..."
     → connection.send_user_message(message)
 ```
 
-Both the server and inject client derive the same bounded POSIX socket path from
+Both the server and the sending CLI derive the same bounded POSIX socket path from
 the resolved runtime root and spawn ID. The socket lives in the mode-0700, UID-scoped
 directory `/tmp/meridian-<uid>`, independent of either process's `TMPDIR`, so
 runtime/project path depth cannot exceed `sockaddr_un.sun_path` and concurrent spawns
-remain isolated. Control injection is POSIX-only; the server's legacy native-Windows
+remain isolated. Message delivery over the socket is POSIX-only; the server's legacy native-Windows
 branch has no supported client.
 
 Startup sweeps only current-user `control-<32 hex>.sock` files older than 120 seconds.
@@ -295,7 +295,7 @@ files are needed. Recovery runs on the next spawn start, not a timer.
 Test isolation crosses interpreter boundaries; see the
 [test guidance](../../../../../tests/AGENTS.md).
 
-All control actions (inject, interrupt, permission reply, user input reply) are
+Control actions (inject and interrupt) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
 do not call `connection.send_user_message()` directly.
 
