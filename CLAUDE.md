@@ -4,3 +4,5 @@ turn something you can do into a question for Jimmy. Features and big refactors 
 for Jimmy, as `AGENTS.md` says.
 
 @AGENTS.md
+
+Trust goes with checking yourself: run the change and see it behave before you merge it or call it done.
