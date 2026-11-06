@@ -136,6 +136,7 @@ class DrainInputWaiter:
             task_context=f"{self._task_context} auxiliary wake",
         )
 
+
 async def _cancel_task(
     task: asyncio.Future[Any] | None,
     *,

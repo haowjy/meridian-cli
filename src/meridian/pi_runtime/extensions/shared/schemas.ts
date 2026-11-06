@@ -19,7 +19,6 @@ export type BashRecord = {
   stderr_log_path: string;
   log_bytes: number;
   timeout_min: number;
-  originating_bash_id: string | null;
   ping_sent_at_ms?: number | null;
   notification_consumed_at_ms?: number | null;
   execution_error?: string;
@@ -54,7 +53,6 @@ export const BashRecordsFileSchema = Type.Object({
     started_at_ms: Type.Number(), ended_at_ms: Type.Union([Type.Number(), Type.Null()]),
     log_path: Type.String(), stdout_log_path: Type.String(), stderr_log_path: Type.String(),
     log_bytes: Type.Integer({ minimum: 0 }), timeout_min: Type.Number(),
-    originating_bash_id: Type.Union([Type.String(), Type.Null()]),
     ping_sent_at_ms: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     notification_consumed_at_ms: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     execution_error: Type.Optional(Type.String()),

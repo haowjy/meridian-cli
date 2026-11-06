@@ -265,4 +265,3 @@ def test_workspace_launch_validation_raises_for_invalid_workspace(tmp_path: Path
 
     with pytest.raises(ValueError, match=r"Invalid workspace config in meridian\.toml"):
         ensure_workspace_valid_for_launch(project_root)
-

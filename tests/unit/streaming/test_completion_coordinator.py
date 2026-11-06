@@ -84,9 +84,7 @@ class _Evidence:
         del event, state
         return self.persisted
 
-    async def assess(
-        self, trigger: AssessmentTrigger, state: CompletionState
-    ) -> WorkAssessment:
+    async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
         del trigger, state
         if self.assessments:
             self.last = self.assessments.popleft()
@@ -203,9 +201,7 @@ class _Profile:
         del state
         return False
 
-    def next_nudge_at(
-        self, state: CompletionState, assessment: WorkAssessment
-    ) -> float | None:
+    def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
         return None
 
@@ -429,9 +425,7 @@ async def test_changed_stabilization_generation_restarts_from_waiting() -> None:
 async def test_persisted_activity_restarts_stabilization_window() -> None:
     clock = FakeClock()
     evidence = _Evidence(_ready(7), _ready(7))
-    evidence.persisted = EvidenceEventDecision(
-        activity=EvidenceActivity(code="persisted_event")
-    )
+    evidence.persisted = EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
     coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=2.0))
     await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
 

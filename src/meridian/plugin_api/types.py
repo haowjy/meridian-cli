@@ -184,9 +184,7 @@ class HookContext:
             "spawn_duration_secs": (
                 None if self.spawn_duration_secs is None else str(self.spawn_duration_secs)
             ),
-            "spawn_cost_usd": (
-                None if self.spawn_cost_usd is None else str(self.spawn_cost_usd)
-            ),
+            "spawn_cost_usd": (None if self.spawn_cost_usd is None else str(self.spawn_cost_usd)),
             "spawn_error": self.spawn_error,
             "work_id": self.work_id,
             "work_dir": self.work_dir,

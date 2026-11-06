@@ -36,4 +36,3 @@ def session_model_refresh_sync(payload: SessionModelRefreshInput) -> SessionMode
         record.model,
     )
     return SessionModelRefreshOutput(chat_id=payload.chat_id, model=model)
-

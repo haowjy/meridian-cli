@@ -41,9 +41,7 @@ class TerminalEventOutcome:
     cause: TerminalOutcomeCause | None = None
 
     def __post_init__(self) -> None:
-        if self.status == SpawnStatus.SUCCEEDED and (
-            self.exit_code != 0 or self.error is not None
-        ):
+        if self.status == SpawnStatus.SUCCEEDED and (self.exit_code != 0 or self.error is not None):
             raise ValueError("succeeded terminal outcomes require exit_code=0 and no error")
 
 

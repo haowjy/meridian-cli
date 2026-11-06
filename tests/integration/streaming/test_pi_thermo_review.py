@@ -68,9 +68,7 @@ async def test_spawn_manager_publishes_refined_success_boundary(
         )
         for _ in range(100):
             boundaries = [
-                event
-                for event in observed
-                if event.event_type == "meridian/turn_completed"
+                event for event in observed if event.event_type == "meridian/turn_completed"
             ]
             if boundaries:
                 break

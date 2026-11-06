@@ -73,12 +73,15 @@ def _seed_spawn(
             else {"type": "session_meta", "payload": {"id": harness_session_id}}
         )
         filename = (
-            f"{harness_session_id}.jsonl" if harness == "claude"
+            f"{harness_session_id}.jsonl"
+            if harness == "claude"
             else f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl"
         )
         (native_store / filename).write_text(json.dumps(native_header) + "\n", encoding="utf-8")
     session_store.start_session(
-        runtime_root, chat_id=chat_id, spawn_id=spawn_id,
+        runtime_root,
+        chat_id=chat_id,
+        spawn_id=spawn_id,
         harness=harness,
         harness_session_id=harness_session_id or "",
         native_store=str(native_store) if harness_session_id else None,
@@ -414,8 +417,11 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
         extra_args=("--permission-mode", "acceptEdits"),
     )
     stub_bundle_request_and_resolve(
-        monkeypatch, model=snapshot.model, model_token=snapshot.model,
-        harness=HarnessId.CLAUDE, harness_model=snapshot.model,
+        monkeypatch,
+        model=snapshot.model,
+        model_token=snapshot.model,
+        harness=HarnessId.CLAUDE,
+        harness_model=snapshot.model,
     )
     _seed_spawn(
         runtime_root,
@@ -471,7 +477,9 @@ def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_write
         project_root, "c1", runtime_root=runtime_root, harness_hint="codex"
     )
     assert (reference.harness, reference.source_chat_id, reference.source_spawn_id) == (
-        "claude", "c1", "p-cross"
+        "claude",
+        "c1",
+        "p-cross",
     )
     monkeypatch.setattr(
         spawn_api,
@@ -517,8 +525,11 @@ def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
     )
     stub_bundle_request_and_resolve(
-        monkeypatch, model="gpt-5.3-codex", model_token="gpt-5.3-codex",
-        harness=HarnessId.CODEX, harness_model="gpt-5.3-codex",
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.3-codex",
     )
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "ambient-work")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", ambient_work_dir.as_posix())

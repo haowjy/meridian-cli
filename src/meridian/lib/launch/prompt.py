@@ -60,6 +60,5 @@ def build_primary_preamble() -> str:
     """Render session-context framing for primary (user-facing) sessions."""
 
     return (
-        "# Session Context\n\n"
-        "This is a **primary session**. You are talking directly to the user."
+        "# Session Context\n\nThis is a **primary session**. You are talking directly to the user."
     )

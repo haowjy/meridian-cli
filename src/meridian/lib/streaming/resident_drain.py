@@ -162,9 +162,7 @@ class _HoldProfile:
         self._backend = backend
         self._send_nudge = send_nudge
         self._accepted_signals: frozenset[SpawnSignalKind] = (
-            frozenset({"done", "rearm"})
-            if completion_signals_available
-            else frozenset()
+            frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
         )
         self._clock = clock
         self._confirmation_grace_seconds = poll_seconds
@@ -247,8 +245,7 @@ class _HoldProfile:
             and state.assessment is not None
             and state.assessment.disposition == "blocked"
             and any(
-                blocker.source == "persisted_descendant"
-                for blocker in state.assessment.blockers
+                blocker.source == "persisted_descendant" for blocker in state.assessment.blockers
             )
         )
 
@@ -413,11 +410,7 @@ class _HoldProfile:
             return ProfileDecision(action="wait")
         if context.assessment.disposition == "unknown":
             return ProfileDecision(action="wait")
-        if (
-            self._accepted_signals
-            and not self._confirmation_requested
-            and not self._rearmed
-        ):
+        if self._accepted_signals and not self._confirmation_requested and not self._rearmed:
             self._enter_wait()
             return ProfileDecision(action="wait", nudge=True)
         if context.assessment.disposition == "ready" and self._confirmation_settled:

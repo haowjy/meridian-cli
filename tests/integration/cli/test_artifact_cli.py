@@ -35,9 +35,7 @@ def test_teardown_is_surgically_scoped_to_slug(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(service, "_tailscale", fake_tailscale)
     assert service.tailscale_off("my-report", 50000, funnel=False)
 
-    assert commands == [
-        ["serve", "--https=50000", "--set-path=/my-report", "off"]
-    ]
+    assert commands == [["serve", "--https=50000", "--set-path=/my-report", "off"]]
 
 
 def test_register_and_url_use_explicit_listener_port(
@@ -206,9 +204,7 @@ def test_explicit_tailscale_listener_port_is_rejected(
     )
 
     with pytest.raises(service.ArtifactError, match="port 55000 is already in use"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000
-        )
+        service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000)
 
 
 def test_explicit_locally_bound_port_is_rejected(
@@ -222,9 +218,7 @@ def test_explicit_locally_bound_port_is_rejected(
     )
 
     with pytest.raises(service.ArtifactError, match="port 55000 is already in use"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000
-        )
+        service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="new", port=55000)
 
 
 def test_free_explicit_port_is_used_for_bind_listener_and_url(
@@ -343,9 +337,7 @@ def test_patched_cli_serve_list_stop_gc(
     monkeypatch.setattr(service, "_tailscale_register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "tailscale_dns_name", lambda: "host.example.ts.net")
     monkeypatch.setattr(service, "pid_alive", lambda _pid, _created: True)
-    monkeypatch.setattr(
-        service, "terminate_pid", lambda pid, _created: terminated.append(pid)
-    )
+    monkeypatch.setattr(service, "terminate_pid", lambda pid, _created: terminated.append(pid))
     monkeypatch.setattr(
         service,
         "tailscale_off",
@@ -412,9 +404,7 @@ def test_invalid_persisted_slugs_are_dropped_without_tailscale_calls(
 def test_tailscale_boundaries_reject_invalid_slug_without_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        service, "_tailscale", lambda _args: pytest.fail("tailscale must not run")
-    )
+    monkeypatch.setattr(service, "_tailscale", lambda _args: pytest.fail("tailscale must not run"))
     with pytest.raises(service.ArtifactError):
         service._tailscale_register(50000, "", funnel=False)
     with pytest.raises(service.ArtifactError):
@@ -499,9 +489,7 @@ def test_failed_post_registration_rollback_persists_recovery_entry(
     )
 
     with pytest.raises(service.ArtifactError, match="status failed"):
-        service.start_serve(
-            tmp_path, ttl_seconds=60, funnel=False, slug="recovery"
-        )
+        service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="recovery")
 
     assert [item.slug for item in store.load_serves()] == ["recovery"]
 
@@ -512,9 +500,7 @@ def test_gc_continues_after_one_teardown_failure(
     state_path = tmp_path / "serves.json"
     monkeypatch.setattr(store, "serves_path", lambda: state_path)
     store.save_serves([_serve("fails", 50000), _serve("removed", 50001, pid=4243)])
-    monkeypatch.setattr(
-        service, "tailscale_off", lambda slug, _port, *, funnel: slug == "removed"
-    )
+    monkeypatch.setattr(service, "tailscale_off", lambda slug, _port, *, funnel: slug == "removed")
     terminated: list[tuple[int, float | None]] = []
     monkeypatch.setattr(
         service, "terminate_pid", lambda pid, created: terminated.append((pid, created))
@@ -560,19 +546,13 @@ def test_start_retries_when_first_local_server_never_becomes_ready(
         return FakeProcess(port)
 
     monkeypatch.setattr(service, "launch_http_server", fake_launch)
-    monkeypatch.setattr(
-        service, "wait_for_http_server", lambda _proc, _port: next(readiness)
-    )
+    monkeypatch.setattr(service, "wait_for_http_server", lambda _proc, _port: next(readiness))
     monkeypatch.setattr(service, "process_created_epoch", float)
-    monkeypatch.setattr(
-        service, "terminate_pid", lambda pid, _created: terminated.append(pid)
-    )
+    monkeypatch.setattr(service, "terminate_pid", lambda pid, _created: terminated.append(pid))
     monkeypatch.setattr(service, "_tailscale_register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "tailscale_dns_name", lambda: "host.ts.net")
 
-    serve, _url = service.start_serve(
-        tmp_path, ttl_seconds=60, funnel=False, slug="retry"
-    )
+    serve, _url = service.start_serve(tmp_path, ttl_seconds=60, funnel=False, slug="retry")
 
     assert serve.local_port == 50001
     assert terminated == [50000]
@@ -585,9 +565,7 @@ def test_concurrent_serves_are_serialized_without_lost_entries(
     state_path = tmp_path / "serves.json"
     monkeypatch.setattr(store, "serves_path", lambda: state_path)
     monkeypatch.setattr(service, "tailscale_serve_ports", lambda: set())
-    monkeypatch.setattr(
-        service, "pick_port", lambda occupied: min({50000, 50001} - set(occupied))
-    )
+    monkeypatch.setattr(service, "pick_port", lambda occupied: min({50000, 50001} - set(occupied)))
 
     class FakeProcess:
         def __init__(self, pid: int) -> None:

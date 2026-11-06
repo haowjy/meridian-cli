@@ -39,6 +39,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.ops.relocate_gate import with_relocate_hint
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
@@ -85,8 +86,17 @@ class PreparedExecutionHandoff:
     work_id: str | None
 
 
-def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
-    return exc.for_ref(session.source_ref) if isinstance(exc, NativeSessionUnavailable) else exc
+def _with_source_ref(
+    exc: Exception, session: SessionRequest, *, runtime_root: Path, project_root: Path
+) -> Exception:
+    if not isinstance(exc, NativeSessionUnavailable):
+        return exc
+    return with_relocate_hint(
+        exc.for_ref(session.source_ref),
+        runtime_root=runtime_root,
+        chat_id=session.continue_chat_id,
+        target=project_root,
+    )
 
 
 def _log_launch_failure_without_traceback(
@@ -364,7 +374,12 @@ async def launch_prepared_spawn(
             prepared=prepared,
         )
     except Exception as exc:
-        exc = _with_source_ref(exc, request.session)
+        exc = _with_source_ref(
+            exc,
+            request.session,
+            runtime_root=runtime_root,
+            project_root=project_paths.project_root,
+        )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -377,6 +392,13 @@ async def launch_prepared_spawn(
             spawn_id=spawn.spawn_id,
             exc=exc,
         )
+        if (
+            warning_observer is not None
+            and isinstance(exc, NativeSessionUnavailable)
+            and exc.reason == "store_moved"
+        ):
+            # The failure text a foreground caller reads must carry the relocate hint.
+            warning_observer("\n".join(part for part in (request.warning, str(exc)) if part))
         return 1
 
     if warning_observer is not None:
@@ -404,7 +426,7 @@ async def launch_prepared_spawn(
 
                 maybe_prelaunch_state = prepare_prelaunch(
                     launch=handoff.launch,
-                    session=handoff.resolved_request.session,
+                    identity=handoff.launch_context.binding.spec.native_identity,
                     child_cwd=handoff.launch_context.control_root,
                     child_env=child_env,
                     resolved_harness_session_id="",
@@ -434,7 +456,12 @@ async def launch_prepared_spawn(
                     ),
                 )
         except Exception as exc:
-            exc = _with_source_ref(exc, request.session)
+            exc = _with_source_ref(
+                exc,
+                request.session,
+                runtime_root=runtime_root,
+                project_root=project_paths.project_root,
+            )
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,

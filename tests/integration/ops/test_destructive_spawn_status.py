@@ -83,9 +83,7 @@ def _old_active_spawn(
     )
     session_store.stop_session(root, "c1")
     sessions_path = root / "sessions.jsonl"
-    session_events = [
-        loads_json_object(line) for line in sessions_path.read_text().splitlines()
-    ]
+    session_events = [loads_json_object(line) for line in sessions_path.read_text().splitlines()]
     for event in session_events:
         if "started_at" in event:
             event["started_at"] = OLD

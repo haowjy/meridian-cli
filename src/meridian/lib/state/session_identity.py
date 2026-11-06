@@ -74,8 +74,10 @@ def chat_owner_spawn(
     chat's already-read ``newest`` record to answer a linked chat without reading the
     rest. Which run is live in the chat right now is a different question, not asked here.
     """
-    if newest is not None and newest.spawn_id and spawn_store.get_spawn(
-        runtime_root, newest.spawn_id
+    if (
+        newest is not None
+        and newest.spawn_id
+        and spawn_store.get_spawn(runtime_root, newest.spawn_id)
     ):
         return SpawnId(newest.spawn_id)
     for generation in reversed(session_store.chat_generations(runtime_root, chat_id)):

@@ -54,6 +54,7 @@ from meridian.lib.launch.request import SessionRequest, cross_harness_continue_e
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_list_agents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.relocate_gate import copy_checkout_note, relocate_hint
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     inspect_runtime_authority_for_read,
@@ -134,7 +135,12 @@ from .owed import (
     resolve_owed_finished_rows,
     select_delivery_rows,
 )
-from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
+from .pre_init import (
+    EXPECTED_PRE_INIT_EXCEPTIONS,
+    PreInitFailure,
+    pre_init_failed_output,
+    run_pre_init_boundary,
+)
 from .prepare import (
     SpawnCreateArtifacts,
     bind_create_payload_context,
@@ -689,9 +695,7 @@ def spawn_list_sync(
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    spawns = list(
-        reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records))
-    )
+    spawns = list(reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)))
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
@@ -2294,6 +2298,25 @@ def _build_continue_create_input(
     )
 
 
+def _gone_source_task_dir(
+    create_input: SpawnCreateInput,
+    *,
+    runtime_root: Path,
+    project_root: Path,
+    chat_id: str | None,
+) -> SpawnActionOutput | None:
+    """The refusal for a continue or fork whose source's task dir is gone, with the way
+    to relocate. It is the failure the launch would raise, reached before preparation."""
+    task_dir = create_input.task_dir
+    if not task_dir or chat_id is None or Path(task_dir).is_dir():
+        return None
+    message = f"task_dir does not exist: {task_dir}"
+    hint = relocate_hint(runtime_root=runtime_root, chat_id=chat_id, target=project_root)
+    return pre_init_failed_output(
+        payload=create_input, exc=ValueError(f"{message}\n{hint}" if hint else message)
+    )
+
+
 def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
 
@@ -2426,6 +2449,18 @@ def spawn_fork_sync(
     create_input = unresolved_create_input.model_copy(
         update={"project_root": project_root.as_posix()},
     )
+    gone = (
+        _gone_source_task_dir(
+            create_input,
+            runtime_root=runtime_root,
+            project_root=project_root,
+            chat_id=resolved_reference.source_chat_id,
+        )
+        if requested_task_dir is None
+        else None
+    )
+    if gone is not None:
+        return gone
     preparation = _run_spawn_create_preparation(
         create_input,
         ctx=ctx,
@@ -2528,6 +2563,22 @@ def spawn_continue_sync(
         source_spawn_id=resolved_spawn_id,
         resolved_reference=resolved_reference,
         runtime_root=runtime_root,
+    )
+    gone = _gone_source_task_dir(
+        create_input,
+        runtime_root=runtime_root,
+        project_root=project_root,
+        chat_id=resolved_reference.source_chat_id,
+    )
+    if gone is not None:
+        return _with_command(gone, "spawn.continue")
+    redirect_notice = _merge_warnings(
+        redirect_notice,
+        copy_checkout_note(
+            runtime_root=runtime_root,
+            chat_id=resolved_reference.source_chat_id,
+            project_root=project_root,
+        ),
     )
     preparation = _run_spawn_create_preparation(
         create_input,

@@ -89,6 +89,8 @@ async def test_setup_failure_produces_terminal_event(
     assert row.terminal.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
     assert row.terminal.error is not None
     assert row.terminal.origin == "runner"
-    assert launch_paths(runtime_root, str(run.spawn_id)).stderr_log.read_text(
-        encoding="utf-8"
-    ).endswith("Injected control socket setup failure\n")
+    assert (
+        launch_paths(runtime_root, str(run.spawn_id))
+        .stderr_log.read_text(encoding="utf-8")
+        .endswith("Injected control socket setup failure\n")
+    )

@@ -51,9 +51,7 @@ def test_a_notification_reaches_command_hooks_and_its_route(
         "label": label.to_dict(),
         "attachments": [],
     }
-    assert (tmp_path / "title.txt").read_text(encoding="utf-8") == (
-        "coder Pick a store\n"
-    )
+    assert (tmp_path / "title.txt").read_text(encoding="utf-8") == ("coder Pick a store\n")
     # The row replaced the default route and sent only to push (the none backend),
     # never to the smtp email backend.
     assert [(result.route, result.status) for result in report.results] == [
@@ -71,10 +69,7 @@ def test_idle_records_the_push_as_its_routes_delivered_it(
     monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "none")
     monkeypatch.delenv("MERIDIAN_HOOKS_ENABLED", raising=False)
     (tmp_path / "meridian.toml").write_text(
-        "[[hooks]]\n"
-        'name = "desk"\n'
-        'event = "notify.your_turn"\n'
-        f'command = "exit {exit_code}"\n',
+        f'[[hooks]]\nname = "desk"\nevent = "notify.your_turn"\ncommand = "exit {exit_code}"\n',
         encoding="utf-8",
     )
     now = [0]

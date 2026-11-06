@@ -141,9 +141,7 @@ def _read_conflicts(work: Path) -> list[dict[str, object]]:
 
     return [
         cast("dict[str, object]", record.model_dump())
-        for record in autosync_store.read_conflicts(
-            work, runtime_root=work.parent / "runtime"
-        )
+        for record in autosync_store.read_conflicts(work, runtime_root=work.parent / "runtime")
     ]
 
 
@@ -602,9 +600,10 @@ def test_git_autosync_aborts_stale_rebase_on_entry(
 
     rebase = _git("pull", "--rebase", "origin", branch, cwd=work, env=git_env, check=False)
     assert rebase.returncode != 0
-    assert _git_path(work, "rebase-merge", env=git_env).exists() or _git_path(
-        work, "rebase-apply", env=git_env
-    ).exists()
+    assert (
+        _git_path(work, "rebase-merge", env=git_env).exists()
+        or _git_path(work, "rebase-apply", env=git_env).exists()
+    )
 
     (other / "shared.txt").write_text("local change\n", encoding="utf-8")
     _git("add", "-A", cwd=other, env=git_env)

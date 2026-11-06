@@ -8,6 +8,7 @@ import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_rec
 import { readPrivateJson } from "../../shared/json_file";
 import {
   currentSpawnIdFromEnv,
+  resolveBashHoldDir,
   resolveBashLogsDir,
   resolveBashRecordsPath,
   resolveDeliveryReceiptsPath,
@@ -22,6 +23,7 @@ import {
 import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
 import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
+import { HOLD_DIR_ENV, MAX_HOLD_MIN, taskHoldsMeridianCommand } from "./meridian_hold";
 import { ShellTask } from "./shell_task";
 import { waitForSpawn } from "./spawn_wait";
 
@@ -142,11 +144,15 @@ export type BashManageResult =
   | { kind: "inspection"; bash_id: string; output: string; truncated: boolean; error?: string }
   | { kind: "error"; error: string };
 
-const DEFAULT_TIMEOUT_MIN = 55;
-// Wait as long as a foreground command may run; a short wait lets the model fetch
-// results around consumption, so the idle watcher announces them again.
-const WAIT_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN;
-const MAX_TIMEOUT_MIN = 59;
+// A model's foreground command that outlives this is backgrounded, so a forgotten
+// server cannot hold the turn; the model may pass timeout_min up to MAX_TIMEOUT_MIN.
+export const DEFAULT_TIMEOUT_MIN = 4;
+export const MAX_TIMEOUT_MIN = 59;
+// Fills the `timeout_min` field of a user `!`/`$` record. User commands have no auto-background
+// timer; the field only needs a value the schema accepts.
+const USER_RECORD_TIMEOUT_MIN = 55;
+// How long `bash_manage wait` blocks.
+const WAIT_TIMEOUT_MIN = 55;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
 const TASK_PING_INTERVAL_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS";
@@ -222,16 +228,26 @@ export class BashRuntime {
           status: "aborted", exit_code: -1,
         }))).catch((error) => finish({ kind: "error", error: errorText(error) }));
       };
-      const timeout = setTimeout(() => {
-        void this.publishBackground(exec).then((published) => {
-          if (published) finish({
-            kind: "start",
-            bash_id: exec.id,
-            status: "backgrounded",
-            message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
+      // At each expiry a task without an explicit timeout_min that is running a Meridian wait or
+      // foreground spawn keeps the foreground, up to MAX_HOLD_MIN.
+      const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
+        const startedAtMs = exec.proposal.started_at_ms;
+        const held = params.timeout_min == null && Date.now() - startedAtMs < MAX_HOLD_MIN * 60_000
+          ? taskHoldsMeridianCommand(this.spawnId, exec.id).catch(() => false) : Promise.resolve(false);
+        void held.then((isHeld) => {
+          if (settled) return;
+          if (isHeld) { timeout = arm(); return; }
+          return this.publishBackground(exec).then((published) => {
+            if (published) finish({
+              kind: "start",
+              bash_id: exec.id,
+              status: "backgrounded",
+              message: `Command exceeded timeout_min=${timeoutMin} and was moved to the background as ${exec.id}. It is still running; a completion notice will follow. Get its result with bash_manage (action='wait' or 'output', bash_id='${exec.id}'). Do not run the command again.`,
+            });
           });
-        }, (error) => finish({ kind: "error", error: errorText(error) }));
+        }).catch((error) => finish({ kind: "error", error: errorText(error) }));
       }, timeoutMin * 60_000);
+      let timeout = arm();
 
       if (signal?.aborted) {
         abort();
@@ -265,7 +281,7 @@ export class BashRuntime {
     const forwardOutput = (data: Buffer): void => {
       if (forwardForegroundOutput) safeOnData(options.onData, data);
     };
-    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
+    const launch = await this.launchRecord(command, USER_RECORD_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
     if (!launch) return { exitCode: -1 };
     const { execution: exec, creation } = launch;
     this.hooks.onForegroundStart?.(exec.id);
@@ -312,7 +328,7 @@ export class BashRuntime {
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
-    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
+    const launch = await this.launchRecord(command, USER_RECORD_TIMEOUT_MIN, cwd, env);
     if (!launch) throw new Error("Detached Bash launch was cancelled before start");
     const { execution: exec, creation } = launch;
     await creation;
@@ -366,7 +382,6 @@ export class BashRuntime {
         stderr_log_path: record.stderr_log_path,
         log_bytes: record.log_bytes,
         timeout_min: record.timeout_min,
-        originating_bash_id: record.originating_bash_id,
         execution_error: record.execution_error,
       }));
   }
@@ -474,7 +489,7 @@ export class BashRuntime {
       return null;
     }
 
-    const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId });
+    const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId, [HOLD_DIR_ENV]: resolveBashHoldDir(bashId, this.spawnId) });
     const child = task.child;
     const exec = makeExecution({
       bash_id: bashId,
@@ -492,7 +507,6 @@ export class BashRuntime {
       stderr_log_path: logPaths.stderr,
       log_bytes: 0,
       timeout_min: timeoutMin,
-      originating_bash_id: process.env._MERIDIAN_PI_BASH_ID || null,
       ping_sent_at_ms: null,
     }, task);
     this.executions.set(bashId, exec);
@@ -551,6 +565,8 @@ export class BashRuntime {
     exitCode: number | null,
   ): Promise<void> {
     this.clearPing(exec);
+    // No holder outlives the task's process group, so its hold directory is garbage now.
+    await rm(resolveBashHoldDir(exec.id, this.spawnId), { recursive: true, force: true });
     const endedAt = Date.now();
     // The row keeps its running status and the task its handle until this write lands, so no
     // observer can see, wait on, or consume an unpublished result.

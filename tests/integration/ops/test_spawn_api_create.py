@@ -759,9 +759,7 @@ def test_spawn_create_forwards_requested_environment_to_the_background_worker(
     prepared = prepare_for_runtime_write(project_root)
     assert prepared.runtime_root is not None
     log_dir = launch_paths(prepared.runtime_root, result.spawn_id).dir
-    worker_request = json.loads(
-        (log_dir / "bg-worker-request.json").read_text(encoding="utf-8")
-    )
+    worker_request = json.loads((log_dir / "bg-worker-request.json").read_text(encoding="utf-8"))
     requested_env = requested.get("env")
     if requested_env is not None:
         expected = dict(item.split("=", 1) for item in requested_env)  # type: ignore[union-attr]

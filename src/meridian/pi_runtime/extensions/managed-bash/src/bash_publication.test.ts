@@ -10,7 +10,7 @@ import { BashPublication, changeRow, withoutRows, withRow, type Published } from
 const row = (id: string, patch: Partial<BashRecord> = {}): BashRecord => ({
   bash_id: id, command: "true", cwd: "/", pid: null, status: "running", is_background: false, is_tracked: true,
   exit_code: null, started_at_ms: 1, ended_at_ms: null, log_path: "l", stdout_log_path: "o", stderr_log_path: "e",
-  log_bytes: 0, timeout_min: 1, originating_bash_id: null, ...patch,
+  log_bytes: 0, timeout_min: 1, ...patch,
 });
 
 let root: string;

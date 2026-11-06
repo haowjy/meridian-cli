@@ -71,6 +71,9 @@ class ClaudeRuntimeResolution:
     # Populated from the final child environment by Claude's ``bind_spec`` port;
     # empty on a spec that did not pass through bind.
     settings_allows: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # Whether the starting prompt reaches Claude through the first-turn mod instead of
+    # argv. Decided once in ``bind_spec`` so argv and env cannot disagree.
+    first_turn_by_mod: bool = False
 
 
 @dataclass(frozen=True)

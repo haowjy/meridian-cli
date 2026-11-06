@@ -64,9 +64,7 @@ class _ProbeServer:
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.connections += 1
         index = self.connections
         with contextlib.suppress(Exception):
@@ -109,9 +107,7 @@ async def test_wait_for_ready_recovers_when_first_probe_hangs(
     async with _ProbeServer(hang_first=1) as server:
         connection = _connection_for(server.base_url)
         try:
-            await asyncio.wait_for(
-                connection._wait_for_ready(timeout_seconds=5.0), timeout=10.0
-            )
+            await asyncio.wait_for(connection._wait_for_ready(timeout_seconds=5.0), timeout=10.0)
             became_ready = connection._last_health_ok
         finally:
             await connection._cleanup_runtime()
@@ -131,12 +127,8 @@ async def test_wait_for_ready_times_out_within_budget_when_every_probe_hangs(
     async with _ProbeServer(hang_first=10_000) as server:
         connection = _connection_for(server.base_url)
         try:
-            with pytest.raises(
-                TimeoutError, match="readiness endpoint did not become ready"
-            ):
-                await asyncio.wait_for(
-                    connection._wait_for_ready(timeout_seconds=1.0), timeout=8.0
-                )
+            with pytest.raises(TimeoutError, match="readiness endpoint did not become ready"):
+                await asyncio.wait_for(connection._wait_for_ready(timeout_seconds=1.0), timeout=8.0)
         finally:
             await connection._cleanup_runtime()
 

@@ -156,9 +156,7 @@ def project_codex_spec_to_appserver_command(
         "--listen",
         f"ws://{host}:{port}",
     ]
-    command.extend(
-        project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct)
-    )
+    command.extend(project_codex_autocompact_args(spec.autocompact, spec.autocompact_pct))
 
     if spec.interactive:
         command.extend(("-c", f"{CODEX_CONFIG_NOTIFY_KEY}={json.dumps(IDLE_NOTIFY_COMMAND)}"))
@@ -171,8 +169,7 @@ def project_codex_spec_to_appserver_command(
         command.extend(
             (
                 "-c",
-                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}="
-                f"{json.dumps(permissions.approval_policy)}",
+                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}={json.dumps(permissions.approval_policy)}",
             )
         )
 

@@ -83,16 +83,53 @@ def test_running_dogfood_migration_preserves_old_runner_row_shape(tmp_path: Path
     # Field names from the PR 1 model at 77b8bc58:src/meridian/lib/state/spawn/model.py.
     pr1_field_names = frozenset(
         {
-            "id", "history_id", "record_mode", "session_instance_id", "parent_history_id",
-            "owner_history_id", "forked_from_history_id", "retained_history_ids",
-            "state_revision", "chat_id", "entry_chat_id", "exit_chat_id", "exit_identity",
-            "owner_chat_id", "parent_id", "originating_bash_id", "model", "agent",
-            "agent_path", "skills", "skill_paths", "harness", "kind", "desc", "work_id",
-            "goal", "display_label", "harness_session_id", "trampoline_successor_id",
-            "control_root", "task_cwd", "execution_cwd", "claude_config_dir", "launch_mode",
-            "worker_pid", "runner_pid", "runner_created_at_epoch", "resident_rearm_count",
-            "status", "started_at", "last_attempt_exited_at", "last_attempt_exit_code",
-            "runner_exit", "cancel_intent", "terminal", "launch_policy_snapshot", "prompt",
+            "id",
+            "history_id",
+            "record_mode",
+            "session_instance_id",
+            "parent_history_id",
+            "owner_history_id",
+            "forked_from_history_id",
+            "retained_history_ids",
+            "state_revision",
+            "chat_id",
+            "entry_chat_id",
+            "exit_chat_id",
+            "exit_identity",
+            "owner_chat_id",
+            "parent_id",
+            "originating_bash_id",
+            "model",
+            "agent",
+            "agent_path",
+            "skills",
+            "skill_paths",
+            "harness",
+            "kind",
+            "desc",
+            "work_id",
+            "goal",
+            "display_label",
+            "harness_session_id",
+            "trampoline_successor_id",
+            "control_root",
+            "task_cwd",
+            "execution_cwd",
+            "claude_config_dir",
+            "launch_mode",
+            "worker_pid",
+            "runner_pid",
+            "runner_created_at_epoch",
+            "resident_rearm_count",
+            "status",
+            "started_at",
+            "last_attempt_exited_at",
+            "last_attempt_exit_code",
+            "runner_exit",
+            "cancel_intent",
+            "terminal",
+            "launch_policy_snapshot",
+            "prompt",
         }
     )
     raw = {
@@ -111,9 +148,9 @@ def test_running_dogfood_migration_preserves_old_runner_row_shape(tmp_path: Path
     assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
 
     migrated = json.loads(state_path.read_text(encoding="utf-8"))
-    assert migrated.keys() == (raw.keys() - {
-        "entry_chat_id", "exit_chat_id", "exit_identity", "trampoline_successor_id"
-    }) | {"chat_id"}
+    assert migrated.keys() == (
+        raw.keys() - {"entry_chat_id", "exit_chat_id", "exit_identity", "trampoline_successor_id"}
+    ) | {"chat_id"}
     assert migrated["chat_id"] == "c-entry"
     assert migrated["kind"] == "child"
     assert "run_boundary" not in migrated
@@ -143,7 +180,8 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     assert loaded is not None
     assert loaded.chat_id == "c1"
     assert loaded.run_boundary == RunBoundaryOutcome(
-        status="verified", trampoline_successor_id="diagnostic-only")
+        status="verified", trampoline_successor_id="diagnostic-only"
+    )
     assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
     assert "exit_identity" not in state_path.read_text(encoding="utf-8")
 
@@ -259,10 +297,13 @@ def test_released_verified_exit_reads_as_the_one_current_pointer(tmp_path: Path)
     assert loaded is not None
     assert loaded.run_boundary == RunBoundaryOutcome(status="verified")
     assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
-    newer = SpawnRecord.model_validate({
-        **loaded.model_dump(), "current_chat_id": "c-newer",
-        "run_boundary": state["run_boundary"],
-    })
+    newer = SpawnRecord.model_validate(
+        {
+            **loaded.model_dump(),
+            "current_chat_id": "c-newer",
+            "run_boundary": state["run_boundary"],
+        }
+    )
     assert newer.continue_chat_id == "c-newer"  # Valid newer observation still wins.
 
     write_state_locked(spawns_dir, "p1", lambda row: row, allow_terminal_overwrite=True)
@@ -271,14 +312,20 @@ def test_released_verified_exit_reads_as_the_one_current_pointer(tmp_path: Path)
     assert rewritten["run_boundary"] == {"status": "verified", "trampoline_successor_id": None}
 
 
-@pytest.mark.parametrize(("status", "exit_id", "current_id"), [
-    ("unresolved", "c2", None),
-    ("verified", None, None),
-    ("verified", 42, "c3"),
-    ("verified", "c2", 42),
-])
+@pytest.mark.parametrize(
+    ("status", "exit_id", "current_id"),
+    [
+        ("unresolved", "c2", None),
+        ("verified", None, None),
+        ("verified", 42, "c3"),
+        ("verified", "c2", 42),
+    ],
+)
 def test_legacy_exit_normalization_rejects_invalid_evidence(
-    tmp_path: Path, status: str, exit_id: object, current_id: object,
+    tmp_path: Path,
+    status: str,
+    exit_id: object,
+    current_id: object,
 ) -> None:
     for flat in (False, True):
         runtime = tmp_path / ("dogfood" if flat else "released")

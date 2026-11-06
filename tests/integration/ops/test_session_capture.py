@@ -281,9 +281,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     process.join(timeout=30)
     assert not process.is_alive()
     assert process.exitcode == 0
-    spawn_store.finalize_spawn(
-        root, old_run, status="succeeded", exit_code=0, origin="reconciler"
-    )
+    spawn_store.finalize_spawn(root, old_run, status="succeeded", exit_code=0, origin="reconciler")
     abandoned = next(
         row for row in session_store.list_session_generations(root) if row.spawn_id == old_run
     )
@@ -339,9 +337,7 @@ def test_abandoned_generation_closes_on_resume_and_archive_deferral_retries(
     assert not tuple(launch_paths(root, old_run).dir.glob(".native-transcript.jsonl.*.tmp"))
 
     session_store.stop_session(root, "c1")
-    spawn_store.finalize_spawn(
-        root, new_run, status="succeeded", exit_code=0, origin="runner"
-    )
+    spawn_store.finalize_spawn(root, new_run, status="succeeded", exit_code=0, origin="runner")
     assert session_stop_maintenance(project, str(new_run)) is None
     _assert_sealed_snapshot(_snapshot_path(root, str(old_run)), contains="resumed-native")
     _assert_sealed_snapshot(_snapshot_path(root, str(new_run)), contains="resumed-native")
@@ -788,9 +784,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
 
     # Byte inventory is the only supported interpretation of legacy members.
     member_name = f"launches/1/{LAUNCH_FILE_NAMES.history}"
-    original_member = next(
-        m for m in inventory(legacy.parents[2]) if m.name == member_name
-    )
+    original_member = next(m for m in inventory(legacy.parents[2]) if m.name == member_name)
     restored_member = next(m for m in inventory(restored_history) if m.name == member_name)
     assert restored_member == original_member
     with pytest.raises(ValueError, match="members are inert"):

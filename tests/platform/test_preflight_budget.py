@@ -106,8 +106,7 @@ def test_fast_gate_completes_all_checks_and_warns_over_budget(
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     markers = [tmp_path / f"check-{index}" for index in range(3)]
     commands = [
-        ("sh", "-c", 'sleep 0.05; printf done > "$1"', "check", str(marker))
-        for marker in markers
+        ("sh", "-c", 'sleep 0.05; printf done > "$1"', "check", str(marker)) for marker in markers
     ]
 
     assert run_commands(commands, cwd=tmp_path, budget_seconds=0.001) == 0

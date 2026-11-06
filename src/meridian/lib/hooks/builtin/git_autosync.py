@@ -202,9 +202,7 @@ class GitAutosync:
                 runtime_root=runtime_root,
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
-                return self._execute_with_lock(
-                    context, config, clone_path, start, autosync_tx
-                )
+                return self._execute_with_lock(context, config, clone_path, start, autosync_tx)
         except TimeoutError as exc:
             logger.warning(
                 "git_autosync_lock_timeout",

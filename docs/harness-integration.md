@@ -65,6 +65,11 @@ Implement the primitives rather than overriding `plan_native_identity()` or
 | `continues_in_source_store` | Declare operations that retain the source namespace |
 | `resolves_untracked_source` | Declare whether raw resume references can be resolved |
 | `resolve_native_session_file()` | Resolve and validate the exact ID within its recorded store |
+| `classify_store_move()` | Say why a resume's store differs from the recorded one, as a `NativeStoreMove` (`project_moved` or `config_root`, with the adapter's `fix` line for the latter); the default `None` means no move, and the resume reports the transcript missing |
+| `locate_native_session()` | Find other native files for a recorded ID, within the recorded config root only; used on a tracked `--continue` whose recorded file is missing. One distinct file is linked back and used, several refuse. The default finds none |
+| `tui_recovers_directory` | `True` when the harness's own TUI asks for a new directory once its recorded one is gone; a `--continue` that relocate could not repair then offers "launch anyway" (Pi, OpenCode) |
+| `native_cwd()` | Return the directory the harness itself records for the session, or `None` |
+| `plan_native_relocate()`, `apply_native_relocations()` | Plan and apply what `session relocate` changes in the harness's own state. Relocate decides the move (`cwd_from` is `native_cwd()`, `cwd_to` its rebased form); the harness only changes its own record, using the `--native` file when given (a harness without one refuses it: the base method refuses `--native` unless `native_transcript_choice` is set, and a harness implements `_plan_native_relocate`). The plan names the `source` file apply acts on; apply gets only plans without a refusal; defaults change nothing |
 | `observe_after_exit()` | Return `PostExit` evidence; do not bind or persist it |
 
 Launch owns entry binding, exit allocation, and invocation attribution. Transcript
@@ -149,6 +154,13 @@ sessions load only session-boundary.
   messaging socket at SessionStart.
 - **meridian-idle**, interactive primaries: idle push and cache warning; core
   (`meridian idle`) makes every decision.
+- **meridian-first-turn**, interactive primaries: submits the starting prompt
+  (`starting-prompt.md`, named by `_MERIDIAN_CLAUDE_FIRST_TURN_PATH`) as the first
+  user turn, so it is not on the `claude` command line, where `ps` shows it and a
+  `pkill -f <word>` elsewhere can kill the session. A launch keeps the positional
+  argument when the mod will not run: it was not found, the passthrough args hold
+  `--bare` or `--safe-mode`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE` is set,
+  or Claude is older than 2.1.314.
 - **meridian-spawn-watch**, interactive primaries when
   `harness.claude.spawn_watch.enabled` is true (default): when the lead goes
   idle it runs `meridian spawn collect`, submits the owed background-child

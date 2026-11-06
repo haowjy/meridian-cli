@@ -121,15 +121,33 @@ Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
 in RPC, but its custom-panel API is a no-op. RPC task output uses required
 `ctx.ui.notify`; print mode retains text output. Tables and logs must never be
 written directly to the RPC stdout transport.
-Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
-durable record retains the enclosing originating Bash ID. Canonical child
-spawn rows carry parent/origin membership; no origin sidecar is produced.
+
+A model's foreground `bash` is backgrounded after 4 minutes (or its `timeout_min`). A task that
+passed no `timeout_min` and is then running a Meridian wait or a foreground spawn re-arms the timer
+and checks again at the next expiry (`meridian_hold.ts`), until it has been in the foreground 55
+minutes. A backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
+notice carries no output, so the model would get only a truncated tail, behind an extra call.
+
+The evidence is the hold directory `pi-bash/<session spawn id>/holds/<bash id>/`. Managed bash
+puts its absolute path in `_MERIDIAN_PI_BASH_HOLD_DIR` for the task's shell; the CLI's
+`hold_pi_bash()` (around `spawn wait` and every `spawn` create, fork or continue) reads it,
+writes `<pid>.json` = `{v:1, owner_pid, owner_birth_epoch}` once, and removes it on exit. The task
+is held while any file parses and its owner is alive with the same birth time (`ps`, the check
+the wait leases use). A crash leaves a dead owner, and a failed check (`ps` errors) also reads as not held, so there is no
+heartbeat or expiry. Managed bash removes the hold directory when it marks the task terminal. Because the variable is not project-scoped, `-C` keeps it: a `--no-observe`
+or cross-project wait is held like any other. Both variables are in `BLOCKED_CHILD_ENV_VARS`, so
+a harness child never inherits its parent's task. No Pi task, no file.
+
+Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID` to the task's own CLI
+(the spawn store records it as the child row's `originating_bash_id`); the bash record keeps
+no origin. Canonical child spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
 `notification_consumed_at_ms` consumes a terminal wait or `output` result with
 available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
-unattended notice. Sending or queueing is not consumption. Wait blocks up to the
-55-minute bash timeout with no model-chosen limit: a short wait let the model
-read results around consumption and receive the same completion again. The
+unattended notice. Sending or queueing is not consumption. Wait blocks up to
+55 minutes (its own constant, independent of the 4-minute foreground default)
+with no model-chosen limit: a short wait let the model read results around
+consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
 staging leaves the result owed, even if the pending reply includes a known terminal
 status. Once acknowledgement has staged, a successful write returns its result;

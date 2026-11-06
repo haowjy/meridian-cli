@@ -152,10 +152,7 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
     ]
     snapshots = run_spawn_race_or_skip(
         _concurrent_update_worker,
-        [
-            (runtime_root.as_posix(), spawn_id, payload)
-            for payload in payloads
-        ],
+        [(runtime_root.as_posix(), spawn_id, payload) for payload in payloads],
     )
     row = get_spawn(runtime_root, spawn_id)
 

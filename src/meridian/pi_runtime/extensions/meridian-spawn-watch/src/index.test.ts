@@ -42,7 +42,7 @@ async function exists(filePath: string) {
 }
 function record(id: string, overrides: Partial<BashRecord> = {}): BashRecord {
   return {
-    bash_id: id, command: `echo ${id}`, cwd: '/tmp', pid: null, status: 'exited', is_background: true, is_tracked: true, exit_code: 0, started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: '/unused', stdout_log_path: '/unused', stderr_log_path: '/unused', log_bytes: 0, timeout_min: 1, originating_bash_id: null, ...overrides
+    bash_id: id, command: `echo ${id}`, cwd: '/tmp', pid: null, status: 'exited', is_background: true, is_tracked: true, exit_code: 0, started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: '/unused', stdout_log_path: '/unused', stderr_log_path: '/unused', log_bytes: 0, timeout_min: 1, ...overrides
   };
 }
 async function setup() {

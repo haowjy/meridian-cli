@@ -97,9 +97,7 @@ def test_codex_resume_counts_only_the_launch_after_the_stored_total() -> None:
     first = _fold(HarnessId.CODEX, [updated(1000), updated(2000)])
     assert first.input_tokens == 2000 and first.harness_cumulative is not None
     # The resume replays the earlier total, then the new turn grows it.
-    second = _fold(
-        HarnessId.CODEX, [updated(2000), updated(2500)], seed=first.harness_cumulative
-    )
+    second = _fold(HarnessId.CODEX, [updated(2000), updated(2500)], seed=first.harness_cumulative)
     assert (second.input_tokens, second.output_tokens) == (500, 50)
     assert second.harness_cumulative is not None
     assert second.harness_cumulative["inputTokens"] == 2500

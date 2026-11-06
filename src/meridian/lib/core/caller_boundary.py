@@ -32,6 +32,8 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+
+
 def current_pid_namespace() -> str | None:
     """Return this process's PID-namespace identity when procfs exposes it."""
 
@@ -63,11 +65,7 @@ class CallerBoundary:
         return cls(
             pid_namespace=pid_namespace,
             sandbox=effective.sandbox,
-            network=(
-                effective.network
-                if effective.sandbox in CONSTRAINED_SANDBOX_MODES
-                else None
-            ),
+            network=(effective.network if effective.sandbox in CONSTRAINED_SANDBOX_MODES else None),
             has_spawn_capability=policy.has_spawn_capability,
         )
 
@@ -116,9 +114,7 @@ class CallerBoundary:
         try:
             parsed_network = parse_network_policy(network)
         except ValueError as error:
-            raise ValueError(
-                "Child spawn refused: caller boundary is invalid."
-            ) from error
+            raise ValueError("Child spawn refused: caller boundary is invalid.") from error
         return cls(
             pid_namespace=pid_namespace,
             sandbox=sandbox,
@@ -153,9 +149,7 @@ class CallerBoundaryCheck:
         if not caller.is_floored:
             return cls(caller=None)
         if not caller.has_spawn_capability:
-            raise ValueError(
-                "Child spawn refused: caller profile has no spawn capability."
-            )
+            raise ValueError("Child spawn refused: caller profile has no spawn capability.")
         check = cls(caller=caller)
         check.enforce_passthrough_args(passthrough_args)
         return check

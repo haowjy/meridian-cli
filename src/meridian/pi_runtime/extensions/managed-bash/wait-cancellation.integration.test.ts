@@ -32,7 +32,7 @@ async function terminalFixture(): Promise<{
     bash_id: bashId, command: "terminal fixture; not executed", cwd: root, pid: null,
     status: "exited", exit_code: 0, is_background: true, is_tracked: true,
     started_at_ms: 1, ended_at_ms: 2, log_path: log, stdout_log_path: log,
-    stderr_log_path: log, log_bytes: 4, timeout_min: 55, originating_bash_id: null,
+    stderr_log_path: log, log_bytes: 4, timeout_min: 55,
   };
   const recordsPath = path.join(dir, "bash-records.json");
   await mkdir(dir, { recursive: true });

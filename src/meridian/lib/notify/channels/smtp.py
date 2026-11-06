@@ -62,9 +62,7 @@ def _read_password_file(raw_path: str) -> str:
     with path.open(encoding="utf-8") as handle:
         mode = stat.S_IMODE(os.fstat(handle.fileno()).st_mode)
         if mode & (stat.S_IRGRP | stat.S_IROTH):
-            raise ValueError(
-                f"SMTP password file {path} is group/world readable; use chmod 600"
-            )
+            raise ValueError(f"SMTP password file {path} is group/world readable; use chmod 600")
         return handle.read().rstrip("\r\n")
 
 

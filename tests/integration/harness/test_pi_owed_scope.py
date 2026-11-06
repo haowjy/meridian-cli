@@ -9,7 +9,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi import PI_OWED_PARENT_IDS_ENV, PiAdapter
 from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeResolution
 from meridian.lib.launch.constants import BLOCKED_CHILD_ENV_VARS
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.spawn.owed import discover_owed_scope
 from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import record_to_stored_state
@@ -59,7 +58,7 @@ def _prepare_prelaunch(
     monkeypatch.setattr("meridian.lib.harness.pi.resolve_pi_runtime", _resolve_pi_runtime)
     state = PiAdapter().prepare_prelaunch(
         launch=launch_paths(runtime_root, SpawnId("p-resumed")),
-        session=SessionRequest(),
+        identity=None,
         child_cwd=runtime_root,
         child_env={
             "MERIDIAN_SESSION_ROLE": role,

@@ -141,6 +141,4 @@ def test_fallback_root_capability_probe_is_cached_per_executable(
 
     assert mars_supports_fallback_root("/fake/supported-mars")
     assert mars_supports_fallback_root("/fake/supported-mars")
-    assert calls == [
-        ["/fake/supported-mars", "build", "launch-bundle", "--help"]
-    ]
+    assert calls == [["/fake/supported-mars", "build", "launch-bundle", "--help"]]

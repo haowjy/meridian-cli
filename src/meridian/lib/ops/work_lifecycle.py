@@ -486,8 +486,7 @@ def work_update_sync(
         )
     if current.status == "done" and payload.status is not None:
         raise ValueError(
-            f"Work item '{current.name}' is done. "
-            f"Use `meridian work reopen {current.name}` first."
+            f"Work item '{current.name}' is done. Use `meridian work reopen {current.name}` first."
         )
     item = work_repository.update_work_item(
         project_state_dir,

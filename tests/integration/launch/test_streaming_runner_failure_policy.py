@@ -138,9 +138,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.terminal.error == "timeout"
     report = launch_paths(runtime_root, str(run.spawn_id)).report.read_text()
     assert report == "# Spawn failed\n\ntimeout\n"
-    lifecycle = json.loads(
-        launch_paths(runtime_root, str(run.spawn_id)).pi_lifecycle.read_text()
-    )
+    lifecycle = json.loads(launch_paths(runtime_root, str(run.spawn_id)).pi_lifecycle.read_text())
     assert lifecycle["phase"] == "cleanup_completed"
     assert lifecycle["cleanup_status"] == "completed"
 
@@ -252,16 +250,16 @@ async def test_claude_failure_runs_one_real_subprocess(
         'if [ "$1" = "--version" ]; then echo "2.0.0"; exit 0; fi\n'
         f'printf "%s\n" "$*" >> {invocation_log}\n'
         "session_id=\n"
-        "while [ \"$#\" -gt 0 ]; do\n"
+        'while [ "$#" -gt 0 ]; do\n'
         '  if [ "$1" = "--session-id" ]; then shift; session_id=$1; fi\n'
         "  shift\n"
         "done\n"
         "IFS= read -r prompt\n"
-        "printf '{\"type\":\"system\",\"subtype\":\"init\","
-        "\"session_id\":\"%s\"}\n' \"$session_id\"\n"
+        'printf \'{"type":"system","subtype":"init",'
+        '"session_id":"%s"}\n\' "$session_id"\n'
         "printf '%s\n' "
-        "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
-        "\"result\":\"subscription quota exhausted\"}'\n"
+        '\'{"type":"result","subtype":"error_max_turns","is_error":true,'
+        '"result":"subscription quota exhausted"}\'\n'
         "exit 1\n",
         encoding="utf-8",
     )
@@ -368,6 +366,8 @@ async def test_guardrail_failure_does_not_rerun_harness(
     assert row is not None and row.terminal is not None
     assert row.status == "failed"
     assert row.terminal.error == "guardrail_failed"
-    assert launch_paths(runtime_root, str(run.spawn_id)).stderr_log.read_text(
-        encoding="utf-8"
-    ).endswith(f"Guardrail validation failed:\n- {guardrail} (exit 1)\n")
+    assert (
+        launch_paths(runtime_root, str(run.spawn_id))
+        .stderr_log.read_text(encoding="utf-8")
+        .endswith(f"Guardrail validation failed:\n- {guardrail} (exit 1)\n")
+    )

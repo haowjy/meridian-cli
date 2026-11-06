@@ -48,8 +48,12 @@ def read_boundary(path: Path, *, nonce: str, pid: int | None) -> PostExit:
         if len(data) > 16 * 1024:
             return PostExit()
         record = _Record.model_validate(json.loads(data))
-        if (record.v != 2 or record.launch_nonce != nonce or record.pid != pid
-                or record.invalid_reason is not None):
+        if (
+            record.v != 2
+            or record.launch_nonce != nonce
+            or record.pid != pid
+            or record.invalid_reason is not None
+        ):
             return PostExit()
         entry = record.initial.key() if record.initial else None
         final_quit = (

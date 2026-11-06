@@ -12,13 +12,12 @@ from meridian.lib.safety.policy import EnforcementReport, ReportLine
 CLAUDE_AUTOCOMPACT_MIN_TOKENS = 100_000
 CLAUDE_AUTOCOMPACT_MAX_TOKENS = 1_000_000
 
+
 def project_claude_autocompact_args(autocompact: int | None) -> tuple[str, ...]:
     """Return Claude's absolute-token threshold flag when its CLI can express it."""
 
     if autocompact is None or not (
-        CLAUDE_AUTOCOMPACT_MIN_TOKENS
-        <= autocompact
-        <= CLAUDE_AUTOCOMPACT_MAX_TOKENS
+        CLAUDE_AUTOCOMPACT_MIN_TOKENS <= autocompact <= CLAUDE_AUTOCOMPACT_MAX_TOKENS
     ):
         return ()
     return ("--autocompact", str(autocompact))
@@ -31,15 +30,12 @@ def project_codex_autocompact_args(
 
     arguments: list[str] = []
     if autocompact is not None:
-        arguments.extend(
-            ("-c", f"{CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY}={autocompact}")
-        )
+        arguments.extend(("-c", f"{CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY}={autocompact}"))
     if autocompact_pct is not None:
         arguments.extend(
             (
                 "-c",
-                f"{CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY}="
-                f"{autocompact_pct}",
+                f"{CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY}={autocompact_pct}",
             )
         )
     return tuple(arguments)

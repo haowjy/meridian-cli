@@ -286,8 +286,9 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     monkeypatch.setattr(
         codex_adapter,
         "fork_session",
-        lambda source_session_id: calls.append(source_session_id)
-        or "00000000-0000-4000-8000-000000000011",
+        lambda source_session_id: (
+            calls.append(source_session_id) or "00000000-0000-4000-8000-000000000011"
+        ),
     )
 
     prepared = build_create_payload(

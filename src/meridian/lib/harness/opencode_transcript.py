@@ -593,10 +593,7 @@ def _latest_message_model(
             "ORDER BY seq DESC, time_created DESC, id DESC"
         )
     else:
-        query = (
-            "SELECT data FROM message WHERE session_id=? "
-            "ORDER BY time_created DESC, id DESC"
-        )
+        query = "SELECT data FROM message WHERE session_id=? ORDER BY time_created DESC, id DESC"
     for (raw_data,) in connection.execute(query, (session_id,)):
         model = _model_from_message(raw_data)
         if model is not None:
@@ -690,9 +687,7 @@ def interpret_opencode_record(
     rendering_reason: str | None = None
     for raw_part in cast("list[object]", raw_parts):
         part_row = json_object(raw_part)
-        part = (
-            loads_json_object(str(part_row.get("data"))) if part_row is not None else None
-        )
+        part = loads_json_object(str(part_row.get("data"))) if part_row is not None else None
         if part is None:
             rendering_reason = reason
             continue

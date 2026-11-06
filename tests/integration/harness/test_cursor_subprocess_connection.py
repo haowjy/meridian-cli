@@ -50,7 +50,7 @@ def _install_cursor(
         f"    printf '%s\\n' '{_MINTED_ID}'\n"
         f"    exit {create_chat_exit}\n"
         "fi\n"
-        "printf '%s\\n' '{\"type\":\"system\",\"sessionId\":\"fake-agent\"}'\n"
+        'printf \'%s\\n\' \'{"type":"system","sessionId":"fake-agent"}\'\n'
         "while :; do :; done\n",
         encoding="utf-8",
     )
@@ -76,9 +76,7 @@ async def _wait_for_commands(
     while loop.time() < deadline:
         if command_log.exists():
             try:
-                commands = [
-                    json.loads(line) for line in command_log.read_text().splitlines()
-                ]
+                commands = [json.loads(line) for line in command_log.read_text().splitlines()]
             except json.JSONDecodeError:
                 commands = []
             if len(commands) >= count and all(
@@ -195,9 +193,7 @@ async def test_cursor_nonzero_create_chat_falls_back_to_unresumed_agent(
 
     connection = await _start(tmp_path, SpawnId("p-cursor-fallback"))
     assert connection.session_id is None
-    assert spawn_store.get_spawn(
-        tmp_path, SpawnId("p-cursor-fallback")
-    ).harness_session_id is None
+    assert spawn_store.get_spawn(tmp_path, SpawnId("p-cursor-fallback")).harness_session_id is None
     commands = await _wait_for_commands(
         command_log,
         count=2,
@@ -225,9 +221,10 @@ async def test_cursor_hung_create_chat_is_killed_then_launches_unresumed(
         timeout=1.0,
     )
     assert connection.session_id is None
-    assert spawn_store.get_spawn(
-        tmp_path, SpawnId("p-cursor-hung-create-chat")
-    ).harness_session_id is None
+    assert (
+        spawn_store.get_spawn(tmp_path, SpawnId("p-cursor-hung-create-chat")).harness_session_id
+        is None
+    )
 
     pid = int(create_chat_pid.read_text())
     with pytest.raises(ProcessLookupError):

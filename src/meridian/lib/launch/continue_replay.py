@@ -351,11 +351,15 @@ def _resolve_continue_conversation_intent(
     )
     seed_event = (
         get_initial_model_selection(
-            runtime_root, replay_harness, source.harness_session_id,
+            runtime_root,
+            replay_harness,
+            source.harness_session_id,
             source_chat_id=source.source_chat_id,
         )
-        if recorded is None and runtime_root is not None
-        and source.harness_session_id is not None and not fork
+        if recorded is None
+        and runtime_root is not None
+        and source.harness_session_id is not None
+        and not fork
         else None
     )
     if requested_model_override is not None:

@@ -70,7 +70,8 @@ def materialize_fork(
 
     forked_session_id = (
         adapter.fork_session(source_session_id, native_store=native_store)
-        if native_store is not None else adapter.fork_session(source_session_id)
+        if native_store is not None
+        else adapter.fork_session(source_session_id)
     ).strip()
     if not forked_session_id:
         raise RuntimeError("Harness adapter.fork_session() returned an empty session ID.")

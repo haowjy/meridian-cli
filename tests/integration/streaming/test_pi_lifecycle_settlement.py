@@ -100,9 +100,7 @@ async def test_retryable_agent_end_waits_for_settlement_and_preserves_error(
         final = await coordinator.handle_terminal_event(
             settled,
             outcome,
-            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
-                outcome
-            ),
+            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(outcome),
         )
 
         assert final.recorded_outcome is not None
@@ -138,9 +136,7 @@ async def test_settled_abort_remains_cancelled(
         final = await coordinator.handle_terminal_event(
             settled,
             outcome,
-            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
-                outcome
-            ),
+            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(outcome),
         )
 
         assert final.recorded_outcome is not None

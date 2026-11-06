@@ -44,6 +44,7 @@ def _start_test_spawn(runtime_root: Path) -> str:
         ).spawn_id
     )
 
+
 def test_finalize_propagates_concurrent_disappearance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -77,9 +78,8 @@ def _finalize_spawn_worker(
     )
     return (
         isinstance(outcome, Applied),
-        isinstance(outcome, Applied) and outcome.before.status not in {
-            "succeeded", "failed", "cancelled", "timed_out"
-        },
+        isinstance(outcome, Applied)
+        and outcome.before.status not in {"succeeded", "failed", "cancelled", "timed_out"},
     )
 
 

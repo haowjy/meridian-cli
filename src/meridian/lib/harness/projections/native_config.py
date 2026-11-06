@@ -15,9 +15,7 @@ from meridian.lib.safety.policy import EnforcementReport, ReportLine
 CODEX_CONFIG_MODEL_KEY = "model"
 CODEX_CONFIG_REASONING_EFFORT_KEY = "model_reasoning_effort"
 CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY = "model_auto_compact_token_limit"
-CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY = (
-    "model_post_turn_compact_threshold_percent"
-)
+CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY = "model_post_turn_compact_threshold_percent"
 CODEX_CONFIG_SANDBOX_MODE_KEY = "sandbox_mode"
 CODEX_CONFIG_APPROVAL_POLICY_KEY = "approval_policy"
 CODEX_CONFIG_WRITABLE_ROOTS_KEY = "sandbox_workspace_write.writable_roots"
@@ -140,8 +138,7 @@ def codex_key_addressable(segments: tuple[str, ...]) -> bool:
         segment
         and not any(character in segment for character in ".='\"")
         and not any(
-            character.isspace() or unicodedata.category(character) == "Cc"
-            for character in segment
+            character.isspace() or unicodedata.category(character) == "Cc" for character in segment
         )
         for segment in segments
     )
@@ -230,9 +227,7 @@ def project_codex_native_config(
     return tuple(arguments), tuple(lines)
 
 
-def unsupported_native_config_report(
-    config: NativeConfig, *, harness: str
-) -> EnforcementReport:
+def unsupported_native_config_report(config: NativeConfig, *, harness: str) -> EnforcementReport:
     """Report a non-empty native config that a harness does not project."""
 
     keys = tuple(".".join(segments) for segments, _value in flatten_native_config(config))

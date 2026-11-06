@@ -191,9 +191,7 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
                     AvailableSkillEntry(
                         name=name,
                         skill_type=skill_type,
-                        description=" ".join(
-                            _normalize_str(item_dict.get("description")).split()
-                        ),
+                        description=" ".join(_normalize_str(item_dict.get("description")).split()),
                         source_path=_normalize_str(item_dict.get("source_path")) or None,
                     )
                 )
@@ -233,9 +231,7 @@ class _BundleNetwork(BaseModel):
     deny: tuple[str, ...]
 
 
-def _parse_bundle_network(
-    raw: object, *, sandbox: object
-) -> NetworkPolicy | SandboxDerivedNetwork:
+def _parse_bundle_network(raw: object, *, sandbox: object) -> NetworkPolicy | SandboxDerivedNetwork:
     """Parse the current Mars object once; durable legacy shapes use their own parser."""
 
     try:
@@ -322,9 +318,7 @@ def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]
     for capability in ("agent", "task"):
         entry = json_object(capabilities.get(capability))
         if entry is None:
-            raise _bundle_schema_error(
-                f"'tools.capability_natives.{capability}' must be an object"
-            )
+            raise _bundle_schema_error(f"'tools.capability_natives.{capability}' must be an object")
         try:
             # A platform deny is unscoped, so the names Mars gives are the tools too.
             rule = ToolRule.model_validate(

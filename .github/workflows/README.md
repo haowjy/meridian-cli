@@ -7,11 +7,14 @@ nightly schedule.
 
 - PRs get a non-blocking release-label warning.
 - `pr-body.yml` validates the PR body's `## Changelog` section on open, edit,
-  synchronize, reopen and ready-for-review, and fails the PR when it is missing
+  synchronize, reopen, ready-for-review and label changes, and fails the PR when it is missing
   or malformed. Drafts are skipped (the integration PR opens as a draft). The
   same step compares `CHANGELOG.md` with the base branch's copy, so a PR that
   adds content under `## [Unreleased]` or a release heading (`## [X]`) fails
   before merge; `CHANGELOG.md` belongs to the release job.
+- `pr-body.yml`'s `release-branch` job, which runs on drafts too, fails a PR to `main`
+  labeled `release:minor` or `release:major` unless it comes from a `release/*` branch:
+  those labels cut a release on merge, so only a release branch's PR carries them.
 - Routine CI and the local pre-push hook run the same `scripts/preflight.sh fast`
   gate over default pytest paths, lint and typecheck; its 60-second budget is a
   warning target and never fails or stops the gate.

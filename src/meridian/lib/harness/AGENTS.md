@@ -40,14 +40,19 @@ a spec field in neither fails startup.
 - **Native identity is planned, not discovered.** A chat binds one immutable
   `(harness, native_store, id)`. `plan_native_identity()` picks operation and source;
   `finalize_native_identity()` pins store/ID against the final child env before argv
-  projection; `observe_after_exit()` returns `PostExit` and never binds or persists;
+  projection; `observe_after_exit()` returns `PostExit` and never binds or persists; `turn_since()` is
+  a separate probe, run only for interactive primaries on the session current at exit (`None` = no
+  reliable signal: Codex, Pi, OpenCode 1.x);
   `launch/native_run.py` owns ordering and attribution. Source store always comes from
   the recorded chat (`SessionRequest.source_native_store`), never config hints. Cwd,
   timestamps, logs, and newest-file or prefix scans never establish chat identity.
   `legacy_native_stores.py` is a one-time import seam, not a runtime repair fallback.
 - **Transcript resolution is exact.** Recorded store plus full native ID; multiple
   matches fail as `ambiguous_native_file`. Never reinterpret a recorded Claude project
-  store as a config root; no ambient-store fallback.
+  store as a config root. A missing file is searched for by exact ID only within the
+  recorded config root, only on a tracked `--continue`, and the result is linked back
+  into the recorded store; there is no ambient-store fallback, and several distinct
+  files refuse. Recorded paths change only through `meridian session relocate`.
 - **Model observations have one writer**: `model_observation.observe_session_model`
   stores the raw native model token. Don't call `session_store.record_model_observation`
   elsewhere.

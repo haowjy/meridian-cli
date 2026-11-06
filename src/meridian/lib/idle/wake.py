@@ -18,9 +18,7 @@ _TIMEOUT_OPTION = "--timeout"
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
 _NEWLINE_BOUNDARY = "\0"
 _PUNCTUATION = f"();<>|&{_NEWLINE_BOUNDARY}"
-_SEGMENT_BOUNDARIES = frozenset(
-    {";", "&&", "||", "|", "&", "(", ")", _NEWLINE_BOUNDARY}
-)
+_SEGMENT_BOUNDARIES = frozenset({";", "&&", "||", "|", "&", "(", ")", _NEWLINE_BOUNDARY})
 _REDIRECTIONS = frozenset({">", ">>", "<", ">&", "<&", "&>", ">|"})
 
 
@@ -247,9 +245,7 @@ def _spawn_after(tokens: list[str], start: int) -> SpawnCommand | None:
     for arg in rest:
         if arg == "--":
             break
-        if arg in {"--bg", "--background"} or arg.startswith(
-            ("--bg=", "--background=")
-        ):
+        if arg in {"--bg", "--background"} or arg.startswith(("--bg=", "--background=")):
             return None
     return SpawnCommand(waits=False)
 
@@ -261,8 +257,7 @@ def spawn_command(command: str) -> SpawnCommand | None:
     if not segments:
         return None
     if any(
-        (index := _command_index(segment)) is not None
-        and segment[index] in _LOOP_COMMANDS
+        (index := _command_index(segment)) is not None and segment[index] in _LOOP_COMMANDS
         for segment in segments
     ):
         return None

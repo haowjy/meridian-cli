@@ -150,10 +150,7 @@ async def test_serve_later_switch_has_one_conflict(tmp_path, monkeypatch):
     assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
     row = get_spawn(runtime_root, "p1")
     assert row.status == "succeeded"
-    assert (
-        session_store.chat_record(runtime_root, row.chat_id).harness_session_id
-        == "entry-thread"
-    )
+    assert session_store.chat_record(runtime_root, row.chat_id).harness_session_id == "entry-thread"
 
 
 @pytest.mark.asyncio

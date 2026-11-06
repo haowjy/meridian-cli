@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
+
 class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Select the transport for the spec's OpenCode version, then defer to it."""
 

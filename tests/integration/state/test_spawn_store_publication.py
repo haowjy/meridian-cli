@@ -47,13 +47,9 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _start_test_spawn(
-    runtime_root: Path, *, spawn_id: str, status: SpawnStatus = "running"
-) -> str:
+def _start_test_spawn(runtime_root: Path, *, spawn_id: str, status: SpawnStatus = "running") -> str:
     resolved_status = (
-        "running"
-        if status in {"succeeded", "failed", "cancelled", "timed_out"}
-        else status
+        "running" if status in {"succeeded", "failed", "cancelled", "timed_out"} else status
     )
     resolved_spawn_id = str(
         start_spawn(
@@ -436,9 +432,20 @@ def test_delete_published_spawn_cannot_leave_writer_ghost_row(tmp_path: Path) ->
 
 def _reopening(**overrides: Any) -> LaunchInput:
     fields: dict[str, Any] = dict(
-        chat_id="c1", prompt="x", kind="child", model="gpt-5.4", control_root=None,
-        task_cwd=None, execution_cwd=None, owner_chat_id=None, parent_id=None, goal=None,
-        harness_session_id=None, launch_mode=None, worker_pid=None, runner_pid=None,
+        chat_id="c1",
+        prompt="x",
+        kind="child",
+        model="gpt-5.4",
+        control_root=None,
+        task_cwd=None,
+        execution_cwd=None,
+        owner_chat_id=None,
+        parent_id=None,
+        goal=None,
+        harness_session_id=None,
+        launch_mode=None,
+        worker_pid=None,
+        runner_pid=None,
         runner_created_at_epoch=None,
     )
     return LaunchInput(**{**fields, **overrides})
@@ -490,9 +497,16 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
 
         # The holder reopens the finished launch: K archived, usage folded, v3 -> v4.
         finalize_spawn(
-            runtime_root, "p9", "succeeded", 0, origin="runner", duration_secs=5.0,
+            runtime_root,
+            "p9",
+            "succeeded",
+            0,
+            origin="runner",
+            duration_secs=5.0,
             usage=TokenUsage(
-                total_cost_usd=0.5, input_tokens=10, output_tokens=2,
+                total_cost_usd=0.5,
+                input_tokens=10,
+                output_tokens=2,
                 harness_cumulative={"total": {"inputTokens": 10}},
             ),
         )
@@ -534,7 +548,11 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
 
         # A v4 row's terminal keeps the harness's running total; the next launch is seeded from it.
         finalize_spawn(
-            runtime_root, launch.spawn_id, "succeeded", 0, origin="runner",
+            runtime_root,
+            launch.spawn_id,
+            "succeeded",
+            0,
+            origin="runner",
             usage=TokenUsage(harness_cumulative={"total": {"inputTokens": 7}}),
         )
         stored_terminal = json.loads((spawn_dir / "state.json").read_text())["terminal"]
@@ -544,4 +562,3 @@ def test_new_spawn_layout(tmp_path: Path) -> None:
         folded = finished.prior_usage.plus(finished.terminal)
         assert folded.harness_cumulative == {"total": {"inputTokens": 7}}
         assert folded.plus(None).harness_cumulative == folded.harness_cumulative
-

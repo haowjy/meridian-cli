@@ -12,10 +12,10 @@ def test_guardrails_receive_report_and_chat_not_runner_log(tmp_path: Path) -> No
     script = tmp_path / "guardrail.sh"
     script.write_text(
         "#!/bin/sh\nprintf '%s\\n' \\\n"
-        "  \"$_MERIDIAN_GUARDRAIL_RUN_ID\" \\\n"
-        "  \"$_MERIDIAN_GUARDRAIL_CHAT_ID\" \\\n"
-        "  \"$_MERIDIAN_GUARDRAIL_REPORT\" \\\n"
-        "  \"${_MERIDIAN_GUARDRAIL_OUTPUT_LOG-unset}\" > \"$OBSERVED\"\n",
+        '  "$_MERIDIAN_GUARDRAIL_RUN_ID" \\\n'
+        '  "$_MERIDIAN_GUARDRAIL_CHAT_ID" \\\n'
+        '  "$_MERIDIAN_GUARDRAIL_REPORT" \\\n'
+        '  "${_MERIDIAN_GUARDRAIL_OUTPUT_LOG-unset}" > "$OBSERVED"\n',
         encoding="utf-8",
     )
     script.chmod(0o755)

@@ -194,9 +194,7 @@ async def test_codex_events_fail_after_liveness_timeout_mid_stream(
     )
     monkeypatch.setattr(CodexConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
 
-    events = await _collect_codex_events_under_fake_clock(
-        determinism, connection, monkeypatch
-    )
+    events = await _collect_codex_events_under_fake_clock(determinism, connection, monkeypatch)
 
     assert [event.event_type for event in events] == [
         "item/updated",
@@ -274,8 +272,7 @@ async def test_codex_backend_exit_and_reader_race_emit_one_enriched_close(
     assert close_event is not None
     assert close_event.event_type == "meridian/error/connectionClosed"
     assert close_event.payload["message"] == (
-        "Codex app-server exited with code 23.\n\n"
-        "Codex app-server stderr:\nfatal vendor detail"
+        "Codex app-server exited with code 23.\n\nCodex app-server stderr:\nfatal vendor detail"
     )
     assert close_event.payload["backend_exit_code"] == 23
     assert close_event.payload["backend_stderr_excerpt"] == "fatal vendor detail"
@@ -327,9 +324,7 @@ async def test_codex_expected_stop_cancels_watcher_before_backend_termination() 
     connection._ws = websocket
     scope_handle = _RecordingScopeHandle(process)
     connection._scope_handle = scope_handle  # type: ignore[assignment]
-    connection._backend_exit_task = asyncio.create_task(
-        connection._watch_backend_exit()
-    )
+    connection._backend_exit_task = asyncio.create_task(connection._watch_backend_exit())
     connection._reader_task = asyncio.create_task(connection._read_messages_loop())
     await asyncio.sleep(0)
 

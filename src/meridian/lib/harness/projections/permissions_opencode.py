@@ -451,9 +451,7 @@ def compile_opencode_permissions(
     # Non-restrictable completion grants follow every profile rule. OpenCode resolves the
     # last match, so this makes the command role's precedence exact.
     final_grant_keys = {(entry.action, entry.resource) for entry in final_platform_grants}
-    ordered = [
-        entry for entry in ordered if (entry.action, entry.resource) not in final_grant_keys
-    ]
+    ordered = [entry for entry in ordered if (entry.action, entry.resource) not in final_grant_keys]
     ordered.extend(dict.fromkeys(final_platform_grants))
     final_by_key = {(entry.action, entry.resource): entry for entry in ordered}
 

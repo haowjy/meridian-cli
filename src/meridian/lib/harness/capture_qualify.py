@@ -212,9 +212,7 @@ class _IdleObserver:
         return None
 
 
-def observer_for(
-    harness: str, session_id: str, dialect: str | None = None
-) -> CaptureObserver:
+def observer_for(harness: str, session_id: str, dialect: str | None = None) -> CaptureObserver:
     if harness == "pi":
         return PiObserver(session_id)
     if harness == "claude":

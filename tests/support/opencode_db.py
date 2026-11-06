@@ -83,9 +83,7 @@ def write_opencode_db_session(
     write_opencode_db_session_with_parts(
         db_path=db_path,
         session_id=session_id,
-        messages=[
-            (role, {}, [{"type": "text", "text": text}]) for role, text in messages
-        ],
+        messages=[(role, {}, [{"type": "text", "text": text}]) for role, text in messages],
     )
 
 
@@ -126,9 +124,7 @@ def write_opencode_db_session_with_parts(
             "INSERT OR REPLACE INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
             (session_id, now, now),
         )
-        id_prefix = "".join(
-            character if character.isalnum() else "_" for character in session_id
-        )
+        id_prefix = "".join(character if character.isalnum() else "_" for character in session_id)
         for message_index, (role, message_data, parts) in enumerate(messages):
             timestamp = now + (message_index * 100)
             message_id = f"{id_prefix}_msg_{message_index}"

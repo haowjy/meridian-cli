@@ -54,7 +54,8 @@ def record() -> None:
     source = payload.get("source")
     if (
         payload.get("hook_event_name") != "SessionStart"
-        or not isinstance(source, str) or source not in _SOURCES
+        or not isinstance(source, str)
+        or source not in _SOURCES
     ):
         return
     session_id = payload.get("session_id")
@@ -79,10 +80,14 @@ def record() -> None:
     messaging_socket = _messaging_socket()
     if messaging_socket is not None:
         record_payload["messaging_socket"] = messaging_socket
-    line = b"\n" + json.dumps(
-        record_payload,
-        separators=(",", ":"),
-    ).encode() + b"\n"
+    line = (
+        b"\n"
+        + json.dumps(
+            record_payload,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
     if len(line) > _RECORD_LIMIT:
         return
 

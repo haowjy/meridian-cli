@@ -234,9 +234,7 @@ def session_scope(
         finally:
             # The runner's own spawn is reclaimed with the lock it holds; its slot may still be
             # unbound if the launch failed before publishing the row.
-            _reclaim_session_scopes(
-                runtime_root, resolved_chat_id, launch_slot.held
-            )
+            _reclaim_session_scopes(runtime_root, resolved_chat_id, launch_slot.held)
         if kind == "primary":
             # Browse shows the last-used model; a mid-session switch is only visible in the
             # native history. Runs after reclamation and never waits on a lock: a missed

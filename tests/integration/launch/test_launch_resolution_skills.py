@@ -39,7 +39,6 @@ class _BundleResolution:
     harness: HarnessId
 
 
-
 def _stub_bundle_resolution(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -110,4 +109,3 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
     appended = preview.binding.run_params.appended_system_prompt or ""
     assert appended.count("Resolved variant body from mars") == 1
     assert preview.resolved_request.skill_paths == (fallback_skill_path.resolve().as_posix(),)
-

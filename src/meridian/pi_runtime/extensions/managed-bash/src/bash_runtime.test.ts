@@ -95,7 +95,6 @@ describe("BashRuntime task pings", () => {
       const bashId = (result as { bash_id: string }).bash_id;
       const file = parseBashRecordsFile(JSON.parse(await readFile(path.join(runtimeRoot, "pi-bash", "p-test-ping", "bash-records.json"), "utf8")));
       expect(file?.spawn_id).toBe("p-test-ping");
-      expect(file?.records[bashId]?.originating_bash_id).toBe("b-12345678");
       await until(() => runtime.list(true)[0]!.log_bytes > 0);
       expect(await runtime.manage({ action: "output", bash_id: bashId })).toMatchObject({ output: bashId });
       await until(() => pings.length === 1);

@@ -85,13 +85,10 @@ def generated_session_events(seed: int) -> list[dict[str, object]]:
     return events
 
 
-
 GOLDEN_FOLD_DIGEST = "f5c5954b1f3a2ecf2754d99cfe1e6733984c7e4128fc9c8c6fef017f79f9cc32"
 
 
-def assert_pre_restructure_fold_golden(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def assert_pre_restructure_fold_golden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Replay 1,000 deterministic journals against the fold recorded before the binding rewrite.
 
     The digest covers the baseline serialized generation and chat fields. New metadata
@@ -114,9 +111,7 @@ def assert_pre_restructure_fold_golden(
             baseline_generations = s.list_session_generations(tmp_path)
             baseline_chats = s.list_all_session_records(tmp_path)
         assert not logs
-        results.append(
-            [_golden_dump(baseline_generations), _golden_dump(baseline_chats)]
-        )
+        results.append([_golden_dump(baseline_generations), _golden_dump(baseline_chats)])
     serialized = json.dumps(results, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(serialized).hexdigest() == GOLDEN_FOLD_DIGEST
 

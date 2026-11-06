@@ -316,6 +316,18 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
         surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     OpDeclaration(
+        extension_id="meridian.session",
+        command_id="relocate",
+        summary="Point a moved chat's recorded paths at its new directory.",
+        handler="meridian.lib.ops.session_relocate:session_relocate",
+        sync_handler="meridian.lib.ops.session_relocate:session_relocate_sync",
+        input_type="meridian.lib.ops.session_relocate:SessionRelocateInput",
+        output_type="meridian.lib.ops.session_relocate:SessionRelocateOutput",
+        cli_group="session",
+        cli_name="relocate",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    OpDeclaration(
         extension_id="meridian.spawn",
         command_id="subagents",
         summary="List the agents to delegate to; `--all` for every installed agent.",
@@ -412,10 +424,7 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.spawn",
         command_id="status",
-        summary=(
-            "Show spawn status, duration, and model. "
-            "Use --full to include report text."
-        ),
+        summary=("Show spawn status, duration, and model. Use --full to include report text."),
         handler="meridian.lib.ops.spawn.api:spawn_status",
         sync_handler="meridian.lib.ops.spawn.api:spawn_status_sync",
         input_type="meridian.lib.ops.spawn.api:SpawnStatusInput",

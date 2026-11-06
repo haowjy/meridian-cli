@@ -1605,9 +1605,7 @@ class SpawnWaitMultiOutput(BaseModel):
         # Sparse spawn details.
         wire["spawns"] = [_spawn_wire(spawn) for spawn in self.spawns]
         wire["owed_spawns"] = [_spawn_wire(spawn) for spawn in self.owed_spawns]
-        wire["since_started_spawns"] = [
-            _spawn_wire(spawn) for spawn in self.since_started_spawns
-        ]
+        wire["since_started_spawns"] = [_spawn_wire(spawn) for spawn in self.since_started_spawns]
         return wire
 
     def to_cli_output(

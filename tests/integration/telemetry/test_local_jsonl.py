@@ -98,9 +98,7 @@ def test_write_batch_repairs_valid_tail_missing_newline(tmp_path, caplog) -> Non
         "event.four",
     ]
     assert not [
-        record
-        for record in caplog.records
-        if "Skipping malformed JSONL row" in record.getMessage()
+        record for record in caplog.records if "Skipping malformed JSONL row" in record.getMessage()
     ]
 
 

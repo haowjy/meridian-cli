@@ -260,9 +260,7 @@ def test_codex_native_network_access_is_rejected_with_pointer_to_network() -> No
     )
 
     with pytest.raises(ValueError, match=r"use the profile `network` field"):
-        reject_removed_codex_native_config(
-            {"sandbox_workspace_write": {"network_access": True}}
-        )
+        reject_removed_codex_native_config({"sandbox_workspace_write": {"network_access": True}})
 
 
 def test_spawn_capability_requires_the_canonical_spawn_command() -> None:

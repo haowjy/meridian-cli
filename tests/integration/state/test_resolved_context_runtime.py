@@ -33,9 +33,7 @@ class _CurrentChatBackend:
 def test_derive_runtime_root_uses_project_id_user_home(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir(parents=True)
-    (project_root / "meridian.toml").write_text(
-        '[project]\nid = "proj-abc"\n', encoding="utf-8"
-    )
+    (project_root / "meridian.toml").write_text('[project]\nid = "proj-abc"\n', encoding="utf-8")
 
     derived = derive_runtime_root_from_project(project_root)
 

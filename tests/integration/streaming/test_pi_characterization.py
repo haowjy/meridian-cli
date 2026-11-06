@@ -430,8 +430,7 @@ async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor
         # Isolate the coordinator's scheduling anchor from the separately tested
         # index deadline by starting the bounded read after this synthetic hold.
         read_deadline = (
-            descendant_evidence_module.time.monotonic()
-            + descendant_evidence_module.QUERY_TIMEOUT
+            descendant_evidence_module.time.monotonic() + descendant_evidence_module.QUERY_TIMEOUT
         )
         return projection(index, root_spawn_id, deadline=read_deadline)  # type: ignore[arg-type]
 

@@ -1130,9 +1130,7 @@ async def execute_with_streaming(
                     runner_phase[0] = "processing_attempt"
                     conclusion.failure_reason = None
                     conclusion.exit_code = attempt.drain_exit_code
-                    conclusion.authoritative_terminal_status = (
-                        attempt.authoritative_terminal_status
-                    )
+                    conclusion.authoritative_terminal_status = attempt.authoritative_terminal_status
                     conclusion.cancellation_observed = (
                         conclusion.cancellation_observed or attempt.cancelled_by_request
                     )
@@ -1261,9 +1259,7 @@ async def execute_with_streaming(
                                 env=child_env,
                                 report_path=extraction.report_path,
                                 chat_id=(
-                                    guardrail_spawn.continue_chat_id
-                                    if guardrail_spawn
-                                    else None
+                                    guardrail_spawn.continue_chat_id if guardrail_spawn else None
                                 ),
                                 timeout_seconds=guardrail_timeout_seconds,
                             )

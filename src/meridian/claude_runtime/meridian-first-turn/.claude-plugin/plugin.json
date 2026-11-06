@@ -1,0 +1,5 @@
+{
+  "name": "meridian-first-turn",
+  "version": "0.1.0",
+  "description": "Submits an interactive Meridian launch's starting prompt as the first user turn, so it never appears on the `claude` command line."
+}

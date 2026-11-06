@@ -61,6 +61,11 @@ class NativeRun:
         """Identity failure from the joined observer, if any."""
         return self._observation_error
 
+    @property
+    def current_key(self) -> NativeKey | None:
+        """Last session published from boundary observations (``/clear``, ``/resume``)."""
+        return self._current_key
+
     def observe(self, session_id: str) -> None:
         """Only first owned signals can contradict pre-exec facts."""
         with self._lock:
@@ -154,22 +159,30 @@ class NativeRun:
         root = self.attempt.runtime_root
         target = session_store.chat_record(root, chat_id)
         held = target is not None and session_store.is_session_lease_owner_alive(
-            root, chat_id, session_instance_id=target.session_instance_id,
+            root,
+            chat_id,
+            session_instance_id=target.session_instance_id,
         )
         other = session_identity.live_observer_for_chat(
-            root, chat_id, records=spawn_store.list_spawns(root).records,
+            root,
+            chat_id,
+            records=spawn_store.list_spawns(root).records,
             excluding_spawn_id=str(self.attempt.spawn_id),
         )
         if held or other is not None:
             logger.warning(
                 "Observed current chat overlaps live ownership",
-                chat_id=chat_id, spawn_id=str(self.attempt.spawn_id),
+                chat_id=chat_id,
+                spawn_id=str(self.attempt.spawn_id),
                 other_spawn_id=other or (target.spawn_id if target is not None else None),
             )
 
     @contextmanager
     def observing(
-        self, adapter: SubprocessHarness, *, child_env: Mapping[str, str],
+        self,
+        adapter: SubprocessHarness,
+        *,
+        child_env: Mapping[str, str],
     ) -> Generator[Callable[[int], None], None, None]:
         """Own native observation lexically; yield ``start(pid)`` for on-running.
 
@@ -297,6 +310,7 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
+    turn_observed: bool | None = None
 
 
 def conclude_native_run(
@@ -315,6 +329,7 @@ def conclude_native_run(
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
     prior_error_phase: str = "post_exit",
+    probe_turn: bool = False,
 ) -> NativeRunOutcome:
     """Conclude once per turn, after its child, teardown and observer joined."""
     error = prior_error or run.observation_error
@@ -337,9 +352,11 @@ def conclude_native_run(
             error = post.entry_error
             if error is None and post.entry_observed is not None:
                 observed = post.entry_observed.fields()
-                if (run.entry.session_id is None
-                        and observed.harness == run.entry.harness
-                        and observed.native_store == run.entry.native_store):
+                if (
+                    run.entry.session_id is None
+                    and observed.harness == run.entry.harness
+                    and observed.native_store == run.entry.native_store
+                ):
                     # A native fork may allocate its ID inside the harness. An owned
                     # startup receipt can complete that entry, never change its namespace.
                     run.observe(post.entry_observed.session_id)
@@ -393,4 +410,24 @@ def conclude_native_run(
         )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
-    return NativeRunOutcome(error, boundary, run.entry.session_id)
+    turn_observed = None
+    if probe_turn and error is None and started and started_at_epoch is not None:
+        turn_observed = _turn_since_launch(run, adapter, post, started_at_epoch)
+    return NativeRunOutcome(error, boundary, run.entry.session_id, turn_observed)
+
+
+def _turn_since_launch(
+    run: NativeRun, adapter: SubprocessHarness, post: PostExit, started_at_epoch: float
+) -> bool | None:
+    """Probe the entry session, and only when the conversation never moved. ``/clear``,
+    ``/resume`` and a trampoline rotate it, and after two rotations the last session can be
+    empty while the middle one held the turns, so any move answers None ("Session resumed.")."""
+    if run.identity is None or run.identity.operation != "resume":
+        return None
+    entry = run.entry.complete()
+    if entry is None or post.trampoline_successor_id:
+        return None
+    current = run.current_key
+    if current is not None and current != entry:
+        return None
+    return adapter.turn_since(entry, started_at_epoch=started_at_epoch)

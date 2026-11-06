@@ -157,14 +157,21 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
         run_boundary=RunBoundaryOutcome(status="unresolved"),
     )
     spawn_store.finalize_spawn(
-        runtime_root, "p41", "succeeded", 0, origin="runner",
+        runtime_root,
+        "p41",
+        "succeeded",
+        0,
+        origin="runner",
     )
     monkeypatch.setattr(
         primary_launch_module,
         "launch_primary",
         lambda **kwargs: LaunchResult(
-            command=(), exit_code=0, primary_spawn_id="p41",
-            continue_ref="session-41", continue_chat_id="c9002",
+            command=(),
+            exit_code=0,
+            primary_spawn_id="p41",
+            continue_ref="session-41",
+            continue_chat_id="c9002",
         ),
     )
 
@@ -181,18 +188,26 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     assert "unverified" in (run_boundary_summary(row) or "")
     # Suppressing absent proof must not suppress actual warnings; no extra CLI launches needed.
     mismatch = row.model_copy(update={"run_boundary": RunBoundaryOutcome(status="mismatch")})
-    successor = row.model_copy(update={"run_boundary": RunBoundaryOutcome(
-        status="unresolved", trampoline_successor_id="possible-successor",
-    )})
+    successor = row.model_copy(
+        update={
+            "run_boundary": RunBoundaryOutcome(
+                status="unresolved",
+                trampoline_successor_id="possible-successor",
+            )
+        }
+    )
     observed = successor.model_copy(update={"current_chat_id": "c-observed"})
     assert (run_boundary_summary(mismatch, include_unverified=False) or "").startswith("warning:")
     assert (run_boundary_summary(successor, include_unverified=False) or "").startswith("warning:")
     assert run_boundary_summary(observed, include_unverified=False) == (
         "entry c9002 (session-41) → last observed chat c-observed"
     )
-    historical = observed.model_copy(update={
-        "record_mode": "historical", "run_boundary": RunBoundaryOutcome(status="verified"),
-    })
+    historical = observed.model_copy(
+        update={
+            "record_mode": "historical",
+            "run_boundary": RunBoundaryOutcome(status="verified"),
+        }
+    )
     assert historical.continue_chat_id is None
     assert run_boundary_summary(historical) == "entry c9002 (session-41) → exit c-observed"
     assert spawn_view_label(historical) == "p41 → c-observed (verified exit chat)"
@@ -458,7 +473,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
 
     assert output.warning is not None
     assert source_task_dir.as_posix() in output.warning
-    assert "falling back to the normal launch directory" in output.warning
+    assert "using " in output.warning
     context = contexts[0]
     assert context.execution_cwd == project_root.resolve()
     assert context.task_cwd is None
@@ -808,8 +823,12 @@ def test_complete_claude_key_projects_exact_resume_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stub_bundle_request_and_resolve(monkeypatch, model="sonnet", harness=HarnessId.CLAUDE)
+    from meridian.lib.harness.claude_sessions import project_slug
+
     runtime_root = _state_root(tmp_path)
-    native_store = runtime_root / "native-claude" / "projects"
+    # The store the resumed child runs in: a resume refuses any other.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    native_store = tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
     native_store.mkdir(parents=True, exist_ok=True)
     native_id = "claude-session-42"
     (native_store / f"{native_id}.jsonl").write_text(

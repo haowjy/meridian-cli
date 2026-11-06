@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.claude_sessions import project_slug, resolve_claude_config_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.request import (
@@ -33,10 +35,12 @@ pytestmark = pytest.mark.slow
 
 
 def _native_store(project_root: Path) -> Path:
-    """A Claude transcript a tracked continue can resolve its source from."""
+    """A Claude transcript a tracked continue can resolve its source from, in the
+    store the resumed child runs in."""
 
-    store = project_root / "claude-store"
-    store.mkdir()
+    store = resolve_claude_config_root(os.environ, project_root) / "projects"
+    store = store / project_slug(project_root)
+    store.mkdir(parents=True)
     (store / f"{_SESSION_ID}.jsonl").write_text(
         json.dumps({"sessionId": _SESSION_ID}) + "\n", encoding="utf-8"
     )

@@ -69,6 +69,9 @@ bare path
                                       forgets its consumption
     observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
                                       read, never written
+  pi-bash/<spawn_id>/holds/<bash id>/<pid>.json
+                                    — a CLI wait or foreground spawn inside one Pi bash task,
+                                      removed on exit; owner liveness is the whole record
   pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
                                     — Pi's admission receipts and dismissals, same keys;
                                       `delivery-receipts.json` / `cleared-spawns.json` are
@@ -121,6 +124,23 @@ A scoped `SessionBindings` snapshot raises `ChatOutsideBindingScope` for chats
 outside its scope; cross-chat repair uniqueness requires `scope=None`.
 See [history.md](history.md) for read ordering, append epochs, projection and
 namespace contracts.
+
+### Relocate rows
+
+`meridian session relocate` appends one `relocate` row per affected chat (v1; a build
+that predates it drops the unknown name and keeps the old paths). The fold rewrites, in
+the chat record and in every generation bucket the chat already has, `control_root`,
+`task_cwd` and `execution_cwd` by whole-component prefix, except the paths listed in
+the row's `paths.keep` (a checkout nested inside the old directory that stays put; the
+planner records them and the fold must skip them), and replaces `native_store`
+where it equals the row's `old` (`native_binding.relocate_key`; `bind` stays fill-only).
+It never creates a bucket, so the history index's write loop finds an ordinal for every
+bucket it returns. Rows are idempotent, so a rerun after a crash is safe: `rebase_path`
+is the one rebase rule (planner, fold, harness plans) and leaves a path already under
+`new` alone when `new` sits inside `old`. A start an
+older build appends afterwards with the old store folds as a binding conflict and is
+dropped, as it is for any store mismatch. Spawn rows, work items and the `task` links
+are not events: `ops/session_relocate.py` rewrites them through their own writers.
 
 ### One-time native identity import
 
@@ -526,7 +546,8 @@ Read-only projected status is not authorization to terminate a scope.
 
 
 A chat keeps one `(harness, native_store, harness_session_id)` binding across
-starts and updates. `update_session_harness_id` atomically returns
+starts and updates; the only thing that changes a recorded store is a `relocate` row
+(see Relocate rows). `update_session_harness_id` atomically returns
 `BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
 `native_binding.bind`; callers mirror its accepted ID, not their candidate.
 `session_fold.py` owns event models and replay; `by_native_key(records)`

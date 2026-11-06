@@ -173,9 +173,7 @@ class BackendLivenessPolicy:
                     return await task
 
                 wait_timeout = (
-                    remaining
-                    if decision == LivenessDecision.CONTINUE
-                    else self._timeout_seconds()
+                    remaining if decision == LivenessDecision.CONTINUE else self._timeout_seconds()
                 )
                 if decision == LivenessDecision.CONTINUE and wait_timeout <= 0:
                     continue

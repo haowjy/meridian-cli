@@ -40,7 +40,10 @@ def _normalize(value: str | None) -> str | None:
 
 
 def recover_recorded_chat_harness_session_id(
-    runtime_root: Path, chat_id: str, *, session: session_store.SessionRecord | None = None,
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    session: session_store.SessionRecord | None = None,
 ) -> RecoveryResult | None:
     """Read only the immutable chat binding; mirrors cannot supply missing identity."""
     record = session or session_store.chat_record(runtime_root, chat_id)
@@ -48,10 +51,14 @@ def recover_recorded_chat_harness_session_id(
 
 
 def recover_recorded_chat_harness_session_ids(
-    runtime_root: Path, sessions: Sequence[session_store.SessionRecord],
+    runtime_root: Path,
+    sessions: Sequence[session_store.SessionRecord],
 ) -> dict[str, RecoveryResult]:
-    return {session.chat_id: result for session in sessions
-            if (result := _recover_from_session_record(session)) is not None}
+    return {
+        session.chat_id: result
+        for session in sessions
+        if (result := _recover_from_session_record(session)) is not None
+    }
 
 
 def _recover_from_session_record(

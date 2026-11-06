@@ -189,9 +189,7 @@ class _Coordinator:
     def next_timeout(self) -> None:
         return None
 
-    async def observe_event(
-        self, event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent | None:
+    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
         self._calls.append(("pre_persist", event.raw))
         return event
 
@@ -263,9 +261,7 @@ class _StabilizingEvidence:
             return EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
         return EvidenceEventDecision()
 
-    async def assess(
-        self, trigger: AssessmentTrigger, state: CompletionState
-    ) -> WorkAssessment:
+    async def assess(self, trigger: AssessmentTrigger, state: CompletionState) -> WorkAssessment:
         del trigger, state
         return WorkAssessment(disposition="ready", blockers=(), generation=1)
 

@@ -46,7 +46,7 @@ const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 const stored = (bashId: string, patch: Partial<BashRecord> = {}): BashRecord => ({
   bash_id: bashId, command: "sleep 30", cwd: "/", pid: null, status: "running", is_background: true, is_tracked: true,
   exit_code: null, started_at_ms: 1, ended_at_ms: null, log_path: "l", stdout_log_path: "o", stderr_log_path: "e",
-  log_bytes: 3, timeout_min: 1, originating_bash_id: null, ...patch,
+  log_bytes: 3, timeout_min: 1, ...patch,
 });
 
 type Fixture = ReturnType<typeof fixture>;

@@ -130,8 +130,7 @@ def test_countdown_uses_current_time_and_persisted_ttl_confidence(
 
 def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:
     user, assistant = trim_turn_excerpts(
-        "  human prompt\n\n<system-reminder>injected hook text</system-reminder> "
-        + "word " * 40,
+        "  human prompt\n\n<system-reminder>injected hook text</system-reminder> " + "word " * 40,
         "reply\nwith\tspacing " + "answer " * 60,
     )
 

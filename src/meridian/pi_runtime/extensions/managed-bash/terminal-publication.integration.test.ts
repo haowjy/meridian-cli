@@ -496,7 +496,7 @@ describe("managed Bash terminal publication", () => {
       const stored: BashRecord = {
         bash_id: bashId, command: "sleep 30", cwd: "/", pid: null, status: "running", is_background: true, is_tracked: true,
         exit_code: null, started_at_ms: 1, ended_at_ms: null, log_path: "l", stdout_log_path: "o", stderr_log_path: "e",
-        log_bytes: 3, timeout_min: 1, originating_bash_id: null, execution_error: "earlier fault",
+        log_bytes: 3, timeout_min: 1, execution_error: "earlier fault",
       };
       await writeFile(path.join(dir, "bash-records.json"), JSON.stringify({ v: 1, spawn_id: "p-publication", updated_at_ms: 1, runtime_error: "earlier runtime error", records: { [bashId]: stored } }));
       const signals = vi.spyOn(process, "kill");

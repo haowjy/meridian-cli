@@ -184,10 +184,7 @@ def test_hooks_run_creates_no_state_without_materialized_state(
     meridian_home: Path,
 ) -> None:
     (meridian_home / "config.toml").write_text(
-        "[[hooks]]\n"
-        'name = "manual-test"\n'
-        'event = "spawn.finished"\n'
-        'command = "true"\n',
+        '[[hooks]]\nname = "manual-test"\nevent = "spawn.finished"\ncommand = "true"\n',
         encoding="utf-8",
     )
 
@@ -209,9 +206,7 @@ def test_spawn_list_in_mars_only_project_does_not_create_meridian_toml(
     meridian_home: Path,
 ) -> None:
     before = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
-    result = _run_meridian(
-        ["spawn", "list"], cwd=cwd_with_mars_only, meridian_home=meridian_home
-    )
+    result = _run_meridian(["spawn", "list"], cwd=cwd_with_mars_only, meridian_home=meridian_home)
     after = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
 
     assert result.returncode == 0, result.stderr or result.stdout
@@ -385,9 +380,7 @@ def test_materialization_notice_names_nearest_marked_ancestor(
     ancestor = tmp_path / "parent"
     project_root = ancestor / "scratch"
     project_root.mkdir(parents=True)
-    (ancestor / "meridian.toml").write_text(
-        '[project]\nid = "parent-project"\n', encoding="utf-8"
-    )
+    (ancestor / "meridian.toml").write_text('[project]\nid = "parent-project"\n', encoding="utf-8")
 
     result = _run_meridian(
         ["--mode", "human", "work", "start", "first work"],
@@ -470,4 +463,3 @@ def test_primary_launch_preserves_existing_config_identity(
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     content = (cwd_with_project_id / "meridian.toml").read_text(encoding="utf-8")
     assert 'id = "proj-cwd-integration"' in content
-

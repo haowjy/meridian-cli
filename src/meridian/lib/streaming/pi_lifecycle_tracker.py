@@ -44,8 +44,7 @@ class PiLifecycleTracker:
             raw_type = event.payload.get("raw_type")
             raw_type_text = raw_type if isinstance(raw_type, str) else "unknown"
             self.lifecycle_tracking_invalidated_error = (
-                "pi_lifecycle_tracking_invalidated:unsupported_schema_event:"
-                f"{raw_type_text}"
+                f"pi_lifecycle_tracking_invalidated:unsupported_schema_event:{raw_type_text}"
             )
             return False
 
@@ -75,8 +74,7 @@ class PiLifecycleTracker:
         )
         if unknown_label is not None:
             self.lifecycle_tracking_invalidated_error = (
-                "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
-                f"{unknown_label}"
+                f"pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:{unknown_label}"
             )
         return False
 

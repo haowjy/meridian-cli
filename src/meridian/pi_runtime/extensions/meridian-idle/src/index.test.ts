@@ -168,7 +168,7 @@ describe("meridian idle event mapping", () => {
         stderr_log_path: `${root}/${id}.stderr.log`,
         log_bytes: 0,
         timeout_min: 55,
-        originating_bash_id: null,
+       
       });
       const running = Array.from({ length: 18 }, (_, index) => record(
         `b-running-${index}`,

@@ -966,9 +966,7 @@ class HistoryIndex:
         schema. The cost per catch-up is one small file read plus work for new IDs; IDs
         reserved before their directory exists stay in the cursor's retry set.
         """
-        row = db.exec_driver_sql(
-            "SELECT extent, tail FROM cursors WHERE source = 'spawns'"
-        ).first()
+        row = db.exec_driver_sql("SELECT extent, tail FROM cursors WHERE source = 'spawns'").first()
         counter = read_spawn_counter(self.root)
         if row is None or (counter == row[0] and not row[1]):
             return []

@@ -89,9 +89,7 @@ def sample(items: list, limit: int | None) -> list:
 def compare_corpus(root: Path, writer: Path, *, limit: int | None = None) -> dict[str, int]:
     raw = read_events(root / "sessions.jsonl", lambda row: row)
     events = [
-        event
-        for row in raw
-        if (event := parse_event(row, UnsupportedSessionRecords())) is not None
+        event for row in raw if (event := parse_event(row, UnsupportedSessionRecords())) is not None
     ]
     observations = [
         event for row in raw if (event := old._parse_model_observation(row)) is not None

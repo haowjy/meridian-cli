@@ -65,12 +65,8 @@ def test_opencode_child_session_terminal_events_do_not_complete_parent_scope() -
     child_error = _opencode_event("session.error", "ses_child")
     parent_idle = _opencode_event("session.idle", "ses_parent")
 
-    child_idle_semantics = normalize_event(
-        child_idle, primary_event_scope=parent_scope
-    ).semantics
-    child_error_semantics = normalize_event(
-        child_error, primary_event_scope=parent_scope
-    ).semantics
+    child_idle_semantics = normalize_event(child_idle, primary_event_scope=parent_scope).semantics
+    child_error_semantics = normalize_event(child_error, primary_event_scope=parent_scope).semantics
     parent_semantics = normalize_event(parent_idle, primary_event_scope=parent_scope).semantics
 
     assert child_idle_semantics.terminal is None
@@ -87,7 +83,10 @@ def test_opencode_unscoped_terminal_event_only_counts_without_parent_scope() -> 
     unscoped_idle = _opencode_event("session.idle", None)
 
     assert normalize_event(unscoped_idle).semantics.terminal is not None
-    assert normalize_event(
-        unscoped_idle,
-        primary_event_scope=PrimaryEventScope(HarnessId.OPENCODE, "ses_parent"),
-    ).semantics.terminal is None
+    assert (
+        normalize_event(
+            unscoped_idle,
+            primary_event_scope=PrimaryEventScope(HarnessId.OPENCODE, "ses_parent"),
+        ).semantics.terminal
+        is None
+    )

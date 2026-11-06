@@ -23,10 +23,7 @@ def test_plugin_config_uses_config_env_override(
     override_clone = tmp_path / "override-clone"
     override_config = tmp_path / "override.toml"
     override_config.write_text(
-        (
-            '[git."https://example.com/team/repo.git"]\n'
-            f'path = "{override_clone.as_posix()}"\n'
-        ),
+        (f'[git."https://example.com/team/repo.git"]\npath = "{override_clone.as_posix()}"\n'),
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_HOME", default_home.as_posix())

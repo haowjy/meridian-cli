@@ -516,6 +516,8 @@ def test_imported_chat_native_log_and_continue_projection(
     log = session_log_sync(SessionLogInput(ref="c1", project_root=str(root)))
     assert log.session_id == sid
     assert any(message.content == "native hello" for message in log.messages)
+    # Claude runs in its child's config root; resuming under another one is a store move.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
     prepend_fake_executables(monkeypatch, root / "bin", harness)
     stub_bundle_request_and_resolve(
         monkeypatch,
@@ -645,7 +647,7 @@ def test_torn_batch_recovers_only_uncommitted_bindings(
         append(root, {first.chat_id: [first]})
         tail = second.model_dump_json(exclude_none=True)
         with (root / "sessions.jsonl").open("ab") as handle:
-            handle.write(tail[:len(tail) // 2].encode())
+            handle.write(tail[: len(tail) // 2].encode())
         raise OSError("interrupted append")
 
     monkeypatch.setattr(session_binding, "append_chat_rows", torn_append)

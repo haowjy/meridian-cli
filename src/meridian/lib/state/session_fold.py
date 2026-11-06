@@ -21,7 +21,8 @@ from meridian.lib.core.types import (
     OptionalPersistedHarnessSessionId,
     PersistedChatId,
 )
-from meridian.lib.state.native_binding import Conflict, bind
+from meridian.lib.state.native_binding import Conflict, bind, relocate_key
+from meridian.lib.state.paths import rebase_path
 
 HISTORICAL_GENERATION_PREFIX = "historical-"
 SUPPORTED_SESSION_EVENT_VERSIONS = frozenset({1})
@@ -209,6 +210,48 @@ class SessionUpdateEvent(BaseModel):
         return NativeKeyFields(native_store=self.native_store, session_id=self.harness_session_id)
 
 
+class Replacement(BaseModel):
+    """One value a relocate row replaces: ``old`` becomes ``new``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    old: str
+    new: str
+
+
+class PathMove(Replacement):
+    """A directory prefix a relocate moved: ``old`` and its other spellings (``also``,
+    e.g. the resolved form) become ``new``. ``keep`` lists recorded paths under it that
+    stayed because they name a checkout nested inside the old directory."""
+
+    also: tuple[str, ...] = ()
+    keep: tuple[str, ...] = ()
+
+    @property
+    def olds(self) -> tuple[str, ...]:
+        return (self.old, *self.also)
+
+
+class SessionRelocateEvent(BaseModel):
+    """A chat's recorded paths moved (``meridian session relocate``).
+
+    Scoped to one chat like every other row, and applied to every generation the
+    chat already has, never creating one. ``paths`` is a directory prefix, matched
+    by whole component; ``native_store`` replaces the store only where it equals
+    ``old``. Both are idempotent, so a row repeated after a crash changes nothing.
+    Older builds drop this event name at v1, so they ignore a relocate entirely.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    v: int = 1
+    event: Literal["relocate"] = "relocate"
+    chat_id: PersistedChatId
+    relocated_at: str
+    paths: PathMove | None = None
+    native_store: Replacement | None = None
+
+
 class SessionHistoricalEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event: Literal["historical_import"] = "historical_import"
@@ -336,6 +379,7 @@ type SessionEvent = (
     | SessionUpdateEvent
     | SessionHistoricalEvent
     | SessionModelSelectionEvent
+    | SessionRelocateEvent
 )
 
 
@@ -357,6 +401,8 @@ def parse_event(
             return SessionUpdateEvent.model_validate(payload)
         if event_type == "model_selection":
             return SessionModelSelectionEvent.model_validate(payload)
+        if event_type == "relocate":
+            return SessionRelocateEvent.model_validate(payload)
     except ValidationError:
         return None
     return None
@@ -397,8 +443,38 @@ def validate_historical_import(event: SessionHistoricalEvent) -> None:
         raise ValueError("Historical imports must be inactive")
 
 
+def _relocated(record: SessionRecord, event: SessionRelocateEvent) -> SessionRecord:
+    updates: dict[str, str | None] = {}
+    if event.paths is not None:
+        for name in ("control_root", "task_cwd", "execution_cwd"):
+            value: str | None = getattr(record, name)
+            rebased = (
+                rebase_path(value, event.paths.olds, event.paths.new)
+                if value and value not in event.paths.keep
+                else None
+            )
+            if rebased is not None:
+                updates[name] = rebased
+    if event.native_store is not None:
+        updates["native_store"] = relocate_key(
+            record.key_fields(),
+            store_old=event.native_store.old,
+            store_new=event.native_store.new,
+        ).native_store
+    return record.model_copy(update=updates)
+
+
 def project_session_event(records: dict[str, SessionRecord], event: SessionEvent) -> bool:
     """Apply one authoritative event; shared by replay and incremental discovery."""
+    if isinstance(event, SessionRelocateEvent):
+        existing = records.get(event.chat_id)
+        if existing is None or existing.record_mode == "historical":
+            return False
+        relocated = _relocated(existing, event)
+        if relocated == existing:
+            return False
+        records[event.chat_id] = relocated
+        return True
     if isinstance(event, SessionHistoricalEvent):
         validate_historical_import(event)
         records[event.chat_id] = event.record
@@ -567,6 +643,14 @@ def project_session_generation(
     """Advance replay working sets and return every changed generation bucket."""
     chat_id = event.chat_id
     applied = project_session_event(records, event)
+    if isinstance(event, SessionRelocateEvent):
+        # Rewrites the buckets the chat already has; a bucket made here would have no
+        # ordinal in the history index's write loop.
+        return tuple(
+            key
+            for key, rows in generations.items()
+            if key[0] == chat_id and project_session_event(rows, event)
+        )
     if isinstance(event, SessionStartEvent):
         if not applied:
             return ()
@@ -600,9 +684,7 @@ def project_session_generation(
     if project_session_event(rows, event):
         if isinstance(event, SessionStartEvent):
             rows[chat_id] = rows[chat_id].model_copy(
-                update={
-                    field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS
-                }
+                update={field: getattr(records[chat_id], field) for field in _CHAT_OWNED_FIELDS}
             )
         changed.append((chat_id, generation))
         current = rows[chat_id]

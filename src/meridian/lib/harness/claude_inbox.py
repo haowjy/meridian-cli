@@ -54,13 +54,16 @@ def post_primary_message(
     if not is_process_alive_born_by(worker_pid, recorded_at):
         raise _process_exited(spawn_id)
 
-    wire_message = json.dumps(
-        {
-            "type": "user",
-            "message": {"role": "user", "content": message},
-        },
-        separators=(",", ":"),
-    ).encode("utf-8") + b"\n"
+    wire_message = (
+        json.dumps(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": message},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         try:

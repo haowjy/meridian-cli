@@ -209,25 +209,16 @@ def _patch_intent_seams(
     live: str | None,
     stored: str | None,
 ) -> None:
-    monkeypatch.setattr(
-        continue_replay_module, "get_model_selection", lambda *a, **k: recorded
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "observe_session_model", lambda *a, **k: live
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "get_last_executed_model", lambda *a, **k: stored
-    )
+    monkeypatch.setattr(continue_replay_module, "get_model_selection", lambda *a, **k: recorded)
+    monkeypatch.setattr(continue_replay_module, "get_initial_model_selection", lambda *a, **k: None)
+    monkeypatch.setattr(continue_replay_module, "observe_session_model", lambda *a, **k: live)
+    monkeypatch.setattr(continue_replay_module, "get_last_executed_model", lambda *a, **k: stored)
     tokens = [token for token in (live, stored) if token]
     monkeypatch.setattr(
         continue_replay_module,
         "run_mars_models_for_harness",
         lambda *a, **k: [
-            {"harness_model_id": token, "model_id": token, "provider": "claude"}
-            for token in tokens
+            {"harness_model_id": token, "model_id": token, "provider": "claude"} for token in tokens
         ],
     )
 
@@ -320,9 +311,7 @@ def test_unroutable_observed_falls_back_to_recorded(
         live="opencode/deepseek-v4-flash-free",
         stored=None,
     )
-    monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_for_harness", lambda *a, **k: []
-    )
+    monkeypatch.setattr(continue_replay_module, "run_mars_models_for_harness", lambda *a, **k: [])
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
 
@@ -365,9 +354,7 @@ def test_fork_ignores_observed(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_model_selection",
         lambda *a, **k: _recorded_selection("recorded-token"),
     )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
-    )
+    monkeypatch.setattr(continue_replay_module, "get_initial_model_selection", lambda *a, **k: None)
 
     contract = build_continue_replay_contract(source=source, fork=True, runtime_root=Path("/tmp/x"))
 

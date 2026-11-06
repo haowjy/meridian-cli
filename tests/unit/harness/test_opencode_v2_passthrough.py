@@ -17,8 +17,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 
 def _spec(**overrides: object) -> ResolvedLaunchSpec:
-    values: dict[str, object] = {
-    }
+    values: dict[str, object] = {}
     values.update(overrides)
     return ResolvedLaunchSpec(**values)
 

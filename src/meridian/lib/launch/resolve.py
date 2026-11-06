@@ -217,9 +217,7 @@ def _resolve_pi_child_wave_timeout_from_config_snapshot(
     except Exception:
         config = None
     if config is not None and config.pi_child_wave_timeout_seconds is not None:
-        timeout_seconds = _coerce_positive_timeout_seconds(
-            config.pi_child_wave_timeout_seconds
-        )
+        timeout_seconds = _coerce_positive_timeout_seconds(config.pi_child_wave_timeout_seconds)
         if timeout_seconds is not None:
             return timeout_seconds
 
@@ -303,9 +301,7 @@ def _resolve_pi_task_ping_interval_from_config_snapshot(
     except Exception:
         config = None
     if config is not None and config.pi_task_ping_interval_seconds is not None:
-        interval_seconds = _coerce_positive_timeout_seconds(
-            config.pi_task_ping_interval_seconds
-        )
+        interval_seconds = _coerce_positive_timeout_seconds(config.pi_task_ping_interval_seconds)
         if interval_seconds is not None:
             return interval_seconds
 
@@ -409,9 +405,7 @@ def resolve_startup_timeout_seconds(
 
     try:
         config = (
-            MeridianConfig.model_validate(config_snapshot)
-            if config_snapshot
-            else MeridianConfig()
+            MeridianConfig.model_validate(config_snapshot) if config_snapshot else MeridianConfig()
         )
     except Exception:
         config = MeridianConfig()

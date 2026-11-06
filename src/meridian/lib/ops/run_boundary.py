@@ -5,7 +5,9 @@ from meridian.lib.state.spawn.model import SpawnRecord
 
 
 def run_boundary_summary(
-    row: SpawnRecord, *, include_unverified: bool = True,
+    row: SpawnRecord,
+    *,
+    include_unverified: bool = True,
 ) -> str | None:
     """Show recorded identity evidence, including for inert historical rows."""
     boundary = row.run_boundary

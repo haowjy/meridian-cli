@@ -108,16 +108,26 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
         assert await settle(started) is None
         await started.idle()
         assert await settle(started) is None  # idle done still cannot waive the result
-        write_private(tmp_path, "launch-receipts.json", {
-            "v": 1, "spawn_id": "p1", "messages": {"notice": [work_id]},
-        })
-        assert await settle(started) is None
-        await started.observe("message_start", {
-            "message": {
-                "role": "custom", "customType": "meridian-spawn-watch",
-                "details": {"delivery_id": "notice", "work_ids": [work_id]},
+        write_private(
+            tmp_path,
+            "launch-receipts.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "messages": {"notice": [work_id]},
             },
-        })
+        )
+        assert await settle(started) is None
+        await started.observe(
+            "message_start",
+            {
+                "message": {
+                    "role": "custom",
+                    "customType": "meridian-spawn-watch",
+                    "details": {"delivery_id": "notice", "work_ids": [work_id]},
+                },
+            },
+        )
         assert await settle(started) is None  # causal ACK must not end its active turn
         observation = tmp_path / "pi-bash" / "p1" / "delivery-observations.json"
         assert json.loads(observation.read_text())["observed_message_ids"] == ["notice"]

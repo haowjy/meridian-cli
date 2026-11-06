@@ -41,9 +41,7 @@ def test_unknown_upstream_event_remains_a_valid_open_transport_envelope() -> Non
 def test_every_bundle_reserves_meridian_connection_close_semantics() -> None:
     for bundle in get_bundle_registry().values():
         assert MERIDIAN_CONNECTION_CLOSED_EVENT in bundle.semantics.events
-        normalized = normalize_event(
-            _event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT)
-        )
+        normalized = normalize_event(_event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT))
         assert normalized.semantics.terminal is not None
 
 

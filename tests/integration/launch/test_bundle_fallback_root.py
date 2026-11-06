@@ -43,9 +43,7 @@ def test_bundle_fallback_flag_requires_project_scope_and_capability(
         lambda _executable: supported,
     )
 
-    command = bundle_adapter._build_bundle_command(
-        BundleRequest(agent=None, project_root=project)
-    )
+    command = bundle_adapter._build_bundle_command(BundleRequest(agent=None, project_root=project))
 
     fallback_args = ["--fallback-root", (user_home / "mars").resolve().as_posix()]
     if expects_fallback:
@@ -73,8 +71,8 @@ def test_failed_bundle_explains_fallback_agent_alias_scope(
     fake_mars.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' "
-        "'{\"error\":{\"code\":\"model_candidates_exhausted\","
-        "\"message\":\"model fallback candidates exhausted for `luna`\"}}'\n"
+        '\'{"error":{"code":"model_candidates_exhausted",'
+        '"message":"model fallback candidates exhausted for `luna`"}}\'\n'
         "exit 2\n",
         encoding="utf-8",
     )

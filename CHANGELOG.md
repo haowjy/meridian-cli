@@ -6,6 +6,30 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.19.5] - 2026-11-05
+
+### Added
+- `meridian session relocate`: after a project directory moves, rewrite a chat's (or every chat's) recorded paths and bring Claude, OpenCode and Pi's own record of the directory in line. See [troubleshooting](https://github.com/haowjy/meridian-cli/blob/main/docs/troubleshooting.md#a-moved-project-directory-or-claude-store).
+
+### Fixed
+- `meridian --continue` after moving a project directory no longer fails with `native_binding_conflict` and `Session resume failed`. It stops before launch with the `session relocate` command (on a terminal, it offers to run it), and a Claude chat whose transcript file is missing from its recorded store is found by exact session ID and linked back.
+- `spawn --continue` stops with the relocate command when the recorded directory is gone, and `session log`, `session export` and `session search` print it when the transcript can't be read and the recorded directory is gone.
+
+## [0.19.4] - 2026-11-05
+
+### Fixed
+- `meridian --continue` on a Claude or OpenCode session that ends without a new turn says "Session ended without a new turn." instead of "Session resumed.". The spawn status stays `succeeded`.
+
+## [0.19.3] - 2026-10-31
+
+### Changed
+- Pi: a foreground bash command the model runs moves to the background after 4 minutes (was 55), and a completion notice follows. A command running `meridian spawn wait` (any form, including `--no-observe` and cross-project `-C`) or a foreground `meridian spawn` (create, `--continue`, `--from`) stays in the foreground for up to 55 minutes, so the child's report still arrives as the tool result. Pass `timeout_min` (max 59) for other commands you know run long.
+
+## [0.19.2] - 2026-10-31
+
+### Changed
+- Meridian pins Mars 0.26.2, which hides info-level sync diagnostics unless `--verbose` and makes the Codex trust warning say to open Codex and run `/hooks`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0262).
+
 ## [0.19.1] - 2026-10-29
 
 ### Changed

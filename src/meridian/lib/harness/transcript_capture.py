@@ -129,9 +129,7 @@ class NativeCapture:
         self._qualify(observer)
 
     def _opencode_records(self, observer: CaptureObserver) -> Iterator[SnapshotRecord]:
-        for event in iter_opencode_db_session_events(
-            session_id=self.session_id, db_path=self.path
-        ):
+        for event in iter_opencode_db_session_events(session_id=self.session_id, db_path=self.path):
             observer.observe(event)
             raw = (
                 json.dumps(

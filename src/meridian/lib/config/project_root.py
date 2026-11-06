@@ -28,9 +28,7 @@ def has_project_marker(root: Path) -> bool:
     resolved_root = root.expanduser().resolve()
     if resolved_root == (get_user_home() / "mars").expanduser().resolve():
         return False
-    return (resolved_root / "meridian.toml").is_file() or (
-        resolved_root / "mars.toml"
-    ).is_file()
+    return (resolved_root / "meridian.toml").is_file() or (resolved_root / "mars.toml").is_file()
 
 
 def resolve_project_root_resolution(

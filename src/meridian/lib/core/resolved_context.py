@@ -63,9 +63,7 @@ def _execution_chat(
     spawn_id = env.get("MERIDIAN_SPAWN_ID", "").strip()
     if not spawn_id:
         return None
-    return (backend or LocalFilesystemBackend()).get_execution_chat(
-        runtime_root, SpawnId(spawn_id)
-    )
+    return (backend or LocalFilesystemBackend()).get_execution_chat(runtime_root, SpawnId(spawn_id))
 
 
 @dataclass(frozen=True)
@@ -214,11 +212,7 @@ class ResolvedContext:
             # archive, and a command that resolved the other location would name a
             # path that no longer exists.
             bound_work_dir = work_store.work_scratch_dir(project_paths.root_dir, work_id)
-        elif (
-            work_dir_raw
-            and not explicit_work_id_raw
-            and work_id_source in ("none", "env")
-        ):
+        elif work_dir_raw and not explicit_work_id_raw and work_id_source in ("none", "env"):
             # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
             # Session-switched work IDs recompute canonical roots, so stale ambient
             # MERIDIAN_ACTIVE_WORK_DIR from process launch must not shadow them.
@@ -248,9 +242,7 @@ class ResolvedContext:
                 ("work_archive", resolved_context_paths.work_archive),
                 ("kb", resolved_context_paths.kb_root),
             )
-            resolved_builtins = tuple(
-                (name, path) for name, path in builtins if path is not None
-            )
+            resolved_builtins = tuple((name, path) for name, path in builtins if path is not None)
             context_dirs = resolved_builtins + tuple(
                 sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
             )

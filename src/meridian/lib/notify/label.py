@@ -92,9 +92,7 @@ def build_session_label(
                     or work_id
                 )
             else:
-                work_id = (
-                    resolve_active_work_id(project_root, runtime_root, environ=env) or work_id
-                )
+                work_id = resolve_active_work_id(project_root, runtime_root, environ=env) or work_id
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
         pass
     return SessionLabel(

@@ -6,7 +6,10 @@ from typing import ClassVar, Literal
 
 Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
-UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file"]
+UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file", "store_moved"]
+# Why a resume's store differs from the recorded one, as the harness adapter reads it:
+# the project directory moved, or the harness's config root changed.
+StoreMoveKind = Literal["project_moved", "config_root"]
 MismatchReason = Literal["key", "fork_reused_source", "source_changed", "fork_parent"]
 
 
@@ -68,6 +71,25 @@ class NativeKeyFields:
         }
 
 
+@dataclass(frozen=True)
+class NativeStoreMove:
+    """A resume would run in ``attempted`` while the chat is recorded in ``recorded``.
+
+    ``fix`` is the adapter's line for a ``config_root`` difference: how the user makes
+    the resume find the recorded store without moving the chat. ``also_moved`` says the
+    project directory moved as well, so that fix alone is not enough.
+    """
+
+    recorded: str
+    attempted: str
+    kind: StoreMoveKind
+    fix: str | None = None
+    also_moved: bool = False
+
+    def render(self) -> dict[str, str]:
+        return {"recorded": self.recorded, "attempted": self.attempted, "kind": self.kind}
+
+
 class NativeIdentityError(ValueError):
     """Base for every typed identity refusal."""
 
@@ -84,24 +106,50 @@ class NativeSessionUnavailable(NativeIdentityError):
         "unbound": "unbound",
         "missing": "native_transcript_missing",
         "ambiguous_native_file": "ambiguous_native_file",
+        "store_moved": "native_store_moved",
     }
     _MESSAGES: ClassVar[dict[UnavailableReason, str]] = {
         "unbound": "no verified native session for {ref}",
         "missing": "native transcript missing or pending for {ref}",
         "ambiguous_native_file": "ambiguous native transcript for {ref}",
+        "store_moved": "{ref} is recorded in native store {recorded}, but this launch would use "
+        "{attempted} ({kind})",
     }
 
-    def __init__(self, ref: str, reason: UnavailableReason) -> None:
+    def __init__(
+        self,
+        ref: str,
+        reason: UnavailableReason,
+        *,
+        store_move: NativeStoreMove | None = None,
+        hint: str | None = None,
+    ) -> None:
         self.ref = ref
         self.reason: UnavailableReason = reason
+        self.store_move = store_move
+        self.hint = hint
         self.failure_code = self._CODES[reason]
-        super().__init__(f"{self.failure_code}: {self._MESSAGES[reason].format(ref=ref)}")
+        details = store_move.render() if store_move is not None else {}
+        message = f"{self.failure_code}: {self._MESSAGES[reason].format(ref=ref, **details)}"
+        super().__init__(f"{message}\n{hint}" if hint else message)
 
     def for_ref(self, ref: str) -> "NativeSessionUnavailable":
-        return NativeSessionUnavailable(ref, self.reason)
+        return NativeSessionUnavailable(
+            ref, self.reason, store_move=self.store_move, hint=self.hint
+        )
+
+    def with_hint(self, hint: str | None) -> "NativeSessionUnavailable":
+        """This refusal with ``hint`` added after the hint it already carries."""
+        joined = "\n".join(part for part in (self.hint, hint) if part) or None
+        return NativeSessionUnavailable(
+            self.ref, self.reason, store_move=self.store_move, hint=joined
+        )
 
     def lifecycle_fields(self) -> dict[str, object]:
-        return {"ref": self.ref, "reason": self.reason}
+        fields: dict[str, object] = {"ref": self.ref, "reason": self.reason}
+        if self.store_move is not None:
+            fields["store_move"] = self.store_move.render()
+        return fields
 
 
 class NativeEntryMismatch(NativeIdentityError):
@@ -153,6 +201,9 @@ class NativeIdentity:
     session_id: str | None
     source_session_id: str | None
     source: Path | None
+    # The file the miss-path search found when the recorded one was missing; equals
+    # ``source``. The prelaunch links it back into ``native_store``.
+    located_from: Path | None = None
 
     def entry_fields(self) -> NativeKeyFields:
         return NativeKeyFields(self.harness, self.native_store, self.session_id)

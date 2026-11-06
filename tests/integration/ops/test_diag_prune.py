@@ -520,9 +520,10 @@ def test_adhoc_scan_without_origin_falls_back_to_tree_activity(tmp_path: Path) -
     assert candidates[0].path is None
     assert candidates[0].reason == "adhoc-path-gone"
     assert candidates[0].prunable
-    assert candidates[0].last_activity == datetime.fromtimestamp(
-        now - (8 * 24 * 60 * 60), tz=UTC
-    ).isoformat()
+    assert (
+        candidates[0].last_activity
+        == datetime.fromtimestamp(now - (8 * 24 * 60 * 60), tz=UTC).isoformat()
+    )
 
 
 def test_adhoc_prune_removes_context_and_rechecks_activity_under_lock(tmp_path: Path) -> None:
@@ -568,9 +569,7 @@ def test_adhoc_prune_rejects_committed_candidate(tmp_path: Path) -> None:
         prunable=True,
     )
 
-    assert prune_adhoc_project_dirs(
-        [candidate], retention_days=0, now=2_000_000_000.0
-    ) == 0
+    assert prune_adhoc_project_dirs([candidate], retention_days=0, now=2_000_000_000.0) == 0
     assert runtime_root.is_dir()
 
 
@@ -724,9 +723,7 @@ def test_doctor_adhoc_retention_ignores_cwd_project_config(
     assert not project_value_ignored.adhoc_project_dirs[0].prunable
 
     monkeypatch.setenv("MERIDIAN_STATE_ADHOC_RETENTION_DAYS", "0")
-    env_value_applied = doctor_sync(
-        DoctorInput(project_root=project_root.as_posix(), global_=True)
-    )
+    env_value_applied = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=True))
     assert len(env_value_applied.adhoc_project_dirs) == 1
     assert env_value_applied.adhoc_project_dirs[0].prunable
 

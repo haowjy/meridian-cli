@@ -61,9 +61,7 @@ def effective_cursor_policy(
     """Return the sandbox Cursor's binary switch gives; its shell network is open."""
 
     del native_config
-    return EffectivePolicy(
-        sandbox=_EFFECTIVE_SANDBOX[policy.sandbox], network=UNENFORCED_NETWORK
-    )
+    return EffectivePolicy(sandbox=_EFFECTIVE_SANDBOX[policy.sandbox], network=UNENFORCED_NETWORK)
 
 
 @dataclass(frozen=True)

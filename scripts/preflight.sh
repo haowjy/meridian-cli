@@ -29,6 +29,7 @@ case "$MODE" in
     # A complete gate must not inherit a last-failed or filtered selection.
     unset PYTEST_ADDOPTS PYTESTS_LAST_FAILED
     run_step uv run --extra dev ruff check .
+    run_step uv run --extra dev ruff format --check .
     run_step uv run --extra dev python -m pyright --warnings
     run_step uv run --extra dev python -m meridian.dev.lints
     (

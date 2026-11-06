@@ -49,6 +49,7 @@ class RuntimeContext(BaseModel):
             work_dir=resolved.work_dir,
         )
 
+
 def resolve_runtime_context(*, project_root: Path, runtime_root: Path | None) -> ResolvedContext:
     """Resolve runtime context with explicit roots and no environment mutation."""
 

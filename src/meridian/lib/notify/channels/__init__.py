@@ -42,9 +42,7 @@ def normalize_channel_name(name: str, *, aliases: tuple[str, ...] = ()) -> str:
     available = frozenset(REGISTRY) | frozenset(aliases)
     if normalized not in available:
         choices = ", ".join(sorted(available))
-        raise ValueError(
-            f"Unknown notification backend {name!r}. Available backends: {choices}."
-        )
+        raise ValueError(f"Unknown notification backend {name!r}. Available backends: {choices}.")
     return normalized
 
 

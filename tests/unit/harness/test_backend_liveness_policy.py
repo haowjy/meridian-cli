@@ -36,9 +36,7 @@ def _policy(
         pytest.param(None, 4242, False, None, LivenessDecision.CONTINUE, True, id="active"),
         pytest.param("turn", 4242, True, True, LivenessDecision.SUPPRESS, True, id="turn"),
         pytest.param("request", 4242, True, True, LivenessDecision.SUPPRESS, True, id="request"),
-        pytest.param(
-            None, 4242, True, True, LivenessDecision.STREAM_STALLED, False, id="stalled"
-        ),
+        pytest.param(None, 4242, True, True, LivenessDecision.STREAM_STALLED, False, id="stalled"),
         pytest.param(None, 4242, True, False, LivenessDecision.BACKEND_DEAD, False, id="dead"),
         pytest.param(
             "turn", 4242, True, False, LivenessDecision.BACKEND_DEAD, False, id="dead-stale-turn"

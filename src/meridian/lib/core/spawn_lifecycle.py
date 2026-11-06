@@ -65,11 +65,10 @@ class SpawnReservation:
     started_at: str | None = None
     clock: Clock | None = None
 
+
 FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
-_CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
-    {"cancelled", "error", "error.connectionclosed"}
-)
+_CONTROL_EVENT_NAMES: frozenset[str] = frozenset({"cancelled", "error", "error.connectionclosed"})
 _OPENCODE_CONTROL_EVENT_TYPES = frozenset(
     {
         "sync",
@@ -147,8 +146,7 @@ def _event_name(payload: dict[str, object]) -> str:
 def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
     event_type = _event_name(payload)
     return event_type in _OPENCODE_CONTROL_EVENT_TYPES or any(
-        event_type.startswith(prefix)
-        for prefix in _OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES
+        event_type.startswith(prefix) for prefix in _OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES
     )
 
 
@@ -175,9 +173,7 @@ def _is_claude_non_durable_payload(payload: dict[str, object]) -> bool:
 
 def _is_codex_control_event_payload(payload: dict[str, object]) -> bool:
     event_name = _event_name(payload)
-    return any(
-        event_name.startswith(prefix) for prefix in _CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES
-    )
+    return any(event_name.startswith(prefix) for prefix in _CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES)
 
 
 def is_control_report_payload(payload: dict[str, object]) -> bool:

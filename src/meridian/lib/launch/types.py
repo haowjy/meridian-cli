@@ -89,6 +89,7 @@ class LaunchResult(BaseModel):
     primary_spawn_id: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
+    turn_observed: bool | None = None
     launcher_diagnostics_path: Path | None = None
 
 

@@ -17,6 +17,7 @@ from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.claude_drain import ClaudeNativeTaskSource
+from meridian.lib.harness.claude_version import claude_version
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -49,8 +50,7 @@ logger = logging.getLogger(__name__)
 
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 10.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB
-_VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 5.0
-_TESTED_VERSION_PREFIXES: Final[tuple[str, ...]] = ("1.", "2.")
+_TESTED_MAJOR_VERSIONS: Final[frozenset[int]] = frozenset({1, 2})
 _HARNESS_NAME: Final[str] = HarnessId.CLAUDE.value
 
 
@@ -319,45 +319,15 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         logger.warning("Claude connection failed: %s", reason)
 
     async def _check_claude_version(self, child_env: dict[str, str]) -> None:
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "claude",
-                "--version",
-                env=dict(child_env),
-                stdout=PIPE,
-                stderr=PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=_VERSION_CHECK_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning("Timed out while checking Claude CLI version.")
-            return
-        except OSError:
-            logger.warning("Could not execute `claude --version`; skipping version gate.")
-            return
-
-        output = (stdout + stderr).decode("utf-8", errors="ignore").strip()
-        version = self._extract_semver(output)
+        version = await asyncio.to_thread(claude_version, child_env)
         if version is None:
-            logger.warning("Unknown Claude version output: %s", output or "<empty>")
+            logger.warning("Could not read `claude --version`; skipping version gate.")
             return
-        if not version.startswith(_TESTED_VERSION_PREFIXES):
+        if version[0] not in _TESTED_MAJOR_VERSIONS:
             logger.warning(
                 "Claude version may be untested for bidirectional stdin/stdout protocol: %s",
-                version,
+                ".".join(map(str, version)),
             )
-
-    @staticmethod
-    def _extract_semver(text: str) -> str | None:
-        for token in text.split():
-            parts = token.strip().split(".")
-            if len(parts) < 2:
-                continue
-            if all(part.isdigit() for part in parts[:2]):
-                return token.strip()
-        return None
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         command = self._build_command(config, spec)

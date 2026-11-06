@@ -118,9 +118,11 @@ def read_last_executed_model(
                     if event_type == "model_change":
                         last = _nested_str(payload, "modelId") or last
                     elif event_type == "session":
-                        fallback = _nested_str(payload, "model") or _nested_str(
-                            payload, "model", "modelId"
-                        ) or fallback
+                        fallback = (
+                            _nested_str(payload, "model")
+                            or _nested_str(payload, "model", "modelId")
+                            or fallback
+                        )
             return last or fallback
     except (OSError, ValueError, RuntimeError, sqlite3.Error):
         return None

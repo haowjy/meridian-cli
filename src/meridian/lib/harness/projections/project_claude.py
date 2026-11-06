@@ -201,10 +201,10 @@ def project_claude_spec_to_cli_args(
     if not permissions.settings.empty:
         command.extend(("--settings", _settings_json(permissions.settings)))
 
-    # For interactive Claude launches, add user-turn content as positional argument
-    # This routes USER_TASK_PROMPT and TASK_CONTEXT to the user-turn channel
-    # instead of --append-system-prompt (spec S-2a)
-    if spec.interactive and spec.user_turn_content:
+    # USER_TASK_PROMPT and TASK_CONTEXT go to the user-turn channel instead of
+    # --append-system-prompt (spec S-2a): through the first-turn mod when it is
+    # loaded, else as the positional argument.
+    if spec.interactive and spec.user_turn_content and not spec.claude_runtime.first_turn_by_mod:
         command.extend(("--", check_prompt_argument(spec.user_turn_content)))
 
     return command

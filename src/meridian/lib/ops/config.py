@@ -434,9 +434,7 @@ def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
         )
         configured_names = tuple(
             dict.fromkeys(
-                hook.name
-                for hook in report.config.hooks
-                if hook.source != DEFAULT_SOURCE
+                hook.name for hook in report.config.hooks if hook.source != DEFAULT_SOURCE
             )
         )
         count = len(configured_names)
@@ -445,8 +443,8 @@ def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
             rendered_hook_value += f" ({', '.join(configured_names)})"
         if report.errors:
             invalid_count = len(report.errors)
-            rendered_hook_value += (
-                f"; {invalid_count} invalid row" + ("" if invalid_count == 1 else "s")
+            rendered_hook_value += f"; {invalid_count} invalid row" + (
+                "" if invalid_count == 1 else "s"
             )
         values.append(
             ConfigResolvedValue(

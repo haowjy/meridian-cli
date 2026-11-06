@@ -97,11 +97,7 @@ def stored_record_digest(stored: Mapping[str, object]) -> str:
                 "state": {k: v for k, v in state.items() if k not in _LOCAL_STATE_FIELDS},
                 "session": None
                 if session_object is None
-                else {
-                    k: v
-                    for k, v in session_object.items()
-                    if k not in _LOCAL_SESSION_FIELDS
-                },
+                else {k: v for k, v in session_object.items() if k not in _LOCAL_SESSION_FIELDS},
                 "files": [m for m in members if m.get("name") not in _METADATA_MEMBERS],
             }
         )

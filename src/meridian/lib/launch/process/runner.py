@@ -22,6 +22,7 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
+    NativeSessionUnavailable,
 )
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -121,6 +122,7 @@ class ProcessOutcome(BaseModel):
     primary_started_epoch: float
     primary_started_local_iso: str | None
     resolved_harness_session_id: str
+    turn_observed: bool | None = None
     launcher_diagnostics_path: Path | None = None
 
 
@@ -755,6 +757,7 @@ def run_harness_process(
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
     native_run: NativeRun | None = None
+    turn_observed: bool | None = None
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 
@@ -838,20 +841,22 @@ def run_harness_process(
                 launch_lock=hold.slot,
             )
         with (
-            nullcontext(hold.slot) if hold is not None else LaunchSlot()
-        ) as launch_lock, fail_unstarted_launch(), session_scope(
-            runtime_root=runtime_root,
-            metadata=session_metadata,
-            request=preview_request.session,
-            chat_id=resume_chat_id,
-            control_root=str(control_root),
-            task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
-            execution_cwd=str(execution_cwd),
-            kind="primary",
-            spawn_id=str(reserved_spawn_id),
-            startup_attempt_id=startup_attempt_id,
-            launch_slot=launch_lock,
-        ) as managed:
+            nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock,
+            fail_unstarted_launch(),
+            session_scope(
+                runtime_root=runtime_root,
+                metadata=session_metadata,
+                request=preview_request.session,
+                chat_id=resume_chat_id,
+                control_root=str(control_root),
+                task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
+                execution_cwd=str(execution_cwd),
+                kind="primary",
+                spawn_id=str(reserved_spawn_id),
+                startup_attempt_id=startup_attempt_id,
+                launch_slot=launch_lock,
+            ) as managed,
+        ):
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(
                 project_root=config_root,
@@ -1010,14 +1015,18 @@ def run_harness_process(
                             claude_config_dir=config_dir,
                         )
 
-                prelaunch_state = harness_adapter.prepare_prelaunch(
-                    launch=launch,
-                    session=preview_request.session,
-                    child_cwd=launch_child_cwd,
-                    child_env=child_env,
-                    resolved_harness_session_id=resolved_harness_session_id,
-                    record_effective_config_dir=_record_effective_config_dir,
-                )
+                try:
+                    prelaunch_state = harness_adapter.prepare_prelaunch(
+                        launch=launch,
+                        identity=native_run.identity,
+                        child_cwd=launch_child_cwd,
+                        child_env=child_env,
+                        resolved_harness_session_id=resolved_harness_session_id,
+                        record_effective_config_dir=_record_effective_config_dir,
+                    )
+                except NativeSessionUnavailable as exc:
+                    # The adapter knows the native session id; the user knows the chat.
+                    raise exc.for_ref(managed.chat_id or exc.ref) from exc
                 if prelaunch_state.env_overrides:
                     child_env.update(prelaunch_state.env_overrides)
                 command = harness_adapter.resolve_primary_command(
@@ -1140,9 +1149,11 @@ def run_harness_process(
                             facts=facts,
                             connection_session_id=None,
                             lifecycle=lifecycle,
+                            probe_turn=True,
                         )
                         identity_error = outcome.error
                         resolved_harness_session_id = outcome.harness_session_id or ""
+                        turn_observed = outcome.turn_observed
                     elif identity_error is not None and lifecycle is not None:
                         record_identity_failure(
                             identity_error, phase="pre_exec", lifecycle=lifecycle
@@ -1207,6 +1218,7 @@ def run_harness_process(
         primary_started_epoch=primary_started_epoch,
         primary_started_local_iso=primary_started_local_iso,
         resolved_harness_session_id=resolved_harness_session_id,
+        turn_observed=turn_observed,
         launcher_diagnostics_path=launcher_diagnostics_path,
     )
 

@@ -39,10 +39,12 @@ def _translate(raw: dict[str, Any]) -> dict[str, Any]:
     if data.get("chat_id") is None and entry_chat_id is not None:
         data["chat_id"] = entry_chat_id
     if exit_identity is not None or exit_chat_id is not None:
-        legacy = LegacyRunBoundaryOutcome.model_validate({
-            "status": exit_identity if exit_identity is not None else "unresolved",
-            "exit_chat_id": exit_chat_id,
-        })
+        legacy = LegacyRunBoundaryOutcome.model_validate(
+            {
+                "status": exit_identity if exit_identity is not None else "unresolved",
+                "exit_chat_id": exit_chat_id,
+            }
+        )
         if data.get("run_boundary") is None:
             data["run_boundary"] = legacy.model_dump(exclude={"exit_chat_id"})
         if legacy.exit_chat_id is not None and data.get("current_chat_id") is None:

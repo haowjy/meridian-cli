@@ -266,9 +266,7 @@ def parse_notes(text: str, source: str = "PR body") -> tuple[Notes, tuple[str, .
             continue
         match = _PLACEHOLDER_RE.search(text)
         if match is not None:
-            errors.append(
-                _error(source, index + 1, f"leftover placeholder {match.group(0)!r}")
-            )
+            errors.append(_error(source, index + 1, f"leftover placeholder {match.group(0)!r}"))
 
     if none_line_only:
         none_line = clean[first].strip()
@@ -360,8 +358,7 @@ def parse_notes(text: str, source: str = "PR body") -> tuple[Notes, tuple[str, .
                 _error(
                     source,
                     index + 1,
-                    "expected 'None. <reason>' or '### <Section>', got: "
-                    f"{clean[index].strip()!r}",
+                    f"expected 'None. <reason>' or '### <Section>', got: {clean[index].strip()!r}",
                 )
             )
             continue
@@ -493,9 +490,7 @@ def render_changelog(
     lines, visible = _visible_lines(changelog, changelog_path)
     unreleased, content = _unreleased_block(lines, visible, changelog_path)
     if content:
-        raise ChangelogError(
-            _error(changelog_path, content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
-        )
+        raise ChangelogError(_error(changelog_path, content[0] + 1, _UNRELEASED_CONTENT_MESSAGE))
     end = _block_end(visible, unreleased)
 
     for index, line in enumerate(visible):
@@ -603,18 +598,14 @@ def _changelog_errors(changelog_path: str, base_changelog_path: str | None) -> l
     errors: list[str] = []
     if base_changelog_path is None:
         if head_content:
-            errors.append(
-                _error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
-            )
+            errors.append(_error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE))
         return errors
 
     base_text = _read_text(base_changelog_path)
     base_lines, base_visible = _visible_lines(base_text, base_changelog_path)
     base_content = _unreleased_block(base_lines, base_visible, base_changelog_path)[1]
     if head_content and not base_content:
-        errors.append(
-            _error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE)
-        )
+        errors.append(_error(changelog_path, head_content[0] + 1, _UNRELEASED_CONTENT_MESSAGE))
 
     base_counts = Counter(label for _line, label in _release_headings(base_visible))
     seen: Counter[str] = Counter()
@@ -675,9 +666,7 @@ def _run_render(
         return _report(errors)
     notes = merge_notes([notes for notes, _errors in parsed])
 
-    rendered = render_changelog(
-        _read_text(changelog_path), changelog_path, notes, version, date
-    )
+    rendered = render_changelog(_read_text(changelog_path), changelog_path, notes, version, date)
     if dry_run:
         sys.stdout.write(rendered)
         return 0
@@ -693,8 +682,7 @@ def _run_extract(version: str, changelog_path: str) -> int:
         (
             index
             for index, line in enumerate(visible)
-            if (match := _RELEASE_HEADING_RE.match(line)) is not None
-            and match.group(1) == version
+            if (match := _RELEASE_HEADING_RE.match(line)) is not None and match.group(1) == version
         ),
         None,
     )

@@ -19,10 +19,7 @@ def render_skill_block(skill: SkillContent) -> str:
     """
 
     skill_dir = Path(skill.path).parent.as_posix()
-    return (
-        f"# Skill: /{skill.name} (loaded)\n\n"
-        f"Files: `{skill_dir}/`\n\n{skill.content.strip()}"
-    )
+    return f"# Skill: /{skill.name} (loaded)\n\nFiles: `{skill_dir}/`\n\n{skill.content.strip()}"
 
 
 def compose_skill_prompt_documents(

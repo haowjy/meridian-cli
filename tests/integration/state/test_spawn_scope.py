@@ -34,9 +34,7 @@ def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "content", ["{not json", ""], ids=["corrupt-json", "empty-file"]
-)
+@pytest.mark.parametrize("content", ["{not json", ""], ids=["corrupt-json", "empty-file"])
 def test_spawn_scope_malformed_file_falls_through(tmp_path: Path, content: str) -> None:
     project_root = _project(tmp_path)
     scope_dir = resolve_project_runtime_root_for_write(project_root) / "spawns" / "p1"

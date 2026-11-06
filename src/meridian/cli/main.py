@@ -478,9 +478,10 @@ def root(
         normalized_task_dir = (task_dir or "").strip() or None
 
         from meridian.cli import primary_launch
+        from meridian.cli.relocate_prompt import launch_or_offer_relocate
 
-        emit(
-            primary_launch.run_primary_launch(
+        def launch(launch_anyway: bool) -> primary_launch.PrimaryLaunchOutput:
+            return primary_launch.run_primary_launch(
                 project_root=options.project_root,
                 continue_ref=continue_ref,
                 fork_ref=fork_ref,
@@ -508,6 +509,18 @@ def root(
                 prompt=resolved_prompt,
                 skills=tuple(parsed_skills),
                 goal=goal,
+                launch_anyway=launch_anyway,
+            )
+
+        emit(
+            launch_or_offer_relocate(
+                launch,
+                interactive=(
+                    not dry_run
+                    and not options.no_input
+                    and sys.stdin.isatty()
+                    and sys.stderr.isatty()
+                ),
             )
         )
 
@@ -1193,7 +1206,9 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
             telemetry_mode=(
                 StartupTelemetryMode.NONE
                 if launch_dry_run
-                else descriptor.telemetry_mode if descriptor is not None else None
+                else descriptor.telemetry_mode
+                if descriptor is not None
+                else None
             ),
             startup_class=startup_class,
             project_root=project_root,

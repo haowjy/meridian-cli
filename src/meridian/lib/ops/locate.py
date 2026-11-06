@@ -67,7 +67,6 @@ class Untracked:
     native_id: str
 
 
-
 def _select_latest_spawn_id(runtime_root: Path, statuses: tuple[str, ...] | None) -> str | None:
     spawns = overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
     if statuses is not None:
@@ -139,9 +138,7 @@ class RunTarget(NamedTuple):
     occupant: bool = False
 
 
-def locate_run(
-    project_root: Path, ref: str, *, runtime_root: Path | None = None
-) -> RunTarget:
+def locate_run(project_root: Path, ref: str, *, runtime_root: Path | None = None) -> RunTarget:
     """The spawn a command inspects or acts on.
 
     A spawn ref names that spawn. A chat or native ref names the run live in that chat
@@ -173,9 +170,7 @@ def locate_run(
     return RunTarget(owner, chat_id)
 
 
-def resolve_spawn_target(
-    project_root: Path, ref: str, *, runtime_root: Path | None = None
-) -> str:
+def resolve_spawn_target(project_root: Path, ref: str, *, runtime_root: Path | None = None) -> str:
     """The spawn ID a spawn command acts on."""
 
     return str(locate_run(project_root, ref, runtime_root=runtime_root).spawn_id)

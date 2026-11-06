@@ -21,10 +21,7 @@ def _run_fake_claude_spawn(tmp_path: Path, *, explicit_report: str | None) -> di
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[project]\n"
-        f'id = "report-test-{tmp_path.name}"\n'
-        "\n[spawn]\n"
-        "deny_headless_harnesses = []\n",
+        f'[project]\nid = "report-test-{tmp_path.name}"\n\n[spawn]\ndeny_headless_harnesses = []\n',
         encoding="utf-8",
     )
     runtime_root = tmp_path / "runtime"
@@ -49,12 +46,10 @@ def _run_fake_claude_spawn(tmp_path: Path, *, explicit_report: str | None) -> di
         "  shift\n"
         "done\n"
         'if [ "$version" = "1" ]; then echo "2.1.0 (Claude Code)"; exit 0; fi\n'
-        "read -r prompt || true\n"
-        + report_command
-        + "printf '{\"type\":\"system\",\"subtype\":\"init\","
-        "\"session_id\":\"%s\"}\\n' \"$session_id\"\n"
-        "printf '{\"type\":\"result\",\"subtype\":\"success\","
-        "\"result\":\"fallback assistant\",\"session_id\":\"%s\"}\\n' "
+        "read -r prompt || true\n" + report_command + 'printf \'{"type":"system","subtype":"init",'
+        '"session_id":"%s"}\\n\' "$session_id"\n'
+        'printf \'{"type":"result","subtype":"success",'
+        '"result":"fallback assistant","session_id":"%s"}\\n\' '
         '"$session_id"\n',
         encoding="utf-8",
     )

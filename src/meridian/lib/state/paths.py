@@ -2,6 +2,7 @@
 
 import os
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast
@@ -31,6 +32,44 @@ def normalize_path_for_write(path: str | None) -> str | None:
     if not path:
         return path
     return os.path.abspath(os.path.normpath(path))
+
+
+def _is_under(path: str, root: str) -> bool:
+    root = root.rstrip("/") or "/"
+    return path == root or path.startswith(root if root.endswith("/") else root + "/")
+
+
+def rebase_path(path: str, olds: Sequence[str], new: str) -> str | None:
+    """``path`` with its leading ``old`` directory replaced by ``new``, or None when
+    there is nothing to change.
+
+    ``olds`` are the spellings of one old directory (as typed, resolved); the first that
+    holds ``path`` wins. Components match whole: ``/a/b`` covers ``/a/b/c``, never
+    ``/a/b-old``. A path already under ``new`` (in any spelling of ``old`` that holds
+    ``new``) is left alone, so a rerun (or a path recorded after the move) is not
+    rebased twice.
+    """
+
+    new = new.rstrip("/") or "/"
+    for old in olds:
+        if not _is_under(path, old):
+            continue
+        if any(_is_under(path, spelling) for spelling in _new_spellings(new, olds)):
+            return None
+        rest = path[len(old.rstrip("/")) :].lstrip("/")
+        return f"{new.rstrip('/')}/{rest}" if rest else new
+    return None
+
+
+def _new_spellings(new: str, olds: Sequence[str]) -> list[str]:
+    """When ``new`` sits inside OLD: ``new`` as each spelling of OLD writes it, itself
+    included (a path recorded as ``/typed/x`` is already under ``/real/x``). Else none."""
+    spellings: list[str] = []
+    for old in olds:
+        if _is_under(new, old):
+            tail = new[len(old.rstrip("/")) :]
+            spellings += [other.rstrip("/") + tail for other in olds]
+    return [new, *spellings] if spellings else []
 
 
 class RuntimePaths(BaseModel):

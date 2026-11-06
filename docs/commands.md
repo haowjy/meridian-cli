@@ -212,6 +212,8 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
 | `meridian session repair REF` | Read-only: for an unbound chat (`c123`, its spawn `p123`, a raw harness session ID, or `@latest`/`@last-failed`/`@last-completed`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
 | `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
+| `meridian session relocate --from OLD --to NEW [--dry-run]` | After a project directory moved (`OLD` no longer exists): rewrite every chat's recorded paths under `OLD` to `NEW`, plus spawn rows, work items and `task` links, and update each harness's own record of the directory. Refused while `OLD` exists |
+| `meridian session relocate CHAT [--from OLD] [--to DIR] [--native PATH] [--dry-run]` | Move one chat (and chats sharing its native session) to `DIR`, default the current project; `OLD` defaults to the harness's own record, then the chat's `control_root` (a worktree that itself moved needs `--from`). Works while `OLD` still exists. `--native` (Claude only) picks the transcript file to link; without `--from` it re-links in place and moves no path |
 
 Archive destinations can also come from configuration. Automation is off by
 default; active records and dependencies cannot be reclaimed. Published ZIPs
@@ -220,12 +222,25 @@ retention. Search reports unavailable content or budget exhaustion as incomplete
 not a clean negative. See [History storage and retention](history.md) for repair,
 configuration, transfer, conflict behavior and archive-integrity limits.
 
-`session repair` never rebinds: bindings are immutable. `--native` always refuses
-a bound chat, a file that is not a valid native session for the chat's harness,
+`session repair` never rebinds a bound chat: only `session relocate` changes recorded
+paths. `session repair --native` always refuses a bound chat, a file that is not a valid native session for the chat's harness,
 and a session already bound to another chat. Candidate listing covers Pi (the
 chat's spawn session dir; the shared root for primaries) and Claude (the recorded
 project store); for Codex and OpenCode pass `--native`. An OpenCode database holds
 many sessions, so it binds only a chat that already records its session ID.
+
+`session relocate` prints its plan (one `old -> new` header, then per chat the path fields that move and the harness-side change) and
+an undo line, and refuses chats that are running. It changes only paths: Claude gets
+links to the transcript in the new project's store; OpenCode's session directory
+changes through its own `POST /api/session/<id>/move` (one short-lived `opencode
+serve`); Pi's transcript header `cwd` is rewritten in place (first line only). Codex
+needs nothing. Transcripts are never moved, deleted or truncated. It appends one
+`relocate` row per chat to the session journal; rerun the same command to finish after
+a crash. When a harness refuses its part, the output says so with the way out.
+`--continue` from a moved project stops before launch and prints the relocate command
+(`--dry-run` exits 1 with it too); on a terminal it offers to run it. `spawn --continue`
+stops with the command; `session log`, `export` and `search` print it only when the
+transcript is unreadable and the recorded directory is gone. Details: [Troubleshooting](troubleshooting.md#a-moved-project-directory-or-claude-store).
 
 Runner-history pruning is explicit, never automatic; see
 [Prune redundant runner streams](history.md#prune-redundant-runner-streams).

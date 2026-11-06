@@ -2,8 +2,8 @@
 
 ``meridian session repair cN`` is read-only: it lists candidate native files
 with their evidence. ``--native PATH`` binds after validation through the one
-binding rule, with source ``user_repair``. Bindings are immutable, so a bound
-chat is never rebound.
+binding rule, with source ``user_repair``. Repair never rebinds a bound chat; a
+bound chat's recorded paths change only through ``meridian session relocate``.
 """
 
 from __future__ import annotations

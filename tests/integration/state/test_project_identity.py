@@ -100,9 +100,7 @@ def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
 
 
 def test_committed_identity_is_read_without_minting(tmp_path: Path) -> None:
-    (tmp_path / "meridian.toml").write_text(
-        '[project]\nid = "shared-clone-id"\n', encoding="utf-8"
-    )
+    (tmp_path / "meridian.toml").write_text('[project]\nid = "shared-clone-id"\n', encoding="utf-8")
 
     assert resolve_project_identity(tmp_path) == Committed(id="shared-clone-id")
     assert ensure_project_identity(tmp_path) == Committed(id="shared-clone-id")
@@ -145,9 +143,7 @@ def test_ensure_committed_identity_preserves_existing_content_verbatim(
     updated = config_path.read_text(encoding="utf-8")
     assert updated.startswith(original)
     assert updated.removeprefix(original) == (
-        "\n# managed by meridian — do not edit\n"
-        "[project]\n"
-        f'id = "{identity.id}"\n'
+        f'\n# managed by meridian — do not edit\n[project]\nid = "{identity.id}"\n'
     )
 
 
