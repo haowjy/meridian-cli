@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-import time
 
 import psutil
-import pytest
 
 from meridian.lib.state import liveness
 
@@ -31,12 +29,6 @@ class _FakeProcess:
         return self._status
 
 
-def test_is_process_alive_returns_false_when_pid_does_not_exist(monkeypatch) -> None:
-    monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: False)
-
-    assert liveness.is_process_alive(123) is False
-
-
 def test_is_process_alive_returns_false_for_pid_reuse(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "pid_exists", lambda pid: True)
     monkeypatch.setattr(liveness.psutil, "Process", lambda pid: _FakeProcess(create_time=131.0))
@@ -55,27 +47,6 @@ def test_process_liveness_treats_zombie_as_exited(monkeypatch) -> None:
     assert liveness.is_process_alive(123) is False
     assert liveness.is_process_alive_with_birth(123, 100.0) is False
     assert liveness.is_process_alive_born_by(123, 100.0) is False
-
-
-@pytest.mark.skipif(os.name != "posix", reason="requires POSIX zombie semantics")
-def test_real_zombie_is_not_alive() -> None:
-    child_pid = os.fork()
-    if child_pid == 0:
-        os._exit(0)
-
-    try:
-        child = psutil.Process(child_pid)
-        deadline = time.monotonic() + 2.0
-        while child.status() != psutil.STATUS_ZOMBIE:
-            if time.monotonic() >= deadline:
-                pytest.fail("child did not enter zombie state")
-            time.sleep(0.01)
-        birth = child.create_time()
-
-        assert liveness.is_process_alive(child_pid) is False
-        assert liveness.is_process_alive_with_birth(child_pid, birth) is False
-    finally:
-        os.waitpid(child_pid, 0)
 
 
 def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:

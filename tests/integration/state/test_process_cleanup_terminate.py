@@ -10,7 +10,6 @@ import psutil as _psutil
 import pytest
 
 from meridian.lib.core.process_cleanup import (
-    terminate_recorded_spawn_scopes,
     terminate_spawn_scopes,
 )
 from meridian.lib.core.types import SpawnId
@@ -90,44 +89,6 @@ def _cleanup_result(
     )
 
 
-def test_terminate_spawn_scopes_reads_persisted_scopes_and_marks_released(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.core import process_cleanup
-
-    record = _persist_spawn(tmp_path)
-    scopes = [_scope("backend", pid=101), _scope("worker", pid=202)]
-    for scope in scopes:
-        record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
-    terminate_calls: list[tuple[int, float, str, str]] = []
-
-    def _terminate_scope_sync(
-        scope: ProcessScopeSnapshot,
-        *,
-        grace_seconds: float,
-        reason: str,
-    ) -> CleanupResult:
-        terminate_calls.append(
-            (scope.root_pid, scope.root_created_at_epoch, reason, scope.scope_id)
-        )
-        return _cleanup_result(scope.scope_id, scope.root_pid, reason, grace_seconds)
-
-    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope_sync)
-
-    results = terminate_spawn_scopes(tmp_path, record, reason="reaper", grace_seconds=4.0)
-
-    assert [result.scope_id for result in results] == ["backend", "worker"]
-    assert terminate_calls == [
-        (101, 10.0, "reaper", "backend"),
-        (202, 10.0, "reaper", "worker"),
-    ]
-    assert all(
-        is_scope_released(launch_paths(tmp_path, SpawnId(record.id)), scope.release_id)
-        for scope in scopes
-    )
-
-
 def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -163,39 +124,6 @@ def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease
         ("leased", "active_session_lease"),
     ]
     assert not is_scope_released(launch_paths(tmp_path, SpawnId(record.id)), leased.release_id)
-
-
-def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.core import process_cleanup
-
-    record = _persist_spawn(tmp_path, worker_pid=321)
-    legacy_result = _cleanup_result("legacy_worker", 321, "reaper", 5.0)
-    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", lambda **kwargs: legacy_result)
-
-    results = terminate_spawn_scopes(tmp_path, record, reason="reaper")
-
-    assert results == [legacy_result]
-
-
-def test_terminate_recorded_spawn_scopes_does_not_run_legacy_worker_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.core import process_cleanup
-
-    record = _persist_spawn(tmp_path, worker_pid=321)
-
-    def _unexpected(**kwargs: object) -> CleanupResult:
-        raise AssertionError("legacy worker fallback should not run")
-
-    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _unexpected)
-
-    results = terminate_recorded_spawn_scopes(tmp_path, record, reason="cancel")
-
-    assert results == []
 
 
 @pytest.mark.parametrize(

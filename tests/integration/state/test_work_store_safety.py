@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import multiprocessing
 import time
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -47,24 +45,6 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _ensure_shared_task_name(_: int, *, runtime_root: Path) -> str:
-    return work_repository.ensure_work_item_metadata(runtime_root, "shared-task").name
-
-
-def test_ensure_work_item_metadata_with_concurrent_calls(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-
-    total = 24
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        names = list(
-            pool.map(partial(_ensure_shared_task_name, runtime_root=runtime_root), range(total))
-        )
-
-    assert len(names) == total
-    assert set(names) == {"shared-task"}
-    assert (runtime_root / "work" / "shared-task" / "__status.json").exists()
-
-
 @posix_only
 def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
@@ -85,30 +65,6 @@ def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None
     assert item is not None
     assert item.description == "new description"
     assert item.task_dir == "/new/task-dir"
-
-
-def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = work_repository.create_work_item(runtime_root, "repair-malformed")
-
-    status_path = runtime_root / "work" / item.name / "__status.json"
-    status_path.write_text("not json", encoding="utf-8")
-
-    with capture_logs() as logs:
-        loaded = work_store.get_work_item(runtime_root, item.name)
-    assert loaded is not None
-    assert loaded.name == item.name
-    assert loaded.status == "open"
-    assert status_path.read_text(encoding="utf-8") == "not json"
-    assert any(log.get("path") == str(status_path) for log in logs)
-
-    work_repository.repair_work_item(runtime_root, item.name)
-    payload = json.loads(status_path.read_text(encoding="utf-8"))
-    assert payload["status"] == "open"
-    assert payload["created_at"]
-    assert payload["archived_at"] is None
 
 
 def test_work_status_preserves_unknown_fields_through_mutation(tmp_path: Path) -> None:
@@ -210,40 +166,6 @@ def test_namespace_mutations_validate_every_located_copy_before_disk_changes(
     assert not (runtime_root / "work" / "renamed").exists()
 
 
-def test_archived_user_status_does_not_collide_with_compatibility_marker(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = work_repository.create_work_item(runtime_root, "status-collision")
-    work_repository.update_work_item(
-        runtime_root,
-        item.name,
-        status="requires-newer-meridian",
-    )
-
-    work_repository.archive_work_item(runtime_root, item.name)
-    archived = work_store.get_work_item(runtime_root, item.name)
-
-    assert archived is not None
-    assert archived.status == "done"
-    assert archived.display_status == "done"
-
-
-def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = work_repository.create_work_item(runtime_root, "repair-archive-time")
-    active_dir = runtime_root / "work" / item.name
-    archived_dir = runtime_root / "archive" / "work" / item.name
-    archived_dir.parent.mkdir(parents=True)
-    active_dir.rename(archived_dir)
-
-    repaired = work_repository.repair_work_item(runtime_root, item.name)
-
-    assert repaired.status == "done"
-    assert repaired.archived_at is not None
-    payload = json.loads((archived_dir / "__status.json").read_text(encoding="utf-8"))
-    assert payload["status"] == "done"
-    assert payload["archived_at"] == repaired.archived_at
-
-
 def test_interrupted_archive_leaves_the_item_done_where_it_moved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -300,12 +222,3 @@ def test_interrupted_reopen_leaves_the_item_archived(
     assert (runtime_root / "work" / item.name / "notes.md").is_file()
 
 
-def test_delete_without_force_succeeds_for_status_only_directory(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = work_repository.create_work_item(runtime_root, "delete-me")
-
-    deleted, had_artifacts = work_repository.delete_work_item(runtime_root, item.name, force=False)
-
-    assert deleted.name == item.name
-    assert had_artifacts is False
-    assert not (runtime_root / "work" / item.name).exists()

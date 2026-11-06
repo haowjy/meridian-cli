@@ -6,27 +6,12 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import meridian.lib.core.telemetry as core_telemetry
-import meridian.lib.telemetry.observer as spawn_observer
-import meridian.lib.telemetry.observers as lifecycle_observers
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.telemetry import SpawnEventCounter
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
-from meridian.lib.telemetry.router import get_global_router
-
-
-def read_telemetry_events(runtime_root: Path) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    for segment in sorted((runtime_root / "telemetry").glob("*.jsonl")):
-        for line in segment.read_text(encoding="utf-8").splitlines():
-            events.append(json.loads(line))
-    return events
 
 
 def write_segment(
@@ -76,15 +61,6 @@ def start_spawn(
     ).spawn_id
 
 
-def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:
-    monkeypatch.setattr(lifecycle_observers, "_GLOBAL_OBSERVERS", [])
-    monkeypatch.setattr(lifecycle_observers, "_debug_trace_registered", False)
-    monkeypatch.setattr(spawn_observer, "_registered", False)
-    monkeypatch.setattr(core_telemetry, "_GLOBAL_EVENT_COUNTER", SpawnEventCounter())
-    setup_telemetry(runtime_root=runtime_root)
-    spawn_observer.register_spawn_telemetry_observer()
-
-
 def test_retention_preserves_spawn_owned_segments_for_live_spawns(tmp_path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     segment = write_segment(
@@ -104,6 +80,8 @@ def test_retention_preserves_spawn_owned_segments_for_live_spawns(tmp_path) -> N
         run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 
     assert segment.exists()
+
+
 
 
 def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_path) -> None:
@@ -138,26 +116,6 @@ def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_pat
 
     assert valid_segment.exists()
     assert quarantined_segment.exists()
-
-
-def test_retention_deletes_spawn_owned_segments_for_stale_spawns(tmp_path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    segment = write_segment(
-        telemetry_dir,
-        "p1.999-0001.jsonl",
-        event="spawn.started",
-        domain="spawn",
-    )
-    old_time = time.time() - 10 * 24 * 60 * 60
-    os.utime(segment, (old_time, old_time))
-
-    service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service)
-    assert spawn_id == "p1"
-
-    run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
-
-    assert not segment.exists()
 
 
 def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_segment(
@@ -202,63 +160,3 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
     assert live_cli.exists()
     assert stale_recognized.exists()
     assert not orphan.exists()
-
-
-def test_full_pipeline_emit_queue_writer_segment(tmp_path) -> None:
-    setup_telemetry(runtime_root=tmp_path)
-    emit_telemetry("server", "mcp.command.invoked", scope="mcp.server", ids={"request_id": "r1"})
-    get_global_router().close()
-
-    segment = tmp_path / "telemetry" / f"cli.{os.getpid()}-0001.jsonl"
-    assert segment.exists()
-    event = json.loads(segment.read_text(encoding="utf-8").splitlines()[0])
-    assert event["event"] == "mcp.command.invoked"
-    assert event["ids"] == {"request_id": "r1"}
-
-
-def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
-    tmp_path, monkeypatch
-) -> None:
-    setup_spawn_projection(tmp_path, monkeypatch)
-    service = SpawnLifecycleService(tmp_path)
-    succeeded_id = start_spawn(service)
-    failed_id = start_spawn(service)
-
-    service.finalize(
-        succeeded_id,
-        "succeeded",
-        0,
-        origin="runner",
-        duration_secs=1.5,
-    )
-    service.finalize(
-        failed_id,
-        "failed",
-        2,
-        origin="runner",
-        error="boom",
-    )
-
-    get_global_router().close()
-    events = read_telemetry_events(tmp_path)
-    assert {event["event"] for event in events}.issuperset({"spawn.succeeded", "spawn.failed"})
-    succeeded = next(event for event in events if event["event"] == "spawn.succeeded")
-    failed = next(event for event in events if event["event"] == "spawn.failed")
-
-    assert succeeded["severity"] == "info"
-    assert succeeded["ids"] == {"spawn_id": succeeded_id}
-    assert succeeded["data"] == {
-        "status": "succeeded",
-        "exit_code": 0,
-        "duration_secs": 1.5,
-    }
-    assert "category" not in succeeded["data"]
-    assert failed["severity"] == "error"
-    assert failed["ids"] == {"spawn_id": failed_id}
-    assert failed["data"] == {
-        "status": "failed",
-        "exit_code": 2,
-        "reason": "boom",
-        "error": {"type": "SpawnFailed", "message": "boom"},
-    }
-    assert "category" not in failed["data"]

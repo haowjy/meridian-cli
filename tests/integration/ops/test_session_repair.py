@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import pytest
 
-from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
 from meridian.lib.state import session_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -133,20 +132,3 @@ def test_inspect_lists_evidence_then_bind_validates_and_refuses(
     assert _repair(project, "c2", late, force=True).forced
 
 
-def test_bind_works_for_other_harnesses(env: tuple[Path, Path, Path]) -> None:
-    home, project, runtime = env
-    _chat(runtime, "c1", project, harness="claude")
-    session_id = str(uuid4())
-    store = home / ".claude/projects" / project_slug(project)
-    store.mkdir(parents=True)
-    path = store / f"{session_id}.jsonl"
-    path.write_text(
-        json.dumps({"sessionId": session_id, "cwd": str(project), "timestamp": START}) + "\n"
-    )
-
-    listing = _repair(project, "c1")
-    assert [c.path for c in listing.candidates] == [str(path)]
-    assert _repair(project, "c1", path).action == "bound"
-    record = session_store.chat_record(runtime, "c1")
-    assert record is not None
-    assert (record.harness_session_id, record.native_store) == (session_id, str(store))

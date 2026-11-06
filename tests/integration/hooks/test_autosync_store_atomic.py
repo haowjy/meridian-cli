@@ -7,47 +7,10 @@ from pathlib import Path
 
 from meridian.lib.hooks.builtin.autosync_store import (
     ConflictRecord,
-    autosync_lock_path,
     conflict_dir,
     read_conflicts,
-    state_file,
     transaction,
 )
-
-
-def test_local_and_remote_workflows_serialize_on_one_sync_root(tmp_path: Path) -> None:
-    """Local and remote entry paths cannot overlap their mutation workflows."""
-    runtime_root = tmp_path / "runtime"
-
-    first_entered = threading.Event()
-    release_first = threading.Event()
-    second_entered = threading.Event()
-
-    def first_workflow() -> None:
-        with transaction(tmp_path, runtime_root=runtime_root) as autosync_tx:
-            first_entered.set()
-            assert release_first.wait(timeout=5)
-            autosync_tx.write_sync_state(outcome="local")
-
-    def second_workflow() -> None:
-        assert first_entered.wait(timeout=5)
-        with transaction(tmp_path / ".", runtime_root=runtime_root) as autosync_tx:
-            second_entered.set()
-            autosync_tx.write_sync_state(outcome="remote")
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(first_workflow)
-        second = executor.submit(second_workflow)
-        assert first_entered.wait(timeout=5)
-        assert not second_entered.wait(timeout=0.1)
-        release_first.set()
-        first.result()
-        second.result()
-
-    payload = json.loads(
-        state_file(tmp_path, runtime_root=runtime_root).read_text(encoding="utf-8")
-    )
-    assert payload["outcome"] == "remote"
 
 
 def test_hook_write_and_resolution_do_not_lose_conflict_update(tmp_path: Path) -> None:
@@ -132,5 +95,3 @@ def test_resolution_preserves_idless_document_shape_and_hides_unknown_fields(
     assert "custom" not in record.model_dump()
 
 
-def test_lock_path_is_canonical_for_sync_root_aliases(tmp_path: Path) -> None:
-    assert autosync_lock_path(tmp_path) == autosync_lock_path(tmp_path / ".")

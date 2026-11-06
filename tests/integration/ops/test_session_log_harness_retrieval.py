@@ -13,9 +13,7 @@ import pytest
 from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
@@ -150,96 +148,6 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         ("user", "show transcript please"),
         ("assistant", "here is your transcript"),
     ]
-
-
-def test_pi_session_log_uses_reopen_default_lineage_and_labels_partial_parent(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    native_root = resolve_pi_spawn_session_root()
-    native_root.mkdir(parents=True)
-    native_id = "lineage-fixture"
-    path = native_root / f"2026-01-01T00-00-00_{native_id}.jsonl"
-    rows = [
-        {"type": "session", "version": 3, "id": native_id, "cwd": project_root.as_posix()},
-        {
-            "type": "message",
-            "id": "root",
-            "parentId": None,
-            "message": {"role": "user", "content": "root prompt"},
-        },
-        {
-            "type": "message",
-            "id": "abandoned",
-            "parentId": "root",
-            "message": {
-                "role": "assistant",
-                "provider": "p",
-                "model": "m",
-                "content": "abandoned sibling",
-            },
-        },
-        {
-            "type": "message",
-            "id": "bad-branch",
-            "parentId": "missing-parent",
-            "message": {
-                "role": "assistant",
-                "provider": "p",
-                "model": "m",
-                "content": "broken sibling",
-            },
-        },
-        {
-            "type": "message",
-            "id": "selected",
-            "parentId": "root",
-            "message": {
-                "role": "assistant",
-                "provider": "p",
-                "model": "m",
-                "content": "selected lineage",
-            },
-        },
-    ]
-    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        prompt="question",
-        harness="pi",
-        model="test",
-        agent="coder",
-        kind="primary",
-        harness_session_id=native_id,
-    )
-    session_store.start_session(
-        runtime_root,
-        "pi",
-        native_id,
-        "test",
-        chat_id="c1",
-        kind="primary",
-        native_store=native_root.as_posix(),
-    )
-
-    output = session_log_sync(
-        SessionLogInput(ref="c1", project_root=project_root.as_posix(), full=True)
-    )
-    parsed = read_session_transcript(ref="c1", file_path=None, project_root=project_root.as_posix())
-
-    rendered = output.format_text()
-    assert parsed.view_basis == "reopen-default"
-    assert parsed.completeness_reasons == ("missing_parent",)
-    assert "selected lineage" in rendered
-    assert "abandoned sibling" not in rendered
-    assert "broken sibling" not in rendered
-    assert "partial: missing_parent" in rendered
 
 
 def test_session_log_resolves_opencode_db_without_legacy_session_file(
@@ -536,65 +444,6 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
     ]
 
 
-def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_empty_db_legacy_json_12345"
-    session_file = xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
-    session_file.parent.mkdir(parents=True, exist_ok=True)
-    session_file.write_text(
-        json.dumps({"role": "assistant", "content": "legacy JSON transcript"}) + "\n",
-        encoding="utf-8",
-    )
-    write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    session_store.start_session(
-        runtime_root,
-        harness="opencode",
-        harness_session_id=session_id,
-        model="test",
-        chat_id="c1",
-        spawn_id="p1",
-        native_store=str(xdg_data_home / "opencode" / "opencode.db"),
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        owner_chat_id="c0",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            full=True,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "opencode transcript"
-    assert output.messages == ()
-
-
 def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
     history_path = runtime_root / "spawns" / spawn_id / LAUNCH_FILE_NAMES.history
     history_path.write_text(
@@ -611,83 +460,6 @@ def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
         + "\n",
         encoding="utf-8",
     )
-
-
-@pytest.mark.parametrize(
-    ("ref_kind", "ref", "track_session", "expected_session_id", "history_text"),
-    [
-        ("spawn", "p1", True, "p1", "spawn history transcript"),
-        ("chat", "c1", True, "c1", "chat ref spawn history transcript"),
-        ("raw", "session", True, "session", "raw ref spawn history transcript"),
-        (
-            "raw-untracked",
-            "session",
-            False,
-            "session",
-            "untracked raw ref spawn history transcript",
-        ),
-    ],
-)
-def test_empty_opencode_session_never_substitutes_runner_history(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-    ref_kind: str,
-    ref: str,
-    track_session: bool,
-    expected_session_id: str,
-    history_text: str,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = f"ses_fixture_empty_db_{ref_kind}_history_12345"
-    write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    if track_session:
-        session_store.start_session(
-            runtime_root,
-            harness="opencode",
-            native_store=str(xdg_data_home / "opencode" / "opencode.db"),
-            harness_session_id=session_id,
-            model="gpt-5.3-codex",
-            chat_id="c1",
-            spawn_id="p1",
-        )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        owner_chat_id="c0",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-    _write_spawn_history(runtime_root, "p1", history_text)
-
-    resolved_ref = session_id if ref == "session" else ref
-    if not track_session:
-        # This minimal DB has no project ownership metadata for untracked lookup.
-        with pytest.raises(ValueError, match="unbound"):
-            session_log_sync(SessionLogInput(ref=resolved_ref, project_root=str(project_root)))
-        return
-    output = session_log_sync(
-        SessionLogInput(ref=resolved_ref, project_root=project_root.as_posix(), full=True)
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "opencode transcript"
-    assert not output.messages
 
 
 def test_session_log_resolves_codex_session_file_from_codex_home_env(

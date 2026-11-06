@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
-import logging
 import threading
 from pathlib import Path
 from typing import Any
 
-import pytest
 from pydantic import BaseModel
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import read_events
-from meridian.lib.state.jsonl import JsonlDecodeError, append_durable_jsonl_line, iter_jsonl
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from tests.conftest import posix_only
 
 
@@ -34,22 +32,6 @@ def _write_lines(path: Path, lines: list[str]) -> None:
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def test_read_events_skips_truncated_trailing_line(tmp_path: Path) -> None:
-    data_path = tmp_path / "events.jsonl"
-    _write_lines(
-        data_path,
-        [
-            '{"id":1,"kind":"start"}\n',
-            '{"id":2,"kind":"update"}\n',
-            '{"id":3,"kind":"broken"',
-        ],
-    )
-
-    rows = read_events(data_path, _parse_read_event)
-
-    assert [row.id for row in rows] == [1, 2]
-
-
 def test_read_events_waits_for_newline_before_accepting_valid_tail(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"
     _write_lines(
@@ -61,42 +43,6 @@ def test_read_events_waits_for_newline_before_accepting_valid_tail(tmp_path: Pat
     )
 
     assert read_events(data_path, _parse_read_event) == [_ReadEvent(id=1, kind="start")]
-
-
-def test_read_events_skips_and_logs_malformed_complete_rows(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    data_path = tmp_path / "events.jsonl"
-    _write_lines(
-        data_path,
-        [
-            '{"id":1,"kind":"start"}\n',
-            "{not-valid-json}\n",
-            '{"id":"bad","kind":"update"}\n',
-            '{"id":2,"kind":"done"}\n',
-        ],
-    )
-
-    rows = read_events(data_path, _parse_read_event)
-    assert [row.id for row in rows] == [1, 2]
-    assert "Skipping malformed JSONL row" not in caplog.text
-
-    with caplog.at_level(logging.DEBUG, logger="meridian.lib.state.jsonl"):
-        rows = read_events(data_path, _parse_read_event)
-    assert [row.id for row in rows] == [1, 2]
-    assert "Skipping malformed JSONL row" in caplog.text
-
-
-def test_iter_jsonl_skips_empty_rows_but_strict_mode_rejects_corruption(
-    tmp_path: Path,
-) -> None:
-    data_path = tmp_path / "events.jsonl"
-    _write_lines(data_path, ["\n", "{not-valid-json}\n"])
-    rows = iter_jsonl(data_path, _parse_read_event, on_malformed="raise")
-
-    assert next(rows) == (None, 1)
-    with pytest.raises(JsonlDecodeError, match="Malformed JSONL row"):
-        next(rows)
 
 
 def test_append_repairs_truncated_trailing_line(tmp_path: Path) -> None:

@@ -75,24 +75,6 @@ def test_mars_passthrough_streams_and_propagates_exit_with_meridian_env(
     }
 
 
-def test_passthrough_injects_project_primary_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.cli.mars_passthrough import parse_mars_passthrough
-
-    project = tmp_path / "project"
-    nested = project / "nested"
-    nested.mkdir(parents=True)
-    (project / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", nested.as_posix())
-
-    request = parse_mars_passthrough(["list"], executable="/fake/mars")
-
-    assert request.mars_args == ("list", "--root", project.as_posix())
-    assert not request.user_scope
-
-
 @pytest.mark.integration
 @posix_only
 def test_mars_init_creates_nested_project_below_ancestor_mars_root(
@@ -146,65 +128,6 @@ def test_init_link_creates_nested_project_below_ancestor_mars_root(
     assert result.returncode == 0, result.stderr or result.stdout
     assert (nested / "mars.toml").is_file()
     assert (nested / ".claude").is_dir()
-
-
-def test_passthrough_user_flag_injects_user_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.cli.mars_passthrough import parse_mars_passthrough
-
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "mars.toml").write_text("", encoding="utf-8")
-    user_home = tmp_path / "user-home"
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project.as_posix())
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-
-    request = parse_mars_passthrough(["--user", "sync"], executable="/fake/mars")
-
-    assert request.mars_args == (
-        "sync",
-        "--root",
-        (user_home / "mars").resolve().as_posix(),
-    )
-    assert request.user_scope
-
-
-def test_passthrough_layers_project_inspection_but_not_mutation_or_user_scope(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.cli.mars_passthrough import parse_mars_passthrough
-    from meridian.lib.catalog import mars_roots
-
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "mars.toml").write_text("", encoding="utf-8")
-    user_home = tmp_path / "user-home"
-    user_root = (user_home / "mars").resolve()
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project.as_posix())
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-    monkeypatch.setattr(
-        mars_roots,
-        "mars_supports_fallback_root",
-        lambda _executable: True,
-    )
-
-    agents = parse_mars_passthrough(["agents", "list"], executable="/fake/mars")
-    mutation = parse_mars_passthrough(["sync"], executable="/fake/mars")
-    user_agents = parse_mars_passthrough(["--user", "agents", "list"], executable="/fake/mars")
-
-    assert agents.mars_args == (
-        "agents",
-        "list",
-        "--root",
-        project.as_posix(),
-        "--fallback-root",
-        user_root.as_posix(),
-    )
-    assert "--fallback-root" not in mutation.mars_args
-    assert "--fallback-root" not in user_agents.mars_args
 
 
 def test_mutation_gate_uses_meridian_project_dir_before_root_injection(

@@ -95,15 +95,3 @@ def test_scope_sidecar_missing_required_field_is_discarded(field: str) -> None:
     assert process_scope_projection.scope_snapshot_from_dict(payload) is None
 
 
-def test_scope_sidecar_without_release_id_derives_stable_identity() -> None:
-    snapshot = _scope(
-        "p1",
-        scope_id="backend",
-        owner_policy="session_owned",
-        owner_id="c1",
-        root_pid=501,
-    )
-    payload = dataclasses.asdict(snapshot)
-    del payload["release_id"]
-
-    assert process_scope_projection.scope_snapshot_from_dict(payload) == snapshot

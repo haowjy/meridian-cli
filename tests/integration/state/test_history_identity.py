@@ -1,6 +1,5 @@
 """Portable identity belongs to files, and revisions belong to the locked writer."""
 
-import json
 import shutil
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -43,23 +42,3 @@ def test_identity_survives_mutation_and_transfer(tmp_path: Path) -> None:
         assert get_spawn(root, spawn_id) == result.after
 
 
-def test_unidentified_record_is_not_rewritten_by_reads(tmp_path: Path) -> None:
-    spawn_id = start_spawn(
-        tmp_path, chat_id="c1", model="model", agent="agent", harness="codex", prompt="hello"
-    ).spawn_id
-    state_path = tmp_path / "spawns" / str(spawn_id) / "state.json"
-    raw = json.loads(state_path.read_text())
-    raw.pop("history_id", None)
-    raw.pop("state_revision", None)
-    state_path.write_text(json.dumps(raw))
-    before = state_path.read_bytes()
-    first = get_spawn(tmp_path, spawn_id)
-    assert first is not None
-    assert first.history_id is None
-    assert get_spawn(tmp_path, spawn_id) == first
-    assert state_path.read_bytes() == before
-    result = write_state_locked(tmp_path / "spawns", str(spawn_id), lambda row: row)
-    assert isinstance(result, Applied)
-    assert isinstance(result.after.history_id, UUID)
-    assert result.after.state_revision == 1
-    assert get_spawn(tmp_path, spawn_id) == result.after

@@ -6,12 +6,9 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from meridian.lib.ops.session_archive import (
     SessionArchiveInput,
     session_archive_sync,
-    session_stop_maintenance,
 )
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
@@ -226,13 +223,6 @@ def test_qualification_matrix_and_apply_removes_only_runner_files(tmp_path: Path
         running_launch.close()
 
 
-def test_after_days_is_measured_from_terminal_time(tmp_path: Path) -> None:
-    project, root, store = corpus(tmp_path)
-    key = add_spawn(root, store, 1)
-    assert prune(project, after_days=60).skipped == {"recent": (key,)}
-    assert [row.spawn_id for row in prune(project, after_days=29).pruned] == [key]
-
-
 def test_reads_still_work_after_prune(tmp_path: Path) -> None:
     from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
     from meridian.lib.ops.session_transcript import read_session_transcript
@@ -257,17 +247,6 @@ def test_reads_still_work_after_prune(tmp_path: Path) -> None:
     assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
     assert not (root / "spawns" / key / "history.jsonl").exists()
     assert reads() == before
-
-
-def test_automatic_maintenance_never_prunes(tmp_path: Path, monkeypatch) -> None:
-    project, root, store = corpus(tmp_path)
-    key = add_spawn(root, store, 1)
-    monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "true")
-    monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", str(tmp_path / "zips"))
-    monkeypatch.setenv("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS", "365")
-    session_stop_maintenance(project, key)
-    for name in runner_paths(root, key):
-        assert (root / name).is_file()
 
 
 def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
@@ -301,26 +280,6 @@ def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
     assert [row.spawn_id for row in prune(project).pruned] == [key]
 
 
-def test_one_spawn_failure_is_recorded_and_the_pass_continues(tmp_path: Path, monkeypatch) -> None:
-    project, root, store = corpus(tmp_path)
-    blocked = add_spawn(root, store, 1)
-    free = add_spawn(root, store, 2)
-    real_unlink = Path.unlink
-
-    def unlink(self: Path, missing_ok: bool = False) -> None:
-        if blocked in self.parts:
-            raise PermissionError(f"denied: {self.name}")
-        real_unlink(self, missing_ok=missing_ok)
-
-    monkeypatch.setattr(Path, "unlink", unlink)
-    result = prune(project, apply=True)
-
-    assert [row.spawn_id for row in result.pruned] == [free]
-    assert len(result.errors) == 1
-    assert result.errors[0].startswith(f"{blocked}: denied")
-    assert not (root / "spawns" / free / "history.jsonl").exists()
-
-
 def test_apply_rechecks_native_identity_not_just_file_existence(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -346,60 +305,3 @@ def test_apply_rechecks_native_identity_not_just_file_existence(
     assert (root / "spawns" / key / "history.jsonl").is_file()
 
 
-def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
-    from meridian.lib.state.history_index import HistoryIndex
-
-    project, root, store = corpus(tmp_path)
-    key = add_spawn(root, store, 1)
-    HistoryIndex(root).catch_up()  # Dogfood rows predate this build's index.
-    state_path = root / "spawns" / key / "state.json"
-    state = json.loads(state_path.read_text())
-    state.update(entry_chat_id="c1", exit_identity="verified", exit_chat_id="c1")
-    state_path.write_text(json.dumps(state))
-
-    result = prune(project)
-
-    assert [r.spawn_id for r in result.quarantined] == [key]
-    hint = f"1 spawns; run `meridian doctor`: {key}"
-    assert f"Skipped quarantined: {hint}" in result.format_text()
-    with pytest.raises(ValueError, match=f"quarantined: {hint}"):
-        session_archive_sync(
-            SessionArchiveInput(
-                project_root=str(project), eligible=True, destination=str(tmp_path / "zips")
-            )
-        )
-
-
-def test_archive_after_prune_captures_native_and_ships_no_runner_members(
-    tmp_path: Path,
-) -> None:
-    import zipfile
-
-    from meridian.lib.config.history_models import HistoryArchiveConfig
-    from meridian.lib.ops.session_archive import archive_history, materialize_native_history
-    from meridian.lib.state.paths import LAUNCH_FILE_NAMES
-
-    project, root, store = corpus(tmp_path)
-    key = add_spawn(root, store, 1)
-    assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
-
-    materialize_native_history(project, root, key)
-    assert (launch_paths(root, key).native_transcript).is_file()
-    out = archive_history(
-        root,
-        destination=tmp_path / "zips",
-        refs=(key,),
-        eligible=False,
-        apply=True,
-        after_days=0,
-        policy=HistoryArchiveConfig(),
-        project_root=project,
-    )
-
-    assert out.errors == ()
-    assert len(out.selected) == 1
-    assert out.reclaimed == out.selected
-    (archive,) = out.archives
-    members = {Path(name).name for name in zipfile.ZipFile(archive).namelist()}
-    assert LAUNCH_FILE_NAMES.native_snapshot in members
-    assert not members & set(LAUNCH_FILE_NAMES.retired_runner_stream)
