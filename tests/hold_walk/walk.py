@@ -157,6 +157,7 @@ class NoopCleanup:
 @dataclass
 class Side:
     name: str
+    frozen: bool
     launch: Any
     backend: FakeResidentBackendControl
     profile: Any
@@ -224,7 +225,8 @@ async def drive_event(
     action: DrainAction | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     snaps: list[tuple[str, dict[str, Any]]] = []
-    side.profile.observe_event(event.semantics)
+    if side.frozen:
+        side.profile.observe_event(event.semantics)
     await side.coord.observe_event(event)
     snaps.append(("observe", snapshot(side)))
     delivered = side.coord.note_event_delivered(event.raw)
@@ -545,6 +547,7 @@ def build_side(
     )
     return Side(
         name=spawn_id,
+        frozen=profile_cls is not HoldProfile,
         launch=launch,
         backend=backend,
         profile=profile,

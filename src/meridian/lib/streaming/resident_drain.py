@@ -20,7 +20,6 @@ from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_s
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
-    CompletionCleanupRequest,
     CompletionDirectives,
     CompletionEvaluation,
     CompletionState,
@@ -35,11 +34,6 @@ from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
 from meridian.lib.streaming.descendant_evidence import (
     DescendantRefreshOwner,
     ReconciledDescendantEvidence,
-)
-from meridian.lib.streaming.drain_coordinator import (
-    DrainExitDecision,
-    DrainLoopDecision,
-    DrainTerminalDecision,
 )
 from meridian.lib.streaming.hold_state import (
     AskPhase,
@@ -60,8 +54,6 @@ if TYPE_CHECKING:
 
     from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
-    from meridian.lib.harness.semantics import NormalizedHarnessEvent
-    from meridian.lib.streaming.drain_policy import DrainAction
 
 logger = structlog.get_logger()
 
@@ -195,8 +187,11 @@ class _HoldProfile:
         # Only the child's own work inside a turn renews the idle limit and answers
         # an expiry nudge. A nudge starts a turn but is not work, and output from a
         # background process after the turn ended is not the child working.
+        turn_started = semantics.activity == "turn_active"
         work_in_turn = semantics.work and state.active_turn
-        self._state = after_event(self._state, turn_started=False, work_in_turn=work_in_turn)
+        if turn_started:
+            self.set_awaiting_done(False)
+        self._state = after_event(self._state, turn_started=turn_started, work_in_turn=work_in_turn)
         return work_in_turn and state.deadline_at is not None
 
     def candidate_transition(self) -> AbstractContextManager[None]:
@@ -361,12 +356,6 @@ class _HoldProfile:
             ),
         )
 
-    def observe_event(self, semantics: EventSemantics) -> None:
-        if semantics.activity != "turn_active":
-            return
-        self.set_awaiting_done(False)
-        self._state = after_event(self._state, turn_started=True, work_in_turn=False)
-
     def clear(self) -> None:
         self.set_awaiting_done(False)
         self._state = HoldState()
@@ -482,17 +471,19 @@ class _ResidentCompletionCleanup:
         )
 
 
-class ResidentDrainCoordinator:
-    """Construct and adapt hold collaborators to the drain coordinator protocol."""
+class ResidentDrainCoordinator(CompletionCoordinator):
+    """The completion coordinator wired with the hold's evidence, profile and cleanup."""
 
     def __init__(
         self,
         *,
-        coordinator: CompletionCoordinator,
+        evidence: HoldEvidence,
         profile: _HoldProfile,
+        cleanup: _ResidentCompletionCleanup,
+        clock: Callable[[], float],
     ) -> None:
-        self._coordinator = coordinator
-        self._profile = profile
+        super().__init__(evidence=evidence, profile=profile, cleanup=cleanup, clock=clock)
+        self._hold = profile
 
     @classmethod
     def build(
@@ -539,7 +530,7 @@ class ResidentDrainCoordinator:
             rearm_budget=rearm_budget,
             clock=clock,
         )
-        coordinator = CompletionCoordinator(
+        return cls(
             evidence=evidence,
             profile=profile,
             cleanup=_ResidentCompletionCleanup(
@@ -548,73 +539,14 @@ class ResidentDrainCoordinator:
             ),
             clock=clock,
         )
-        return cls(coordinator=coordinator, profile=profile)
 
     @property
     def accepted_signals(self) -> frozenset[SpawnSignalKind]:
-        return self._profile.accepted_signals
-
-    async def start(self) -> None:
-        await self._coordinator.start()
+        return self._hold.accepted_signals
 
     async def stop(self) -> None:
-        self._profile.clear()
-        await self._coordinator.stop()
-
-    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
-        self._profile.observe_event(event.semantics)
-        return await self._coordinator.observe_event(event)
-
-    def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
-        return self._coordinator.note_event_delivered(event)
-
-    async def handle_terminal_event(
-        self,
-        event: RawHarnessEvent,
-        outcome: TerminalEventOutcome,
-        action: DrainAction,
-    ) -> DrainTerminalDecision:
-        return await self._coordinator.handle_terminal_event(event, outcome, action)
-
-    def next_timeout(self) -> float | None:
-        return self._coordinator.next_timeout()
-
-    @property
-    def pending_outcome(self) -> TerminalEventOutcome | None:
-        return self._coordinator.pending_outcome
-
-    async def handle_timeout(self) -> DrainLoopDecision:
-        return await self._coordinator.handle_timeout()
-
-    async def after_event(self) -> DrainLoopDecision:
-        return await self._coordinator.after_event()
-
-    def wants_aux_wake(self) -> bool:
-        return self._coordinator.wants_aux_wake()
-
-    async def wait_for_aux_wake(self) -> None:
-        await self._coordinator.wait_for_aux_wake()
-
-    async def handle_aux_wake(self) -> DrainLoopDecision:
-        return await self._coordinator.handle_aux_wake()
-
-    def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
-        return self._coordinator.handle_close(intentional_stop=intentional_stop)
-
-    def should_defer_close(self) -> bool:
-        return self._coordinator.should_defer_close()
-
-    async def handle_stream_exit(
-        self,
-        recorded_outcome: TerminalEventOutcome | None,
-    ) -> DrainExitDecision:
-        return await self._coordinator.handle_stream_exit(recorded_outcome)
-
-    async def execute_post_publication_cleanup(
-        self,
-        request: CompletionCleanupRequest,
-    ) -> None:
-        await self._coordinator.execute_post_publication_cleanup(request)
+        self._hold.clear()
+        await super().stop()
 
 
 __all__ = ["ResidentDrainCoordinator"]

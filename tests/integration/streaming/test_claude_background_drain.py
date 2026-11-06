@@ -32,7 +32,7 @@ from tests.support.pi import start_row
 
 async def _wait_for_descendant_evidence(plan: Any) -> None:
     """Block until the descendant read has finished, so an expired deadline cannot race it."""
-    owner = plan.coordinator._coordinator._evidence._descendants
+    owner = plan.coordinator._evidence._descendants
     while owner.assessment.disposition == "unknown":
         await asyncio.sleep(0.001)
 
