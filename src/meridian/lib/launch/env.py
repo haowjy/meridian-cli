@@ -21,6 +21,10 @@ _PI_TASK_PING_INTERVAL_MS_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS"
 _PI_TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
 
 
+def path_within(path: Path, root: Path) -> bool:
+    return path.resolve().is_relative_to(root.resolve())
+
+
 def undo_direnv(base_env: Mapping[str, str]) -> dict[str, str]:
     """Ask direnv to reverse its diff without evaluating shell output or loading an rc.
 

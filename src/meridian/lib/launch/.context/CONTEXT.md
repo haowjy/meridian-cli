@@ -266,6 +266,39 @@ original env input. `env.py:undo_direnv` uses direnv's own reversal, with a boun
 subprocess only when `DIRENV_DIFF` exists; captured environment and stderr must
 never appear in errors or artifacts. This does not prevent tools reloading `.env`.
 
+### The Launching Build on the Child PATH
+
+Two halves in `cli_shim.py`, one per side of the bind/materialize seam. It lives beside the
+launch code rather than in `env.py`: it needs `get_user_home` and `atomic_replace`, and
+`env.py` stays a pure env-plan module (it only owns `path_within`).
+
+- **Decide, in `bind_launch_context`, every mode including previews:**
+  `pin_launching_build` runs on the final env, after `build_env_plan`. In order: if
+  `meridian` on the child PATH is this build's own console script, return. If the shim
+  directory is inside `child_cwd`, a projected root or `/tmp`, return a warning and leave
+  PATH alone. If the shim is already the `meridian` found, return. Otherwise PATH becomes
+  the shim directory plus the old PATH (a plain prepend). A relative `meridian` found on
+  PATH counts as skew. It writes nothing, so previews and `--dry-run` are free, and a
+  primary launch (which shows only the preview bind's warnings) reports the refusal,
+  except where `config.env` changes PATH, which the preview ignores (`.context/FUTURE`).
+- **Write, in `materialize_launch_context`, real launches only:** `write_pinned_shim`
+  writes `$MERIDIAN_HOME/bin/<sha of shim text>/meridian` (`exec` of `module_argv("meridian")`
+  plus `"$@"`, mode 755) when it is first on PATH and missing. A failed write logs
+  `cli_shim_write_failed`; PATH then names a missing directory, which resolves like no pin.
+  The directory is named by the shim's text, so a format change gets a new directory and
+  no read-back is needed.
+
+Hooks, Pi extensions and the model's shell reach `meridian` by name, so no caller changes.
+The directory sits under the user home on purpose: a sandboxed agent cannot rewrite a file
+that `meridian spawn` runs unsandboxed. `child_cwd` is part of the write set but is not in
+`projected_roots`; `/tmp` is named explicitly because `TMPDIR` elsewhere drops it from
+the projected roots. `-P` stops a project's own `meridian/` directory from shadowing the
+package. A dead interpreter fails loud (exit 127); never fall back to the next `meridian`,
+which reintroduces the skew. A launch whose `meridian` is not first-resolved to this
+build's console script (pip `--user`, pyenv, wrappers) also gets a shim; it runs the same
+build. A refusal warning shows on primary and foreground-spawn launches; `--bg` spawns
+print nothing.
+
 ### Harness Profile Env Projection at Bind
 
 Config-resolved harness profile values that the child must observe are baked into
