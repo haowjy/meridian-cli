@@ -316,9 +316,9 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
 
     import threading
 
-    # The repair thread imports nothing for the first time: a module it imports first
-    # races the main thread's harness bootstrap over import locks (a deadlock on 3.13+, or
-    # "partially initialized module" through the harness package's import cycle).
+    # These imports run on the calling thread. Modules the repair thread imports first
+    # itself can race other threads' imports through package-init cycles
+    # ("partially initialized module").
     from meridian.lib.ops.legacy_native_import import (
         bind_late_legacy_sessions,
         configured_archive_destination,

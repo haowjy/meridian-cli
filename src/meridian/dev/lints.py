@@ -26,9 +26,9 @@ DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[2]
 
 _PACKAGE_PREFIX = "meridian/"
 _HARNESS_PREFIX = "meridian/lib/harness/"
-_HARNESS_INIT = "meridian/lib/harness/__init__.py"
-_HARNESS_ADAPTER_MODULES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
-_HARNESS_BOOTSTRAP_CALLS = frozenset({"_run_bootstrap", "ensure_bootstrap"})
+_BOOTSTRAP_TRIGGER_CALLS = frozenset(
+    {"ensure_bootstrap", "get_harness_bundle", "get_bundle_registry"}
+)
 
 # Vendored dependency trees are not ours.
 _SKIPPED_PARTS = frozenset({"node_modules", "dist"})
@@ -333,72 +333,51 @@ def _call_name(function: ast.expr) -> str | None:
     return None
 
 
-def _is_harness_adapter_import(node: ast.Import | ast.ImportFrom) -> bool:
-    if isinstance(node, ast.Import):
-        return any(
-            alias.name == f"meridian.lib.harness.{name}"
-            or alias.name.startswith(f"meridian.lib.harness.{name}.")
-            for alias in node.names
-            for name in _HARNESS_ADAPTER_MODULES
-        )
-    if node.module == "meridian.lib.harness":
-        return any(alias.name in _HARNESS_ADAPTER_MODULES for alias in node.names)
-    if node.module is not None and node.module.startswith("meridian.lib.harness."):
-        return node.module.removeprefix("meridian.lib.harness.").split(".", 1)[0] in (
-            _HARNESS_ADAPTER_MODULES
-        )
-    if node.level == 1 and node.module in _HARNESS_ADAPTER_MODULES:
-        return True
-    return bool(
-        node.level == 1
-        and node.module is None
-        and any(alias.name in _HARNESS_ADAPTER_MODULES for alias in node.names)
-    )
-
-
-class _EagerHarnessBootstrapVisitor(ast.NodeVisitor):
-    """Module-level adapter imports and bootstrap calls in harness/__init__.py."""
+class _ImportTimeLookupVisitor(ast.NodeVisitor):
+    """Calls that run when a module body runs: function bodies are skipped."""
 
     def __init__(self) -> None:
-        self.hits: list[tuple[int, str]] = []
+        self.lines: list[int] = []
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        return
+    def _visit_def(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        # Decorators and defaults run at definition; the body does not.
+        for expr in (
+            *getattr(node, "decorator_list", ()),
+            *node.args.defaults,
+            *(d for d in node.args.kw_defaults if d is not None),
+        ):
+            self.visit(expr)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        return
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        return
-
-    def visit_Import(self, node: ast.Import) -> None:
-        if _is_harness_adapter_import(node):
-            self.hits.append((node.lineno, "import"))
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if _is_harness_adapter_import(node):
-            self.hits.append((node.lineno, "import"))
+    visit_FunctionDef = _visit_def
+    visit_AsyncFunctionDef = _visit_def
+    visit_Lambda = _visit_def
 
     def visit_Call(self, node: ast.Call) -> None:
-        name = _call_name(node.func)
-        if name in _HARNESS_BOOTSTRAP_CALLS:
-            self.hits.append((node.lineno, "call"))
+        if _call_name(node.func) in _BOOTSTRAP_TRIGGER_CALLS:
+            self.lines.append(node.lineno)
         self.generic_visit(node)
 
 
-def harness_eager_bootstrap_violations(sources: Sources) -> list[Violation]:
-    """Reject harness package import that bootstraps adapters."""
+def import_time_bootstrap_violations(sources: Sources) -> list[Violation]:
+    """Reject module-level calls that trigger the harness bootstrap.
 
-    module = next((item for item in sources.python_modules if item.path == _HARNESS_INIT), None)
-    if module is None or not module.mentions(*_HARNESS_BOOTSTRAP_CALLS, *_HARNESS_ADAPTER_MODULES):
-        return []
-    visitor = _EagerHarnessBootstrapVisitor()
-    visitor.visit(module.tree)
+    A module body that runs one while another thread holds the bootstrap lock waits
+    on that thread, and the bootstrap waits on the import lock this module holds:
+    a hang no deadlock detector reports.
+    """
+
     message = (
-        "harness package import must not run adapter bootstrap or import adapter "
-        "implementations; call ensure_bootstrap() from the code that needs registered bundles."
+        "module-level call triggers the harness bootstrap; call it inside a function "
+        "so importing this module cannot wait on the bootstrap lock."
     )
-    return [Violation(_HARNESS_INIT, line, message) for line, _kind in visitor.hits]
+    violations: list[Violation] = []
+    for module in sources.python_modules:
+        if not module.mentions(*_BOOTSTRAP_TRIGGER_CALLS):
+            continue
+        visitor = _ImportTimeLookupVisitor()
+        visitor.visit(module.tree)
+        violations.extend(Violation(module.path, line, message) for line in visitor.lines)
+    return violations
 
 
 # --- per-launch paths ------------------------------------------------------
@@ -558,7 +537,7 @@ CHECKS: tuple[Check, ...] = (
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
-    harness_eager_bootstrap_violations,
+    import_time_bootstrap_violations,
     launch_path_violations,
 )
 

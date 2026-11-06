@@ -304,13 +304,19 @@ def post_to_primary(
     return inbox(runtime_root=runtime_root, record=record, message=message)
 
 
+def registered_bundles() -> Mapping[HarnessId, HarnessBundle[Any]]:
+    """Return what is registered so far, without triggering the bootstrap."""
+
+    return MappingProxyType(_REGISTRY)
+
+
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
     """Return the active harness bundle registry mapping."""
 
     from meridian.lib.harness import ensure_bootstrap
 
     ensure_bootstrap()
-    return MappingProxyType(_REGISTRY)
+    return registered_bundles()
 
 
 def get_connection_cls(
@@ -470,4 +476,5 @@ __all__ = [
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
     "register_harness_bundle",
+    "registered_bundles",
 ]

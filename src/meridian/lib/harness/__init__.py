@@ -7,7 +7,6 @@ from __future__ import annotations
 import threading
 
 _bootstrapped = False
-_bootstrap_in_progress = False
 _bootstrap_imports: tuple[object, ...] = ()
 _bootstrap_lock = threading.RLock()
 
@@ -53,21 +52,6 @@ def _run_bootstrap() -> None:
     """Execute the load-bearing harness bootstrap sequence exactly once."""
 
     global _bootstrapped
-    global _bootstrap_in_progress
-    global _bootstrap_imports
-
-    if _bootstrapped:
-        return
-
-    _bootstrap_in_progress = True
-    try:
-        _bootstrap_adapters()
-    finally:
-        _bootstrap_in_progress = False
-
-
-def _bootstrap_adapters() -> None:
-    global _bootstrapped
     global _bootstrap_imports
 
     # Import order is load-bearing.
@@ -104,6 +88,7 @@ def _bootstrap_adapters() -> None:
     from meridian.lib.harness.extractors import opencode as _opencode_extractor
     from meridian.lib.harness.extractors import pi as _pi_extractor
 
+    from meridian.lib.harness.bundle import registered_bundles
     from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 
     _bootstrap_imports = (
@@ -125,7 +110,8 @@ def _bootstrap_adapters() -> None:
         _opencode_extractor,
         _pi_extractor,
     )
-    _enforce_spawn_params_accounting()
+    # The public registry accessor would re-enter ensure_bootstrap.
+    _enforce_spawn_params_accounting(registered_bundles())
     _bootstrapped = True
 
 
@@ -135,7 +121,7 @@ def ensure_bootstrap() -> None:
     if _bootstrapped:
         return
     with _bootstrap_lock:
-        if _bootstrapped or _bootstrap_in_progress:
+        if _bootstrapped:
             return
         _run_bootstrap()
 

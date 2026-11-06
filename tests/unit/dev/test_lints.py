@@ -6,8 +6,8 @@ from pathlib import Path
 
 from meridian.dev.lints import (
     RAW_WRITE_ALLOWLIST,
-    harness_eager_bootstrap_violations,
     harness_idle_import_violations,
+    import_time_bootstrap_violations,
     launch_path_violations,
     raw_write_violations,
     read_sources,
@@ -57,10 +57,12 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         "from meridian.lib.idle import policy\nfrom ..idle import other\n",
     )
     plant(
-        "meridian/lib/harness/__init__.py",
-        "from meridian.lib.harness import claude\n"
-        "def ensure_bootstrap():\n    _run_bootstrap()\n"
-        "_run_bootstrap()\n",
+        "meridian/lib/harness/adapter.py",
+        "def ok():\n    ensure_bootstrap()\n"
+        "ensure_bootstrap()\n"
+        "REG = bundle.get_bundle_registry()\n"
+        "@deco(get_harness_bundle(1))\ndef f(x=get_harness_bundle(2)):\n    pass\n"
+        "class C:\n    b = get_harness_bundle(3)\n",
     )
     sources = read_sources(tmp_path)
 
@@ -91,9 +93,12 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         ("meridian/lib/harness/planted.py", 1),
         ("meridian/lib/harness/planted.py", 2),
     ]
-    assert [(v.path, v.line) for v in harness_eager_bootstrap_violations(sources)] == [
-        ("meridian/lib/harness/__init__.py", 1),
-        ("meridian/lib/harness/__init__.py", 4),
+    assert [(v.path, v.line) for v in import_time_bootstrap_violations(sources)] == [
+        ("meridian/lib/harness/adapter.py", 3),
+        ("meridian/lib/harness/adapter.py", 4),
+        ("meridian/lib/harness/adapter.py", 5),
+        ("meridian/lib/harness/adapter.py", 6),
+        ("meridian/lib/harness/adapter.py", 9),
     ]
     # None of the allowlisted writes exist here, so every entry is stale.
     assert {v.path for v in stale_raw_write_allowlist(sources)} == {
