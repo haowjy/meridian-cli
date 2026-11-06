@@ -2213,18 +2213,6 @@ def _source_spawn_for_follow_up(
     return resolved_spawn_id, row, resolved_reference
 
 
-def _prompt_for_follow_up(
-    source_spawn: SpawnRecord, payload_spawn_id: str, prompt: str | None
-) -> str:
-    if prompt is not None and prompt.strip():
-        return prompt
-
-    existing_prompt = (source_spawn.prompt or "").strip()
-    if not existing_prompt:
-        raise ValueError(f"Spawn '{payload_spawn_id}' has no stored prompt")
-    return existing_prompt
-
-
 def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
@@ -2276,10 +2264,9 @@ def _build_continue_create_input(
     )
 
     resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
-    derived_prompt = _prompt_for_follow_up(source_spawn, source_spawn_id, payload.prompt)
 
     return SpawnCreateInput(
-        prompt=derived_prompt,
+        prompt=payload.prompt,
         model=continue_contract.model,
         files=payload.files,
         template_vars=payload.template_vars,
@@ -2506,6 +2493,13 @@ def spawn_continue_sync(
     *,
     sink: OutputSink | None = None,
 ) -> SpawnActionOutput:
+    # Resending the source's original prompt would redo its task, so a continue states
+    # what to do next. Checked first so no launch work happens for a bare continue.
+    if not payload.prompt.strip():
+        raise ValueError(
+            f"spawn --continue {payload.spawn_id.strip()} needs a prompt: pass -p/--prompt "
+            "or --prompt-file (use '-' for stdin) with the follow-up to send"
+        )
     floor_check = _run_spawn_creation_boundary(payload)
     if isinstance(floor_check, SpawnActionOutput):
         return _with_command(floor_check, "spawn.continue")

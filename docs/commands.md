@@ -21,7 +21,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Show a spawn's report and status; inside a spawn, a terminal report body consumes its pending completion notice (`--no-observe` opts out) |
 | `meridian spawn status ID` | Read spawn status summary; `--full` includes and consumes a terminal report body unless combined with `--no-observe` |
-| `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
+| `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input. A prompt (`-p`, `--prompt-file`, or `--prompt-file -` for stdin) is required: without one the command exits 1 before launching, because resending the original prompt would redo the task |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |

@@ -596,7 +596,7 @@ def _spawn_create(
             name="--continue",
             help=(
                 "Continue a session ref: chat ID, spawn ID, or raw harness session ID. "
-                "The spawn keeps its ID."
+                "The spawn keeps its ID. Needs a follow-up prompt (-p or --prompt-file)."
             ),
         ),
     ] = None,
