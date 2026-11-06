@@ -3,9 +3,9 @@
 The hook definition and its trust both ride the app-server's ``-c`` flags, so Meridian
 writes no ``config.toml`` and a shared ``CODEX_HOME`` stays untouched. A hook with no trust
 record is skipped without a warning, and Codex fails open on every hook failure, so two
-guards keep it from silently not running: the command turns any failure of the enforcer into
-a block, and ``CodexConnection.start`` calls ``hooks/list`` and refuses the launch unless
-Codex reports exactly this hook, trusted (``check_hooks_list``).
+guards keep it from silently not running: the command checks the enforcer's digest and turns
+any failure of the enforcer into a block, and ``CodexConnection.start`` calls ``hooks/list``
+and refuses the launch unless Codex reports exactly this hook, trusted (``check_hooks_list``).
 
 ``currentHash`` is the SHA-256 of the hook's identity as Codex serialises it (sorted keys,
 compact separators); a Codex that changes the format reports the hook ``modified``, which the
@@ -19,6 +19,7 @@ import json
 import shlex
 import sys
 from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 from typing import cast
 
@@ -33,15 +34,35 @@ _MATCHER = "Bash"
 _TIMEOUT_SECONDS = 10
 
 
+# Checks the enforcer against the digest on the command line, then runs the bytes it read, so
+# the file cannot change between the check and the run. The message is worded for the model:
+# the launch has to be restarted to pick up a newer Meridian.
+_BOOTSTRAP = (
+    "import hashlib,sys;"
+    'p,h=sys.argv[1:];s=open(p,"rb").read();'
+    'hashlib.sha256(s).hexdigest()==h or (sys.stderr.write("Blocked by Meridian policy: '
+    'the shell policy hook changed after the launch started; restart the launch."),sys.exit(2));'
+    'sys.argv=[p];exec(compile(s,p,"exec"),{"__name__":"__main__"})'
+)
+
+
+@cache
 def hook_command() -> str:
     """Run the enforcer with the launching interpreter, and block if it cannot decide.
 
-    ``-I`` keeps an agent-writable environment from steering its imports. The enforcer exits
-    2 to deny with its own reason; any other failure (missing interpreter or script, a crash)
-    gets a message here, because Codex otherwise lets the call run.
+    ``-I`` keeps an agent-writable environment from steering its imports. The command holds
+    the SHA-256 of the enforcer and runs it only if the file still matches, so an agent that
+    can write the file cannot turn the hook off for the rest of the launch. The interpreter
+    and the standard library are not covered: an agent that can replace those can. The
+    enforcer exits 2 to deny with its own reason; any other failure (missing interpreter or
+    script, a crash) gets a message here, because Codex otherwise lets the call run.
     """
 
-    run = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(_ENFORCER))}"
+    digest = hashlib.sha256(_ENFORCER.read_bytes()).hexdigest()
+    run = (
+        f"{shlex.quote(sys.executable)} -I -c {shlex.quote(_BOOTSTRAP)} "
+        f"{shlex.quote(str(_ENFORCER))} {digest}"
+    )
     message = "Blocked by Meridian policy: the shell policy hook failed to run; restart the launch."
     return f"{run} || {{ [ $? -eq 2 ] || echo {shlex.quote(message)} >&2; exit 2; }}"
 
