@@ -19,6 +19,7 @@ from pathlib import Path
 import structlog
 
 from meridian.lib.platform.atomic import atomic_replace
+from meridian.lib.platform.python_module import module_argv
 from meridian.lib.state.user_paths import get_user_home
 
 from .env import path_within
@@ -27,9 +28,8 @@ logger = structlog.get_logger(__name__)
 
 
 def _shim_location(env: Mapping[str, str]) -> tuple[Path, str]:
-    # ``-P`` keeps a project's own ``meridian/`` directory from shadowing the package.
     # The directory is named by the shim's text, so a format change gets a new one.
-    text = f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -P -m meridian "$@"\n'
+    text = f'#!/bin/sh\nexec {shlex.join(module_argv("meridian"))} "$@"\n'
     digest = hashlib.sha256(text.encode()).hexdigest()[:16]
     return (get_user_home(env=env) / "bin" / digest).resolve() / "meridian", text
 

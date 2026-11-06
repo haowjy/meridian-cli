@@ -282,8 +282,8 @@ launch code rather than in `env.py`: it needs `get_user_home` and `atomic_replac
   primary launch (which shows only the preview bind's warnings) reports the refusal,
   except where `config.env` changes PATH, which the preview ignores (`.context/FUTURE`).
 - **Write, in `materialize_launch_context`, real launches only:** `write_pinned_shim`
-  writes `$MERIDIAN_HOME/bin/<sha of shim text>/meridian` (`exec <sys.executable> -P -m
-  meridian "$@"`, mode 755) when it is first on PATH and missing. A failed write logs
+  writes `$MERIDIAN_HOME/bin/<sha of shim text>/meridian` (`exec` of `module_argv("meridian")`
+  plus `"$@"`, mode 755) when it is first on PATH and missing. A failed write logs
   `cli_shim_write_failed`; PATH then names a missing directory, which resolves like no pin.
   The directory is named by the shim's text, so a format change gets a new directory and
   no read-back is needed.
