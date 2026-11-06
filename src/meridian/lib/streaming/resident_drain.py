@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.core.delivery import DeliveryRefused, TransportDead
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
@@ -154,6 +154,7 @@ class _HoldProfile:
         *,
         launch: LaunchPaths,
         backend: ResidentBackendControl | None,
+        health: Callable[[], bool],
         send_nudge: Callable[[str], Awaitable[None]],
         deadline_seconds: float,
         poll_seconds: float,
@@ -171,6 +172,7 @@ class _HoldProfile:
             rearm_budget=rearm_budget,
         )
         self._backend = backend
+        self._health = health
         self._send_nudge = send_nudge
         self._accepted_signals: frozenset[SpawnSignalKind] = (
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
@@ -193,8 +195,6 @@ class _HoldProfile:
         # next nudge waits this long past the previous one so a rearm loop stays slow.
         self._nudge_not_before: float | None = None
         self._confirmation_grace_at: float | None = None
-        # A nudge found the transport gone: the backend counts as dead from then on.
-        self._transport_dead = False
         self._blockers: tuple[DiagnosticBlocker, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
@@ -311,9 +311,6 @@ class _HoldProfile:
                 else:
                     # Gone, or the nudge may have arrived: never resend it.
                     self._idle_nudge_sends = _IDLE_NUDGE_SENDS
-                    # Gone also ends the answer window: the evaluation that follows
-                    # takes the dead-backend cleanup.
-                    self._transport_dead = isinstance(exc, TransportDead)
             raise
         if expiry_nudge:
             self._idle_nudge_sends = _IDLE_NUDGE_SENDS
@@ -626,10 +623,11 @@ class _HoldProfile:
         self._awaiting_done = awaiting_done
 
     def _resident_health_status(self) -> LivenessDecision:
-        if self._transport_dead:
-            return LivenessDecision.BACKEND_DEAD
         if self._backend is None:
-            return LivenessDecision.CONTINUE
+            # No backend liveness policy: the connection's own health is the evidence.
+            # A send that found the transport gone (TransportDead) leaves it unhealthy,
+            # so the evaluation that follows takes the dead-backend cleanup.
+            return LivenessDecision.CONTINUE if self._health() else LivenessDecision.BACKEND_DEAD
         try:
             return self._backend.health_status()
         except Exception:
@@ -687,6 +685,7 @@ class ResidentDrainCoordinator:
         send_nudge: Callable[[str], Awaitable[None]],
         completion_signals_available: bool,
         backend: ResidentBackendControl | None,
+        health: Callable[[], bool],
         native: NativeTaskSource | None,
         deadline_seconds: float,
         poll_seconds: float | None,
@@ -715,6 +714,7 @@ class ResidentDrainCoordinator:
         profile = _HoldProfile(
             launch=launch,
             backend=backend,
+            health=health,
             send_nudge=send_nudge,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,

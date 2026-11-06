@@ -106,6 +106,7 @@ def build_drain_plan(
             send_nudge=send_nudge,
             completion_signals_available=receiver.completion_signals_available,
             backend=resident_backend,
+            health=receiver.health,
             native=native,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,

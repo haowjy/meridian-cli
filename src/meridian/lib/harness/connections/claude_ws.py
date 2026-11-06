@@ -200,7 +200,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return StopResult()
 
     def health(self) -> bool:
-        return self._state == "connected"
+        child = self._child
+        process = None if child is None else child.process
+        return self._state == "connected" and (process is None or process.returncode is None)
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._ensure_connected()
@@ -371,7 +373,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _send_json(self, payload: dict[str, object]) -> None:
         child = self._child
         process = None if child is None else child.process
-        if process is None or process.stdin is None:
+        if process is None or process.stdin is None or process.returncode is not None:
             raise TransportDead("Claude subprocess stdin is not available.")
 
         wire = json.dumps(payload, separators=(",", ":")) + "\n"

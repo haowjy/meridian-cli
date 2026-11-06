@@ -63,6 +63,7 @@ def _coordinator(
         send_nudge=connection.resident_backend.begin_followup_turn,
         completion_signals_available=True,
         backend=connection.resident_backend,
+        health=connection.health,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,

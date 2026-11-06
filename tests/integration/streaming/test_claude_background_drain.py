@@ -73,6 +73,9 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
         native_task_source = ClaudeConnection.native_task_source
         primary_event_scope = None
 
+        def health(self) -> bool:
+            return True
+
         def observe_event_semantics(self, semantics: object) -> None:
             pass
 
