@@ -182,8 +182,9 @@ it already holds, once the TUI process is running, and unbinds when the TUI exit
 starts a turn when the session is idle and joins the running turn otherwise; the TUI renders
 it, and the sender is told it was delivered once the server acknowledged it. Meridian never
 answers an approval an injected turn raises: it stays on the TUI for the person. On OpenCode
-a message carries text only, so the server runs it with the session's last model, which is the
-one the person picked in the TUI. If the OpenCode attach failed and the launch fell back to a
+V2 a message carries text only, so the server runs it with the session's last model, which is
+the one the person picked in the TUI. V1 copies the agent and model of the session's last
+committed turn, so an agent switched in the TUI since then is not followed. If the OpenCode attach failed and the launch fell back to a
 black-box session, no socket is bound and the sender gets the no-route error.
 
 Claude's `crossSessionInbound` setting picks the policy:

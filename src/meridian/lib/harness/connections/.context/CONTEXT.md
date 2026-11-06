@@ -7,7 +7,7 @@ A rejected inject is annotated as control-action response evidence, persisted, a
 reported to the injector without becoming a terminal event for the running spawn.
 Initial-prompt rejection remains spawn-fatal.
 
-**Codex has one thread: the one `thread/start` returned.** The app-server announces its
+**Codex has one thread: the one the `thread/start`, `thread/resume` or `thread/fork` reply returned.** The app-server announces its
 own helper threads (titles, memory) to every client with `thread/started`, and the TUI can
 open others; `_update_turn_state` ignores events for any thread but its own. Taking an
 announced id as its own sent `turn/steer` and `turn/start` to a thread the TUI is not on

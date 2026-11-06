@@ -62,7 +62,7 @@ In the managed architecture Meridian is the websocket client connected to the Co
 
 Key properties:
 
-- **Requests are surfaced, not auto-accepted.** Pending requests stay open until a controller responds or Codex times out.
+- **Requests are surfaced, not auto-accepted.** Pending requests stay open until the person answers in the TUI or Codex times out.
 - **Subagent spawns fail closed.** The permission broker refuses requests immediately, journals the refusal, and does not route it to the parent session.
 - **Unsupported server request methods** (anything other than approval and user-input variants) still return a transport-level error.
 

@@ -159,7 +159,7 @@ from the black-box leg (Pi until its route lands).
 Codex and OpenCode primaries run in managed attach and have no port: `PrimaryAttachLauncher`
 binds the socket itself with `serving_route`, routing to the observer connection's
 `send_user_message` once the TUI process is running, and unbinds when the TUI exits, before
-`connection.stop()`. The observer stays connected after the TUI attaches, and an approval
+`connection.stop()`. The observer stays connected after the TUI attaches, through any length of idle silence (only a dead backend ends it; it is the route a sender needs), and an approval
 an injected turn raises reaches the TUI and the observer alike; nothing answers it.
 `has_message_route` is still derived from the port, so these primaries' capabilities
 block does not yet state their address.
