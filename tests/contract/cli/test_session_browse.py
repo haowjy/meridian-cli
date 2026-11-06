@@ -29,6 +29,7 @@ def test_exec_decision_builds_primary_invocation(decision: Resume | Fork, verb: 
             os.sys.executable,
             [
                 os.sys.executable,
+                "-P",
                 "-m",
                 "meridian",
                 "-C",
