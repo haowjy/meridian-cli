@@ -1,5 +1,33 @@
 # Upgrade notes
 
+## A primary launch exits with the harness's status
+
+`meridian`, `meridian --continue`, `--fork`, `--from` and `meridian bootstrap` used to exit `0`
+whenever Meridian itself ran to the end, even if the harness failed. They now exit with the
+status Meridian recorded for the session:
+
+| Harness result | Shell status |
+|---|---|
+| clean quit (`/exit`, Ctrl-D) | `0` |
+| exits with code N | `N` |
+| killed by signal N | `128+N` |
+| cancelled by a signal to Meridian (Ctrl-C, SIGTERM, SIGHUP) | `130` |
+| Meridian could not record the session | nonzero |
+| `--dry-run` | `0` |
+
+On a scratch runtime with a stand-in `claude` that exits `3`, the previous build left `$?` at `0`
+and this one leaves it at `3`; a stand-in that kills itself with `kill -9` gives `137`, and one that
+exits cleanly still gives `0`. The text output is unchanged: `Session failed.` and the
+`meridian --continue cN` hint print as before.
+
+Stored spawn status and finalization did not change; only the process status did. A script that
+runs a primary launch under `set -e`, `&&` or `||` now stops or branches on a failed harness. If it
+relied on the old `0`, add `|| true` after the launch, or read the status explicitly with `rc=$?`.
+`meridian session` browse re-runs `meridian --continue`, so it now returns the resumed harness's
+status too.
+
+This change writes no new on-disk state. Rollback has not been probed.
+
 ## A continue keeps the spawn ID
 
 `--continue pN`, `--continue cN` and the session browser now keep the spawn's ID: the

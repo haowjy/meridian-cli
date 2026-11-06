@@ -138,32 +138,33 @@ def register_bootstrap_command(app: App) -> None:
                 output_format="text",
             )
 
-        emit(
-            primary_launch.run_primary_launch(
-                project_root=project_root,
-                continue_ref=None,
-                fork_ref=None,
-                fork_fresh_ref=None,
-                model=model,
-                harness=global_harness or explicit_harness,
-                agent=agent,
-                work=work,
-                task_dir=None,
-                yolo=yolo,
-                approval=approval,
-                autocompact=autocompact,
-                autocompact_pct=autocompact_pct,
-                effort=effort,
-                sandbox=sandbox,
-                network=network,
-                network_allow=network_allow,
-                network_deny=network_deny,
-                timeout=timeout,
-                dry_run=dry_run,
-                passthrough=options.passthrough_args,
-                include_bootstrap_documents=True,
-            )
+        output = primary_launch.run_primary_launch(
+            project_root=project_root,
+            continue_ref=None,
+            fork_ref=None,
+            fork_fresh_ref=None,
+            model=model,
+            harness=global_harness or explicit_harness,
+            agent=agent,
+            work=work,
+            task_dir=None,
+            yolo=yolo,
+            approval=approval,
+            autocompact=autocompact,
+            autocompact_pct=autocompact_pct,
+            effort=effort,
+            sandbox=sandbox,
+            network=network,
+            network_allow=network_allow,
+            network_deny=network_deny,
+            timeout=timeout,
+            dry_run=dry_run,
+            passthrough=options.passthrough_args,
+            include_bootstrap_documents=True,
         )
+        emit(output)
+        if output.shell_status != 0:
+            raise SystemExit(output.shell_status)
 
     app.command(bootstrap, name="bootstrap")
 
