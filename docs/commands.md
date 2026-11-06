@@ -37,12 +37,15 @@ A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exi
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn message` uses the control endpoint for spawned sessions. It prints
+`spawn message` reaches a session through the control socket its launcher serves, for
+spawned sessions and primaries alike. It prints
 "Message delivered" when the harness answered the request that carried the message
 (Codex, OpenCode, Pi) and "Message posted … (no receipt)" when the write finished but
-the harness confirms nothing (Claude). For a live Claude
-primary, it posts to Claude Code's session inbox; the command confirms only that
-the message was posted, not delivered. Claude holds the message for human approval
+the harness confirms nothing (Claude). A Claude primary's launcher binds its socket once
+Claude has published its session inbox, so a primary that has not (`--bare`, `--safe-mode`,
+`--print`, Claude older than 2.1.224) has no socket; the command waits up to 30 seconds
+for one, then fails saying the session has no message route. A primary started by an older
+build never had a socket and needs a relaunch. Claude holds the message for human approval
 when that session bypasses permission prompts and `crossSessionInbound` is not
 `accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
 `~/.claude/settings.json`. This applies to every peer message, not only
@@ -58,9 +61,9 @@ that chat now, else the spawn that ran it; a chat ID never means a child it laun
 After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
-`cancel` on a primary still needs `--force`. Other primary harnesses
-fail immediately because they do not yet expose a message route
-([#498](https://github.com/haowjy/meridian-cli/issues/498)).
+`cancel` on a primary still needs `--force`. Codex, OpenCode and Pi primaries
+have no message route yet ([#498](https://github.com/haowjy/meridian-cli/issues/498));
+the command waits 30 seconds and fails.
 
 Common `spawn` flags:
 

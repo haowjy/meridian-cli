@@ -28,8 +28,8 @@ _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 
 class _ControlSocketStartFails:
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: object) -> None:
-        _ = spawn_id, socket_path, manager
+    def __init__(self, socket_path: Path, route: object) -> None:
+        _ = socket_path, route
 
     async def start(self) -> None:
         raise RuntimeError("Injected control socket setup failure")

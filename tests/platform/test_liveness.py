@@ -54,7 +54,6 @@ def test_process_liveness_treats_zombie_as_exited(monkeypatch) -> None:
 
     assert liveness.is_process_alive(123) is False
     assert liveness.is_process_alive_with_birth(123, 100.0) is False
-    assert liveness.is_process_alive_born_by(123, 100.0) is False
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX zombie semantics")
@@ -87,7 +86,6 @@ def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     monkeypatch.setattr(liveness.psutil, "Process", _raise_access_denied)
 
     assert liveness.is_process_alive(123) is True
-    assert liveness.is_process_alive_born_by(123, 100.0) is False
 
 
 def test_birth_liveness_tolerates_clock_steps_on_live_process() -> None:

@@ -30,6 +30,12 @@ snapshots. Register any new launcher in `select_process_launcher()`.
 - **`conclude_native_run()` runs once** after child exit, before lifecycle completion.
   Managed attach routes owned IDs through `NativeRun.observe`; it does not bind or
   decide identity itself.
+- **A primary's control socket is lexical too.** The black-box leg runs inside
+  `primary_control_socket(...)` (`primary_control_socket.py`): `serve(pid)` from the
+  on-running callback starts a daemon thread that binds the socket once the harness bundle's
+  `primary_message_route` returns a route, and leaving the block unbinds it and joins the
+  thread, inside the launch lock and before finalize. `serve` never raises, because a raising
+  on-running callback kills the child. Managed attach serves nothing yet.
 - **Assigned identity binds before exec.** A finalized `native_identity` with an ID
   (minted create, verified resume, fork target) binds as `source="assigned"` before the
   child starts; a conflict refuses the launch. Identities without an ID (Claude fork)

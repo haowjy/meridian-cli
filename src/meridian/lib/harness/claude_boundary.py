@@ -123,7 +123,7 @@ def read_observations(
     return NativeObservationBatch(tuple(observations), next_cursor)
 
 
-def latest_messaging_socket(path: Path, *, pid: int) -> tuple[Path, float | None] | None:
+def latest_messaging_socket(path: Path, *, pid: int) -> Path | None:
     """Return the last usable inbox socket published by one Claude process."""
 
     try:
@@ -132,14 +132,11 @@ def latest_messaging_socket(path: Path, *, pid: int) -> tuple[Path, float | None
     except OSError:
         return None
 
-    latest: tuple[Path, float | None] | None = None
+    latest: Path | None = None
     for _, record in _iter_complete_records(raw):
         if record is None or record.pid != pid:
             continue
         socket_path = _usable_messaging_socket(record.messaging_socket)
         if socket_path is not None:
-            recorded_at = record.recorded_at
-            if isinstance(recorded_at, bool) or not isinstance(recorded_at, int | float):
-                recorded_at = None
-            latest = socket_path, None if recorded_at is None else float(recorded_at)
+            latest = socket_path
     return latest

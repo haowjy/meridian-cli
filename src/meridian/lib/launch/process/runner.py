@@ -102,6 +102,7 @@ from .ports import (
     ProcessLauncher,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
+from .primary_control_socket import primary_control_socket
 from .selector import select_process_launcher
 from .session import (
     build_session_metadata,
@@ -484,32 +485,37 @@ def _execute_primary_process(
     if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(launch.stderr_log)
 
-    def record_blackbox_started(identity: ProcessIdentity) -> None:
-        captured = output_log_path is not None
-        record_scope(
-            launch,
-            scope_from_identity(
-                identity,
-                scope_id="stdio" if captured else "tui",
-                role="harness_stdio" if captured else "harness_tui",
-                owner_policy="spawn_owned",
-                owner_id=str(launch.spawn_id),
-            ),
-        )
-        on_running(identity)
+    with primary_control_socket(
+        launch, get_harness_bundle(harness_id).primary_message_route
+    ) as serve_control_socket:
 
-    blackbox_result = _execute_via_blackbox(
-        command=command,
-        launch_cwd=launch_cwd,
-        child_env=blackbox_env,
-        output_log_path=output_log_path,
-        process_launcher=select_process_launcher(
-            output_log_path, terminal_surface_mode=terminal_surface_mode
-        ),
-        launcher_diagnostics_path=launcher_diagnostics_path,
-        run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-        on_running=record_blackbox_started,
-    )
+        def record_blackbox_started(identity: ProcessIdentity) -> None:
+            captured = output_log_path is not None
+            record_scope(
+                launch,
+                scope_from_identity(
+                    identity,
+                    scope_id="stdio" if captured else "tui",
+                    role="harness_stdio" if captured else "harness_tui",
+                    owner_policy="spawn_owned",
+                    owner_id=str(launch.spawn_id),
+                ),
+            )
+            on_running(identity)
+            serve_control_socket(identity.pid)
+
+        blackbox_result = _execute_via_blackbox(
+            command=command,
+            launch_cwd=launch_cwd,
+            child_env=blackbox_env,
+            output_log_path=output_log_path,
+            process_launcher=select_process_launcher(
+                output_log_path, terminal_surface_mode=terminal_surface_mode
+            ),
+            launcher_diagnostics_path=launcher_diagnostics_path,
+            run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
+            on_running=record_blackbox_started,
+        )
     fold = get_harness_bundle(harness_id).extractor.create_fold(usage_seed)
     if output_log_path is not None and output_log_path.is_file():
         fold.fold_stdout(output_log_path, harness_id)

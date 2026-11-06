@@ -141,19 +141,20 @@ it was found). Nothing is recorded
 in Meridian's state, and several distinct files refuse. Relocate calls `locate_claude_session_files`
 itself for its source file.
 
-### Primary inbox injection
+### Primary message route
 
-`HarnessBundle.primary_inbox` is the optional mechanism port for posting to a
-live primary TUI that has no `SpawnManager` connection. The CLI selects it only
-for `kind == "primary"`; spawned sessions continue through their serialized
-control socket. Claude resolves the latest SessionStart-published inbox socket
-and record epoch for the primary's recorded worker PID, then refuses the post
-unless that PID is still a live, non-zombie process born by the recorded epoch.
-This prevents a stale primary row from posting to an unrelated Claude process
-that reused the PID. Claude owns the native wire protocol. A post has no delivery
-acknowledgement and must not be described as delivered. `primary_inbox_route`
-runs the same resolution without posting; the message frame uses it to decide
-whether to advertise a reply, and a primary without it counts as unreachable.
+`HarnessBundle.primary_message_route(launch, pid)` is the optional port by which a
+primary launcher serves the same control socket a spawned session's manager serves.
+It returns a `MessageRoute` (a `deliver` coroutine and an optional note shown to the
+sender) or `None` while the harness has no route to offer. The launcher
+(`launch/process/primary_control_socket.py`) polls it every 0.25 s from the moment
+the child starts and binds the socket only once it returns a route, so a socket file
+always means a message can be delivered. Claude's route exists once the
+SessionStart-published inbox socket for that exact child PID appears in the launch's
+boundary journal; each send re-reads the journal and writes the wire frame to the
+inbox, which is `DeliveryKind.POSTED`. The socket is unbound with the launcher's
+lexical block, so no PID-reuse check is needed. A harness with no port (Codex,
+OpenCode, Pi until their routes land) serves nothing.
 
 ### `HarnessContract` as Inspectable Surface
 
