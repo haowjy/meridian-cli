@@ -75,6 +75,12 @@ class PrimaryLaunchOutput(BaseModel):
     terminal_surface_mode: str | None = None
     launcher_diagnostics_path: Path | None = None
 
+    @property
+    def shell_status(self) -> int:
+        """``exit_code`` as a process status: a child killed by signal N (Popen reports
+        ``-N``) maps to the shell's ``128+N``; anything else wraps into 0-255."""
+        return 128 - self.exit_code if self.exit_code < 0 else self.exit_code & 0xFF
+
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         lines: list[str] = [self.boundary_summary] if self.boundary_summary else []

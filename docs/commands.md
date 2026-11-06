@@ -31,6 +31,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
+A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exits with its harness's exit code, so a failed harness fails the shell command. A clean quit (`/exit`, Ctrl-D) is `0`. A harness killed by signal N exits `128+N`, and closing the terminal or sending SIGTERM/SIGHUP to meridian cancels the session (`130`). `--dry-run` is `0`.
+
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
 `spawn message` uses the control endpoint for spawned sessions. For a live Claude
