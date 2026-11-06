@@ -34,14 +34,16 @@ should also accept `143` and `129`; a spawn that Meridian cancelled has status `
 number it carries. Spawns recorded earlier with `130` stay valid and read as before. A harness that
 ends itself with SIGTERM also gives `143`; read the spawn's status to tell it from a cancel.
 
-`meridian spawn cancel` sends SIGTERM, so its recorded intent is now `143`, not `130`. That shows
-for `--force` on a live primary, and for any spawn whose runner is already gone when it is cancelled;
-a spawn whose runner receives the SIGTERM already stored `143`.
+`meridian spawn cancel` sends SIGTERM, so every cancel it records is now `143`, not `130`: a live
+spawn, `--force` on a live primary, and a spawn whose runner is already gone. A live spawn stored
+`130` before.
 
-A SIGINT that reaches Meridian (`kill -INT`, or a redirected stdin) now stores `130` and ends
-`cancelled`; before, it exited `130` but stored `2` and ended `failed`. A terminal Ctrl-C normally
-goes to the harness, not Meridian, so the result is the harness's own. A Ctrl-C during shutdown can
-still give shell `130` with a different stored result.
+A SIGINT that reaches a black-box primary (`kill -INT`, or a redirected stdin) now stores `130` and
+ends `cancelled`; before, it exited `130` but stored `2` and ended `failed`. A native primary's TUI
+shields SIGINT, so `kill -INT` during the TUI does nothing; outside the shield, in the seconds after
+the harness exits, it is a cancel. A terminal Ctrl-C normally goes to the harness, not Meridian, so
+the result is the harness's own. Once Meridian is writing the final result, a signal waits until the
+write and the `spawn.finished` hooks are done; a second one at least a second later ends it at once.
 
 This change writes no new on-disk state. Rollback has not been probed.
 

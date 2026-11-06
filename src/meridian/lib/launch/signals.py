@@ -19,11 +19,16 @@ from typing import Final, Protocol, cast, overload
 # Signal forwarding
 # ---------------------------------------------------------------------------
 
-TARGET_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGINT, signal.SIGTERM)
 # Deferred for the length of a ``mask_termination`` section, then re-delivered. A closing
 # terminal sends SIGHUP, which would otherwise kill a runner halfway through its terminal write.
-TERMINATION_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGTERM, signal.SIGHUP)
-MASKED_SIGNALS: Final[tuple[signal.Signals, ...]] = (*TARGET_SIGNALS, *TERMINATION_SIGNALS)
+MASKED_SIGNALS: Final[tuple[signal.Signals, ...]] = (
+    signal.SIGINT,
+    signal.SIGTERM,
+    signal.SIGHUP,
+)
+# A repeat of a deferred signal this long after the first one is a deliberate force-quit and
+# passes through the mask; a closer repeat is a burst (a closing terminal sends SIGHUP twice).
+MASK_ESCAPE_GRACE_SECS: Final = 1.0
 
 
 @overload
@@ -102,7 +107,8 @@ class SignalCoordinator:
         self._previous_handlers: dict[signal.Signals, signal.Handlers] = {}
         self._installed_signals: set[signal.Signals] = set()
         self._termination_mask_depth = 0
-        self._deferred_termination: list[signal.Signals] = []
+        # First arrival time of each signal deferred by the current mask, in arrival order.
+        self._deferred_termination: dict[signal.Signals, float] = {}
 
     def register_receiver(self, receiver: SignalReceiver) -> None:
         with self._lock:
@@ -118,7 +124,11 @@ class SignalCoordinator:
     def mask_termination(self) -> Generator[None, None, None]:
         """Defer SIGINT, SIGTERM and SIGHUP while executing a critical section.
 
-        A signal that arrives inside is re-delivered on exit, so it is delayed, not lost.
+        A signal that arrives inside is re-delivered once on exit, so it is delayed, not lost.
+        The mask is not a trap: a repeat of a deferred signal at least ``MASK_ESCAPE_GRACE_SECS``
+        after the first goes to the handler that was in place before the mask, so a stuck
+        section can still be force-quit (Ctrl-C twice). Only a caller's own bound (the
+        ``spawn cancel`` SIGKILL deadline) limits the wait for anything else.
         Handlers can only be changed from the main thread, so elsewhere this does nothing
         and cannot swallow a signal meant for the main thread.
         """
@@ -126,20 +136,32 @@ class SignalCoordinator:
         if current_thread() is not main_thread():
             yield
             return
-        with self._lock:
-            self._termination_mask_depth += 1
-            self._reconcile_handlers_locked()
         try:
+            with self._lock:
+                self._termination_mask_depth += 1
+                self._reconcile_handlers_locked()
             yield
         finally:
             with self._lock:
                 self._termination_mask_depth -= 1
                 self._reconcile_handlers_locked()
-                deferred = self._deferred_termination if self._termination_mask_depth == 0 else []
+                deferred = (
+                    tuple(self._deferred_termination) if self._termination_mask_depth == 0 else ()
+                )
                 if deferred:
-                    self._deferred_termination = []
+                    self._deferred_termination = {}
             for signum in deferred:
                 os.kill(os.getpid(), signum)
+
+    def deferred_signal(self) -> signal.Signals | None:
+        """The first signal the current mask has deferred, if any.
+
+        A section that records an outcome reads this just before the write, so a signal that
+        arrived inside the mask is part of what it records.
+        """
+
+        with self._lock:
+            return next(iter(self._deferred_termination), None)
 
     def _desired_signals_locked(self) -> set[signal.Signals]:
         desired: set[signal.Signals] = set()
@@ -192,13 +214,20 @@ class SignalCoordinator:
     def _on_signal(self, raw_signum: int, frame: FrameType | None) -> None:
         signum = signal.Signals(raw_signum)
         with self._lock:
-            if signum in MASKED_SIGNALS and self._termination_mask_depth > 0:
-                self._deferred_termination.append(signum)
-                return
-            receivers = tuple(
-                receiver for receiver in self._receivers if signum in receiver.target_signals
-            )
             previous_handler = self._previous_handlers.get(signum, signal.SIG_DFL)
+            if signum in MASKED_SIGNALS and self._termination_mask_depth > 0:
+                now = time.monotonic()
+                first_seen = self._deferred_termination.setdefault(signum, now)
+                if now - first_seen < MASK_ESCAPE_GRACE_SECS:
+                    return
+                # A deliberate repeat: force-quit through the pre-mask handler, and do not
+                # re-deliver it again on unmask.
+                del self._deferred_termination[signum]
+                receivers = ()
+            else:
+                receivers = tuple(
+                    receiver for receiver in self._receivers if signum in receiver.target_signals
+                )
 
         if receivers:
             for receiver in receivers:

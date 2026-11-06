@@ -250,7 +250,7 @@ If `report.md` exists and looks complete, the work product is likely usable even
 
 ## Spawn exited with code 143 or 137
 
-The process was killed externally (SIGTERM/SIGKILL). Check `meridian spawn show ID` — if status is `succeeded`, the signal hit during cleanup and no retry is needed. Otherwise check for OOM or external kill, then retry.
+The process was killed externally (SIGTERM/SIGKILL). Check `meridian spawn show ID` — if status is `succeeded`, the signal hit during cleanup and no retry is needed. If it is `cancelled`, someone cancelled it on purpose (`spawn cancel` records `143`): do not retry it. Otherwise check for OOM or external kill, then retry.
 
 ## A package's hook doesn't run
 

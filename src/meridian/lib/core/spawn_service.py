@@ -55,6 +55,7 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
 )
+from meridian.lib.launch.signals import signal_to_exit_code
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.json_doc import write_model_once
@@ -618,7 +619,7 @@ class SpawnApplicationService:
             launch,
             CancelIntent(
                 requested_at=RealClock().utc_now_iso(),
-                exit_code=128 + signal.SIGTERM.value,
+                exit_code=signal_to_exit_code(signal.SIGTERM),
                 error="cancelled",
                 requested_by=requested_by,
             ),

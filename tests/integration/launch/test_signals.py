@@ -340,3 +340,32 @@ def test_signal_callback_receiver_without_escalation_never_re_raises(
     assert calls == [signal.SIGHUP, signal.SIGHUP]
     assert installed == []
     assert kills == []
+
+
+def test_mask_termination_defers_then_redelivers_once_and_a_late_repeat_escapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    clock = {"now": 100.0}
+    monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
+    seen: list[str] = []
+    previous = signal.signal(signal.SIGINT, lambda *_: seen.append("previous"))
+    try:
+        coordinator = SignalCoordinator()
+        with coordinator.mask_termination():
+            os.kill(os.getpid(), signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)  # a burst counts once
+            assert seen == []
+            assert coordinator.deferred_signal() == signal.SIGINT
+            clock["now"] += 1.5
+            os.kill(os.getpid(), signal.SIGINT)  # a deliberate repeat force-quits
+            assert seen == ["previous"]
+            assert coordinator.deferred_signal() is None
+        assert seen == ["previous"]
+
+        with coordinator.mask_termination():
+            os.kill(os.getpid(), signal.SIGINT)
+        assert seen == ["previous", "previous"]
+    finally:
+        signal.signal(signal.SIGINT, previous)

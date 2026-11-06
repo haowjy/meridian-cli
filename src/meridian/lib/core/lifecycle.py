@@ -426,10 +426,12 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            # A SIGTERM or SIGHUP (a closing terminal) mid-write would leave the launch reading as
-            # crashed where it had finished, and one right after would kill the runner before the
-            # hooks ran. The mask defers it past the hooks and re-delivers it on exit, so a cancel
-            # racing the finish still gets ``spawn.finished``; its SIGKILL deadline bounds the wait.
+            # A SIGTERM, SIGHUP (a closing terminal) or SIGINT mid-write would leave the launch
+            # reading as crashed where it had finished, and one right after would kill the runner
+            # before the hooks ran. The mask defers it past the hooks and re-delivers it on exit,
+            # so a cancel racing the finish still gets ``spawn.finished``. What bounds the wait:
+            # ``spawn cancel``'s SIGKILL deadline, or a repeat signal 1s or more after the first
+            # (Ctrl-C twice); a lone Ctrl-C or ``kill -INT`` waits for the hooks and the lock.
             with signal_coordinator().mask_termination():
                 outcome = _spawn_store().finalize_spawn(
                     self._runtime_root,
