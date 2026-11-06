@@ -311,6 +311,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root.", project_scoped=True
     ),
     _internal_handle(
+        "_MERIDIAN_PI_CONTROL_SOCKET",
+        "Control socket path the meridian-message extension serves for a Pi primary.",
+        project_scoped=True,
+    ),
+    _internal_handle(
         "_MERIDIAN_PI_OWED_PARENT_IDS",
         "Resolved Pi result-delivery parent scope for the launch's spawn watcher.",
         project_scoped=True,
