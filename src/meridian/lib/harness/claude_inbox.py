@@ -49,7 +49,10 @@ def _post(inbox: Path, text: str) -> None:
         try:
             client.sendall(wire_message)
         except OSError as exc:
-            raise DeliveryError(f"Could not post to Claude's inbox: {exc.strerror or exc}") from exc
+            raise DeliveryError(
+                f"Could not post to Claude's inbox: {exc.strerror or exc}; "
+                "the message may have arrived and was not resent"
+            ) from exc
 
         try:
             client.shutdown(socket.SHUT_WR)
