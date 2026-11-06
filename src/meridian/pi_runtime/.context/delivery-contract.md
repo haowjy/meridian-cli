@@ -21,8 +21,6 @@ one launch-scoped notification owner, and one Python public-event observer.
 | `cleared-launches.json` | spawn watcher UI | v1 parent, finite `updated_at_ms`, `cleared_launches`; explicit dismissal. Reads union every owned parent's file; only the current spawn's file is written. |
 | `delivery-fault.json` | spawn watcher | `{v:1,spawn_id,operation:"scan"|"admission"|null,error:string|null}`; bounded delivery diagnostics independent of execution records. |
 
-**Files from before launches** (`delivery-receipts.json`, `cleared-spawns.json` under `pi-bash/<parent>/`, `observed-spawns.json` in `spawns/<parent>/`) key spawns by bare ID. They are read and never written: a bare spawn entry means launch 1 (an older build cannot read a v4 row, so it only consumed launch 1), a bare bash ID is read as written. The Pi mirror `pi-bash/<parent>/observed-spawns.json` is retired: not read, not written. An older build mixed in re-delivers results the new build consumed, once per run of that older build; it never loses one.
-
 The watcher treats canonical direct `parent_id` rows as this session's children and
 delivers only those launched with `launch_mode: "background"`: a launcher that waited for
 a foreground child already has its result, so only the launching Bash record can still
@@ -151,11 +149,6 @@ the missing acknowledgement or delete the receipt to force readiness. Native
 session admission and disk writes cannot guarantee atomic exactly-once delivery
 across a process crash.
 
-`last-notification.json` is retired and ignored. It proves no result membership
-or admission; upgrading an old unconsumed terminal result can repeat a notice
-whose former admission cannot be proved. Start fresh sessions when changing
-bundles; never mix old and new writers for one parent.
-
 One Python reader in `lib/harness/pi_private_state.py` supplies both CLI owed-result
 discovery and this watcher with the same consumption set: admitted work IDs from
 `launch-receipts.json`, CLI wait/ack/cancel/show/status/report-show observations from
@@ -173,3 +166,4 @@ skipped source in its evidence ledger; wait/collect report the skip and may repe
 header rather than fail or retry forever. With readable
 state, no-argument `spawn wait` and `spawn collect` do not replay a result already
 delivered or cleared.
+

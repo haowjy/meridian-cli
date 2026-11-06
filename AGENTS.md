@@ -10,11 +10,23 @@ fields; new builds read state older builds wrote (`docs/releasing.md#compatibili
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
-**NEVER merge a PR into `main` without explicit human approval in the current
-conversation.** Stop at draft→ready with a `release:*` label. Approval to merge
-one PR does not carry to the next. Two exceptions go straight to `main` without
-approval: docs-only changes, and tiny, obvious bug fixes. Merging lanes into a task
-branch, or your reviewed part PRs into a `release/v<X>.<Y>.0` branch, needs no approval.
+**NEVER merge a feature PR or a release branch into `main` without explicit human
+approval in the current conversation.** Stop at draft→ready with a `release:*` label.
+Approval to merge one PR does not carry to the next. Docs-only changes go straight to
+`main`. Merging lanes into a task branch, or your reviewed part PRs into a
+`release/v<X>.<Y>.0` branch, needs no approval.
+
+An agent may merge a fix or an approved refactor into `main` without asking, at any
+size. A fix restores intended behavior; changing what users are meant to see is a feature.
+A refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
+its issue or PR; another agent's report of that approval doesn't count. Before merging, CI
+is green, the regressions the change could cause are tested, and the PR body is reread
+against the final diff, with evidence from the commit being merged. A big fix also needs
+an independent review. These merges release, so take the label with care: `release:patch` publishes to users, and a change with no user effect takes `release:skip`.
+
+Big means impact, not size: a change is big when it crosses a boundary others depend on.
+That is the CLI's commands, flags or output, a config or profile format, files under `.meridian/` or `~/.meridian/`, the harness adapter seam, or the Mars package contract. A change that looks narrow but alters behavior others rely on is big
+too; when unsure, call it big.
 
 **NEVER use `--no-verify` on git push** unless explicitly instructed.
 
@@ -40,6 +52,8 @@ These hold however the work is done, including through the Rust rewrite. Change 
 | Private content never reaches the wrong recipient: secrets, another session's transcript, turn text that was excluded | Scattered by area |
 | A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
 | Meridian is an overlay on the harness. A session it starts stays a normal native session: the conversation lives in the harness's own store and format, and can be resumed with the harness alone. Removing Meridian leaves the harness and its sessions working. | None yet |
+
+A restriction is lost when a harness can't express part of a profile. It shows in Mars's default output and in `--dry-run`, not at launch.
 
 ## Comments
 

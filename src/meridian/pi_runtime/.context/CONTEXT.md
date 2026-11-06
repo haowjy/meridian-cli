@@ -1,52 +1,5 @@
 # pi_runtime/ — Context
 
-## Architecture
-
-Meridian-owned TypeScript extensions that run inside the Pi harness process. Pi is the
-first harness with an in-process extension architecture — other harnesses are opaque
-subprocesses. Extensions give Meridian a seam for observability and coordination that
-Pi's native CLI does not expose.
-
-The coordination boundary is **disk state the extensions write and Python observes**.
-Pi stdout remains the JSON-RPC transport; background-work and child-spawn authority does
-not travel over stdout and does not use a separate JSONL event tailer.
-
-### Directory Layout
-
-```
-pi_runtime/
-├── package.json              # extension build/test scripts, "meridian-pi-extensions"
-├── pnpm-workspace.yaml       # declares packages=[], allows esbuild builds
-├── pnpm-lock.yaml            # exact dependency tree
-├── dist/                     # build output: splatted entrypoints
-│   └── extensions/
-│       ├── managed-bash/index.js
-│       ├── meridian-spawn-watch/index.js
-│       ├── session-boundary/index.js
-│       ├── meridian-idle/index.js
-│       └── meridian-permissions/index.js
-└── extensions/
-    ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
-    ├── managed-bash/
-    │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
-    ├── meridian-spawn-watch/
-    │   └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
-    ├── session-boundary/
-    │   └── src/index.ts      # native lifecycle observations, no journal writes
-    ├── meridian-idle/
-    │   └── src/index.ts      # primary idle/input sensor and push/warn timers
-    └── meridian-permissions/
-        └── src/index.ts      # launch-local scoped rules and ask handler
-```
-
-### Extension Responsibilities
-
-`session-boundary` consumes launch path/nonce handles and atomically publishes a
-v2 record of at most 16 KiB to `spawns/<run>/pi-session-boundary.json`. Python reads
-once after process exit, validating nonce and actual Pi PID. Initial entry stays
-fixed across switches; only a final readable `session_shutdown(reason=quit)`
-supplies exit identity. No itinerary or native journal writes.
-
 Lifecycle handlers use their invocation context, never a retained context. A
 shutdown context may already be invalidated by Pi session replacement or reload.
 The extension recognizes only the exact error-text prefix
@@ -54,13 +7,6 @@ The extension recognizes only the exact error-text prefix
 that shutdown without identity, clearing any earlier quit. Other identity-read
 faults poison the record and rethrow. Requalify this error-text dependency when
 upgrading Pi; never infer exit from current/target session or the last-seen ID.
-
-| Extension | Owns | Writes / observes |
-|---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
-| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
-| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | observes scoped managed-bash rows at `agent_end`, shells out to the hidden `meridian idle` API, and owns in-memory push/warn timers; the core decides and delivers every notification |
-| `meridian-permissions` | scoped tool rules, allowlist backstops, and `ask` | blocks Pi `tool_call` events with a policy reason; writes no authority, and the Python extractor journals that error from `tool_execution_end` |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
@@ -76,7 +22,7 @@ deny the policy writes beside scoped allows — or when a scoped `ask` exists. U
 unscoped `allow` (or no rule) only scoped denies can refuse, so they are best effort: an
 unsplittable command runs, and the report marks those denies `partial`. Refusing there
 would break ordinary shell use (`2>&1 | tail`, `$VAR`, redirects) for every profile with
-`bash: allow` and a few scoped denies, which v0.11.8 did not enforce at all. A completion
+`bash: allow` and a few scoped denies. A completion
 backstop applies only when the entire input is one `meridian spawn done` or `meridian
 spawn rearm` command whose optional arguments contain only letters, digits, `_`, `.`,
 or `-`. File-tool scopes canonicalize the requested path and the rule's non-wildcard
@@ -127,38 +73,6 @@ passed no `timeout_min` and is then running a Meridian wait or a foreground spaw
 and checks again at the next expiry (`meridian_hold.ts`), until it has been in the foreground 55
 minutes. A backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
 notice carries no output, so the model would get only a truncated tail, behind an extra call.
-
-The evidence is the hold directory `pi-bash/<session spawn id>/holds/<bash id>/`. Managed bash
-puts its absolute path in `_MERIDIAN_PI_BASH_HOLD_DIR` for the task's shell; the CLI's
-`hold_pi_bash()` (around `spawn wait` and every `spawn` create, fork or continue) reads it,
-writes `<pid>.json` = `{v:1, owner_pid, owner_birth_epoch}` once, and removes it on exit. The task
-is held while any file parses and its owner is alive with the same birth time (`ps`, the check
-the wait leases use). A crash leaves a dead owner, and a failed check (`ps` errors) also reads as not held, so there is no
-heartbeat or expiry. Managed bash removes the hold directory when it marks the task terminal. Because the variable is not project-scoped, `-C` keeps it: a `--no-observe`
-or cross-project wait is held like any other. Both variables are in `BLOCKED_CHILD_ENV_VARS`, so
-a harness child never inherits its parent's task. No Pi task, no file.
-
-Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID` to the task's own CLI
-(the spawn store records it as the child row's `originating_bash_id`); the bash record keeps
-no origin. Canonical child spawn rows carry parent/origin membership; no origin sidecar is produced.
-Terminal tracked background Bash rows are durable result obligations. Their persisted
-`notification_consumed_at_ms` consumes a terminal wait or `output` result with
-available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
-unattended notice. Sending or queueing is not consumption. Wait blocks up to
-55 minutes (its own constant, independent of the 4-minute foreground default)
-with no model-chosen limit: a short wait let the model read results around
-consumption and receive the same completion again. The
-tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
-staging leaves the result owed, even if the pending reply includes a known terminal
-status. Once acknowledgement has staged, a successful write returns its result;
-a later abort cannot roll it back. Timed-out/pending replies do not consume.
-Eligibility uses the outcome observed before log I/O, revalidated for new faults,
-not a later ordinary completion. This is not atomic native model delivery.
-`BashPublication` owns the immutable published snapshot and its serialized
-stage → write → adopt path. Each slot stages against the previous adoption plus
-current evidence, writes one prospective value, and adopts that same value only
-on success. Failed writes leave no tentative metadata to undo. There is no second
-patch/commit description or serialization blacklist.
 
 Live `Execution` objects separately own handles, output queues, progress, creation
 proposals and first-fault evidence. A snapshot swap cannot replace them. Readers
@@ -218,186 +132,3 @@ publication sequencing, fixed report/member/message bounds, subtract-only
 revalidation, cancellation generations, exact admission/public observation, and
 restart/crash behavior. Scan, report, and receipt failures remain supervised in
 `delivery-fault.json`.
-
-### Build Pipeline
-
-`pnpm run build:extensions` cleans once, then builds five extension entrypoints:
-
-1. `build:extensions:clean` — removes `./dist/extensions`
-2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
-3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
-4. `build:extensions:session-boundary` — bundles the native session observer
-5. `build:extensions:meridian-idle` — bundles the primary idle sensor
-6. `build:extensions:meridian-permissions` — bundles the launch-local permission handler
-
-`pnpm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
-
-Output goes to `dist/extensions/`. Python launch projection resolves entrypoints with
-`pi_extension_projection.py`, preferring the repo build output during local development
-and falling back to the stable install root from `pi_paths.resolve_meridian_pi_extension_root()`.
-A missing bundle raises `PiExtensionProjectionError` with the build command.
-
-### Extension Loading
-
-Pi loads stable bundles via explicit `-e <path>` flags; projection does not copy
-extensions into per-launch agent directories. Both roles load managed-bash and
-spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
-always loaded by the adapter and has no config toggle. Meridian-idle is selected
-only when the launch profile is interactive. Meridian-permissions is selected only
-when the bound policy needs scoped matching, `ask`, or an allowlist/platform backstop;
-its typed policy is passed in `_MERIDIAN_PI_PERMISSION_POLICY` for that launch.
-The variable is absent when no handler is needed. If it is present but empty,
-malformed, or has an unsupported shape, the extension throws during load. Pi aborts
-on an explicit extension load error, and projection refuses a missing bundle, so a
-passed policy never degrades to unchecked tool execution.
-Meridian-idle passes `--interactive` on every
-`meridian idle` call, serializes arm/return transitions without making user input
-wait for the CLI, and fires each due push/warn stage back to the core. Its arm
-snapshot contains the tracked background Bash rows still running, bounded to 16
-facts. Commands up to 512 characters remain shell facts; longer commands become
-`other` instead of incomplete shell syntax. Invalid or unresolved Bash evidence
-degrades to no task facts rather than preventing the arm; command interpretation
-remains in the Python idle core.
-
-- **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
-  while retaining native skill, context-file, and prompt-template discovery.
-  `load_all_pi_extensions = true` retains native extension discovery and adds
-  configured extra roots.
-- **Primary native TUI**: retain native discovery, including ambient extensions;
-  managed-bash overrides bash when enabled. No spawned-session quiescence auto-stop.
-
-Both projectors reject passthrough mode and extension-loading selectors.
-`MERIDIAN_SESSION_ROLE` gates role-specific behavior;
-`_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime;
-`_MERIDIAN_PI_OWED_PARENT_IDS` carries a primary launch's result-delivery parent
-set and is blocked from children, so each session scopes its own obligations.
-
-## Contracts
-
-### Disk-State Coordination
-
-The Python streaming layer separates persisted-descendant and Pi-private
-quiescence inputs:
-
-- valid rows under `runtime_root/spawns/` — read through the shared reconciled
-  transitive descendant evidence
-- `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
-- exact admission and public observation files — causal notification membership,
-  fenced by the matching public message event
-- explicit result consumption/dismissal, process-owned wait leases and delivery faults;
-  `observed-launches.json` lives in the parent's `runtime_root/spawns/<parent>/`. Ledgers
-  are keyed by launch (`<spawn id>:<n>`); the files older builds wrote are read as launch 1
-  ([delivery contract](delivery-contract.md))
-
-Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
-Missing authority is empty. Present malformed, truncated, wrong-parent or invalid
-schema evidence is unknown; readers recheck disk before final quiescence. Retired
-`last-notification.json` is ignored.
-
-`PiDiskWatcher` reads only private task/delivery coordination files. It does not scan spawn
-directories or infer descendants from newer IDs; in the parent's spawn directory it wakes
-only for the files it reads. Both Pi and resident drains use
-the shared reconciled transitive tree; keep extension notification and bash state
-independent of persisted descendant state.
-
-### Native ExtensionAPI
-
-Extensions import the native `ExtensionAPI` from the Pi package root:
-
-- `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `on(event, handler)` — register typed native lifecycle and session hooks
-- `sendMessage(message, options)` — void queue/prompt operation, never admission acknowledgement
-- native `message_start` — exact custom-message admission; receipt hook runs before public RPC event
-- `ctx.isIdle()` — idle-fallback publication capability; `ctx.ui.notify()` frames slash output through RPC
-
-### Spawn Correlation
-
-`managed-bash` injects `_MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
-process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
-Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
-record. The watcher scopes `/spawn` by canonical direct `parent_id` and delivers only a
-background `launch_mode` (`isBackgroundLaunch` mirrors core's `is_owed_child`): a
-launcher that waited for a foreground child already has that result. Which parents are
-direct is core's rule too (`lib/state/spawn_ownership.py`),
-handed to the launch as `_MERIDIAN_PI_OWED_PARENT_IDS` so a resumed primary delivers what
-its crashed generations launched instead of only its own children. A matching
-`originating_bash_id` on a background child transfers the launcher obligation
-to that child. Logs, remembered discovery, timers and origin sidecars do not
-establish authority, including during atomic publication races.
-
-### Build Invariant
-
-Extensions must be built before Pi launch. The projection layer raises
-`PiExtensionProjectionError` if `dist/extensions/<name>/index.js` and the installed bundle
-copy are both missing.
-
-## Rationale
-
-### Why In-Process Extensions
-
-Pi's RPC protocol gives Meridian a bidirectional JSON-RPC session, but not enough native
-surface for background task tracking, child-spawn correlation, or follow-up notification
-policy. In-process extensions can override tools, observe session events, and call
-`sendMessage()` without wrapping Pi in a fake terminal or scraping stdout.
-
-### Why Disk Instead of Sidecar Events
-
-Current Pi coordination is state-based:
-
-- spawn creation atomically publishes complete persisted rows;
-- extensions write durable private bash/notification state;
-- `PiDiskWatcher` wakes the Python drain loop on private-file changes;
-- bounded polling reassesses the reconciled tree before finalization.
-
-State files survive crashes and work for nested `uv run meridian ... spawn` commands
-without the parent needing to parse command strings or receive every event in order.
-
-### Why TypeScript
-
-Pi's extension system is TypeScript-native. Bundling with tsup/esbuild produces ESM
-output targeting Node 20 syntax; CI builds use Node 24. Extension imports must stay at
-package roots (`@earendil-works/pi-tui`, `@earendil-works/pi-coding-agent`) because
-subpath imports break under Pi's extension loader.
-
-## Related .context/
-
-- [../../lib/harness/.context/CONTEXT.md](../../lib/harness/.context/CONTEXT.md) — PiAdapter, runtime resolution, quiescence completion model
-- [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
-- [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
-- [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
-
-## Per-extension rules (from AGENTS.md)
-
-`managed-bash` owns shell-task execution and task records.
-Its launch-scoped owner survives extension reload; reload rebinds hooks and does
-not terminate live tasks. Cold recovery preserves records but never signals a
-persisted PID: prior running rows remain tracked with `ownership_lost` until
-explicit detach/manual recovery. Detach releases quiescence, not process
-ownership; normal shutdown still cleans up owned groups. Publish terminal only
-after group exit and queued output, and supervise every async task callback.
-`meridian-spawn-watch` owns child-spawn observation and result notifications.
-Keep that mechanism/policy boundary intact. It arms idle delivery only at a
-main-loop `agent_end`; a session start (startup, resume, reload, `new`, fork)
-starts its watchers but delivers nothing until a turn ends, so a resumed lead
-never pays a cold prompt cache for a status ping.
-`session-boundary` owns bounded native lifecycle observations; only a final
-shutdown/quit qualifies the run exit, never the entry or last-seen session.
-Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidated
-Pi context clears quit and stays unresolved. The stale-context exception depends
-on Pi's exact error-text prefix; a changed prefix poisons the record fail-closed.
-See README for that dependency.
-`meridian-idle` is primary-only. It translates native idle/input events into
-`meridian idle` commands; the Python core owns every policy, notification, and
-persistence decision. At `agent_end` it reads valid tracked background
-managed-bash rows that are still running and forwards a bounded task snapshot
-to `idle arm`; an over-cap command becomes `other`, and it never classifies
-Meridian commands itself.
-`meridian-permissions` owns launch-local scoped tool rules and `ask`; it has no
-disk authority. Keep it separate from managed-bash so disabling managed Bash
-does not disable policy or register shell-task tools and `/ps*` commands. Keep the
-simple-command grammar deliberately small. When the policy says `bash_fail_closed`,
-unsupported shell syntax must be refused; otherwise (an open shell with scoped denies) it
-runs unchecked, and the Python report says so. Canonicalize scoped paths before
-matching, including existing symlink prefixes. A present but unusable policy must
-throw during extension load — Pi treats an explicit extension load error as a
-fatal launch error.

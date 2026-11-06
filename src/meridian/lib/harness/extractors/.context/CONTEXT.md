@@ -1,40 +1,5 @@
 # Attempt-fact contracts
 
-`AttemptFacts` belongs to one attempt, not a connection or chat. The synchronous
-emit hook updates it before any writer; a failed fold marks it incomplete and the
-emit boundary logs the error without stopping delivery. Only the current reply is
-retained; final text has a 1 MiB UTF-8 cap, marked in persisted reports.
-Incomplete facts log `facts_incomplete`. A failed fold step drops generic
-fallback usage for the rest of the attempt, never a harness-reported total;
-malformed stdout lines only mark facts incomplete. `AttemptFold` owns parsing
-cursor state; `bind_scope` is its sole scope seam.
+OpenCode V2 prefers the event-named native reply over streamed text. An unavailable exact lookup falls back to the stream, not another message or an ambient database.
 
-Finalization prefers explicit `report.md`, then attempt facts, then exact native
-reply evidence. OpenCode V2 is the exception: its event-named native reply wins
-over its stream text. An empty or unavailable exact lookup falls back to the
-stream, not to another message or an ambient database.
-
-Claude prefers result frames to assistant frames, sums model usage across result frames,
-and converts well-formed `result.permission_denials` rows into idempotent attempt denials
-for finalization to journal. Codex keeps the latest cumulative usage and the final parent-thread
-agent message; later command execution invalidates that message. Pi keeps the
-latest assistant usage and agent-end text, plus typed failure evidence. OpenCode
-V1 ignores child-session assistant parts. V2 binds `assistantMessageID` to
-`session_message.id` within the recorded session/database. Unknown usage fields
-stay `None`; an explicitly reported zero is preserved.
-
-OpenCode's fold also records native permission failures that reach the V1 tool-part
-or V2 `session.tool.failed` stream as `PermissionDenial` facts. V2 requires the structured
-`permission.rejected` type; V1 recognizes its rule-prevents message, rather than treating
-an ordinary filesystem `permission denied` as policy. A deny that removes a tool from the
-model's catalog produces no attempted-call event and therefore no row; the fold never
-fabricates a request that OpenCode did not report.
-
-`detect_session_id_from_event` is separate from report extraction: Codex accepts
-owned thread/session envelopes, Claude top-level owned frame IDs, and OpenCode
-its session envelope fields. `conclude_native_run` observes the first attempt
-signal and then the diagnostic connection-current ID; it does not scan artifacts.
-
-Claude `--print` primaries are black-box processes. Their captured `output.jsonl`
-stdout is folded after exit. Native TUI primaries without capture produce no
-facts. Neither path reads runner history.
+OpenCode can report a native permission denial only when an attempted call appears in its stream. Removing a tool from the model's catalog produces no attempted-call event, so no denial can be journaled.

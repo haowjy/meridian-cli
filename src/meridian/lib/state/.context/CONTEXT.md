@@ -1,110 +1,5 @@
 # lib/state/ — Context
 
-## Architecture
-
-### Dual-Root Layout
-
-State splits across distinct roots; know which goes where before writing anything:
-
-```
-meridian.toml
-  [project] id                      — committed machine-managed project identity
-
-bare path
-  sha256(canonical path)            — ad-hoc identity; no file is written there
-
-~/.meridian/projects/.locks/<id>.lock
-                                    — shared session-lifetime / exclusive deletion gate
-
-~/.meridian/projects/<id>/          ← user runtime, never committed
-  origin.json                       — ad-hoc path attribution and activity only
-  sessions.jsonl                    — session events (append-only; absent v means v1,
-                                      unsupported versions warn and are skipped by
-                                      reads; read-then-append decisions refuse them
-                                      in scope)
-  sessions/<chat>/work              — stable symlink to the chat's work directory: the
-                                      item's `work-items/<id>/work` link, else the
-                                      execution's ambient directory; a projection of
-                                      the session row, never authority
-  sessions/<chat>/task              — stable symlink to the chat's source checkout: the
-                                      execution's pinned checkout, else the item's
-                                      `work-items/<id>/task` link, else the project
-                                      root (`launch/session_links.py` publishes both
-                                      for every live execution, primary or spawn)
-  work-items/<id>/work              — the item's directory, in `work/` or the archive
-  work-items/<id>/task              — the item's `task_dir` while it is a directory,
-                                      else the project root, whether the item is active
-                                      or done (`work_store.item_checkout()`, the one
-                                      rule); both written only by the work store,
-                                      inside its lock, and rebuildable
-  locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
-  locks/process-scopes/<spawn_id>.lock
-                                    — stable process-scope sidecar mutation lock
-  locks/reaper-cleanup/<spawn_id>.lock
-                                    — stable reaper cleanup lock
-  locks/gc.lock                     — lock-GC pass serialization
-  spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
-  spawns/<spawn_id>/
-    state.json                      — authoritative spawn state (schema v4 when `launch` is
-                                      present, v3 when absent)
-    launch.lock                     — runner-lifetime flock, acquired before publication
-    reaper_cleanup_claim.json       — pending finalize-first cleanup targets
-    launches/<n>/                   — one launch's files (a v3 row's launch 1 stays in the
-                                      spawn directory, `launch` absent). Reach them only
-                                      through `LaunchPaths`. `launch.json` is the finished
-                                      launch's row, copied there by the next launch's holder.
-      history.jsonl                 — legacy runner event stream (no longer written), never read
-      runner-lifecycle.jsonl        — runner breadcrumb journal (signals, phases, atexit)
-      process_scopes.json           — durable process identities + release markers
-      permission_requests.jsonl     — requests the model made that nobody could approve
-                                      (`permission_journal.py`: one format for broker and
-                                      finalization writers; `spawn show` reads it)
-      report.md · stderr.log · params.json · tokens.json · starting-prompt.md …
-    attempt-N/                      — legacy retry evidence; new runs do not create it
-    observed-launches.json          — this parent's consumed launches (`<spawn id>:<n>`),
-                                      explicit-wait leases and wait pins, plus the `delivered`
-                                      map (what the last `spawn collect` handed over, per
-                                      spawn, so `spawn ack` consumes exactly that); shared by Pi and
-                                      Claude delivery; goes with the spawn, so pruning one
-                                      forgets its consumption
-    observed-spawns.json            — what older builds kept there (bare spawn IDs = launch 1):
-                                      read, never written
-  pi-bash/<spawn_id>/holds/<bash id>/<pid>.json
-                                    — a CLI wait or foreground spawn inside one Pi bash task,
-                                      removed on exit; owner liveness is the whole record
-  pi-bash/<spawn_id>/launch-receipts.json · cleared-launches.json
-                                    — Pi's admission receipts and dismissals, same keys;
-                                      `delivery-receipts.json` / `cleared-spawns.json` are
-                                      the pre-launch names, read-only. The old
-                                      `pi-bash/<id>/observed-spawns.json` mirror is retired
-<context.work root>/<slug>/         ← context-resolved, NOT repo-local
-  __status.json                     — mutable per-work-item metadata; readers accept
-                                      absent v as v1, writers do not emit v yet
-  prompts/ handoffs/ …              — work artifacts
-```
-
-Committed project IDs map `meridian.toml` to `~/.meridian/projects/<id>/` and
-survive moves. Marker-less roots use a deterministic `adhoc.<slug>.<hash>` key;
-their state follows the canonical path and the source directory stays untouched.
-
-### Spawn State: Per-Spawn Files
-
-Spawn state lives in individual `spawns/<id>/state.json` files so status reads are
-O(1) instead of replaying an O(n) global event log. The directory layout came from
-the v2 migration; published rows use schema v3, or v4 once they have a `launch`.
-
-**State v4** is v3 plus three spawn-level fields: `launch: {n}` (which launch the flat
-row describes), `prior_usage` (duration, cost and every token count of launches before `n`, plus the last
-`harness_cumulative` that seeds the next extractor; every
-surface, Pi included, shows it plus the current launch) and `owed_launches` (background launches a
-continue moved past before the parent consumed them). The serializer writes `v: 4` when
-`launch` is present and `v: 3` when it is not, in one conditional
-(`record_to_stored_state`), so a write by a process without the launch lock (`work
-rename`, session archive) leaves an older build's row v3 and only `reopen_spawn`, which
-holds the lock and so proves no older runner is alive, sets `launch`. Older builds
-quarantine a v4 row; the history index is v13 (own sqlite file, marker namespace and
-failure latch) so they never validate a v4 `record_json`.
-
 ### Session State
 
 Sessions remain event-sourced JSONL (`sessions.jsonl`). Lifecycle and control
@@ -184,73 +79,6 @@ protocol marker and commit only at their accepted-running boundary.
 
 ## Contracts
 
-### JSON Sidecar Contract (`json_doc.py`)
-
-Small JSON sidecars (session leases, primary metadata, process scopes, cleanup
-claims, spawn scopes, idle state, Pi lifecycle, autosync state and conflicts) are
-Pydantic models persisted only through `read_model()` / `write_model()` /
-`mutate_model()`. `read_model()` returns `None` for a missing, truncated or invalid
-file, so a corrupt sidecar loads as absent and the next write repairs it.
-`mutate_model()` requires the caller's lock and re-reads under it; there is no
-unlocked read-modify-write. A new sidecar adopts this seam rather than hand-rolling
-read, validate, lock and replace.
-Private coordination files (Pi's private state, spawn observations) and their
-nested records subclass `VersionedPrivateDoc`: strict, frozen, extra keys ignored,
-and a `v` field must be the integer 1, because a strict `Literal[1]` alone accepts
-`true` and `1.0`.
-Idle state adds one diagnostic to that generic absent-on-invalid contract: if
-the document's `v` names another format, `idle_store.py` warns with the path and
-that a different Meridian build wrote it.
-
-### JSONL Commit Contract (`jsonl.py`)
-
-One rule for every JSONL file: **a row exists when its newline does.**
-
-- `iter_jsonl()` yields only newline-terminated rows. A torn final row is withheld,
-  not parsed, until a later append commits or repairs it.
-- `append_durable_jsonl_line()` takes exactly one row, owns its newline, and rejects
-  embedded CR/LF. Before appending it repairs the tail: a delimiter-less tail that
-  parses as a JSON object gets its newline; a partial one is dropped. Repair failure
-  propagates; never acknowledge an event appended onto invalid JSON.
-  `append_durable_jsonl_lines()` is the batch form: one repair, one write, one
-  `fsync` for the batch (telemetry's durability unit).
-- Malformed complete rows are skipped with a debug-level diagnostic. Readers that
-  must fail closed (the archive receipt catalog) pass `on_malformed="raise"`.
-- Repair is read-then-replace, so callers hold the writer lock or own a
-  single-writer file.
-
-Terminal status, liveness and `spawn wait` read `state.json`, not JSONL, so a
-withheld torn tail can delay an event's visibility but never hides a completion.
-
-Never write state files with plain `open()` + `write()`. Crash in the middle of a
-plain write leaves a partial file; partial state.json will fail Pydantic validation
-on next read.
-
-`start_spawn()` writes and syncs `starting-prompt.md` followed by `state.json` under
-`spawns/.staging/<spawn-id>-<pid>-<random>/`, then publishes the complete row with one
-directory rename while holding `spawns_flock`. Runtime-write startup removes abandoned
-`.staging/*` entries under the same lock; it never garbage-collects published rows.
-
-### Monotonic ID Generation
-
-**Spawn IDs** (`spawn-id-counter`): incremented under `spawns_flock` at reservation
-time. IDs can be reserved before the spawn row exists (`reserve_launch()`, which returns the spawn's first launch).
-Format: `p1`, `p2`, `p3`, …
-
-**Session IDs** (`session-id-counter`): incremented under `lock_file()`. Format:
-`c1`, `c2`, `c3`, …
-
-**Committed project ID** (`meridian.toml` `[project] id`): generated under the
-user-home project-config lock. Collision-checked against existing
-`~/.meridian/context/<id>/` and `~/.meridian/projects/<id>/` directories.
-Up to 10 retries; raises `RuntimeError` if exhausted.
-
-**Ad-hoc project ID**: deterministic from the canonical source path. The
-`adhoc.` prefix is reserved and its project-lifetime lock sits outside the
-deletable root. Machine-wide retention scans only this namespace, rechecks
-activity under the exclusive lifetime lock, and deletes matching runtime and
-context roots together.
-
 ### Terminal Write Authority
 
 Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. Under the
@@ -302,28 +130,6 @@ scope cleanup consumes only that claim after terminal finalization. Successful t
 gain durable release markers; failed targets remain claimed for retry.
 
 ## Patterns
-
-### Platform Locking
-
-Use `platform.locking.lock_file(path)` for all cross-process locking:
-- POSIX: `fcntl.flock(LOCK_EX)` — advisory, kernel-backed
-- Legacy native-Windows branch (untested): `msvcrt.locking()` with retry loop
-  (50 ms sleep)
-
-Thread-local reentrancy: a thread that already holds the lock can re-enter on the
-same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
-the platform module handles both OS and thread-reentrancy.
-
-`work_scope.py` resolves each work directory. `work_state.py` owns the work-item
-models, metadata codec, and shared directory-location primitives. `work_store.py`
-provides pure read projections; `work_repository.py` serializes all status and
-directory-namespace mutations behind the stable project-level `work-store.flock`.
-Mutable metadata lives in
-`<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
-Its reader treats absent `v` as v1 and preserves unknown fields with a warning;
-writers deliberately omit `v` until the next format change. A newer version gets
-a separate compatibility marker displayed as `requires-newer-meridian`, while the
-single mutation seam validates every active and archived copy before touching disk.
 
 ### Work Item Directory Moves
 
@@ -491,7 +297,7 @@ multi-chat reads use one `chats_rows` pass, never a loop over single-chat reads.
 Indexed queries build a missing projection, then make one catch-up attempt bounded
 by the caller deadline (two seconds by default). Contention raises
 `HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller
-gives an absent projection a separate, sticky 15-second cold build before its
+gives an absent projection a separate, sticky 60-second cold build before its
 ordinary read attempt. An exhausted cold build latches failure.
 Warm catch-up projects `sessions.jsonl` to the committed end even when its writer
 lock is busy; the lock gates marker acknowledgement, not the read. Spawn and archive

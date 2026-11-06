@@ -1,4 +1,4 @@
-"""Absolute completion windows renewed only by budgeted explicit rearm signals."""
+"""Idle-limit completion windows and the persisted, budgeted rearm count."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from meridian.lib.streaming.completion_contracts import ProfileDecision
 
 
 class RearmWindow:
-    """Share signal latching, persisted rearm budget, and absolute-window arithmetic."""
+    """Share signal latching, persisted rearm budget, and idle-window arithmetic."""
 
     def __init__(
         self,
