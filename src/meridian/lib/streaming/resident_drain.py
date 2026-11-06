@@ -270,6 +270,10 @@ class _HoldProfile:
         )
 
     def should_defer_close(self, state: CompletionState) -> bool:
+        # Asked only once the stream has closed. A dead backend will not speak again, so
+        # waiting for its descendants would only run out the deadline.
+        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
+            return False
         if self._rearmed:
             return True
         return (
@@ -322,7 +326,15 @@ class _HoldProfile:
         recorded_outcome: TerminalEventOutcome | None,
     ) -> ProfileExitDecision:
         del state
-        return ProfileExitDecision(recorded_outcome=recorded_outcome)
+        # The hold ends without the deadline cleanup; a dead backend's descendants go too.
+        return ProfileExitDecision(
+            recorded_outcome=recorded_outcome,
+            cleanup_reason=(
+                _BACKEND_DEAD_WHILE_AWAITING_DONE.error
+                if recorded_outcome is _BACKEND_DEAD_WHILE_AWAITING_DONE
+                else None
+            ),
+        )
 
     def observe_event(self, semantics: EventSemantics) -> None:
         if semantics.activity != "turn_active":
