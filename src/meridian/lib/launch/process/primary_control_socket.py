@@ -57,9 +57,13 @@ def primary_control_socket(
 
     The socket is bound only once *factory* returns a route, so a socket file always
     means a message can be delivered. Leaving the block unbinds it and joins the thread.
-    ``serve`` never raises: a failure in on-running would kill the child.
+    ``serve`` never raises: a failure in on-running would kill the child. Must be entered
+    holding the launch lock.
     """
 
+    # The caller holds the launch lock, so any file here is a dead launcher's: unlinking
+    # now sends a sender to the normal poll instead of a refused connection.
+    control_socket_path(launch.runtime_root, launch.spawn_id).unlink(missing_ok=True)
     stop = threading.Event()
     thread: threading.Thread | None = None
 
