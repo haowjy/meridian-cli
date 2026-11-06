@@ -52,8 +52,8 @@ from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, writ
 from meridian.lib.state.process_scope_projection import record_scope
 
 from .native_launcher import native_sigint_shield
-from .primary_control_socket import serving_route
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
+from .primary_control_socket import serving_route
 from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]

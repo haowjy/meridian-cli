@@ -177,6 +177,15 @@ cross-session peer lane, and forwards each message there. Claude decides deliver
 Meridian, and the command can only report that the message was posted. Address a primary by its chat ID or its spawn ID; both survive a
 `--continue`. `-C <root>` reaches a primary in another project.
 
+A Codex or OpenCode primary's launcher binds the same socket over the observer connection
+it already holds, once the TUI process is running, and unbinds when the TUI exits. A message
+starts a turn when the session is idle and joins the running turn otherwise; the TUI renders
+it, and the sender is told it was delivered once the server acknowledged it. Meridian never
+answers an approval an injected turn raises: it stays on the TUI for the person. On OpenCode
+a message carries text only, so the server runs it with the session's last model, which is the
+one the person picked in the TUI. If the OpenCode attach failed and the launch fell back to a
+black-box session, no socket is bound and the sender gets the no-route error.
+
 Claude's `crossSessionInbound` setting picks the policy:
 
 | Value | Behavior |

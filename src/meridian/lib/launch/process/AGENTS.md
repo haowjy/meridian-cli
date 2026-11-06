@@ -43,7 +43,9 @@ snapshots. Register any new launcher in `select_process_launcher()`.
   route)`, an async context manager any launch leg on its own loop reuses. A dead launcher's
   stale socket file is unlinked in `run_harness_process` once the launch lock is held (before
   `reopen` for a continue), so a sender polls instead of seeing a refused connection. Managed
-  attach serves nothing yet.
+  attach wraps its TUI phase in the same `serving_route` on its own loop
+  (`PrimaryAttachLauncher._bind_route`), routed to the observer connection; a bind failure logs
+  and never fails the launch.
 - **Assigned identity binds before exec.** A finalized `native_identity` with an ID
   (minted create, verified resume, fork target) binds as `source="assigned"` before the
   child starts; a conflict refuses the launch. Identities without an ID (Claude fork)

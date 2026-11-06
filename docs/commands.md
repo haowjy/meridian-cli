@@ -61,7 +61,7 @@ that chat now, else the spawn that ran it; a chat ID never means a child it laun
 After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
-`cancel` on a primary still needs `--force`. Codex, OpenCode and Pi primaries
+`cancel` on a primary still needs `--force`. Pi primaries
 have no message route yet ([#498](https://github.com/haowjy/meridian-cli/issues/498));
 the command waits 30 seconds and fails.
 
