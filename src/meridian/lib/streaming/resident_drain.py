@@ -204,7 +204,7 @@ class _HoldProfile:
         if not self._accepted_signals:
             return CompletionDirectives()
         signals = consume_resident_signals(self._launch)
-        if state.candidate is None and self._state.ask is AskPhase.UNASKED:
+        if state.candidate is None and self._state.ask in {AskPhase.UNASKED, AskPhase.REFUSED}:
             self._state = replace(self._state, closing=False)
             return CompletionDirectives()
         if self._window.grant_rearm(signals.rearm):
@@ -307,11 +307,6 @@ class _HoldProfile:
         return min(due, default=None)
 
     async def send_nudge(self, state: CompletionState) -> None:
-        prior = self._state.ask
-        # Assume sent before the await: no failure can leave the ask looking unsent and
-        # re-fire the turn-end ask. The fold stamps `asked_at` again, so the grace starts
-        # when the send ends.
-        self._state = replace(self._state, ask=AskPhase.SENT, asked_at=self._clock())
         result = SendResult.SENT
         failure: Exception | None = None
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
@@ -333,7 +328,7 @@ class _HoldProfile:
                     spawn_id=str(self._spawn_id),
                     exc_info=True,
                 )
-        self._state = after_send(self._state, result, prior=prior, now=self._clock())
+        self._state = after_send(self._state, result, now=self._clock())
         if failure is not None:
             # The coordinator re-evaluates: a ready tree publishes, a dead one cleans up.
             raise failure

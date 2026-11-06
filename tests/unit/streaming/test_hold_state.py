@@ -61,6 +61,7 @@ OPEN = AnswerWindow(retry_left=True)
 SPENT = AnswerWindow(retry_left=False)
 SENT = HoldState(ask=AskPhase.SENT, asked_at=99.0)
 SETTLED = HoldState(ask=AskPhase.SETTLED, asked_at=90.0)
+REFUSED = HoldState(ask=AskPhase.REFUSED, asked_at=90.0, answer=AnswerWindow(retry_left=True))
 RESET = HoldState()
 WAIT = ProfileDecision(action="wait")
 WAIT_END = ProfileDecision(action="wait", emit_turn_boundary=True)
@@ -215,7 +216,7 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
     ("E4", RESET, {}, ASK, None),
     ("E4", RESET, {"end": GOOD_END}, ASK_END, None),
     # A refused expiry ask gets one more ask at a turn end, none between them.
-    ("E4", HoldState(answer=OPEN), {"end": GOOD_END}, ASK_END, None),
+    ("E4", REFUSED, {"end": GOOD_END}, ASK_END, None),
     (
         "E4",
         HoldState(lease=HeldLease(frozenset({TASK}))),
@@ -233,7 +234,7 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
     ("E5", SETTLED, {}, PUBLISH, None),
     ("E5", SETTLED, {"end": GOOD_END}, PUBLISH, None),
     ("E5", RESET, {"accepts_signals": False}, PUBLISH, None),
-    ("E5", HoldState(answer=OPEN), {}, PUBLISH, None),
+    ("E5", REFUSED, {}, PUBLISH, None),
     # The grace ends at decide, so no timer goes past due.
     (
         "E5",
@@ -283,22 +284,20 @@ def test_row(
     assert step.leave_awaiting is (row in {"D2", "E2", "E3"} and "end" not in overrides)
 
 
-# kind, before the send (ask still as it was, `answer` as `decide` left it), result, after
+# kind, before the send (as `decide` left it), result, after; every attempt stamps `asked_at`
 EXPIRY = HoldState(answer=OPEN)
+REFUSED_EXPIRY = HoldState(ask=AskPhase.REFUSED, answer=OPEN)
 SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
+    ("expiry delivered", EXPIRY, SendResult.SENT, HoldState(ask=AskPhase.SENT, answer=SPENT)),
     (
-        "expiry delivered",
-        EXPIRY,
+        "expiry retry delivered",
+        replace(REFUSED_EXPIRY, answer=SPENT),
         SendResult.SENT,
-        HoldState(ask=AskPhase.SENT, asked_at=100.0, answer=SPENT),
+        HoldState(ask=AskPhase.SENT, answer=SPENT),
     ),
-    (
-        "turn end delivered",
-        RESET,
-        SendResult.SENT,
-        HoldState(ask=AskPhase.SENT, asked_at=100.0),
-    ),
-    ("expiry refused, unasked", EXPIRY, SendResult.REFUSED, replace(EXPIRY, ask=AskPhase.UNASKED)),
+    ("turn end delivered", RESET, SendResult.SENT, HoldState(ask=AskPhase.SENT)),
+    ("expiry refused, unasked", EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
+    ("expiry refused again", REFUSED_EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
     (
         "expiry refused, asked before",
         replace(SETTLED, answer=OPEN),
@@ -306,12 +305,7 @@ SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
         replace(SETTLED, answer=OPEN),
     ),
     ("turn end refused", RESET, SendResult.REFUSED, HoldState(ask=AskPhase.SETTLED)),
-    (
-        "expiry dead",
-        EXPIRY,
-        SendResult.DEAD,
-        HoldState(ask=AskPhase.SETTLED, answer=SPENT),
-    ),
+    ("expiry dead", EXPIRY, SendResult.DEAD, HoldState(ask=AskPhase.SETTLED, answer=SPENT)),
     ("turn end dead", RESET, SendResult.DEAD, HoldState(ask=AskPhase.SETTLED)),
 ]
 
@@ -319,13 +313,11 @@ SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
 @pytest.mark.parametrize(("kind", "before", "result", "after"), SENDS)
 def test_send(kind: str, before: HoldState, result: SendResult, after: HoldState) -> None:
     del kind
-    assert after_send(before, result, prior=before.ask, now=100.0) == after
+    assert after_send(before, result, now=100.0) == replace(after, asked_at=100.0)
 
 
 def test_grace_starts_when_the_send_ends() -> None:
-    # send_nudge stamps `asked_at` before the await; the fold moves it.
-    started = replace(SENT, asked_at=67.0)
-    folded = after_send(started, SendResult.SENT, prior=AskPhase.UNASKED, now=100.0)
+    folded = after_send(RESET, SendResult.SENT, now=100.0)
     assert folded.asked_at == 100.0
     assert decide(folded, facts()).decision == WAIT
 
@@ -337,3 +329,8 @@ def test_events() -> None:
     )
     assert after_event(held, turn_started=False, work_in_turn=True) == replace(held, answer=None)
     assert after_event(RESET, turn_started=True, work_in_turn=False) == RESET
+    assert after_event(REFUSED, turn_started=True, work_in_turn=False) == REFUSED
+    # Work closes the window: the child is due a fresh turn-end ask.
+    assert after_event(REFUSED, turn_started=False, work_in_turn=True) == replace(
+        REFUSED, ask=AskPhase.UNASKED, answer=None
+    )

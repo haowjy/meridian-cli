@@ -27,8 +27,13 @@ _UNREADABLE = TerminalEventOutcome(
 
 class AskPhase(StrEnum):
     UNASKED = "unasked"  # nothing asked since the last reset
+    REFUSED = "refused"  # an expiry ask was refused, so nothing reached the child; `answer` is open
     SENT = "sent"  # sent; a turn should start within the grace
     SETTLED = "settled"  # a turn started, the grace passed, or the send failed
+
+
+# The child has seen no ask, so a kept candidate is not yet confirmed.
+_NOTHING_ASKED = frozenset({AskPhase.UNASKED, AskPhase.REFUSED})
 
 
 class SendResult(StrEnum):
@@ -63,7 +68,7 @@ class HoldState:
     """ "Reset" means `HoldState()`."""
 
     ask: AskPhase = AskPhase.UNASKED
-    asked_at: float | None = None  # last send; survives a rearm
+    asked_at: float | None = None  # when the last send attempt ended; survives a rearm
     answer: AnswerWindow | None = None
     lease: HeldLease | SpacedLease | None = None
     rearmed: bool = False  # the next good turn end is the next candidate
@@ -118,7 +123,7 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
             if facts.expired:
                 return _timeout(facts)
             if disposition == "unknown" or _descendant_blocked(facts.assessment):
-                ask = AskPhase.UNASKED if state.ask is AskPhase.UNASKED else AskPhase.SETTLED
+                ask = AskPhase.SETTLED if state.ask is AskPhase.SENT else state.ask
                 return _wait(replace(state, ask=ask), facts)
         decision = ProfileDecision(action="fail", outcome=end.outcome)
         return HoldStep(HoldState(), decision)
@@ -149,9 +154,8 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         return _wait(state, facts, leave_awaiting=end is None)
     if (
         facts.accepts_signals
-        and state.ask is AskPhase.UNASKED
         and not state.rearmed
-        and (state.answer is None or end is not None)
+        and (state.ask is AskPhase.UNASKED or (state.ask is AskPhase.REFUSED and end is not None))
     ):
         quiet, state = _lease_quiet(state, facts)
         if not quiet:
@@ -168,22 +172,25 @@ def grace_ends(state: HoldState, grace_seconds: float) -> float:
 
 def after_event(state: HoldState, *, turn_started: bool, work_in_turn: bool) -> HoldState:
     """Fold one harness event: a turn settles an ask, work in a turn closes the window."""
-    if turn_started and state.ask is not AskPhase.UNASKED:
+    if turn_started and state.ask is AskPhase.SENT:
         state = replace(state, ask=AskPhase.SETTLED)
     if work_in_turn:
-        state = replace(state, answer=None)
+        # The refusal only meant something while its window was open.
+        ask = AskPhase.UNASKED if state.ask is AskPhase.REFUSED else state.ask
+        state = replace(state, ask=ask, answer=None)
     return state
 
 
-def after_send(state: HoldState, result: SendResult, *, prior: AskPhase, now: float) -> HoldState:
-    """Fold one send. `prior` is the phase before it; an open `answer` means expiry kind."""
+def after_send(state: HoldState, result: SendResult, *, now: float) -> HoldState:
+    """Fold one send attempt at the time it ended. An open `answer` means expiry kind."""
+    state = replace(state, asked_at=now)
     if result is SendResult.SENT:
         answer = None if state.answer is None else AnswerWindow(retry_left=False)
-        return replace(state, ask=AskPhase.SENT, asked_at=now, answer=answer)
+        return replace(state, ask=AskPhase.SENT, answer=answer)
     if result is SendResult.DEAD and state.answer is not None:
         state = replace(state, answer=AnswerWindow(retry_left=False))
-    if result is SendResult.REFUSED and state.answer is not None and prior is AskPhase.UNASKED:
-        return replace(state, ask=AskPhase.UNASKED)
+    if result is SendResult.REFUSED and state.answer is not None and state.ask in _NOTHING_ASKED:
+        return replace(state, ask=AskPhase.REFUSED)
     return replace(state, ask=AskPhase.SETTLED)
 
 
@@ -222,10 +229,8 @@ def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
 
 
 def _settled(state: HoldState, facts: HoldFacts) -> bool:
-    if not facts.accepts_signals or state.ask is AskPhase.SETTLED:
-        return True
-    # An expiry ask that was refused: a ready tree may still publish.
-    return state.ask is AskPhase.UNASKED and state.answer is not None
+    # A refused expiry ask: a ready tree may still publish.
+    return not facts.accepts_signals or state.ask in {AskPhase.SETTLED, AskPhase.REFUSED}
 
 
 def _lease_quiet(state: HoldState, facts: HoldFacts) -> tuple[bool, HoldState]:
