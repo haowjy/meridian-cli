@@ -428,6 +428,7 @@ class _Tokenizer:
             elif ch == "`":
                 end = _closing_backtick(src, i + 1)
                 if end is None:
+                    i = self._unclosed(i + 1)
                     break
                 self._substitute(_backtick_body(src[i + 1 : end]))
                 self.add("", dynamic=True)
@@ -435,6 +436,7 @@ class _Tokenizer:
             elif ch in "<>" and src.startswith("(", i + 1):
                 end = _matching_paren(src, i + 2)
                 if end is None:
+                    i = self._unclosed(i + 2)
                     break
                 self._substitute(src[i + 2 : end])
                 self.add("", dynamic=True)
@@ -506,21 +508,21 @@ class _Tokenizer:
         if src.startswith("$((", i):
             end = _matching_paren(src, i + 2)
             if end is None:
-                return len(src)
+                return self._unclosed(i + 3)
             self._substitute_all(src[i + 3 : end - 1])
             self.add("", dynamic=True)
             return end
         if src.startswith("$(", i):
             end = _matching_paren(src, i + 2)
             if end is None:
-                return len(src)
+                return self._unclosed(i + 2)
             self._substitute(src[i + 2 : end])
             self.add("", dynamic=True)
             return end
         if src.startswith("${", i):
             end = _matching_brace(src, i + 2)
             if end is None:
-                return len(src)
+                return self._unclosed(i + 2)
             self._substitute_all(src[i + 2 : end])
             self.add("", dynamic=True)
             return end
@@ -541,6 +543,13 @@ class _Tokenizer:
             return i
         self.add("", dynamic=True)
         return match.end() - 1
+
+    def _unclosed(self, start: int) -> int:
+        """A substitution the reader cannot find the end of (a quote in a comment inside it
+        defeats the matcher): read the rest as commands rather than skip it. Returns the end."""
+
+        self._substitute(self.src[start:])
+        return len(self.src)
 
     def _redirect(self, i: int) -> int:
         src = self.src

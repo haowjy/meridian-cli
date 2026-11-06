@@ -101,6 +101,7 @@ _DENIED_BY_LIST = [
     "echo $(( $(git reset --hard) + 1 ))",
     "echo `echo \\`git reset --hard\\``",
     "((1<<2))\ngit reset --hard\n2",
+    "echo $(true # it's\n); git reset --hard",
     # A shell that reads commands from stdin is fed by write_stdin.
     "bash",
     "sudo bash -s",
