@@ -148,7 +148,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         "created": frozenset(("starting", "stopping", "failed")),
         "starting": frozenset(("connected", "stopping", "failed")),
         "connected": frozenset(("stopping", "failed")),
-        "stopping": frozenset(("stopped", "failed")),
+        "stopping": frozenset(("connected", "stopped", "failed")),
         "stopped": frozenset(("starting",)),
         "failed": frozenset(("starting", "stopping", "stopped")),
     }
@@ -684,20 +684,30 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = True
             return
         self._require_connected()
-        self._cancel_requested = True
+        # ``stopping`` goes up before the POST so an ``interrupted`` event that
+        # races the response ends the drain instead of becoming a failure
+        # terminal. A failed POST undoes it, so a retry sends again.
         self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
-        await self._post_session_action(
-            path_templates=self._CANCEL_PATH_TEMPLATES,
-            payload_variants=(
-                {"response": "abort"},
-                {"reason": "cancel"},
-                {"type": "cancel"},
-                {},
-            ),
-            accepted_statuses=self._ACTION_SUCCESS_STATUSES,
-        )
+        try:
+            await self._post_session_action(
+                path_templates=self._CANCEL_PATH_TEMPLATES,
+                payload_variants=(
+                    {"response": "abort"},
+                    {"reason": "cancel"},
+                    {"type": "cancel"},
+                    {},
+                ),
+                accepted_statuses=self._ACTION_SUCCESS_STATUSES,
+            )
+        except BaseException:
+            self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
+            if self._state == "stopping":
+                self._transition("connected")
+            raise
+        self._cancel_requested = True
 
     async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
         """Return a terminal event missed by the prompt-before-subscribe window.

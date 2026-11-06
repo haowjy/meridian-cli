@@ -408,15 +408,22 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             self._cancel_requested = True
             return
         self._require_connected()
-        self._cancel_requested = True
         self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
-        await self._post_session_action(
-            path_templates=self._CANCEL_PATH_TEMPLATES,
-            payload_variants=({},),
-            accepted_statuses=self._ACTION_SUCCESS_STATUSES,
-        )
+        try:
+            await self._post_session_action(
+                path_templates=self._CANCEL_PATH_TEMPLATES,
+                payload_variants=({},),
+                accepted_statuses=self._ACTION_SUCCESS_STATUSES,
+            )
+        except BaseException:
+            self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
+            if self._state == "stopping":
+                self._transition("connected")
+            raise
+        self._cancel_requested = True
 
     async def respond_request(
         self,
