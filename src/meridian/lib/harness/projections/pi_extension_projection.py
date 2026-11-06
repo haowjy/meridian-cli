@@ -26,10 +26,6 @@ _MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-idle",
     "meridian-idle/index.js",
 )
-_MERIDIAN_MESSAGE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
-    "meridian-message",
-    "meridian-message/index.js",
-)
 _MERIDIAN_PERMISSIONS_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-permissions",
     "meridian-permissions/index.js",
@@ -68,12 +64,6 @@ def resolve_pi_idle_entrypoint() -> tuple[str, ...]:
     return (_resolve_bundle_entrypoint(*_MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH),)
 
 
-def resolve_pi_message_entrypoint() -> tuple[str, ...]:
-    """Resolve the primary-only Meridian message-route Pi extension entrypoint."""
-
-    return (_resolve_bundle_entrypoint(*_MERIDIAN_MESSAGE_EXTENSION_RELATIVE_PATH),)
-
-
 def resolve_pi_permissions_entrypoint() -> tuple[str, ...]:
     """Resolve the launch-local Meridian permission extension entrypoint."""
 
@@ -102,7 +92,9 @@ def resolve_pi_extension_entrypoints(
         # Pi runs session_shutdown handlers one at a time in load order. Loaded first,
         # meridian-message closes its socket before a slow handler (managed-bash waits on
         # background tasks) can leave it accepting messages for a session being replaced.
-        entrypoints.extend(resolve_pi_message_entrypoint())
+        entrypoints.append(
+            _resolve_bundle_entrypoint("meridian-message", "meridian-message/index.js")
+        )
     if profile.background_tasks_enabled:
         entrypoints.extend(resolve_pi_managed_bash_entrypoint())
     if profile.spawn_watch_enabled:
@@ -200,7 +192,6 @@ __all__ = [
     "resolve_pi_idle_entrypoint",
     "resolve_pi_lifecycle_extension_entrypoint",
     "resolve_pi_managed_bash_entrypoint",
-    "resolve_pi_message_entrypoint",
     "resolve_pi_permissions_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",
 ]

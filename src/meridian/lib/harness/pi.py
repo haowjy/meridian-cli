@@ -531,7 +531,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Pass the bound policy directly to Pi's launch-local extension."""
+        """Pass the bound permission policy and the launch-prompt flag to Pi's extensions."""
 
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)

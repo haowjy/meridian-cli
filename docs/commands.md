@@ -37,8 +37,7 @@ A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exi
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn message` reaches a session through the control socket its launcher serves, for
-spawned sessions and primaries alike. It prints
+`spawn message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
 (Codex, OpenCode) and "Message posted … (no receipt)" when the write finished but
 the harness confirms nothing (Claude, and Pi, whose message API returns nothing). A Pi primary
