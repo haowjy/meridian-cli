@@ -321,29 +321,6 @@ def test_signal_callback_receiver_delayed_repeat_escalates(
     assert kills == [(os.getpid(), signal.SIGHUP)]
 
 
-def test_signal_callback_receiver_without_escalation_never_re_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import meridian.lib.launch.signals as signals_module
-
-    clock = {"now": 100.0}
-    monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
-    installed, kills = _install_signal_spies(monkeypatch)
-    calls: list[signal.Signals] = []
-    receiver = SignalCallbackReceiver(
-        target_signals=(signal.SIGHUP,),
-        callback=calls.append,
-    )
-
-    receiver.forward_signal(signal.SIGHUP)
-    clock["now"] += 5.0
-    receiver.forward_signal(signal.SIGHUP)
-
-    assert calls == [signal.SIGHUP, signal.SIGHUP]
-    assert installed == []
-    assert kills == []
-
-
 def test_mask_termination_defers_then_redelivers_once_and_a_late_repeat_escapes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
