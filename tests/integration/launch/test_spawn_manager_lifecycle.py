@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -20,7 +21,6 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.harness.control_action import ControlActionCoordinator
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.paths import resolve_runtime_paths

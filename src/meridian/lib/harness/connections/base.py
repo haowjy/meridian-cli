@@ -11,8 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.launch.launch_types import SpecT
 from meridian.lib.state.paths import LaunchPaths
 

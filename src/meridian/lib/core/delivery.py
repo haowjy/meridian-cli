@@ -1,7 +1,8 @@
 """How far one user message got into a live harness session.
 
-Stdlib only: every layer that routes a message (connections, the control-action
-coordinator, the control socket, the CLI) imports this without a cycle.
+Stdlib only, in ``lib/core``: every layer that routes a message (connections, the
+control-action coordinator, the control socket, the CLI) imports it without running
+``harness/__init__``.
 """
 
 from __future__ import annotations

@@ -234,8 +234,8 @@ become observable before fake iterator exhaustion. Clean EOF is a different cont
 
 ### Inject Acknowledgment
 
-`send_user_message()` returns a `DeliveryKind` (`harness/delivery.py`, stdlib only so
-every layer can import it): `acknowledged` when the harness answered the request that
+`send_user_message()` returns a `DeliveryKind` (`core/delivery.py`, stdlib only so
+every layer can import it without running `harness/__init__`): `acknowledged` when the harness answered the request that
 carried the message, `posted` when the write finished and the harness confirmed nothing.
 Neither proves the model observed or executed the message. A refusal raises.
 
@@ -250,9 +250,10 @@ Neither proves the model observed or executed the message. A refusal raises.
 The kind travels: `ControlActionCoordinator.run_action` → `InjectResult.delivery` →
 the control-socket response's `delivery` field → `meridian spawn message`, which prints
 "Message delivered" for `acknowledged` and "Message posted … (no receipt)" for `posted`.
-A response without `delivery` comes from an older launcher that only wrote to its
-harness, so the CLI treats it as `posted`. A posted inject stays at `sent` in
-`control_actions.jsonl`; only acknowledged ones record `acknowledged`.
+A response without `delivery` comes from an older launcher that does not say how far
+the message got, so the CLI claims only `posted`. A posted inject ends at `posted` in
+`control_actions.jsonl` and an acknowledged one at `acknowledged`; a launcher that died
+mid-write leaves `sent` as the last status. Readers ignore statuses they do not know.
 
 Codex keeps a conservative unscoped fallback: if a `turn/completed` event has no
 thread ID, it still counts as terminal for the parent. OpenCode does not use that

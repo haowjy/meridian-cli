@@ -24,6 +24,7 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -62,7 +63,6 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.opencode_backend import v1_session_running
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (

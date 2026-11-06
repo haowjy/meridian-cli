@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     RawHarnessEvent,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.launch.signals import (

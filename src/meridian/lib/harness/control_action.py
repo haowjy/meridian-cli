@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.harness.connections.base import ConnectionNotReady
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -31,6 +31,7 @@ class ControlActionStatus(StrEnum):
 
     REQUESTED = "requested"
     SENT = "sent"
+    POSTED = "posted"
     ACKNOWLEDGED = "acknowledged"
     FAILED = "failed"
 
@@ -85,7 +86,7 @@ class ControlActionCoordinator:
         action: ControlActionType,
         payload: dict[str, object],
         source: str,
-        send: Callable[[], Awaitable[object]],
+        send: Callable[[], Awaitable[DeliveryKind | None]],
         max_attempts: int | None = None,
         fence_on_interrupt: bool = True,
     ) -> ControlActionResult:
@@ -150,7 +151,7 @@ class ControlActionCoordinator:
                     attempt=attempt,
                 )
                 try:
-                    sent = await send()
+                    delivery = await send()
                 except Exception as exc:
                     last_error = str(exc)
                     retryable = attempt < attempts and self._is_retryable(exc)
@@ -175,19 +176,22 @@ class ControlActionCoordinator:
                         error=last_error,
                     )
 
-                delivery = sent if isinstance(sent, DeliveryKind) else None
-                # A posted message stays at ``sent``: no harness confirmed it.
-                if delivery is not DeliveryKind.POSTED:
-                    await self._append_transition(
-                        action_id=action_id,
-                        action=action,
-                        status=ControlActionStatus.ACKNOWLEDGED,
-                        submission_seq=submission_seq,
-                        interrupt_epoch=interrupt_epoch,
-                        source=source,
-                        payload=payload,
-                        attempt=attempt,
-                    )
+                # ``posted``: the write finished but no harness confirmed it. A launcher
+                # that died mid-write leaves ``sent`` as the last status instead.
+                await self._append_transition(
+                    action_id=action_id,
+                    action=action,
+                    status=(
+                        ControlActionStatus.POSTED
+                        if delivery is DeliveryKind.POSTED
+                        else ControlActionStatus.ACKNOWLEDGED
+                    ),
+                    submission_seq=submission_seq,
+                    interrupt_epoch=interrupt_epoch,
+                    source=source,
+                    payload=payload,
+                    attempt=attempt,
+                )
                 return ControlActionResult(
                     success=True,
                     action_id=action_id,

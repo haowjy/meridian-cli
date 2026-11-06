@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import Literal, TypedDict
 
-if TYPE_CHECKING:
-    # A runtime import cycles: harness/__init__ bootstraps adapters that import streaming.
-    from meridian.lib.harness.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryKind
 
 
 class UserMessageControl(TypedDict):

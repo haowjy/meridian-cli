@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.bundle import (
@@ -18,7 +19,6 @@ from meridian.lib.harness.bundle import (
     post_to_primary,
     primary_accepts_messages,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
@@ -235,7 +235,8 @@ async def send_message(
 
     ok = parsed.get("ok")
     if ok is True:
-        # A server without ``delivery`` is an older build that only wrote to its harness.
+        # A server without ``delivery`` (an older build) does not say how far the message
+        # got, so claim only that it was posted.
         if parsed.get("delivery") == DeliveryKind.ACKNOWLEDGED:
             print(f"Message delivered to spawn {normalized_spawn_id}")
         else:

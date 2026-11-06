@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from typing import Final, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
@@ -28,7 +29,6 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec

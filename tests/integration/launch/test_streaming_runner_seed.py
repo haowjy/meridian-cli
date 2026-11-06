@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.claude_sessions import project_slug
@@ -16,7 +17,6 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     RawHarnessEvent,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import context as launch_context_module

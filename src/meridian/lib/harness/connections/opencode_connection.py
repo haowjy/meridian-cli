@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -35,7 +36,6 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 

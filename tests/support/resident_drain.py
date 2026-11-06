@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -17,7 +18,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     PrimaryEventScope,

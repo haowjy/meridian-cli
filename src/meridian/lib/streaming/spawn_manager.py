@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
@@ -22,7 +23,6 @@ from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec

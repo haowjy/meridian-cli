@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -35,7 +36,6 @@ from meridian.lib.harness.connections.pi_rpc_stream import (
     PiRpcInbox,
     pi_rpc_frames,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.pi_failure import compact_pi_failure_output
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,

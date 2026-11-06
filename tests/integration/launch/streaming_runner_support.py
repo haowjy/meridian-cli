@@ -11,6 +11,7 @@ from typing import ClassVar
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
@@ -20,7 +21,6 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import (

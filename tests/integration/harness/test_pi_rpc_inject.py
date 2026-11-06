@@ -14,10 +14,10 @@ import pytest
 
 from meridian.cli import spawn_message as spawn_message_module
 from meridian.lib.config.loader import load_config
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.runtime import (

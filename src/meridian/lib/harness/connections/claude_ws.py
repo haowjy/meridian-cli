@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final, cast
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
@@ -34,7 +35,6 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec

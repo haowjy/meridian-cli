@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
@@ -19,7 +20,6 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     RawHarnessEvent,
 )
-from meridian.lib.harness.delivery import DeliveryKind
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
