@@ -1,5 +1,30 @@
 # Upgrade notes
 
+## `spawn --continue` needs a prompt
+
+`meridian spawn --continue pN` with no prompt is now an error. It never worked: the continue path
+did not load the spawn's original prompt, so a bare continue always failed with `has no stored
+prompt`. Resending that prompt would redo the task, so a continue now has to say what to do next.
+
+```console
+$ meridian spawn --continue p1
+error: prompt required: pass -p/--prompt or --prompt-file
+$ meridian spawn --continue p1 -p "  "
+error: spawn --continue p1 needs a prompt: pass -p/--prompt or --prompt-file (use '-' for stdin) with the follow-up to send
+```
+
+Both exit `1` and launch nothing, with or without `--dry-run`. The same check applies to the MCP
+spawn tool. A script that continued a spawn without a prompt was already failing; change it to pass
+the follow-up:
+
+```sh
+meridian spawn --continue p1 -p "carry on with the failing tests"
+meridian spawn --continue p1 --prompt-file next-step.md
+echo "carry on" | meridian spawn --continue p1 --prompt-file -
+```
+
+To run the original task again, start a new spawn with that prompt. This change writes no on-disk state, so there is nothing to roll back.
+
 ## A continue keeps the spawn ID
 
 `--continue pN`, `--continue cN` and the session browser now keep the spawn's ID: the
