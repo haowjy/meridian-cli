@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -99,8 +100,9 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             type(self).send_cancel_calls += 1

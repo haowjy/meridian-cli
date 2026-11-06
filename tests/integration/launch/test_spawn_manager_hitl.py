@@ -11,10 +11,12 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
+    ConnectionNotReady,
     HarnessRequest,
     RawHarnessEvent,
 )
@@ -149,8 +151,9 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None
@@ -214,7 +217,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_retryable_permission_send_failure_resolves_not_failed(
+async def test_spawn_manager_coordinator_retries_connection_not_ready_for_permission_reply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -304,8 +307,9 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None
@@ -325,7 +329,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
             # Attempt 2 is the manager's first explicit call (fails, triggering retry).
             # Attempt 3 is the coordinator's retry (succeeds).
             if self.respond_attempts == 2:
-                raise ConnectionError("retryable send failure")
+                raise ConnectionNotReady("retryable send failure")
             callback = getattr(self._request_handler, "on_request_resolved", None)
             if callback is not None:
                 await cast("Any", callback)(request_id, resolution={"decision": decision})
@@ -466,8 +470,9 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
         def health(self) -> bool:
             return self.state == "connected"
 
-        async def send_user_message(self, text: str) -> None:
+        async def send_user_message(self, text: str) -> DeliveryKind:
             _ = text
+            return DeliveryKind.ACKNOWLEDGED
 
         async def send_cancel(self) -> None:
             return None

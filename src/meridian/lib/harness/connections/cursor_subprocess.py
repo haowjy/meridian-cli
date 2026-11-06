@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from typing import Final, cast
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
@@ -166,7 +167,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
-    async def send_user_message(self, text: str) -> None:
+    async def send_user_message(self, text: str) -> DeliveryKind:
         _ = text
         raise RuntimeError(
             "Cursor subprocess transport does not support live user-message injection"

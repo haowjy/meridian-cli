@@ -51,7 +51,7 @@ from meridian.lib.harness.claude_boundary import (
     read_observations,
 )
 from meridian.lib.harness.claude_idle import detect_ttl
-from meridian.lib.harness.claude_inbox import post_primary_message
+from meridian.lib.harness.claude_inbox import post_primary_message, resolve_primary_inbox
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
@@ -808,6 +808,7 @@ register_harness_bundle(
         ),
         semantics=CLAUDE_SEMANTICS,
         primary_inbox=post_primary_message,
+        primary_inbox_route=resolve_primary_inbox,
         detect_ttl=detect_ttl,
     )
 )

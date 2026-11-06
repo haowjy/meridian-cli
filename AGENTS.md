@@ -28,6 +28,23 @@ Edit source package repos in sibling checkouts.
 another branch? Make a worktree (`git worktree add ../meridian-cli.worktrees/<name>
 -b <branch> <base>`) and pass `--task-dir <worktree>` to spawns.
 
+## Invariants
+
+These hold however the work is done, including through the Rust rewrite. Change one only as its own visible step, never to get a task passing. Everything else in this file is a current choice, open to rewriting when evidence shows something better.
+
+| Invariant | Check |
+|---|---|
+| An upgrade never loses or silently misreads user state | Partial: legacy-row tests |
+| A crash never loses an acknowledged write or accepts an incomplete one | `tests/platform/test_atomic.py`, JSONL tail-repair tests |
+| Meridian never acts beyond what was authorized: it doesn't signal unverified processes, start cancelled work or widen a workspace | Scattered by area |
+| Private content never reaches the wrong recipient: secrets, another session's transcript, turn text that was excluded | Scattered by area |
+| A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
+| Meridian is an overlay on the harness. A session it starts stays a normal native session: the conversation lives in the harness's own store and format, and can be resumed with the harness alone. Removing Meridian leaves the harness and its sessions working. | None yet |
+
+## Comments
+
+Few. Write one only for what the code can't show and a wrong edit would break silently, at the line it guards. No decision ids.
+
 ## Dev Commands
 
 `uv` exclusively — never `pip` or raw `python`.

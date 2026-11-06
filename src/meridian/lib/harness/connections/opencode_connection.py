@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -159,8 +160,8 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return False
         return self._impl.health()
 
-    async def send_user_message(self, text: str) -> None:
-        await self._transport().send_user_message(text)
+    async def send_user_message(self, text: str) -> DeliveryKind:
+        return await self._transport().send_user_message(text)
 
     async def send_cancel(self) -> None:
         await self._transport().send_cancel()

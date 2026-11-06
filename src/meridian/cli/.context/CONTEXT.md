@@ -294,8 +294,12 @@ human-facing spawn output.
 
 `spawn message` (`cli/spawn_message.py`) posts text, not just a payload. It opens
 the message with a `[Meridian]` line naming the sender and, when the sender's active
-record is a child spawn or a primary harness with an inbox port, the
-`meridian spawn message <sender chat>` command that answers it. The reply names the
+record has a route the post can reach, the
+`meridian spawn message <sender chat>` command that answers it. The frame asks the
+route the post uses: a child's control socket must exist, and a Claude primary must have
+published a live inbox socket (`resolve_primary_inbox`, shared with the post), so a bare
+or pre-2.1.224 primary gets "no reply route here". The check reads the sender's record's
+own runtime root, which differs from the receiver's under `-C`. The reply names the
 sender's current chat (`continue_chat_id`, so the address survives a `/clear`),
 which is the chat the sender's primary runs in. The chat id comes from
 the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the conversation that launched it.

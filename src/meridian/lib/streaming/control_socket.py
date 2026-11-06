@@ -296,6 +296,8 @@ class ControlSocketServer:
             response = {"ok": False, "error": result.error or "request failed"}
         if result.inbound_seq is not None:
             response["inbound_seq"] = result.inbound_seq
+        if result.delivery is not None:
+            response["delivery"] = result.delivery.value
         return response
 
     async def stop(self) -> None:

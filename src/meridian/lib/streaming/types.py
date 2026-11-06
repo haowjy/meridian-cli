@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
+from meridian.lib.core.delivery import DeliveryKind
+
 
 class UserMessageControl(TypedDict):
     """Inject one user message into an active connection."""
@@ -48,6 +50,7 @@ class InjectResult:
     success: bool
     inbound_seq: int | None = None
     error: str | None = None
+    delivery: DeliveryKind | None = None
 
 
 __all__ = [

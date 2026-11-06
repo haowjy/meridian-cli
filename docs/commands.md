@@ -37,7 +37,10 @@ A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exi
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn message` uses the control endpoint for spawned sessions. For a live Claude
+`spawn message` uses the control endpoint for spawned sessions. It prints
+"Message delivered" when the harness answered the request that carried the message
+(Codex, OpenCode, Pi) and "Message posted … (no receipt)" when the write finished but
+the harness confirms nothing (Claude). For a live Claude
 primary, it posts to Claude Code's session inbox; the command confirms only that
 the message was posted, not delivered. Claude holds the message for human approval
 when that session bypasses permission prompts and `crossSessionInbound` is not
