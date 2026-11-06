@@ -362,9 +362,6 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
-        prompt_surface_inventory_prompt=(
-            "# Meridian Agents\n\n## Subagent\n- `meridian spawn -a reviewer`: Review.\n"
-        ),
     )
     sid = "12345678-1234-4234-8234-123456789abc"
     store = tmp_path / "recorded" / "sessions"

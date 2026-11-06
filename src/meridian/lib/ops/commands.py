@@ -330,7 +330,7 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
     OpDeclaration(
         extension_id="meridian.spawn",
         command_id="subagents",
-        summary="List subagents the current agent may spawn.",
+        summary="List the agents to delegate to; `--all` for every installed agent.",
         handler="meridian.lib.ops.spawn.api:spawn_subagents",
         sync_handler="meridian.lib.ops.spawn.api:spawn_subagents_sync",
         input_type="meridian.lib.ops.spawn.api:SpawnSubagentsInput",

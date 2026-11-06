@@ -634,7 +634,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         """Claude projection: route system content to append-system-prompt.
 
-        - SYSTEM_INSTRUCTION (skills, profile, report, inventory, passthrough)
+        - SYSTEM_INSTRUCTION (skills, profile, report, capabilities, passthrough)
           → --append-system-prompt channel
         - USER_TASK_PROMPT + TASK_CONTEXT → positional prompt argument (user turn)
         """

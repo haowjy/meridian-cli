@@ -103,9 +103,9 @@ agents = ["reviewer", "browser-prober", "prober"]
 1. **Native-copy emission** — qualifies for harness-native materialization even
    when `include_fanout = false`. The agent must still qualify for the harness via
    its model policies; `agents` is a scope filter, not a force-emit.
-2. **Dual inventory listing** — appears in both the Meridian `## Subagent`
-   section (primary route: `meridian spawn -a <name>`) and the native harness
-   section (escalation route: `Agent({subagent_type: "<name>"})` for Claude).
+2. **Meridian stays the route** — `meridian spawn subagents` lists it without the
+   native marker, so callers launch it with `meridian spawn -a <name>`; the native copy
+   (`Agent({subagent_type: "<name>"})` for Claude) remains the escalation route.
 
 The former `agent_copy` fan-out allowlist key is removed. If present in
 `mars.toml`, mars emits a migration warning pointing to

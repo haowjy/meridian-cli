@@ -71,7 +71,7 @@ Key properties:
 Codex managed primary uses these channels:
 
 - `baseInstructions`: agent/profile or role instructions
-- `developerInstructions`: Meridian runtime instructions, skills, inventory, and reporting guidance
+- `developerInstructions`: Meridian runtime instructions, skills, and reporting guidance
 - `turn/start input`: the visible user turn
 
 That keeps Meridian's system content out of the visible TUI prompt on managed paths.
