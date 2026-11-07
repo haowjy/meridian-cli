@@ -74,7 +74,9 @@ reply may close over remaining blockers before a later wake is possible. Mark th
 woken only after the ask is delivered, so a refused ask cannot hide them. A regular wake is
 marked before sending, so a failed send cannot trigger an immediate retry loop.
 
-The send grace starts when the attempt ends. An unknown delivery counts as sent: some
+The send grace (`ASK_GRACE_SECONDS`, 30 s for every harness, independent of the poll) starts when
+the attempt ends; a turn start ends it at once. OpenCode marks a turn active only at its first
+output, so a slow model needs more than a poll interval. An unknown delivery counts as sent: some
 harnesses provide no receipt even on success, and retrying could duplicate the message. A
 refusal can be retried once at the next expiry. An unanswered expiry leads to cleanup
 after its 300 s answer window; work inside the turn closes that window.

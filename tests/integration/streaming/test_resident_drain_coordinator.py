@@ -453,6 +453,7 @@ async def test_unknown_nudge_gets_the_grace_and_is_never_resent(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(resident_drain_module, "ASK_GRACE_SECONDS", 5.0)
     connection = FakeResidentConnection(HarnessId.CODEX)
     connection.fake_resident_backend.inject_error = error
     coordinator = ResidentDrainCoordinator.build(
