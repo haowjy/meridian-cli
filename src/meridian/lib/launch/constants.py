@@ -39,6 +39,9 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         # Set by the Pi managed-bash task that ran this launcher; a harness child has its own.
         "_MERIDIAN_PI_BASH_ID",
         "_MERIDIAN_PI_BASH_HOLD_DIR",
+        # Both name one Pi launch's endpoint and launch prompt; a nested launch derives its own.
+        "_MERIDIAN_PI_LAUNCH_PROMPT",
+        "_MERIDIAN_PI_CONTROL_SOCKET",
     }
 )
 

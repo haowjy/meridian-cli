@@ -51,7 +51,7 @@ What changes for you:
 does a spawned session. A primary started by an older build never served one: relaunch it (or
 `--continue` it) to receive messages. Until then the command waits 30 seconds, then fails saying
 the session has no message route. Claude primaries that publish no inbox (`--bare`, `--safe-mode`,
-`--print`) still have none.
+`--print`) still have none. A Pi primary serves its socket from the `meridian-message` extension.
 
 ## `approval: auto` uses each harness's own auto
 

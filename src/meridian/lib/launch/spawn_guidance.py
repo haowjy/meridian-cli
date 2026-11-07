@@ -108,7 +108,6 @@ def build_capabilities_prompt(
     task_link: Path | None = None,
     work_link: Path | None = None,
     paths_in_user_turn: bool = False,
-    has_message_route: bool,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
@@ -176,14 +175,13 @@ def build_capabilities_prompt(
             "`spawn_id`): it follows this conversation across `/clear`, which this chat ID "
             "does not."
         )
-        if has_message_route:
-            # Chat IDs count per project, so the bare ID is ambiguous to a peer in
-            # another repo; the command carries the project it belongs to.
-            lines.append(
-                "- To message this session from another session or repo: "
-                f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-                f'{resolved_chat_id} --message "..."`.'
-            )
+        # Chat IDs count per project, so the bare ID is ambiguous to a peer in
+        # another repo; the command carries the project it belongs to.
+        lines.append(
+            "- To message this session from another session or repo: "
+            f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
+            f'{resolved_chat_id} --message "..."`.'
+        )
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()
