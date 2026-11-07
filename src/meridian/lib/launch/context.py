@@ -92,7 +92,7 @@ from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 from meridian.plugin_api.types import SpawnKind
 
-from .cli_shim import pin_launching_build, write_pinned_shim
+from .cli_shim import drop_inherited_shims, pin_launching_build, write_pinned_shim
 from .command import (
     build_launch_argv,
     normalize_system_prompt_passthrough_args,
@@ -1869,6 +1869,8 @@ def bind_launch_context(
     # After the env is final so config.env and request overrides cannot undo it.
     # Pure, so preview binds (which carry the primary launch's warnings) run it too.
     pin_warning = pin_launching_build(env, write_roots=(child_cwd, *projected_roots))
+    if pin_warning:
+        drop_inherited_shims(env)
     pin_warnings = (
         (CompositionWarning(code="cli_shim_skipped", message=pin_warning),) if pin_warning else ()
     )
