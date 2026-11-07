@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -683,5 +684,43 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         report = extract_or_fallback_report(launch_paths(tmp_path, spawn_id), facts=facts)
         assert report.content == "Resident report."
         assert report.source == "assistant_message"
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+class _SignalingConnection(FakeResidentConnection):
+    @property
+    def completion_signals_available(self) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("harness_id", "event_type"),
+    (
+        pytest.param(HarnessId.CODEX, "turn/completed", id="codex"),
+        pytest.param(HarnessId.OPENCODE, "session.idle", id="opencode"),
+    ),
+)
+async def test_completion_nudge_is_journaled_as_a_control_action(
+    tmp_path: Path,
+    harness_id: HarnessId,
+    event_type: str,
+) -> None:
+    spawn_id = SpawnId("p1")
+    start_row(tmp_path, str(spawn_id), harness_id, None)
+    connection = _SignalingConnection(harness_id)
+    manager = await start_manager(
+        tmp_path, connection, spawn_id=spawn_id, resident_poll_seconds=5.0
+    )
+
+    connection.emit(resident_event(harness_id, event_type, {}))
+
+    try:
+        await wait_until(lambda: len(connection.fake_resident_backend.injected_messages) == 1)
+        journal = launch_paths(tmp_path, spawn_id).control_actions
+        rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        assert {row["source"] for row in rows} == {"completion_nudge"}
+        assert {row["action"] for row in rows} == {"inject"}
     finally:
         await manager.stop_spawn(spawn_id)

@@ -21,11 +21,15 @@ resident policy. Drain collaborators must not construct application services.
 
 **Do not key resident behavior off harness ids.** A connection exposes a native task
 source (`native_task_source()`) independently of resident backend control. Both feed
-one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`:
-resident backend control nudges through `begin_followup_turn`; Claude supplies its
-native task source and is nudged through serialized delivery. Every hold also reads
-persisted descendants. Select the profile once from these capabilities; evidence
-reports facts, while profiles own hold, done/rearm, deadline and nudge policy.
+one `HoldEvidence(descendants, native)` built by `ResidentDrainCoordinator.build`, and
+every hold nudges through `SpawnManager.deliver`. Every hold also reads persisted
+descendants. Select the profile once from these capabilities; evidence reports facts,
+while profiles own hold, done/rearm, deadline and nudge policy.
+
+**The hold's lifecycle is one table.** `hold_state.py` holds one `HoldState` value, the
+pure `decide(state, facts)` and the folds around it: no I/O, no clock, no store.
+`_HoldProfile` reads files, sends and applies what they return. A new hold behaviour is a
+row, a fact or a fold there, not a flag on the profile.
 
 ## Completion
 
@@ -35,7 +39,7 @@ and a 300 s answer window, then cleanup. `--timeout` /
 `MERIDIAN_TIMEOUT` is the opt-in absolute ceiling (outer attempt timer in
 `streaming_runner.py`); rearms, work and Pi waves cannot reset it. Pi completion is
 descendant-quiescence-driven with no default wall-clock bound, by design. Models, rearm
-budget, no-signal holds:
+budget, no-signal holds and the table's rows:
 [.context/completion-and-entry-points.md](.context/completion-and-entry-points.md).
 
 ## Mental Model

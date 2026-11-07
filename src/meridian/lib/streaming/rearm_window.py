@@ -44,20 +44,12 @@ class RearmWindow:
             cleanup_reason=error,
         )
 
-    def grant_rearm(self, signaled: bool) -> bool:
-        """Count a granted rearm. Call `persist_count` once outside the spawn lock.
+    def can_rearm(self) -> bool:
+        return self._rearm_budget is None or self._rearm_count < self._rearm_budget
 
-        `persist_count` takes the non-reentrant spawn lock, and a first candidate
-        is consumed while holding it.
-        """
-        if not signaled:
-            return False
-        if self._rearm_budget is not None and self._rearm_count >= self._rearm_budget:
-            return False
+    def charge_rearm(self) -> None:
+        """Count one rearm. Takes the non-reentrant spawn lock, which a first candidate holds."""
         self._rearm_count += 1
-        return True
-
-    def persist_count(self) -> None:
         spawn_store.update_spawn(
             self._runtime_root,
             self._spawn_id,

@@ -23,6 +23,7 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
+from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
@@ -32,7 +33,7 @@ from tests.support.pi import start_row
 
 async def _wait_for_descendant_evidence(plan: Any) -> None:
     """Block until the descendant read has finished, so an expired deadline cannot race it."""
-    owner = plan.coordinator._coordinator._evidence._descendants
+    owner = plan.coordinator._evidence._descendants
     while owner.assessment.disposition == "unknown":
         await asyncio.sleep(0.001)
 
@@ -75,6 +76,9 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
 
         def health(self) -> bool:
             return True
+
+        def backend_dead(self) -> bool:
+            return False
 
         def observe_event_semantics(self, semantics: object) -> None:
             pass
@@ -121,7 +125,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 while not messages:
                     await asyncio.sleep(0.001)
                 assert not outcomes
-                clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
+                clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
                 await asyncio.sleep(3600)
             if scenario.startswith("done"):
                 yield frame("assistant", message={"content": []})
@@ -137,7 +141,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                     while not messages:
                         await asyncio.sleep(0.001)
                     assert not outcomes
-                    clock.advance(resident_drain._IDLE_NUDGE_ANSWER_SECONDS + 1)
+                    clock.advance(IDLE_NUDGE_ANSWER_SECONDS + 1)
                     await asyncio.sleep(3600)
                 if scenario == "done_poll":
                     # The done signal alone must not publish while the turn is active.

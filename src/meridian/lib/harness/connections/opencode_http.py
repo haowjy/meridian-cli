@@ -64,10 +64,7 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
-    ResidentBackendControl,
-)
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.opencode_backend import v1_session_running
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -259,7 +256,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         # True once ``events()`` has returned: nothing reads the stream, so a
         # failed cancel must leave ``stopping`` in place (see ``send_cancel``).
         self._events_exited = False
@@ -656,7 +652,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             agent=spec.agent_name,
         )
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._events_exited = False
         self._event_queue = asyncio.Queue()
         self._queue_waiter = None
@@ -719,35 +714,29 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         await self._cleanup_runtime()
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._transition("stopped")
         return StopResult()
 
     @property
     def resident_backend(self) -> ResidentBackendControl:
-        return LivenessResidentBackendControl(
-            liveness=self._liveness,
-            backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
-        )
+        return self._liveness
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
+
+    def backend_dead(self) -> bool:
+        # A silent but living process is stalled, which `health` counts and this does not.
+        return (
+            self._resident_backend_dead()
+            or self._liveness.classify_close_stream() is LivenessDecision.BACKEND_DEAD
+        )
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
         if self._tui_left_session:
             raise DeliveryRefused(TUI_MOVED_MESSAGE)
-        self._signal_in_flight = False
         await self._post_session_message(text)
         return DeliveryKind.ACKNOWLEDGED
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        self._require_connected()
-        if self._signal_in_flight:
-            raise DeliveryRefused("OpenCode follow-up turns require an idle backend")
-        self._signal_in_flight = False
-        await self._post_session_message(message)
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:
@@ -760,7 +749,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # the SSE read, so a later terminal (V1 ``session.idle`` reads as
         # SUCCEEDED and outranks ``cancel_sent``) is never read. A failed POST
         # undoes it, so a retry sends again.
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         try:
@@ -770,7 +758,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 accepted_statuses=self._ACTION_SUCCESS_STATUSES,
             )
         except BaseException:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
             # Roll back only while the drain is alive and ``stop()`` has not
             # taken over: otherwise ``stopping`` is the truth (no reader, or a
@@ -1701,7 +1688,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     async def _ensure_http_client(self) -> aiohttp.ClientSession:
@@ -1743,7 +1729,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_path = None
         self._last_health_ok = False
         self._cancel_requested = False
-        self._signal_in_flight = False
         try:
             await self._cancel_request_dispatch_tasks()
             await self._clear_stale_pending_requests(reason="connection_stopped")

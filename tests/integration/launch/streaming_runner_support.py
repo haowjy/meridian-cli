@@ -65,14 +65,8 @@ class _FakeControlSocketServer:
 
 
 class _IdleResidentBackend:
-    def health_status(self) -> object:
-        return "continue"
-
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        _ = awaiting
-
-    async def begin_followup_turn(self, message: str) -> None:
-        _ = message
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        _ = awaiting_done
 
 
 class _ReportThenHangConnection:
@@ -139,6 +133,9 @@ class _ReportThenHangConnection:
         _ = reason, progress
         self.state = "stopped"
         return StopResult()
+
+    def backend_dead(self) -> bool:
+        return False
 
     def health(self) -> bool:
         return self.state == "connected"
@@ -285,6 +282,9 @@ class _OpenCodeTerminalWithScopeConnection:
         self._scope_snapshot = None
         return StopResult()
 
+    def backend_dead(self) -> bool:
+        return False
+
     def health(self) -> bool:
         return self.state == "connected"
 
@@ -385,6 +385,9 @@ class _ResidentDeadlineConnection:
         self.state = "stopped"
         return StopResult()
 
+    def backend_dead(self) -> bool:
+        return False
+
     def health(self) -> bool:
         return self.state == "connected"
 
@@ -395,14 +398,8 @@ class _ResidentDeadlineConnection:
     async def send_cancel(self) -> None:
         return None
 
-    def health_status(self) -> object:
-        return "continue"
-
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        _ = awaiting
-
-    async def begin_followup_turn(self, message: str) -> None:
-        _ = message
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        _ = awaiting_done
 
     async def events(self):  # type: ignore[no-untyped-def]
         yield RawHarnessEvent(

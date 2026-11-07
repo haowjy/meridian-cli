@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -82,9 +83,6 @@ def build_drain_plan(
         with suppress(DeliveryError):
             await deliver(spawn_id, message, source="pi_done_nudge")
 
-    async def _send_completion_nudge(message: str) -> None:
-        await deliver(spawn_id, message, source="completion_nudge")
-
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
         service = build_spawn_application_service(project_root, runtime_root)
         return await service.cancel_descendants(root_id)
@@ -92,19 +90,12 @@ def build_drain_plan(
     resident_backend = receiver.resident_backend
     native = receiver.native_task_source()
     if native is not None or resident_backend is not None:
-        send_nudge = (
-            resident_backend.begin_followup_turn
-            if resident_backend is not None
-            else _send_completion_nudge
-        )
         coordinator = ResidentDrainCoordinator.build(
             launch=launch,
-            # A resident backend starts its own follow-up turn; other harnesses
-            # take the nudge through the manager's serialized delivery.
-            send_nudge=send_nudge,
+            send_nudge=partial(deliver, spawn_id, source="completion_nudge"),
             completion_signals_available=receiver.completion_signals_available,
             backend=resident_backend,
-            health=receiver.health,
+            backend_dead=receiver.backend_dead,
             native=native,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,

@@ -60,10 +60,10 @@ def _coordinator(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,

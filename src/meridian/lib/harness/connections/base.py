@@ -367,6 +367,10 @@ class HarnessConnection(Generic[SpecT], ABC):
         """Resident backend control seam, when this transport supports resident turns."""
         return None
 
+    def backend_dead(self) -> bool:
+        """Whether the backend is gone for good, as distinct from a stalled stream."""
+        return not self.health()
+
     def native_task_source(self) -> NativeTaskSource | None:
         """Harness-native background tasks, independent of resident backend control."""
         return None
