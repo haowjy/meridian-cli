@@ -63,10 +63,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.harness.projections.permissions_pi import (
-    PI_PERMISSION_POLICY_ENV,
-    compile_pi_permissions,
-)
+from meridian.lib.harness.projections.permissions_pi import compile_pi_permissions
 from meridian.lib.harness.projections.pi_extension_projection import (
     PiExtensionLaunchProfile,
     default_extra_extension_path,
@@ -78,6 +75,10 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 )
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
+)
+from meridian.lib.harness.projections.tool_extension_policy import (
+    LEGACY_PI_POLICY_ENV,
+    TOOL_POLICY_ENV,
 )
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -531,14 +532,19 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Pass the bound permission policy and the launch-prompt flag to Pi's extensions."""
+        """Pass the bound policy and the launch-prompt flag to Pi's extensions.
+
+        A bundle built before the rename still reads the old policy name, and now fails open
+        when its variable is unset; both names carry the policy.
+        """
 
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        overrides = (
-            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
-        )
+        overrides: dict[str, str] = {}
+        if policy is not None:
+            encoded = policy.model_dump_json()
+            overrides = {TOOL_POLICY_ENV: encoded, LEGACY_PI_POLICY_ENV: encoded}
         if spec.interactive and spec.prompt:
             # Same condition as the prompt argument in project_pi_native_tui: the
             # meridian-message extension binds only after that prompt has started.

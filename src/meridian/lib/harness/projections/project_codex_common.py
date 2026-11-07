@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from meridian.lib.harness.codex_tool_hook import hook_config_args
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AGENTS_PREFIX,
     CODEX_CONFIG_APPROVAL_POLICY_KEY,
@@ -145,7 +146,7 @@ def project_codex_sandbox(
 
 
 def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str, ...]:
-    """Spell Codex's process-level tool switches for either launch transport."""
+    """Spell Codex's process-level tool switches and shell hook for either launch transport."""
 
     projected: list[str] = []
     if permissions.shell_tool is not None:
@@ -161,6 +162,8 @@ def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str,
         projected.extend(("-c", f'{CODEX_CONFIG_WEB_SEARCH_KEY}="disabled"'))
     if permissions.view_image is not None:
         projected.extend(("--enable" if permissions.view_image else "--disable", "view_image"))
+    if permissions.tool_hook is not None:
+        projected.extend(hook_config_args())
     return tuple(projected)
 
 

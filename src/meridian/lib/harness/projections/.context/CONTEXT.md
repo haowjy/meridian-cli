@@ -115,10 +115,10 @@ denies.
 | Harness | Compile result | Spelled by |
 |---|---|---|
 | Claude | tool availability, plain denies, scoped permissions, sandbox and prompt mode | `project_claude.py` (`--tools`, `--disallowedTools`, one `--settings`, permission flags) |
-| Codex | sandbox mode, approval policy, shell/web/image switches | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
+| Codex | sandbox mode, approval policy, shell/web/image switches, scoped shell rules as a `PreToolUse` hook | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
 | OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
 | Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
-| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_PI_PERMISSION_POLICY` (extension rules) |
+| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_TOOL_POLICY`, plus the pre-rename `_MERIDIAN_PI_PERMISSION_POLICY` for one release (extension rules) |
 
 Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
 channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
@@ -165,15 +165,57 @@ and the spawn operation refuses them when its current `/proc/self/ns/pid` differ
 namespace the Meridian launcher recorded. On systems without readable procfs the check skips.
 
 Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
-switches. Its scoped rules, `ask`, and per-capability allowlists have no native carrier and
-remain unsupported; a per-capability allowlist's deny (origin `allowlist`) sets no switch,
-so the shell stays on for Codex to read files with. A whole-policy allowlist disables web
+switches. Scoped `bash` rules and per-capability shell allowlists go to a Meridian-owned
+`PreToolUse` hook instead (below); scoped `ask` and every other scoped capability have no
+carrier and remain unsupported. A per-capability allowlist's deny (origin `allowlist`) sets no
+switch, so the shell stays on for the hook to decide. A whole-policy allowlist disables web
 search and image viewing but deliberately leaves that shell on. Platform-origin rules never
 drive these tool switches; the built-in-agent mechanism still drives Codex's multi-agent
 feature switch. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
-and `codex app-server`. Native config also goes to both paths as process-level `-c`
+and `codex app-server`; it also spells the hook. Native config also goes to both paths as process-level `-c`
 overrides; the app-server thread payload remains authoritative for its model, effort,
 sandbox, and approval fields, so those native collisions are skipped and reported.
+
+**The Codex shell hook.** `CodexPermissions.tool_hook` holds the `ExtensionPolicy` (the
+compile Pi's extension also reads, `tool_extension_policy.py`) restricted to `bash` and `*`
+rules, set only when one is scoped. A hook cannot ask, so an unscoped `ask` is carried as
+`deny`; a scoped `ask` is not carried and stays unsupported. The hook definition and its trust
+(`hooks.state.<key>.trusted_hash`, an inline table: the dotted spelling is ignored) ride the
+`codex app-server` argv from `codex_tool_hook.py`, so Meridian writes no `config.toml` and a
+shared `CODEX_HOME` is untouched; the policy reaches the stdlib-only enforcer
+(`codex_runtime/tool_hook.py`) in `_MERIDIAN_TOOL_POLICY`, which a launch never inherits.
+Codex skips an untrusted hook silently and fails open on every hook failure, so:
+
+- the hook command is a `python -I -c` bootstrap that hashes the enforcer file against the
+  digest on the argv and runs the bytes it hashed, so an agent that can write the file cannot
+  turn the hook off; a mismatch exits 2. What remains: an agent that can replace the
+  interpreter or its standard library. Upgrading Meridian under a running launch makes the
+  digest stale, which blocks every shell call until the launch restarts;
+- the command turns any other enforcer failure into a block (`... || exit 2` with a message);
+- `CodexConnection.start` calls `hooks/list` before the thread starts and refuses the launch
+  unless exactly one `sessionFlags` `preToolUse` entry is trusted, enabled and has the
+  expected `currentHash` (a Codex without `hooks/list` is refused too). A project
+  `.codex/config.toml` that turns hooks off is caught here;
+- a Codex hook timeout stays open (the connection logs the `failed` `hook/completed`), so the
+  enforcer sets its own `SIGALRM` deadline (`DEADLINE_SECONDS`, 5 s against Codex's 10 s) whose
+  handler denies and exits. It catches every slow path at once (candidate explosion in `_peel`,
+  nested braces, any later parser bug); don't fix a slow input by making it faster only.
+
+The enforcer has two readers. Under `bash_fail_closed` (an allowlist, or any rule denying
+commands no scoped rule names) it accepts only a closed grammar of simple commands and refuses
+everything else, so a bash feature it does not know cannot slip through; it also requires a
+program given by path to sit in a system bin directory, since a rule matches the program by
+name. Deny-lists use a best-effort reader that sees through wrappers (per-wrapper option
+tables), `sh -c`/`eval`, substitutions, braces and `$'..'`; what it cannot see is named in the
+report line. A shell reading stdin is refused whenever a rule denies, because Codex's
+`write_stdin` would feed it commands the hook never sees; REPLs (`python`) stay open. The hook
+payload carries only `command`: `exec_command`'s `shell` parameter picks among the installed
+shells and is not visible to the hook. The enforcer is a copy of Pi's ranking with a different
+parser, so the two are kept equal by hand. `codex exec` is not a live Codex path (the contract
+lists only the streaming transport, and a primary is a managed attach), so its argv is preview
+only and has no `hooks/list` check. The hook does not see `apply_patch` or MCP calls. Every
+hook report line is `partial`: the interpreter caveat above, and those tools, hold whatever
+the policy.
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
 from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule
@@ -195,8 +237,8 @@ Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` 
 A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands.
 Claude cannot make a completion allow override a scoped deny/ask and reports that gap as
 partial. OpenCode orders completion grants last. Pi short-circuits a matching completion
-grant and otherwise evaluates profile specificity. Codex cannot scope its shell per launch.
-Under `read-only` or
+grant and otherwise evaluates profile specificity. The Codex shell hook does the same when it
+exists; otherwise Codex cannot scope its shell per launch. Under `read-only` or
 `workspace-write`, its Meridian-owned user rules file grants the whole `meridian spawn`
 prefix outside the sandbox for every session using that Codex home; the compile reports the
 remaining exact/prefix list as unsupported. A rules-file write failure is reported without

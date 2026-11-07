@@ -39,7 +39,7 @@ function rule(overrides: Partial<PermissionRule>): PermissionRule {
 }
 
 afterEach(() => {
-  delete process.env._MERIDIAN_PI_PERMISSION_POLICY;
+  delete process.env._MERIDIAN_TOOL_POLICY;
   delete process.env.MERIDIAN_SESSION_ROLE;
 });
 
@@ -296,28 +296,26 @@ describe("path scope evaluation", () => {
 });
 
 describe("policy loading", () => {
-  it("is a no-op only when the policy variable is absent", () => {
-    const handlers = new Map<string, (...args: any[]) => any>();
-    meridianPermissionsExtension({
-      on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
-    } as any);
-    expect(handlers).toEqual(new Map());
+  it("fails closed when the policy variable is absent", () => {
+    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
+      "Pi permission policy is missing",
+    );
   });
 
   it("fails closed when the policy variable is empty", () => {
-    process.env._MERIDIAN_PI_PERMISSION_POLICY = "";
+    process.env._MERIDIAN_TOOL_POLICY = "";
     expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
       "Pi permission policy is empty",
     );
   });
 
   it("fails closed when the policy is malformed JSON", () => {
-    process.env._MERIDIAN_PI_PERMISSION_POLICY = "{";
+    process.env._MERIDIAN_TOOL_POLICY = "{";
     expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow();
   });
 
   it("refuses malformed Meridian command grants", () => {
-    process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify(
+    process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
       policy([], {
         meridian_commands: [{ command: "printf hidden", match: "prefix" }],
       }),
@@ -330,7 +328,7 @@ describe("policy loading", () => {
 
 it("blocks headless ask with the exact reason", async () => {
   process.env.MERIDIAN_SESSION_ROLE = "spawned";
-  process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify(
+  process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
     policy([rule({ action: "ask" })]),
   );
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -347,7 +345,7 @@ it("blocks headless ask with the exact reason", async () => {
 
 it("routes primary ask through Pi's TUI confirmation", async () => {
   process.env.MERIDIAN_SESSION_ROLE = "primary";
-  process.env._MERIDIAN_PI_PERMISSION_POLICY = JSON.stringify(
+  process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
     policy([rule({ action: "ask" })]),
   );
   const handlers = new Map<string, (...args: any[]) => any>();

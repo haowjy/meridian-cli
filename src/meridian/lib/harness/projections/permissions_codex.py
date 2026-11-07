@@ -17,6 +17,13 @@ from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     project_codex_native_config,
 )
+from meridian.lib.harness.projections.tool_extension_policy import (
+    ExtensionPolicy,
+    ExtensionRule,
+    bash_fails_closed,
+    command_grants,
+    extension_rules,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
     ALLOWLIST_ORIGIN,
@@ -29,6 +36,7 @@ from meridian.lib.safety.policy import (
     NetworkProjection,
     PermissionPolicy,
     ReportLine,
+    ReportStatus,
     SandboxMode,
     complete_report,
     network_policy_element,
@@ -79,6 +87,9 @@ class CodexPermissions:
     ``builtin_agents_disabled``: Codex's own multi-agent tools are invisible to Meridian,
     and v2 tells a lone spawn it is `/root` of a team, so it can message itself and wait
     forever.
+
+    ``tool_hook``: the rules Codex's ``PreToolUse`` hook enforces on its shell tool, for
+    scoped shell rules the process-level switches cannot express.
     """
 
     sandbox_mode: str | None
@@ -89,6 +100,7 @@ class CodexPermissions:
     web_search: bool | None
     view_image: bool | None
     builtin_agents_disabled: bool
+    tool_hook: ExtensionPolicy | None
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
@@ -175,6 +187,33 @@ def effective_codex_policy(
     )
 
 
+def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
+    """The shell rules Codex's ``PreToolUse`` hook enforces, when any rule is scoped.
+
+    The hook sees one shell tool, so only ``bash`` and ``*`` rules go in; Mars names the tool
+    ``exec_command`` for Codex, which the enforcer knows as ``bash``. A hook cannot ask, so
+    an unscoped ``ask`` is carried as ``deny``: carrying nothing would let the command run.
+    A scoped ``ask`` is not carried and stays ``unsupported``.
+    """
+
+    rules: list[ExtensionRule] = []
+    for rule in extension_rules(policy.rules):
+        if rule.capability not in {"bash", "*"} or (rule.action == "ask" and rule.pattern):
+            continue
+        if rule.action == "ask":
+            rule = rule.model_copy(update={"action": "deny", "label": f"{rule.label} (ask)"})
+        if rule.capability == "bash":
+            rule = rule.model_copy(update={"tool": "bash"})
+        rules.append(rule)
+    if not any(rule.pattern is not None for rule in rules):
+        return None
+    return ExtensionPolicy(
+        rules=tuple(rules),
+        meridian_commands=command_grants(policy),
+        bash_fail_closed=bash_fails_closed(tuple(rules)),
+    )
+
+
 def _compile_codex_permission_values(
     spec: ResolvedLaunchSpec,
 ) -> tuple[CodexPermissions, NetworkProjection[CodexNetworkSettings]]:
@@ -195,6 +234,12 @@ def _compile_codex_permission_values(
         if switch is not None:
             switches[switch[0]] = switch[1]
 
+    tool_hook = _compile_tool_hook(policy)
+    if tool_hook is not None and switches["shell_tool"] is False:
+        # The hook carries an unscoped shell deny beside scoped allows; the switch would also
+        # refuse those allows.
+        switches["shell_tool"] = None
+
     network = project_codex_network(policy)
     return (
         CodexPermissions(
@@ -208,8 +253,54 @@ def _compile_codex_permission_values(
             builtin_agents_disabled=any(
                 rule.kind == "builtin-agents" for rule in policy.platform_rules
             ),
+            tool_hook=tool_hook,
         ),
         network,
+    )
+
+
+_HOOK_NOTE = "PreToolUse hook (the launch is refused unless Codex lists it as intact and trusted)"
+# What the hook cannot stop whatever the policy: a hook sees the shell tool and runs the
+# launching interpreter.
+_HOOK_LIMITS = (
+    "`apply_patch` and MCP calls do not reach it, and an agent that can replace the Python "
+    "interpreter or its standard library turns it off"
+)
+
+
+def _hook_report_line(rule: ToolRule, hook: ExtensionPolicy) -> ReportLine:
+    element = rule_element(rule)
+    if rule.action == "allow":
+        return ReportLine(element, "native", f"{_HOOK_NOTE}; a matching command may run")
+    if rule.pattern is None:
+        asked = " Codex's hook cannot ask, so `ask` is a deny;" if rule.action == "ask" else ""
+        agents = (
+            " Web search and image viewing are off unless allowed."
+            if rule.capability == "*"
+            else ""
+        )
+        return ReportLine(
+            element,
+            "partial",
+            f"{_HOOK_NOTE} refuses every shell command no scoped allow matches.{asked} It "
+            "accepts only simple commands (expansion, redirection, compound commands, "
+            "assignments, and programs run by path outside the system bin directories are "
+            "refused), and a shell reading stdin. Reads are bound too: Codex reads files through "
+            "the shell, so allow the read commands the agent needs. Beyond the allowed commands "
+            f"themselves (a permitted interpreter can run anything): {_HOOK_LIMITS}.{agents}",
+        )
+    reading = (
+        "a command outside the simple-command grammar is refused"
+        if hook.bash_fail_closed
+        else "a command it cannot read runs"
+    )
+    return ReportLine(
+        element,
+        "partial",
+        f"{_HOOK_NOTE}; best effort: `sh script.sh`, interpreters (`python -c`, a REPL fed "
+        "through `write_stdin`), wrappers it does not know, `find -exec`, commands built at run "
+        "time, and options between a program and its subcommand (`git -C <dir> reset --hard`) "
+        f"get past it; {reading}; {_HOOK_LIMITS}",
     )
 
 
@@ -235,6 +326,17 @@ def _codex_report(
                     "-c features.multi_agent_v2=false -c agents.max_depth=0",
                 )
             )
+        elif (
+            permissions.tool_hook is not None
+            and rule.capability in {"bash", "*"}
+            and not (rule.action == "ask" and rule.pattern is not None)
+            and (
+                rule.pattern is not None
+                or rule.origin == ALLOWLIST_ORIGIN
+                or rule.action != "allow"
+            )
+        ):
+            lines.append(_hook_report_line(rule, permissions.tool_hook))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
             lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
         elif switch is not None:
@@ -303,16 +405,18 @@ def _codex_report(
                     f"Codex cannot grant shell command matches ({commands}); they run as "
                     "ordinary shell calls, subject to its sandbox and approval policy"
                 )
+            status: ReportStatus = (
+                "partial"
+                if spawn_escape and permissions.shell_tool is not False and rules_error is None
+                else "unsupported"
+            )
+            if permissions.tool_hook is not None:
+                note += "; the shell hook lets them past the profile's shell rules"
+                status = "platform" if status == "unsupported" else status
             lines.append(
                 ReportLine(
                     platform_element(platform),
-                    (
-                        "partial"
-                        if spawn_escape
-                        and permissions.shell_tool is not False
-                        and rules_error is None
-                        else "unsupported"
-                    ),
+                    status,
                     "the shell is disabled, so the commands cannot run"
                     if permissions.shell_tool is False
                     else note,
