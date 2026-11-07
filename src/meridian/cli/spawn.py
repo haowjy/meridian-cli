@@ -222,7 +222,6 @@ def _resolve_spawn_prompt(
     prompt_file: str | None,
     *,
     has_files: bool,
-    is_continue: bool,
 ) -> str:
     if prompt is not None and prompt_file is not None:
         raise ValueError("cannot specify both -p and --prompt-file")
@@ -232,7 +231,7 @@ def _resolve_spawn_prompt(
         if prompt_file == "-":
             return _read_text_from_stdin(label="prompt")
         return _read_text_from_file(prompt_file, label="prompt")
-    if has_files or is_continue:
+    if has_files:
         return ""
     raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
 
@@ -616,7 +615,7 @@ def _spawn_create(
             name="--continue",
             help=(
                 "Continue a session ref: chat ID, spawn ID, or raw harness session ID. "
-                "The spawn keeps its ID."
+                "The spawn keeps its ID. Needs a follow-up prompt (-p or --prompt-file)."
             ),
         ),
     ] = None,
@@ -758,7 +757,6 @@ def _spawn_create(
         prompt if prompt is not None else positional_prompt,
         prompt_file,
         has_files=bool(references),
-        is_continue=resolved_continue_from is not None,
     )
     logger.debug(
         "spawn_launcher_phase",
