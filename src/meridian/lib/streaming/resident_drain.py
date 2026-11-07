@@ -327,7 +327,7 @@ class _HoldProfile:
                     exc_info=True,
                 )
         self._state = after_send(
-            self._state, result, now=self._clock(), active_turn=state.active_turn
+            self._state, result, now=self._clock(), active_turn=state.active_turn, wake=self._wake
         )
         if failure is not None:
             # The coordinator re-evaluates: a ready tree publishes, a dead one cleans up.
