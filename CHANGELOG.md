@@ -6,6 +6,21 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-07
+
+### Upgrade notes
+- `spawn --continue` without a prompt now fails with a clearer error. See [`spawn --continue` without a prompt gives a clearer error](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#spawn---continue-without-a-prompt-gives-a-clearer-error).
+
+### Fixed
+- A message from a Cursor child no longer says it can be answered; Cursor takes no live messages.
+- An OpenCode interrupt sent after the connection began stopping is now reported as failed instead of acknowledged.
+- `meridian spawn --continue pN` with no prompt fails at once and says to pass `-p` or `--prompt-file`. It used to fail with "Spawn 'pN' has no stored prompt".
+- Lifecycle hooks run with the launching build's `meridian` first on PATH, as harness sessions do.
+- A launch that refuses to pin `meridian` (its sandbox roots cover the shim directory) drops an inherited shim directory from PATH, so the shim is no longer rewritten inside the refused root.
+- A resident OpenCode 2 spawn whose first turn ends before Meridian attaches to its event stream, which is likely under load, keeps its report and stays held. It used to end `succeeded` with `missing_report` and its answer cut off.
+- A spawn that answers a completion check by only running a command, with no text, keeps its earlier report. Codex used to end `succeeded` with `missing_report`.
+- When a parent can't be told its child finished because the message was refused, it stays open and the idle check names that child. It used to close without reading the child's report.
+
 ## [0.20.0] - 2026-11-07
 
 ### Upgrade notes
