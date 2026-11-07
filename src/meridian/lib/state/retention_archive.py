@@ -93,7 +93,7 @@ class ArchivedRecord(BaseModel):
     @classmethod
     def _discard_replaced_capture_fingerprint(cls, value: object) -> object:
         # Published ZIPs must remain readable after removing this derived field.
-        # It was never portable authority; new records no longer compute/store it.
+        # This derived field is not portable authority.
         if not isinstance(value, dict):
             return value
         payload = cast("dict[object, object]", value)

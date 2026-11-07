@@ -46,8 +46,7 @@ class StartupPhase(StrEnum):
 class LifecycleEvent:
     """Lifecycle event carrying full context.
 
-    Base fields are frozen after Phase 0 ships — mars hook compilation
-    depends on this shape.
+    Base fields are frozen because Mars hook compilation depends on their shape.
     """
 
     # --- Base fields (frozen) ---

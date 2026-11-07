@@ -5,14 +5,9 @@ This module is the single service boundary for lifecycle transitions
 lifecycle hook dispatch.
 Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
 
-Design decisions in effect:
-- D1: Service wraps store, not replaces — delegates to spawn_store functions
-- D4: Hooks are post-dispatch only — fire after successful store write
-- D5: keep update_spawn public — metadata only, no transition
-- D9: No async — synchronous methods matching spawn_store
-- D12: First-class LifecycleEvent over ad hoc callbacks
-- D13: Metrics may be None on spawn.finished — fire for persisted terminal writes,
-  including a terminal a runner writes over a derived one
+Hooks fire after a successful store write. Metrics may be None on spawn.finished;
+the event fires for persisted terminal writes, including a terminal a runner writes
+over a derived one. update_spawn remains public for metadata, not transitions.
 
 Import note
 -----------

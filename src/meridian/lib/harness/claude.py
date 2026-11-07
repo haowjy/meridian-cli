@@ -133,7 +133,7 @@ FIRST_TURN_PATH_ENV = "_MERIDIAN_CLAUDE_FIRST_TURN_PATH"
 # ``$.prompt.submit({asUser})`` from ``session.start``; the mods API has no
 # per-feature version record, so this is the build the types were generated from.
 _FIRST_TURN_MIN_VERSION = (2, 1, 314)
-# Modes in which Claude loads no hooks module from a plugin (probe p10394).
+# Modes in which Claude loads no hooks module from a plugin.
 _NO_MOD_FLAGS = frozenset({"--bare", "--safe-mode"})
 _NO_MOD_ENV = ("CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE")
 # Claude's own truthiness set for those switches.
