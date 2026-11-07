@@ -149,13 +149,6 @@ def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str,
     """Spell Codex's process-level tool switches and shell hook for either launch transport."""
 
     projected: list[str] = []
-    if permissions.shell_tool is not None:
-        projected.extend(
-            (
-                "-c",
-                f"{CODEX_CONFIG_FEATURES_PREFIX}.shell_tool={str(permissions.shell_tool).lower()}",
-            )
-        )
     if permissions.web_search is True:
         projected.extend(("-c", f"{CODEX_CONFIG_TOOLS_WEB_SEARCH_KEY}=true"))
     elif permissions.web_search is False:

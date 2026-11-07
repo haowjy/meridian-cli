@@ -17,8 +17,8 @@ grant stays usable. A whole-policy `'*': deny` allowlist is unchanged.
 The same holds across capabilities. `edit: allow` with `'write(src/*)': allow` used to confine
 writes to `src/`; now writes run anywhere. Add `write: deny` to keep the confinement.
 
-On Codex, `bash: deny` or `bash: ask` alone now launches with the shell hook instead of turning
-the shell off or running every command, so it needs Codex 0.129.0 or newer
+On Codex, `bash: deny` and `bash: ask` now go through the shell hook instead of turning the
+shell off or running every command
 ([details](#scoped-shell-rules-on-codex-need-codex-01290-or-newer)).
 
 ## `spawn --continue` without a prompt gives a clearer error
@@ -64,7 +64,9 @@ spawn directory; `spawn show` reads a new `rearms.jsonl` beside it. An older bui
 A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`), a `*` rule beside scoped
 `bash` allows, or a per-capability `bash` allowlist used to launch with those rules reported
 `unsupported` and not enforced. Meridian now enforces them with a `PreToolUse` hook it adds to the
-`codex app-server` command line, and the report marks them `partial` (the gaps below). Before the
+`codex app-server` command line, and the report marks them `partial` (the gaps below). An unscoped `bash: deny` or `bash: ask` is now enforced by the
+same hook: `ask` used to run every command and `deny` turned the shell off, which kept
+`meridian spawn done` from running. Before the
 first turn, Meridian asks Codex (`hooks/list`) whether the hook is loaded and trusted, and it
 refuses the launch if not.
 
@@ -72,11 +74,8 @@ What changes for you:
 
 - **Codex older than 0.129.0.** A launch whose profile has such a rule fails with "The shell-rule
   hook is not running" (or "this Codex does not answer hooks/list"). Upgrade Codex, or drop the
-  scoped rules from the profile. This now also covers a `bash: ask`, and a `bash: deny` in a
-  profile that gets Meridian's completion commands (every launch does): the hook enforces them
-  where `ask` used to run every command and `deny` used to turn the shell off, which kept
-  `meridian spawn done` from running. Scoped allows alone, and a `'*': deny` allowlist alone,
-  launch as before.
+  scoped rules from the profile. Scoped allows alone, and a `'*': deny` allowlist alone, launch as
+  before.
 - **Anything that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a `hooks.state`
   override, a project `.codex/config.toml` with `hooks` off) stops those launches the same way.
 - **Rules are wildcard matches on each command segment.** The hook splits the command on `;`,

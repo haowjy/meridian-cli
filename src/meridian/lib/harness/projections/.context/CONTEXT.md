@@ -49,8 +49,10 @@ and remains visible in the report.
 
 ## Codex
 
-Unscoped shell, web and image rules use process switches. Scoped shell rules use a
-Meridian `PreToolUse` hook; scoped ask and other scoped capabilities have no carrier.
+Unscoped web and image rules use process switches. Shell rules (every `bash` deny or ask,
+and scoped rules beside them) use a Meridian `PreToolUse` hook, not `shell_tool=false`, which
+would also disable Meridian's own commands; a `bash` allow needs nothing. Scoped ask and
+other scoped capabilities have no carrier.
 The hook cannot ask, so unscoped ask becomes deny. Codex silently skips untrusted hooks
 and fails open on hook failures: the launcher verifies the enabled, trusted hook and its
 hash through `hooks/list` before starting the thread, and the hook converts execution

@@ -45,7 +45,7 @@ def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: st
 
 
 def test_codex_unscoped_shell_deny_keeps_completion_grants_runnable() -> None:
-    """`shell_tool=false` would also disable `meridian spawn done`, so a hook carries the deny."""
+    """A shell deny goes to the hook; `shell_tool=false` would block `meridian spawn done`."""
 
     policy = build_permission_policy(
         rules=(ToolRule(capability="bash", action="deny", native=("bash",)),),
@@ -66,7 +66,6 @@ def test_codex_unscoped_shell_deny_keeps_completion_grants_runnable() -> None:
 
     permissions, _ = compile_codex_permissions(spec)
 
-    assert permissions.shell_tool is None
     assert permissions.tool_hook is not None
     assert [command.command for command in permissions.tool_hook.meridian_commands] == [
         "meridian spawn done"
