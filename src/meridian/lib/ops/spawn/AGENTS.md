@@ -37,6 +37,9 @@ env (`launch/`). Contracts, wait scoping, delivery, wire shapes: `.context/CONTE
   next launch (`lifecycle.reopen`) instead of creating a row; the `ContinueHold`'s slot is the
   runner's lock (`execute_*(hold=hold)`). Every spawn prepares before it writes a row, so a
   setup error leaves nothing to remove. A continue emits `spawn.started`, never `spawn.created`.
+- **A continue requires a prompt.** `spawn_continue_sync` rejects an empty or whitespace
+  prompt first, before any resolution. There is no fallback to the source's original prompt:
+  resending it would redo the task.
 - **`spawn_wait` no-arg owed rows** (`owed.py`) are separate from `spawns` in output and
   never affect fail-fast, aggregates, or exit status; `--fail-fast` triggers on `failed`
   or `timed_out`, not `cancelled`.

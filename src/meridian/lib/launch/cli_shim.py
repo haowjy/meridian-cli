@@ -62,6 +62,21 @@ def pin_launching_build(env: dict[str, str], *, write_roots: Collection[Path]) -
     return None
 
 
+def drop_inherited_shims(env: dict[str, str]) -> None:
+    """Remove shim directories from ``env["PATH"]``, for a launch that refused to pin.
+
+    Otherwise an inherited one stays first, and ``write_pinned_shim`` would rewrite it
+    inside the sandbox root that made the launch refuse.
+    """
+
+    shim, _ = _shim_location(env)
+    env["PATH"] = ":".join(
+        entry
+        for entry in env.get("PATH", "").split(":")
+        if Path(entry).parent != shim.parent.parent
+    )
+
+
 def write_pinned_shim(env: Mapping[str, str]) -> None:
     """Write the shim when ``pin_launching_build`` put its directory first on PATH."""
 
