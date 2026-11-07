@@ -45,7 +45,14 @@ the harness confirms nothing (Claude). A Claude primary's launcher binds its soc
 Claude has published its session inbox, so a primary that has not (`--bare`, `--safe-mode`,
 `--print`, Claude older than 2.1.224) has no socket; the command waits up to 30 seconds
 for one, then fails saying the session has no message route. A primary started by an older
-build never had a socket and needs a relaunch. Claude holds the message for human approval
+build never had a socket and needs a relaunch. A Codex or OpenCode primary's route serves the
+session its launcher started: once the TUI opens another (`/new`, `/fork`, `/resume` on Codex;
+Fork session, or the human's first input in a new or other session, on OpenCode), `spawn message` fails with "The TUI moved to
+another session" and sends nothing, until the primary is relaunched (`--continue` reopens the
+first session, not the one the TUI was on). Two cases the launcher cannot act on: on OpenCode,
+a message sent after the new-session or switch-session command (`ctrl+x n`, `ctrl+x l`) but
+before the human types anything there goes to the first session and reports delivered; and a
+TUI that returns to the first session stays refused until relaunch. Claude holds the message for human approval
 when that session bypasses permission prompts and `crossSessionInbound` is not
 `accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
 `~/.claude/settings.json`. This applies to every peer message, not only
@@ -61,7 +68,7 @@ that chat now, else the spawn that ran it; a chat ID never means a child it laun
 After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
-`cancel` on a primary still needs `--force`. Codex, OpenCode and Pi primaries
+`cancel` on a primary still needs `--force`. Pi primaries
 have no message route yet ([#498](https://github.com/haowjy/meridian-cli/issues/498));
 the command waits 30 seconds and fails.
 

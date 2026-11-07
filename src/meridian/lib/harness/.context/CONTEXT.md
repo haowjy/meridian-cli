@@ -153,8 +153,22 @@ always means a message can be delivered. Claude's route exists once the
 SessionStart-published inbox socket for that exact child PID appears in the launch's
 boundary journal; each send re-reads the journal and writes the wire frame to the
 inbox, which is `DeliveryKind.POSTED`. The socket is unbound with the launcher's
-lexical block, so no PID-reuse check is needed. A harness with no port (Codex,
-OpenCode, Pi until their routes land) serves nothing.
+lexical block, so no PID-reuse check is needed. A harness with no port serves nothing
+from the black-box leg (Pi until its route lands).
+
+Codex and OpenCode primaries run in managed attach and have no port: `PrimaryAttachLauncher`
+binds the socket itself with `serving_route`, routing to the observer connection's
+`send_user_message` once the TUI process is running, and unbinds when the TUI exits, before
+`connection.stop()`. The observer stays connected after the TUI attaches, through any length of idle silence (only a dead backend ends it; it is the route a sender needs), and an approval
+an injected turn raises reaches the TUI and the observer alike; nothing answers it.
+The route serves only the launch's first session: the connection latches that the TUI left
+it (`_tui_left_thread`, `_tui_left_session`) and `send_user_message` then raises
+`DeliveryRefused(TUI_MOVED_MESSAGE)`. Nothing else follows the TUI: `harness_session_id`, the idle
+sensor and `--continue` stay on the first session. The signals and the two gaps (OpenCode's
+new-session and switch-session commands are invisible until the human types):
+`docs/harness-integration.md`.
+`has_message_route` is still derived from the port, so these primaries' capabilities
+block does not yet state their address.
 
 ### `HarnessContract` as Inspectable Surface
 

@@ -34,6 +34,14 @@ class TransportDead(DeliveryError):
     """The receiver is gone and nothing was written."""
 
 
+TUI_MOVED_MESSAGE = (
+    "The TUI moved to another session, and a primary takes messages only for the session "
+    "it started with. Nothing was sent. Type in the TUI, or relaunch with "
+    "`meridian --continue <chat>` (it reopens the first session, not the one the TUI is on) "
+    "and send again."
+)
+"""Refusal text once a Codex or OpenCode primary's TUI has left the session the route serves."""
+
 SEND_TIMEOUT_SECONDS = 33.0
 """How long one send may run. Above the harnesses' own 30 s request timeouts, whose
 failure text should win, and below the CLI's wait for the reply (this plus 2 s)."""
@@ -52,6 +60,7 @@ class MessageRoute:
 
 __all__ = [
     "SEND_TIMEOUT_SECONDS",
+    "TUI_MOVED_MESSAGE",
     "Deliver",
     "DeliveryError",
     "DeliveryKind",
