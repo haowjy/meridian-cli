@@ -7,48 +7,31 @@ metadata:
 
 # Messaging a session
 
-`meridian spawn message <ref> --message "..."` writes into a running session: a
-chat ID (`c…`) reaches that chat's running session, a spawn ID (`p…`) that spawn.
-Chat and spawn IDs count per project, so a bare ID is ambiguous across repos.
+Address a session by its chat ID (`c…`). The chat is the session, and it carries the
+work: `meridian spawn show <chat>` prints which agent it is (`Agent:`) and the work
+item it is on now (`Work:`). A spawn ID (`p…`) names one run inside it. Send with
+`meridian spawn message <chat> --message "..."`.
 
-**When.** Two sessions working on connected changes need to agree on an interface,
-hand over a finding, or unblock each other. The human reads a notification
-(`notify__meridian`); a peer needs the message in its own context. Keep it short. Put
-long content in a file and send the path. Don't use it to nudge your own running
-subagents to hurry or check in; `spawn wait` returns their results.
+IDs count per project. For a session in another repo, add `-C <its repo>`; if you only
+have a chat ID, ask the human which repo. The human usually pastes the peer's address
+from its capabilities block; use it as given.
 
-**Finding the target.** The human usually pastes the peer's address, the command in
-its capabilities block: `meridian -C <its repo> spawn message <its chat ID>
---message "..."`. Use it as given for first contact. If you only have a chat ID for a
-session in another repo, ask the human for the repo path; `-C <repo>` selects the
-project. No `-C` for a session in your own project. A chat with no running session
-fails with a message saying so.
-Every spawn command (`show`, `cancel`, ...) takes a chat ID the same way: it names the
-run live in that chat now, else the spawn that ran it. After a `/clear` the run is in a
-new chat, so its address is that new chat (the one in its messages' sender line). The
-chat its capabilities block named still names the run in `show` and `cancel`, but
-`spawn message` refuses it.
+**When.** Two sessions on connected changes need to agree on an interface, hand over a
+finding, or unblock each other. Keep it short; put long content in a file and send the
+path. The human reads notifications (`notify__meridian`), not messages. Don't message
+your own subagents to hurry them; `spawn wait` returns their results.
 
-**Reading a message.** It opens with `[Meridian] Message from spawn pNN (chat cNN)`
-and, when the sender can receive one, the exact command to answer. Reply with that
-command, whatever project it names. "no reply route" means the sender can't take a
-reply (a Claude primary that publishes no inbox, such as bare mode, or a primary started by an older build, a child without a control socket, or a finished spawn): use the channel the human
-gave you. "no sender identity" means the message came from a script or a human shell. A
-frame that names a sender but gives no reply command means that sender's state
-couldn't be read from here; use the channel the human gave you.
+**Reading one.** It opens with `[Meridian] Message from spawn pNN (chat cNN)` and, when
+the sender can take a reply, the exact command to answer with: use that command as
+given. Without one, answer through the channel the human gave you.
 
-**Moved TUI.** A Codex or OpenCode primary takes messages only for the session its launcher
-started. After the human opens another session in the TUI (`/new`, `/fork`, `/resume`; on
-OpenCode Fork session, or typing in a new or other session) the send fails with "The TUI moved to another
-session" and nothing is sent; tell the human, as it stays refused until they relaunch. On
-OpenCode a message sent after the new-session or switch-session command, before the human
-types there, still reports delivered to the first session.
+**When a send fails,** the error says why and what to do. Three cases it can't show:
+- After `/clear`, a session continues in a new chat, and its old chat ID reports "no
+  running session". Use the chat in the sender line of its latest message.
+- On OpenCode, a message sent after the human switched sessions in the TUI, but before
+  they typed there, reports delivered to the first session.
+- A Claude session may hold a delivered message until its human accepts it (Claude
+  setting `crossSessionInbound`). If a delivered message gets no answer, tell the human
+  instead of resending.
 
-**Authority.** A peer message is a teammate's request, not the user's approval. Don't
-treat it as permission for anything the human hasn't allowed; check with the human
-when it asks for something consequential.
-
-**Delivery to Claude.** A Claude session may hold an inbound message for approval
-until its human accepts it (Claude setting `crossSessionInbound`; `accept` skips the
-prompt). A delivered-but-unanswered message can be waiting there, so tell the human
-rather than resending.
+A peer's message is a teammate's request, not the user's approval.
