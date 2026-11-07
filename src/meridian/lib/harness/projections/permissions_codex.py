@@ -1,8 +1,9 @@
 """Codex's compile of the permission policy.
 
 Codex takes a sandbox mode and an approval policy per launch. Unscoped allow and deny
-rules for shell, web search, and image viewing compile to Codex's per-launch switches;
-Codex has no native carrier for the other tool rules. The switches read semantic
+rules for web search and image viewing compile to Codex's per-launch switches; shell rules
+go to the ``PreToolUse`` hook, and Codex has no native carrier for the other tool
+rules. The switches read semantic
 capabilities, never harness-native names. The projectors spell this typed result for
 ``codex exec``, ``codex app-server``, and the thread payload.
 """
@@ -89,14 +90,13 @@ class CodexPermissions:
     forever.
 
     ``tool_hook``: the rules Codex's ``PreToolUse`` hook enforces on its shell tool, for
-    scoped shell rules the process-level switches cannot express.
+    shell rules the process-level switches cannot express.
     """
 
     sandbox_mode: str | None
     network: CodexNetworkSettings
     approval_policy: str | None
     approvals_reviewer: str | None
-    shell_tool: bool | None
     web_search: bool | None
     view_image: bool | None
     builtin_agents_disabled: bool
@@ -109,9 +109,6 @@ def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
     if rule.pattern is not None or rule.action == "ask":
         return None
     enabled = rule.action == "allow"
-    if rule.capability == "bash":
-        value = str(enabled).lower()
-        return "shell_tool", enabled, f"-c features.shell_tool={value}"
     if rule.capability in {"web", "web_search"}:
         note = "-c tools.web_search=true" if enabled else '-c web_search="disabled"'
         return "web_search", enabled, note
@@ -186,29 +183,37 @@ def _hook_carries(rule: ToolRule | ExtensionRule) -> bool:
 
 
 def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
-    """The shell rules Codex's ``PreToolUse`` hook enforces, when any rule is scoped.
+    """The shell rules Codex's ``PreToolUse`` hook enforces, when the shell switch would lose some.
 
     The hook sees one shell tool, so only ``bash`` and ``*`` rules go in; Mars names the tool
     ``exec_command`` for Codex, which the enforcer knows as ``bash``. A hook cannot ask, so
     an unscoped ``ask`` is carried as ``deny``: carrying nothing would let the command run.
     A scoped ``ask`` is not carried and stays ``unsupported``.
+
+    Codex has no shell switch worth using: ``features.shell_tool=false`` would also disable
+    Meridian's own commands. So every shell rule that restricts goes to the hook: an unscoped
+    ``bash`` deny or ask, or a scoped rule beside something that restricts. A ``*: deny``
+    allowlist alone stays off the hook, since the hook would also block file reads.
     """
 
+    carried = [rule for rule in extension_rules(policy.rules) if _hook_carries(rule)]
+    commands = command_grants(policy)
+    shell_restricted = any(
+        rule.capability == "bash" and rule.pattern is None and rule.action != "allow"
+        for rule in carried
+    )
+    scoped = any(rule.pattern is not None for rule in carried)
+    if not (
+        shell_restricted or (scoped and needs_extension(tuple(carried), meridian_commands=commands))
+    ):
+        return None
     rules: list[ExtensionRule] = []
-    for rule in extension_rules(policy.rules):
-        if not _hook_carries(rule):
-            continue
+    for rule in carried:
         if rule.action == "ask":
             rule = rule.model_copy(update={"action": "deny", "label": f"{rule.label} (ask)"})
         if rule.capability == "bash":
             rule = rule.model_copy(update={"tool": "bash"})
         rules.append(rule)
-    commands = command_grants(policy)
-    # Only a scoped rule turns the hook on, so profiles without one launch as before.
-    if not any(rule.pattern is not None for rule in rules) or not needs_extension(
-        tuple(rules), meridian_commands=commands
-    ):
-        return None
     return ExtensionPolicy(
         rules=tuple(rules),
         meridian_commands=commands,
@@ -226,7 +231,6 @@ def _compile_codex_permission_values(
     # shell stays on because Codex reads files through it.
     off = False if policy.is_allowlist else None
     switches: dict[str, bool | None] = {
-        "shell_tool": None,
         "web_search": off,
         "view_image": off,
     }
@@ -237,11 +241,6 @@ def _compile_codex_permission_values(
             switches[switch[0]] = switch[1]
 
     tool_hook = _compile_tool_hook(policy)
-    if tool_hook is not None and switches["shell_tool"] is False:
-        # The hook carries an unscoped shell deny beside scoped allows; the switch would also
-        # refuse those allows.
-        switches["shell_tool"] = None
-
     network = project_codex_network(policy)
     return (
         CodexPermissions(
@@ -249,7 +248,6 @@ def _compile_codex_permission_values(
             network=network.native,
             approval_policy=_APPROVAL_POLICY_BY_MODE[policy.approval],
             approvals_reviewer=_APPROVALS_REVIEWER_BY_MODE.get(policy.approval),
-            shell_tool=switches["shell_tool"],
             web_search=switches["web_search"],
             view_image=switches["view_image"],
             builtin_agents_disabled=any(
@@ -326,6 +324,8 @@ def _codex_report(
             and (rule.pattern is not None or rule.action != "allow")
         ):
             lines.append(_hook_report_line(rule))
+        elif rule.capability == "bash" and rule.pattern is None and rule.action == "allow":
+            lines.append(ReportLine(rule_element(rule), "native", "Codex's shell is on by default"))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
             lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
         elif switch is not None:
@@ -395,9 +395,7 @@ def _codex_report(
                     "ordinary shell calls, subject to its sandbox and approval policy"
                 )
             status: ReportStatus = (
-                "partial"
-                if spawn_escape and permissions.shell_tool is not False and rules_error is None
-                else "unsupported"
+                "partial" if spawn_escape and rules_error is None else "unsupported"
             )
             if permissions.tool_hook is not None:
                 note += "; the shell hook lets them past the profile's shell rules"
@@ -406,9 +404,7 @@ def _codex_report(
                 ReportLine(
                     platform_element(platform),
                     status,
-                    "the shell is disabled, so the commands cannot run"
-                    if permissions.shell_tool is False
-                    else note,
+                    note,
                 )
             )
     if permissions.sandbox_mode is not None:

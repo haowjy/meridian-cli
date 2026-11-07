@@ -12,7 +12,13 @@ from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import Allow, build_permission_policy
+from meridian.lib.safety.policy import (
+    Allow,
+    PlatformCommand,
+    PlatformRule,
+    build_permission_policy,
+)
+from meridian.lib.tools import ToolRule
 
 
 @pytest.mark.parametrize(
@@ -36,6 +42,34 @@ def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: st
     )
 
     assert compile_codex_permissions(spec)[0].approval_policy == expected
+
+
+def test_codex_unscoped_shell_deny_keeps_completion_grants_runnable() -> None:
+    """A shell deny goes to the hook; `shell_tool=false` would block `meridian spawn done`."""
+
+    policy = build_permission_policy(
+        rules=(ToolRule(capability="bash", action="deny", native=("bash",)),),
+        platform_rules=(
+            PlatformRule(
+                kind="meridian-commands",
+                commands=(
+                    PlatformCommand(
+                        command="meridian spawn done", match="prefix", role="completion"
+                    ),
+                ),
+            ),
+        ),
+        sandbox=None,
+        network=Allow(),
+    )
+    spec = ResolvedLaunchSpec(harness=HarnessId.CODEX, permission_policy=policy)
+
+    permissions, _ = compile_codex_permissions(spec)
+
+    assert permissions.tool_hook is not None
+    assert [command.command for command in permissions.tool_hook.meridian_commands] == [
+        "meridian spawn done"
+    ]
 
 
 @pytest.mark.parametrize(
