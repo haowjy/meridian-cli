@@ -441,6 +441,43 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             raw_text=raw_text,
         )
 
+    def _created_session_ids(self, payload: dict[str, object]) -> tuple[str | None, str | None]:
+        # ``_event_from_json_line`` flattened ``data`` into the payload.
+        session_id, parent_id = payload.get("sessionID"), payload.get("parentID")
+        return (
+            session_id if isinstance(session_id, str) else None,
+            parent_id if isinstance(parent_id, str) and parent_id else None,
+        )
+
+    def _note_tui_session(self, event: RawHarnessEvent) -> None:
+        """Also latch on the human's fork and on input to a session this run never saw.
+
+        ``session.forked`` carries the new session's id (only the fork API and the
+        TUI's Fork session emit it; subagents arrive as ``session.created`` with a
+        parent). ``session.inbox.enqueued`` names the session receiving input, so an
+        id that is neither ours nor a recorded child means the human is elsewhere,
+        which also covers ``ctrl+x l`` to an existing session once they type. A child
+        whose ``session.created`` fell in a reconnect gap reads as a move: the
+        refusal stays honest.
+        """
+        if (
+            self._primary_observer_mode
+            and not self._tui_left_session
+            and event.event_type in {"session.forked", "session.inbox.enqueued"}
+        ):
+            session_id = event.payload.get("sessionID")
+            if (
+                isinstance(session_id, str)
+                and session_id != self._session_id
+                and (
+                    event.event_type == "session.forked"
+                    or session_id not in self._child_session_ids
+                )
+            ):
+                self._latch_tui_left(session_id, event.event_type)
+            return
+        super()._note_tui_session(event)
+
     async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
         """Synthesize a terminal the live ``/api/event`` stream may have missed.
 

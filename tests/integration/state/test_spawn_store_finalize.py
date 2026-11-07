@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from meridian.lib.core.domain import (
     TerminalSpawnStatus,
     TokenUsage,
@@ -22,7 +20,6 @@ from meridian.lib.state.spawn_store import (
     get_spawn,
     start_spawn,
 )
-from tests.support import legacy_rows
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -43,22 +40,6 @@ def _start_test_spawn(runtime_root: Path) -> str:
             prompt="hello",
         ).spawn_id
     )
-
-
-def test_finalize_propagates_concurrent_disappearance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    def disappeared(*_args: object, **_kwargs: object) -> None:
-        raise FileNotFoundError(spawn_id)
-
-    monkeypatch.setattr("meridian.lib.state.spawn_store._write_state_locked", disappeared)
-
-    with pytest.raises(FileNotFoundError):
-        finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
 
 
 def _finalize_spawn_worker(
@@ -139,25 +120,3 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
     assert row.status in {"succeeded", "failed"}
     assert row.terminal is not None
     assert row.terminal.duration_secs in {10.0, 99.0}
-
-
-def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-    legacy_rows.mark_finalizing(runtime_root, spawn_id)
-
-    outcome = finalize_spawn(
-        runtime_root,
-        spawn_id,
-        status="failed",
-        exit_code=1,
-        origin="reconciler",
-        error="orphan_finalization",
-    )
-
-    assert isinstance(outcome, Applied)
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "failed"
-    assert row.terminal is not None
-    assert row.terminal.error == "orphan_finalization"

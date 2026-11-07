@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
-import importlib.util
 import json
 import logging
 import os
@@ -17,13 +15,19 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
-from aiohttp import ClientSession, WSMsgType
+import websockets
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
+from meridian.lib.core.delivery import (
+    TUI_MOVED_MESSAGE,
+    DeliveryKind,
+    DeliveryRefused,
+    TransportDead,
+)
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -58,6 +62,7 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.liveness import (
     BackendLivenessPolicy,
     EventStreamLivenessTimeout,
+    LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
@@ -98,13 +103,6 @@ _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
-def _load_websockets_module() -> Any | None:
-    if importlib.util.find_spec("websockets") is None:
-        return None
-    return importlib.import_module("websockets")
-
-
-_WEBSOCKETS_MODULE: Any | None = _load_websockets_module()
 logger = logging.getLogger(__name__)
 
 
@@ -133,13 +131,9 @@ def _ws_is_open(ws: object) -> bool:
 def _is_clean_websocket_close(exc: BaseException) -> bool:
     """Return whether a websocket close exception represents normal closure."""
 
-    exceptions_module = getattr(_WEBSOCKETS_MODULE, "exceptions", None)
-    connection_closed_ok = getattr(exceptions_module, "ConnectionClosedOK", None)
-    if connection_closed_ok is not None and isinstance(exc, connection_closed_ok):
+    if isinstance(exc, ConnectionClosedOK):
         return True
-
-    connection_closed_error = getattr(exceptions_module, "ConnectionClosedError", None)
-    if connection_closed_error is None or not isinstance(exc, connection_closed_error):
+    if not isinstance(exc, ConnectionClosedError):
         return False
 
     for attr in ("rcvd", "sent"):
@@ -147,52 +141,6 @@ def _is_clean_websocket_close(exc: BaseException) -> bool:
         if getattr(close_frame, "code", None) == 1000:
             return True
     return False
-
-
-class _AiohttpWebSocketCompat:
-    """Compatibility layer matching the subset of the websockets API we use."""
-
-    def __init__(self, session: ClientSession, ws: Any) -> None:
-        self._session = session
-        self._ws = ws
-
-    @property
-    def closed(self) -> bool:
-        return bool(self._ws.closed)
-
-    async def send(self, data: str) -> None:
-        await self._ws.send_str(data)
-
-    async def close(self) -> None:
-        with contextlib.suppress(Exception):
-            await self._ws.close()
-        await self._session.close()
-
-    def __aiter__(self) -> _AiohttpWebSocketCompat:
-        return self
-
-    async def __anext__(self) -> str | bytes:
-        while True:
-            message = await self._ws.receive()
-            msg_type = message.type
-            if msg_type is WSMsgType.TEXT:
-                return cast("str", message.data)
-            if msg_type is WSMsgType.BINARY:
-                return cast("bytes", message.data)
-            if msg_type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
-                raise StopAsyncIteration
-            if msg_type is WSMsgType.ERROR:
-                raise RuntimeError("Aiohttp websocket reported an error")
-
-
-async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
-    session = ClientSession()
-    try:
-        ws = await session.ws_connect(ws_url, max_msg_size=MAX_HARNESS_MESSAGE_BYTES)
-    except Exception:
-        await session.close()
-        raise
-    return _AiohttpWebSocketCompat(session, ws)
 
 
 class _CodexRpcError(RuntimeError):
@@ -250,6 +198,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = False
         self._signal_in_flight = False
         self._primary_observer_mode = False
+        self._tui_left_thread = False
+        self._helper_thread_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._event_stream_ended = False
 
@@ -556,6 +506,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         after the write propagates, never a second send.
         """
         self._require_connected(operation)
+        if self._tui_left_thread:
+            raise DeliveryRefused(TUI_MOVED_MESSAGE)
         if self._ws is None or not _ws_is_open(self._ws):
             # A send on a closed websocket writes nothing.
             raise TransportDead("Codex websocket is closed")
@@ -658,12 +610,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raise self._startup_exit_exception()
 
             try:
-                if _WEBSOCKETS_MODULE is not None:
-                    return await _WEBSOCKETS_MODULE.connect(
-                        ws_url,
-                        max_size=MAX_HARNESS_MESSAGE_BYTES,
-                    )
-                return await _aiohttp_connect(ws_url)
+                return await websockets.connect(ws_url, max_size=MAX_HARNESS_MESSAGE_BYTES)
             except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(0.1)
@@ -749,21 +696,26 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         try:
-            ws_iter = ws.__aiter__()
             while True:
                 try:
-                    raw_message = await self._liveness.wait_for_activity(ws_iter.__anext__())
-                except StopAsyncIteration:
-                    return
+                    # Not ``async for``: the liveness wait cancels a pending read, and
+                    # cancelling the iterator's async generator ends it for good.
+                    # ``recv`` is cancellation-safe, so a quiet observer keeps reading.
+                    raw_message = await self._liveness.wait_for_activity(ws.recv())
                 except EventStreamLivenessTimeout:
+                    if (
+                        self._primary_observer_mode
+                        and self._liveness.evaluate() is not LivenessDecision.BACKEND_DEAD
+                    ):
+                        # An idle primary is quiet, not failed, and this connection is
+                        # the route a sender needs: only a dead backend ends it.
+                        self._liveness.mark_activity()
+                        continue
                     message = (
                         "Codex event stream liveness timeout after "
                         f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
                     )
-                    logger.log(
-                        logging.DEBUG if self._primary_observer_mode else logging.WARNING,
-                        message,
-                    )
+                    logger.warning(message)
                     await self._emit_connection_closed_once({"message": message})
                     return
                 except Exception as exc:
@@ -1159,6 +1111,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> None:
         if method == "serverRequest/resolved":
             await self._resolve_server_request(payload)
+        self._note_tui_thread(method=method, payload=payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
             RawHarnessEvent(
@@ -1425,11 +1378,57 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise TypeError("Codex managed-primary bootstrap returned invalid types")
         return method_obj, cast("dict[str, object]", payload_obj)
 
+    def _note_tui_thread(self, *, method: str, payload: dict[str, object]) -> None:
+        """Latch ``_tui_left_thread`` when the TUI opens or resumes another thread.
+
+        The app-server broadcasts lifecycle notifications for every thread to every
+        client, but turn events only to the thread's own client, so the move shows
+        only as these. ``/new`` and ``/fork`` announce a non-ephemeral, parentless
+        ``thread/started``; ``/resume`` of a loaded or unloaded thread sends no
+        ``thread/started``, only a status or goal event naming it. Helper threads
+        (titles seen ephemeral, others judged by the same rule; subagents) are ephemeral or
+        parented and are announced first.
+        ``thread/closed`` and ``notLoaded`` are unloads, never a move.
+        """
+        if not self._primary_observer_mode or self._tui_left_thread:
+            return
+        thread_id = _extract_thread_id(payload)
+        if thread_id is None or thread_id == self._thread_id:
+            return
+        if method == "thread/started":
+            thread = cast("dict[str, object]", payload.get("thread") or {})
+            if thread.get("ephemeral") or thread.get("parentThreadId"):
+                # Recorded even before our own id is known: a helper started during
+                # session init must not read as a move when its status arrives.
+                self._helper_thread_ids.add(thread_id)
+                return
+        if self._thread_id is None:
+            return
+        if method == "thread/status/changed":
+            status = payload.get("status")
+            status_type = (
+                cast("dict[str, object]", status).get("type") if isinstance(status, dict) else None
+            )
+            if status_type not in {"idle", "active"}:
+                return
+        elif method not in {"thread/started", "thread/goal/cleared"}:
+            return
+        if thread_id in self._helper_thread_ids:
+            return
+        self._tui_left_thread = True
+        logger.warning(
+            "Codex TUI left thread %s for %s (%s); messages are refused",
+            self._thread_id,
+            thread_id,
+            method,
+        )
+
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
-        if method in {"thread/start", "thread/started"}:
-            thread_id = _extract_thread_id(payload)
-            if thread_id is not None:
-                self._thread_id = thread_id
+        thread_id = _extract_thread_id(payload)
+        if thread_id is not None and thread_id != self._thread_id:
+            # The app-server announces its own helper threads (titles, memory) to every
+            # client, and the TUI may open others: only this connection's thread counts.
+            return
 
         turn_id = _extract_turn_id(payload)
         # A background terminal's delta carries the finished turn's id: only a start

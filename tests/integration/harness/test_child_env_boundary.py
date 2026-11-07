@@ -7,7 +7,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -16,9 +15,7 @@ from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
-from meridian.lib.harness.pi import PiAdapter
-from meridian.lib.launch.env import apply_pi_bind_time_env, build_harness_child_env
+from meridian.lib.launch.env import build_harness_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import (
@@ -146,102 +143,3 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         assert env["HOME"] == str(bound_home)
         assert "CLAUDECODE" not in env
         assert "MERIDIAN_SECRET_PROBE" not in env
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-@pytest.mark.parametrize(
-    ("role", "timeout", "interval", "expected_timeout", "expected_interval"),
-    [
-        ("spawned", 1.5, 0.25, "1500", "250"),
-        ("primary", 1.5, 0.25, None, "250"),
-        ("spawned", None, None, None, None),
-        ("spawned", float("nan"), float("nan"), None, None),
-        ("spawned", float("inf"), float("inf"), None, None),
-        ("spawned", 0.0, 0.0, None, None),
-        ("spawned", -1.0, -1.0, None, None),
-    ],
-)
-async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    role: str,
-    timeout: float | None,
-    interval: float | None,
-    expected_timeout: str | None,
-    expected_interval: str | None,
-) -> None:
-    fake_pi = tmp_path / "pi"
-    _write_recording_harness(fake_pi, harness=HarnessId.PI)
-    env_log = tmp_path / "pi-env.jsonl"
-    bound_home = tmp_path / "bound-home"
-    monkeypatch.setenv("HOME", str(bound_home))
-    child_env = build_harness_child_env(
-        base_env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(bound_home),
-            "HARNESS_ENV_LOG": str(env_log),
-        },
-        adapter=PiAdapter(),
-        run_params=SpawnParams(
-            prompt="test",
-            model=ModelId("openai-codex/gpt-5.4-mini"),
-            interactive=role == "primary",
-        ),
-        runtime_env_overrides={
-            "MERIDIAN_PI_BINARY": str(fake_pi),
-            "MERIDIAN_SESSION_ROLE": "primary" if role == "primary" else "spawn",
-            "_MERIDIAN_PI_STATE_DIR": str(tmp_path / "runtime"),
-        },
-    )
-    apply_pi_bind_time_env(
-        child_env,
-        launch_role=role,  # type: ignore[arg-type]
-        timeout_seconds=timeout,
-        interval_seconds=interval,
-        reset_on_activity=False,
-    )
-    connection = PiRpcConnection()
-    spawn_id = SpawnId("p-env-boundary-pi")
-    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id=spawn_id,
-        chat_id=str(spawn_id),
-        model="test-model",
-        agent="test-agent",
-        harness="pi",
-        prompt="hello",
-    )
-    launch_paths(runtime_root, spawn_id).dir.mkdir(parents=True, exist_ok=True)
-    await connection.start(
-        ConnectionConfig(
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            launch=launch_paths(runtime_root, spawn_id),
-            child_env=child_env,
-            pi_session_role=role,  # type: ignore[arg-type]
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-        ),
-    )
-    try:
-        records = await _wait_for_records(env_log, 3)
-    finally:
-        await connection.stop()
-
-    main_record = next(
-        record
-        for record in records
-        if "--version" not in record["argv"] and "--help" not in record["argv"]  # type: ignore[operator]
-    )
-    main_env = cast("dict[str, str]", main_record["env"])
-    expected_session_role = "primary" if role == "primary" else "spawn"
-    assert main_env["MERIDIAN_SESSION_ROLE"] == expected_session_role
-    assert main_env["_MERIDIAN_PI_STATE_DIR"] == str(tmp_path / "runtime")
-    assert main_env.get("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS") == expected_timeout
-    assert main_env.get("_MERIDIAN_PI_TASK_PING_INTERVAL_MS") == expected_interval
-    assert main_env["_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"] == "false"

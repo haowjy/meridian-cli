@@ -234,6 +234,8 @@ class _HoldProfile:
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         self._blockers = context.assessment.blockers
+        if context.directives.rearm:
+            self._window.persist_count()
         if context.terminal_action is not None:
             return self._evaluate_terminal(context)
         return self._evaluate_wait(context)

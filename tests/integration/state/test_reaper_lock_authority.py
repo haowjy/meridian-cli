@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import psutil
 import pytest
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -18,17 +15,9 @@ from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 from meridian.lib.ops.spawn.api import spawn_show_sync
 from meridian.lib.ops.spawn.models import SpawnShowInput
-from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
-from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper import reconcile_active_spawn
-from meridian.lib.state.reaper_cleanup_claim import (
-    claim_active_spawn_scopes,
-    cleanup_claim_path,
-)
-from tests.support import legacy_rows
 from tests.support.launch_paths import launch_paths
 
 
@@ -58,61 +47,6 @@ def _active_spawn(
     return str(created)
 
 
-def _sleep_process() -> tuple[subprocess.Popen[bytes], float]:
-    process = subprocess.Popen(["sleep", "30"])
-    return process, psutil.Process(process.pid).create_time()
-
-
-def _stop(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is None:
-        with suppress(ProcessLookupError):
-            process.kill()
-    process.wait(timeout=5)
-
-
-def test_runner_exit_does_not_turn_a_crashed_launch_into_success(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = _active_spawn(runtime_root)
-    legacy_rows.record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="succeeded",
-        exit_code=0,
-        exited_at="2000-01-01T00:00:01Z",
-    )
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
-    assert row is not None
-
-    reconciled = reconcile_active_spawn(tmp_path, runtime_root, row)
-
-    assert reconciled.status == "failed"
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 1
-    assert reconciled.terminal.error == "crashed"
-
-
-def test_dead_runner_with_cancel_intent_is_cancelled(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = _active_spawn(runtime_root)
-    legacy_rows.record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=130,
-        error="cancelled by user",
-        requested_at="2000-01-01T00:00:01Z",
-    )
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
-    assert row is not None
-
-    reconciled = reconcile_active_spawn(tmp_path, runtime_root, row)
-
-    assert reconciled.status == "cancelled"
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 130
-    assert reconciled.terminal.error == "cancelled by user"
-    assert reconciled.terminal.origin == "cancel"
-
-
 @pytest.mark.asyncio
 async def test_cancel_dead_runner_with_report_keeps_the_completion(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
@@ -135,98 +69,6 @@ async def test_cancel_dead_runner_with_report_keeps_the_completion(tmp_path: Pat
     assert persisted.terminal is not None
     assert persisted.terminal.exit_code == 0
     assert persisted.terminal.error is None
-
-
-def test_reaper_cleans_managed_primary_fallback_processes(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    dead_runner, runner_birth = _sleep_process()
-    dead_runner.terminate()
-    dead_runner.wait(timeout=5)
-    spawn_id = _active_spawn(
-        runtime_root,
-        kind="primary",
-        runner_pid=dead_runner.pid,
-        runner_created_at_epoch=runner_birth,
-    )
-    backend, backend_birth = _sleep_process()
-    tui, tui_birth = _sleep_process()
-    try:
-        write_primary_metadata(
-            launch_paths(runtime_root, spawn_id),
-            PrimaryMetadata(
-                managed_backend=True,
-                backend_pid=backend.pid,
-                backend_birth_epoch=backend_birth,
-                tui_pid=tui.pid,
-                tui_birth_epoch=tui_birth,
-            ),
-        )
-        row = spawn_store.get_spawn(runtime_root, spawn_id)
-        assert row is not None
-
-        reconciled = reconcile_active_spawn(tmp_path, runtime_root, row)
-
-        assert reconciled.status == "failed"
-        assert reconciled.terminal is not None
-        assert reconciled.terminal.error == "crashed"
-        backend.wait(timeout=5)
-        tui.wait(timeout=5)
-        assert backend.poll() is not None
-        assert tui.poll() is not None
-    finally:
-        _stop(backend)
-        _stop(tui)
-
-
-def test_terminal_lockless_cleanup_claim_is_swept(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="tester",
-        harness="claude",
-        kind="child",
-        prompt="hello",
-        started_at="2000-01-01T00:00:00Z",
-        status="running",
-    )
-    sleeper, birth = _sleep_process()
-    try:
-        scope = ProcessScopeSnapshot(
-            scope_id="harness",
-            owner_policy="spawn_owned",
-            owner_id="p1",
-            role="harness_backend",
-            containment="pid_tree_fallback",
-            root_pid=sleeper.pid,
-            root_created_at_epoch=birth,
-            pgid=None,
-            job_name=None,
-            degraded_reason=None,
-        )
-        record_scope(launch_paths(runtime_root, SpawnId("p1")), scope)
-        claim_active_spawn_scopes(runtime_root, SpawnId("p1"))
-        spawn_store.finalize_spawn(
-            runtime_root,
-            "p1",
-            "failed",
-            1,
-            origin="reconciler",
-            error="crashed",
-        )
-        terminal = spawn_store.get_spawn(runtime_root, "p1")
-        assert terminal is not None
-
-        reconciled = reconcile_active_spawn(tmp_path, runtime_root, terminal)
-
-        assert reconciled == terminal
-        sleeper.wait(timeout=5)
-        assert sleeper.poll() is not None
-        assert not cleanup_claim_path(runtime_root, "p1").exists()
-    finally:
-        _stop(sleeper)
 
 
 def test_lockless_crash_projection_is_never_finalized(

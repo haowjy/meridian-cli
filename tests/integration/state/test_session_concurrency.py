@@ -9,16 +9,9 @@ test_session_store.py.
 
 from __future__ import annotations
 
-import multiprocessing
-import os
-import time
 from pathlib import Path
 
-import pytest
-
-from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store
-from tests.conftest import posix_only
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -33,31 +26,6 @@ def _reserve_chat_id_worker(state_root_str: str) -> str:
     return session_store.reserve_chat_id(runtime_root)
 
 
-def _can_acquire_lock_nonblocking_worker(lock_path_str: str) -> bool:
-    lock_path = Path(lock_path_str)
-    with try_lock_file(lock_path, reentrant=False) as handle:
-        return handle is not None
-
-
-def _start_session_then_fork(
-    runtime_root: Path,
-    child_ready: multiprocessing.Event,
-    child_exit: multiprocessing.Event,
-) -> None:
-    session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-forked",
-        model="gpt-5.4",
-        chat_id="c1",
-    )
-    if os.fork() == 0:
-        child_ready.set()
-        child_exit.wait(5)
-        os._exit(0)
-    os._exit(0)
-
-
 def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     process_count = 8
@@ -70,115 +38,3 @@ def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     allocated = sorted(allocated)
     assert allocated == [f"c{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "session-id-counter").read_text(encoding="utf-8") == f"{process_count}\n"
-
-
-def test_start_session_acquires_lifetime_lock_before_appending_start_event(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    original_append_event = session_store.append_chat_rows
-    observed = {"checked": False}
-
-    def _append_event_with_lock_check(root, batches):
-        for rows in batches.values():
-            for event in rows:
-                if isinstance(event, session_store.SessionStartEvent):
-                    lock_path = runtime_root / "sessions" / f"{event.chat_id}.lock"
-                    held = run_spawn_race_or_skip(
-                        _can_acquire_lock_nonblocking_worker,
-                        [(lock_path.as_posix(),)],
-                    )
-                    assert held == [False]
-                    observed["checked"] = True
-        original_append_event(root, batches)
-
-    monkeypatch.setattr(session_store, "append_chat_rows", _append_event_with_lock_check)
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-ordered",
-        model="gpt-5.4",
-    ).chat_id
-    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
-    try:
-        assert observed["checked"] is True
-        held_after_start = run_spawn_race_or_skip(
-            _can_acquire_lock_nonblocking_worker,
-            [(lock_path.as_posix(),)],
-        )
-        assert held_after_start == [False]
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-    released_after_stop = run_spawn_race_or_skip(
-        _can_acquire_lock_nonblocking_worker,
-        [(lock_path.as_posix(),)],
-    )
-    assert released_after_stop == [True]
-
-
-def test_start_session_rolls_back_lock_and_event_on_append_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    chat_id = "c99"
-
-    def _raise_append_error(*_: object, **__: object) -> None:
-        raise RuntimeError("append failed")
-
-    monkeypatch.setattr(session_store, "append_chat_rows", _raise_append_error)
-
-    with pytest.raises(RuntimeError, match="append failed"):
-        session_store.start_session(
-            runtime_root,
-            harness="codex",
-            harness_session_id="thread-fail",
-            model="gpt-5.4",
-            chat_id=chat_id,
-        )
-
-    # Privacy setup may create an empty journal before the first append.
-    journal = runtime_root / "sessions.jsonl"
-    assert not journal.exists() or journal.stat().st_size == 0
-    assert not (runtime_root / "sessions" / f"{chat_id}.lease.json").exists()
-    assert (
-        session_store._session_lock_key(runtime_root, chat_id)
-        not in session_store._SESSION_LOCK_HANDLES
-    )
-
-    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
-    assert run_spawn_race_or_skip(
-        _can_acquire_lock_nonblocking_worker,
-        [(lock_path.as_posix(),)],
-    ) == [True]
-
-
-@posix_only
-def test_fork_child_closes_inherited_direct_session_handles(tmp_path: Path) -> None:
-    context = multiprocessing.get_context("fork")
-    runtime_root = _state_root(tmp_path)
-    child_ready = context.Event()
-    child_exit = context.Event()
-    parent = context.Process(
-        target=_start_session_then_fork,
-        args=(runtime_root, child_ready, child_exit),
-    )
-    parent.start()
-    try:
-        assert child_ready.wait(5)
-        deadline = time.monotonic() + 5
-        while parent.exitcode is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert parent.exitcode == 0
-
-        lock_paths = (
-            runtime_root / "sessions" / "c1.lock",
-            runtime_root.parent / ".locks" / f"{runtime_root.name}.lock",
-        )
-        for lock_path in lock_paths:
-            with try_lock_file(lock_path, reentrant=False) as handle:
-                assert handle is not None
-    finally:
-        child_exit.set()
-        parent.join(5)

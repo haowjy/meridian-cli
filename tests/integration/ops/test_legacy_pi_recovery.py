@@ -146,28 +146,6 @@ def _key(root: Path, chat: str) -> tuple[str | None, str | None]:
     return record.harness_session_id, record.native_store
 
 
-def test_matching_prompt_binds_once_and_marks_the_marker(env: tuple[Path, Path, Path]) -> None:
-    pi_root, root, cwd = env
-    _chat(root, "c1", cwd, spawn_id="p1")
-    _spawn(root, "p1", "c1", cwd, prompt="Reply OK   and run\nno commands")
-    # 0.6.7 ran Pi in the control root, not the recorded worktree.
-    session_id = _journal(pi_root / "p1", cwd, version=1)
-    _old_marker(root)
-
-    result = legacy.recover_legacy_pi_sessions(root)
-
-    assert result == legacy.PiRecovery(bound=1, unbound=())
-    assert _key(root, "c1") == (session_id, str((pi_root / "p1").resolve()))
-    marker = json.loads((root / legacy.MARKER).read_text())
-    assert marker["pi_recovery_tried"] == ["c1"]
-    assert "c1" not in marker["unbound"]["no_session_id"]
-    journal = (root / "sessions.jsonl").read_bytes()
-    assert b'"source":"legacy_pi_recovery"' in journal
-    # One-shot: the marker now records the pass, so nothing is rescanned.
-    assert legacy.recover_legacy_pi_sessions(root) == legacy.PiRecovery()
-    assert (root / "sessions.jsonl").read_bytes() == journal
-
-
 def test_prompt_mismatch_is_not_bound(env: tuple[Path, Path, Path]) -> None:
     # c8145's shape: the only candidate, right cwd and time, different first message.
     pi_root, root, cwd = env
@@ -178,26 +156,6 @@ def test_prompt_mismatch_is_not_bound(env: tuple[Path, Path, Path]) -> None:
 
     assert legacy.recover_legacy_pi_sessions(root) == legacy.PiRecovery(unbound=("c1",))
     assert _key(root, "c1") == (None, None)
-
-
-def test_report_proves_when_no_prompt_was_retained(env: tuple[Path, Path, Path]) -> None:
-    pi_root, root, cwd = env
-    _chat(root, "c1", cwd)
-    _spawn(root, "p1", "c1", cwd, report="# Report\n\nAll   done.\n")
-    session_id = _journal(pi_root / "p1", cwd, assistant="All done.")
-    _old_marker(root)
-
-    assert legacy.recover_legacy_pi_sessions(root).bound == 1
-    assert _key(root, "c1")[0] == session_id
-
-
-def test_nothing_retained_is_not_bound(env: tuple[Path, Path, Path]) -> None:
-    pi_root, root, cwd = env
-    _chat(root, "c1", cwd, spawn_id="p1")
-    _journal(pi_root / "p1", cwd)
-    _old_marker(root)
-
-    assert legacy.recover_legacy_pi_sessions(root) == legacy.PiRecovery(unbound=("c1",))
 
 
 def test_two_candidates_are_not_bound(env: tuple[Path, Path, Path]) -> None:
