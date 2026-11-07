@@ -5,7 +5,10 @@ shell call; see #721 for what a CLI import costs), so the rule ranking below mir
 Pi permission extension's ``policyDecision`` and the policy JSON is
 ``tool_extension_policy.ExtensionPolicy``.
 
-The policy arrives in ``_MERIDIAN_TOOL_POLICY``. A missing variable denies. Exit 2 with the
+The policy arrives in ``_MERIDIAN_TOOL_POLICY``. A missing variable denies, and so does a
+check that outlasts ``DEADLINE_SECONDS``: Codex lets a call run when a hook times out. The deadline
+is a ``SIGALRM`` timer, so it also covers any parser bug that loops; it cannot interrupt one
+long C call, and the only ones here (the regexes) are linear. Exit 2 with the
 reason on stderr is the block; any other failure exit is turned into a block by the hook
 command's own wrapper (``codex_tool_hook.hook_command``).
 
@@ -35,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import sys
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -45,6 +49,10 @@ DENIAL_PREFIX = "Blocked by Meridian policy: "
 _MAX_DEPTH = 8
 _MAX_BRACE_WORDS = 64
 _MAX_UNKNOWN_OPTIONS = 4
+# Codex lets a call run when a hook times out (its limit is 10 s), so the enforcer ends itself
+# first with a denial. An ordinary command is decided in milliseconds; this leaves room for a
+# machine under heavy load and for the interpreter's own start-up, which the timer cannot see.
+DEADLINE_SECONDS = 5.0
 
 # Wrapper programs: (options that take a value, options that do not). Short options may be
 # clustered (`-iu`) or carry their value (`-n5`); long ones carry it as `=value` or the next word.
@@ -448,6 +456,7 @@ class _Tokenizer:
                 and src.startswith("((", i)
                 and not self.started
                 and self._arithmetic_head()
+                and self._is_arithmetic(i)
             ):
                 # `((...))` is arithmetic: its `<<` is a shift, not a here-document.
                 end = _matching_paren(src, i + 1)
@@ -467,6 +476,13 @@ class _Tokenizer:
         if self.heredocs:
             self.heredoc_bodies(len(src))
         return self.parsed
+
+    def _is_arithmetic(self, i: int) -> bool:
+        """``((`` at ``i`` opens arithmetic only if one ``)`` then closes the inner paren and
+        the outer one right after it; ``((cmd); other)`` is a subshell inside a subshell."""
+
+        end = _matching_paren(self.src, i + 1)
+        return end is not None and _matching_paren(self.src, i + 2) == end - 1
 
     def _arithmetic_head(self) -> bool:
         return not self.words or [word.text for word in self.words] == ["for"]
@@ -736,14 +752,21 @@ def _peel(argv: list[str], *, strict: bool) -> tuple[list[list[str]], bool, str 
                 break
             elif not word.startswith("-") or word == "-":
                 break
-            elif name == "env" and (word == "--split-string" or word.startswith("-S")):
+            elif name == "env" and (
+                word.startswith("--split-string") or (word[1] != "-" and "S" in word)
+            ):
                 if strict:
                     problem = problem or "env -S splits a string at run time"
                     return []
-                value = word.partition("=")[2] if word.startswith("--") else word[2:]
+                value = word.partition("=")[2] if word.startswith("--") else word.partition("S")[2]
                 if not value and len(rest) > 1:
                     value, rest = rest[1], rest[1:]
                 rest = [*value.split(), *rest[1:]]
+            elif name == "command" and re.fullmatch(r"-[p]*[vV][pvV]*", word):
+                return [[]]  # a lookup: `command -v sh` runs nothing
+            elif strict and name == "time" and (word.startswith("--output") or "o" in word[1:]):
+                problem = problem or "time -o writes a file"
+                return []
             else:
                 width = _option_width(options, word)
                 if width is None:
@@ -763,32 +786,56 @@ def _peel(argv: list[str], *, strict: bool) -> tuple[list[list[str]], bool, str 
     return candidates, assigned, problem
 
 
-def _shell_run(argv: list[str]) -> tuple[str, str | None] | None:
-    """What a shell or ``eval`` command runs: ``("string", text)``, ``("script", None)``
-    or ``("stdin", None)``; None when ``argv`` is neither."""
+# Fail-closed: the only shell flags an unwrapped `-c` string may carry. They change nothing
+# about which code runs (`-e`, `-u`, `-x` only alter how it reports); every other option,
+# including rc-file, login, interactive, `-o`/`-O` and anything not yet invented, is refused.
+_PLAIN_SHELL_FLAGS = frozenset("cexu")
+# Shell options that take the next word as their value.
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+
+
+def _shell_run(argv: list[str], *, strict: bool = False) -> tuple[str, str | None] | None:
+    """What a shell or ``eval`` command runs: ``("string", text)``, ``("script", None)``,
+    ``("stdin", None)`` or ``("refused", reason)``; None when ``argv`` is neither.
+
+    ``refused`` only comes from the fail-closed reader (``strict``), which unwraps
+    ``sh -c '<string>'`` and nothing fancier.
+    """
 
     program = _base(argv)
     if program == "eval":
-        return "string", " ".join(argv[1:])
+        rest = argv[1:]
+        return "string", " ".join(rest[1:] if rest[:1] == ["--"] else rest)
     if program not in _SHELLS:
         return None
     i = 1
-    stdin = False
+    has_string = reads_stdin = informational = False
+    unplain: str | None = None
     while i < len(argv):
         word = argv[i]
-        if word in {"-o", "-O", "+o", "+O", "--rcfile", "--init-file"}:
-            i += 2
-        elif word == "--":
+        if word == "--":
             i += 1
             break
-        elif word.startswith("-") and not word.startswith("--") and "c" in word[1:]:
-            return ("string", argv[i + 1]) if i + 1 < len(argv) else ("script", None)
-        elif word.startswith(("-", "+")) and word != "-":
-            stdin = stdin or (word.startswith("-") and not word.startswith("--") and "s" in word)
-            i += 1
-        else:
+        if word == "-" or not word.startswith(("-", "+")):
             break
-    if stdin or i >= len(argv) or argv[i] in _STDIN_SCRIPTS:
+        if word in {"--version", "--help"}:
+            informational = True
+        if not (word.startswith("-") and set(word[1:]) <= _PLAIN_SHELL_FLAGS):
+            unplain = unplain or word
+        takes_value = word in _SHELL_VALUE_OPTIONS or (
+            not word.startswith("--") and any(c in word[1:] for c in "oO")
+        )
+        if word.startswith("-") and not word.startswith("--"):
+            has_string = has_string or "c" in word[1:]
+            reads_stdin = reads_stdin or "s" in word[1:]
+        i += 2 if takes_value else 1
+    if has_string:
+        if strict and unplain is not None:
+            return "refused", f"the shell option {unplain!r} changes what {program} runs"
+        return ("string", argv[i]) if i < len(argv) else ("script", None)
+    if informational:
+        return "script", None
+    if reads_stdin or i >= len(argv) or argv[i] in _STDIN_SCRIPTS:
         return "stdin", None
     return "script", None
 
@@ -821,7 +868,10 @@ def layered_commands(
         nonlocal problem
         if strict:
             problem = problem or _program_problem(argv)
-        run = _shell_run(argv)
+        run = _shell_run(argv, strict=strict)
+        if run is not None and run[0] == "refused":
+            problem = problem or run[1]
+            return
         if run is not None and run[0] == "string":
             if depth >= _MAX_DEPTH:
                 problem = problem or "commands nested too deeply"
@@ -1037,7 +1087,18 @@ def _payload_command(raw: str) -> str | None:
     return command
 
 
+def _out_of_time(_signum: int, _frame: object) -> None:
+    # `os._exit`: no `except` in the parser can swallow it, and nothing flushes after it.
+    os.write(
+        2,
+        f"{DENIAL_PREFIX}the shell command took too long to check, so it is refused.\n".encode(),
+    )
+    os._exit(2)
+
+
 def main() -> int:
+    signal.signal(signal.SIGALRM, _out_of_time)
+    signal.setitimer(signal.ITIMER_REAL, DEADLINE_SECONDS)
     raw_policy = os.environ.get(POLICY_ENV)
     if not raw_policy:
         print(

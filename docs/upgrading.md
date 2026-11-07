@@ -23,8 +23,10 @@ What changes for you:
   and `$(...)`, double-quoted `$`, heredocs, `{ }` and `( )`, `if`/`for`, `NAME=value` prefixes,
   and a program run by path outside `/usr/bin`, `/bin`, `/usr/local/bin`, `/usr/sbin`, `/sbin` are
   refused, even when the command inside them would be allowed. Single-quote strings that need a
-  `$`. `bash -c '...'`, `sudo`, `env`, `timeout` and similar wrappers are read, with their string
-  held to the same grammar.
+  `$`. `bash -c '...'` (with at most `-e`, `-u`, `-x`), `sudo`, `env`, `timeout` and similar
+  wrappers are read, with their string held to the same grammar. A shell carrying any other option
+  (`-i`, `-l`, `--rcfile`, `--init-file`, `-O`, `--posix`) is refused, because an rc file runs
+  before the string, and `time -o` is refused because it writes a file.
 - **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
   refuses the other commands. A scoped `ask` is still not enforced.
 - **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
@@ -41,9 +43,9 @@ What changes for you:
   option between a program and its subcommand (`git -C <dir> reset --hard`); an allowlist
   inherits whatever its allowed commands can do (`bash(python *)` runs anything). `apply_patch`
   and MCP calls never reach the hook, and an agent that can replace the Python interpreter or its
-  standard library turns the hook off. A hook that times out (10 seconds) lets that one call run
-  and logs a warning; the matcher itself is linear in the command, so input length does not cause
-  that.
+  standard library turns the hook off. Codex lets a call run when a hook
+  times out (10 seconds), so the enforcer ends itself after 5 seconds with a denial: a command too
+  long or too nested to check in that time is refused, not run.
 
 ## Messages to a primary go through its launcher
 

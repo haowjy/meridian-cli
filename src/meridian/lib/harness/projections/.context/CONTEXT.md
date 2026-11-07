@@ -196,8 +196,10 @@ Codex skips an untrusted hook silently and fails open on every hook failure, so:
   unless exactly one `sessionFlags` `preToolUse` entry is trusted, enabled and has the
   expected `currentHash` (a Codex without `hooks/list` is refused too). A project
   `.codex/config.toml` that turns hooks off is caught here;
-- a timeout stays open (the connection logs the `failed` `hook/completed`), so the enforcer's
-  work is linear in the command: the glob match has no backtracking.
+- a Codex hook timeout stays open (the connection logs the `failed` `hook/completed`), so the
+  enforcer sets its own `SIGALRM` deadline (`DEADLINE_SECONDS`, 5 s against Codex's 10 s) whose
+  handler denies and exits. It catches every slow path at once (candidate explosion in `_peel`,
+  nested braces, any later parser bug); don't fix a slow input by making it faster only.
 
 The enforcer has two readers. Under `bash_fail_closed` (an allowlist, or any rule denying
 commands no scoped rule names) it accepts only a closed grammar of simple commands and refuses
