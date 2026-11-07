@@ -33,9 +33,7 @@ from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
 )
-from meridian.lib.streaming.resident_drain import (
-    _IDLE_NUDGE_ANSWER_SECONDS as IDLE_NUDGE_ANSWER_SECONDS,
-)
+from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -51,13 +49,10 @@ class FakeResidentBackendControl:
         self.inject_error: Exception | None = None
         self.inject_attempts = 0
 
-    def health_status(self) -> LivenessDecision:
-        return self.status
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        self.awaiting_done_values.append(awaiting_done)
 
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        self.awaiting_done_values.append(awaiting)
-
-    async def begin_followup_turn(self, message: str) -> None:
+    def record_send(self, message: str) -> None:
         self.inject_attempts += 1
         if self.inject_error is not None:
             raise self.inject_error
@@ -136,8 +131,11 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
+    def backend_dead(self) -> bool:
+        return self._resident_backend.status is LivenessDecision.BACKEND_DEAD
+
     async def send_user_message(self, text: str) -> DeliveryKind:
-        _ = text
+        self._resident_backend.record_send(text)
         return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
@@ -202,10 +200,10 @@ async def awaiting_done_coordinator(
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -343,10 +341,10 @@ async def coordinator_with_clock(
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,

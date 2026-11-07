@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryError
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state import spawn_store
@@ -61,10 +62,10 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -116,10 +117,10 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -171,10 +172,10 @@ async def test_rejected_success_validation_preserves_resident_wait_protection(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
@@ -233,10 +234,10 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
-        health=connection.health,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
@@ -461,3 +462,55 @@ async def test_rearm_granted_at_first_candidate_does_not_deadlock_on_spawn_lock(
     row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
     assert row is not None
     assert row.resident_rearm_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [DeliveryError("no answer"), ValueError("journal write failed after the send")],
+    ids=["delivery_error", "other_exception"],
+)
+async def test_unknown_nudge_gets_the_grace_and_is_never_resent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    clock = FakeClock(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    connection.fake_resident_backend.inject_error = error
+    coordinator = ResidentDrainCoordinator.build(
+        launch=launch_paths(tmp_path, SpawnId("p1")),
+        send_nudge=connection.send_user_message,
+        completion_signals_available=True,
+        backend=connection.resident_backend,
+        backend_dead=connection.backend_dead,
+        native=None,
+        deadline_seconds=3300.0,
+        poll_seconds=5.0,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
+    )
+    success = TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        success,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+    await asyncio.wait_for(coordinator.wait_for_aux_wake(), timeout=5)
+    assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+    clock.advance(4.9)
+    assert (await coordinator.after_event()).recorded_outcome is None
+    # Publishing has not started: no validation is pending to hold a close open.
+    assert coordinator.should_defer_close() is False
+
+    clock.advance(0.1)
+    await coordinator.handle_timeout()
+    decision = await _after_refresh(coordinator)
+
+    assert decision.recorded_outcome == success
+    assert connection.fake_resident_backend.inject_attempts == 1

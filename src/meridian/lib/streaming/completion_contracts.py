@@ -242,12 +242,12 @@ class NativeTaskSource(Protocol):
 
 class CompletionProfile(Protocol):
     def allows_evaluation_without_candidate(self) -> bool:
-        """Return policy that is pure and stable for the coordinator's lifetime."""
+        """Whether a wait may evaluate with no candidate. It can change between calls."""
         ...
 
-    def refresh_deadline_after_event(
-        self, state: CompletionState, semantics: EventSemantics
-    ) -> bool: ...
+    def observe_event(self, state: CompletionState, semantics: EventSemantics) -> bool:
+        """Take one harness event; return whether it renews the deadline."""
+        ...
 
     def candidate_transition(self) -> AbstractContextManager[None]: ...
 

@@ -163,18 +163,15 @@ class CompletionCoordinator:
             return None
         return max(min(candidates) - now, _TIMEOUT_FLOOR_SECONDS)
 
-    async def observe_event(
-        self, normalized_event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent | None:
-        event = normalized_event.raw
-        transition = normalized_event.semantics.activity
+    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
+        transition = event.semantics.activity
         self.note_activity_transition(transition)
-        decision = await self._evidence.observe_event(event, transition)
-        if not decision.duplicate_canonical_event and self._profile.refresh_deadline_after_event(
-            self.state, normalized_event.semantics
+        decision = await self._evidence.observe_event(event.raw, transition)
+        if not decision.duplicate_canonical_event and self._profile.observe_event(
+            self.state, event.semantics
         ):
             self._refresh_profile_deadline()
-        return None if decision.duplicate_canonical_event else normalized_event
+        return None if decision.duplicate_canonical_event else event
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         decision = self._evidence.note_event_delivered(event, self.state)

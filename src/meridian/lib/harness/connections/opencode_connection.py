@@ -160,6 +160,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return False
         return self._impl.health()
 
+    def backend_dead(self) -> bool:
+        if self._impl is None:
+            return True
+        return self._impl.backend_dead()
+
     async def send_user_message(self, text: str) -> DeliveryKind:
         return await self._transport().send_user_message(text)
 

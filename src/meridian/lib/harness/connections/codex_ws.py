@@ -68,10 +68,7 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
-    ResidentBackendControl,
-)
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -196,7 +193,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id: str | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._primary_observer_mode = False
         self._tui_left_thread = False
         self._helper_thread_ids: set[str] = set()
@@ -332,7 +328,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id = None
         self._liveness.reset()
         self._cancel_requested = False
-        self._signal_in_flight = False
 
         host = config.ws_bind_host
         port = config.ws_port if config.ws_port > 0 else _reserve_port(host)
@@ -483,36 +478,32 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def resident_backend(self) -> ResidentBackendControl:
-        return LivenessResidentBackendControl(
-            liveness=self._liveness,
-            backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
-        )
+        return self._liveness
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
+    def backend_dead(self) -> bool:
+        # A silent but living process is stalled, which `health` counts and this does not.
+        return (
+            self._resident_backend_dead()
+            or self._liveness.classify_close_stream() is LivenessDecision.BACKEND_DEAD
+        )
+
     async def send_user_message(self, text: str) -> DeliveryKind:
-        return await self._send_input(text, "send_user_message")
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        await self._send_input(message, "begin_followup_turn")
-
-    async def _send_input(self, text: str, operation: str) -> DeliveryKind:
         """Steer the running turn, else start one; a steer racing a turn end starts one.
 
         Only a JSON-RPC error (the server refused, nothing delivered) falls back, and a
         refused ``turn/start`` is ``DeliveryRefused``; a timeout or transport failure
         after the write propagates, never a second send.
         """
-        self._require_connected(operation)
+        self._require_connected("send_user_message")
         if self._tui_left_thread:
             raise DeliveryRefused(TUI_MOVED_MESSAGE)
         if self._ws is None or not _ws_is_open(self._ws):
             # A send on a closed websocket writes nothing.
             raise TransportDead("Codex websocket is closed")
-        self._signal_in_flight = False
-        thread_id = self._require_thread_id(operation)
+        thread_id = self._require_thread_id("send_user_message")
         if self._current_turn_id:
             try:
                 await self._request(
@@ -546,7 +537,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._require_connected("send_cancel")
 
         self._cancel_requested = True
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._close_ws()
@@ -938,7 +928,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             self._thread_id = None
             self._cancel_requested = False
-            self._signal_in_flight = False
             self._launch_spec = None
             self._codex_home = None
             self._startup_emitter = None
@@ -1440,13 +1429,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id
             self._liveness.signal_turn_started(turn_id)
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
             self._end_current_turn()
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def _end_current_turn(self) -> None:

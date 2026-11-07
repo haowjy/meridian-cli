@@ -123,9 +123,7 @@ class PiCompletionProfile:
     def allows_evaluation_without_candidate(self) -> bool:
         return True
 
-    def refresh_deadline_after_event(
-        self, state: CompletionState, semantics: EventSemantics
-    ) -> bool:
+    def observe_event(self, state: CompletionState, semantics: EventSemantics) -> bool:
         del state, semantics
         return True
 
