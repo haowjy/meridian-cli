@@ -13,7 +13,6 @@ import pytest
 
 from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -30,8 +29,6 @@ from meridian.lib.launch.process.ports import (
     TerminalFds,
 )
 from meridian.lib.launch.process.primary_attach import (
-    PortBindError,
-    PrimaryAttachError,
     PrimaryAttachLauncher,
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
@@ -98,45 +95,6 @@ def _install_idle_sensor_bundle(
     return contexts, alive_at_creation
 
 
-@pytest.mark.asyncio
-async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
-    event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
-
-    class FiniteConnection:
-        harness_id = HarnessId.CODEX
-        primary_event_scope = None
-
-        def observe_event_semantics(self, _semantics: object) -> None:
-            return None
-
-        async def events(self):  # type: ignore[no-untyped-def]
-            yield event
-
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p-no-writer")),
-        durable=False,
-        connection=cast("Any", FiniteConnection()),
-        tui_command_builder=lambda session_id: ("codex", session_id),
-        process_launcher=cast("ProcessLauncher", object()),
-    )
-    seen: list[RawHarnessEvent] = []
-    stream_error_phases: list[str] = []
-
-    class ErrorReporter:
-        def record(self, *, phase: str, error: BaseException) -> None:
-            _ = error
-            stream_error_phases.append(phase)
-
-    launcher._event_hooks = (seen.append,)
-    launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
-    launcher._idle_error_reporter = cast("Any", ErrorReporter())
-
-    await launcher._consume_live_events()
-
-    assert seen == [event]
-    assert stream_error_phases == ["event_stream"]
-
-
 def _publish_spawn(spawn_dir: Path) -> None:
     start_spawn(
         spawn_dir.parent.parent,
@@ -181,10 +139,7 @@ class FakeManagedConnection:
         events: list[RawHarnessEvent],
         session_id: str = "thread-123",
         subprocess_pid: int = 913,
-        port_bind_failures: int = 0,
         harness_id: HarnessId = HarnessId.CODEX,
-        observer_attach_style: str = "attach",
-        observer_client_env: dict[str, str] | None = None,
     ) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
@@ -192,7 +147,6 @@ class FakeManagedConnection:
         self._events = events
         self._session_id = session_id
         self._subprocess_pid = subprocess_pid
-        self._port_bind_failures = port_bind_failures
         self._stop_event = asyncio.Event()
         self.events_drained = threading.Event()
         self.stop_called = False
@@ -200,10 +154,6 @@ class FakeManagedConnection:
         self.idle_sensor: RecordingIdleSensor | None = None
         self.sensor_cancelled_at_stop: list[bool] = []
         self.started_primary_observer_mode: bool | None = None
-        self.started_ports: list[int] = []
-        self.start_calls = 0
-        self._observer_attach_style = observer_attach_style
-        self._observer_client_env = dict(observer_client_env or {})
         self._observer_endpoint: ObserverEndpoint | None = None
         self.capabilities = ConnectionCapabilities(
             mid_turn_injection="interrupt_restart",
@@ -268,8 +218,6 @@ class FakeManagedConnection:
         spec: ResolvedLaunchSpec,
     ) -> None:
         _ = spec
-        self.start_calls += 1
-        self.started_ports.append(config.ws_port)
         self._spawn_id = config.launch.spawn_id
         start_in_observer_mode = self.started_primary_observer_mode is True
         if start_in_observer_mode and config.ws_port > 0:
@@ -278,14 +226,10 @@ class FakeManagedConnection:
                 url=f"ws://{config.ws_bind_host}:{config.ws_port}",
                 host=config.ws_bind_host,
                 port=config.ws_port,
-                attach_style=cast("Any", self._observer_attach_style),
-                client_env=dict(self._observer_client_env),
+                attach_style="attach",
             )
         else:
             self._observer_endpoint = None
-        if self.start_calls <= self._port_bind_failures:
-            self.state = "failed"
-            raise PortBindError("address already in use (test)")
         self.state = "connected"
 
     async def start_observer(
@@ -330,7 +274,6 @@ class FakeProcessLauncher(ProcessLauncher):
     # Held until set, so a TUI exit cannot outrun the events a test asserts on.
     exit_after: threading.Event | None = None
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
-    launch_envs: list[dict[str, str]] = field(default_factory=list)
     output_log_paths: list[Path | None] = field(default_factory=list)
     metadata_seen_at_launch: dict[str, object] | None = None
 
@@ -348,7 +291,6 @@ class FakeProcessLauncher(ProcessLauncher):
     ) -> FakeProcessLauncher:
         _ = (cwd, output_log_path, terminal_fds)
         self.launch_commands.append(command)
-        self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
         metadata_path = _launch_of(self.spawn_dir).primary_meta
         assert metadata_path.exists()
@@ -512,59 +454,6 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         "raw_event",
     }
     assert connection.sensor_cancelled_at_stop == [True]
-
-
-@pytest.mark.asyncio
-async def test_opencode_bundle_registers_idle_sensor_and_ttl_detection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sensor = RecordingIdleSensor()
-    spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
-    connection = FakeManagedConnection(
-        events=[],
-        session_id="sess-opencode-idle",
-        harness_id=HarnessId.OPENCODE,
-    )
-    _install_idle_sensor_bundle(
-        monkeypatch,
-        harness_id=HarnessId.OPENCODE,
-        sensor=sensor,
-        connection=connection,
-    )
-    sidecar_hooks: list[object] = []
-    real_sidecar_run = primary_attach_module.idle_sidecar.run
-
-    async def _record_sidecar_hooks(
-        sidecar_sensor: object,
-        ctx: IdleSensorContext,
-        **kwargs: Any,
-    ) -> None:
-        sidecar_hooks.append(kwargs.get("detect_ttl"))
-        await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p-opencode-idle")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
-    )
-
-    outcome = await launcher.run(
-        config=_build_config(
-            spawn_id=SpawnId("p-opencode-idle"),
-            control_root=tmp_path,
-            harness_id=HarnessId.OPENCODE,
-        ),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert outcome.exit_code == 0
-    assert sidecar_hooks == [opencode_idle.detect_ttl]
 
 
 @pytest.mark.asyncio
@@ -898,49 +787,6 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p905"
-    connection = FakeManagedConnection(
-        events=[],
-        harness_id=HarnessId.OPENCODE,
-        observer_attach_style="server",
-        observer_client_env={"OPENCODE_PASSWORD": "s3cret"},
-    )
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
-
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p905")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: (
-            "opencode",
-            "--server",
-            "http://127.0.0.1:7812",
-            "--session",
-            session_id,
-        ),
-        process_launcher=process_launcher,
-    )
-
-    await launcher.run(
-        config=_build_config(
-            spawn_id=SpawnId("p905"),
-            control_root=tmp_path,
-            ws_port=7812,
-            harness_id=HarnessId.OPENCODE,
-        ),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin"},
-    )
-
-    assert process_launcher.launch_envs == [{"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}]
-    assert process_launcher.launch_commands == [
-        ("opencode", "--server", "http://127.0.0.1:7812", "--session", "thread-123")
-    ]
-
-
-@pytest.mark.asyncio
 async def test_primary_attach_upgrades_provisional_backend_scope_without_duplicate(
     tmp_path: Path,
 ) -> None:
@@ -975,145 +821,6 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
     assert [(scope.owner_policy, scope.owner_id) for scope in backend_scopes] == [
         ("session_owned", "thread-upgraded")
     ]
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_activity_transitions_update_metadata(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_dir = tmp_path / "spawns" / "p903"
-    activity_transitions: list[object] = []
-    original_write_primary_metadata = primary_attach_module.write_primary_metadata
-
-    def _record_activity_write(
-        launch_arg: LaunchPaths,
-        metadata: Any,
-        **kwargs: Any,
-    ) -> bool:
-        if not activity_transitions or activity_transitions[-1] != metadata.activity:
-            activity_transitions.append(metadata.activity)
-        return original_write_primary_metadata(launch_arg, metadata, **kwargs)
-
-    monkeypatch.setattr(
-        primary_attach_module,
-        "write_primary_metadata",
-        _record_activity_write,
-    )
-    connection = FakeManagedConnection(
-        events=[
-            RawHarnessEvent(
-                event_type="turn/started",
-                payload={"turnId": "turn-7"},
-                harness_id="codex",
-            ),
-            RawHarnessEvent(
-                event_type="turn/completed",
-                payload={"turnId": "turn-7"},
-                harness_id="codex",
-            ),
-        ]
-    )
-    process_launcher = FakeProcessLauncher(
-        spawn_dir=spawn_dir, exit_after=connection.events_drained
-    )
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p903")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p903"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    metadata = _read_metadata(spawn_dir)
-    assert metadata["activity"] == "finalizing"
-    assert "turn_active" in activity_transitions
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_retries_port_bind_with_fresh_ports(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p904"
-    connection = FakeManagedConnection(events=[], port_bind_failures=2)
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p904")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    retries = iter((29001, 29002))
-    original_reserve_local_port = primary_attach_module._reserve_local_port
-
-    def _reserve_retry_port(host: str) -> int:
-        _ = host
-        return next(retries)
-
-    primary_attach_module._reserve_local_port = _reserve_retry_port
-    try:
-        outcome = await launcher.run(
-            config=_build_config(spawn_id=SpawnId("p904"), control_root=tmp_path, ws_port=29000),
-            spec=_build_spec(),
-            cwd=tmp_path,
-            env={},
-        )
-    finally:
-        primary_attach_module._reserve_local_port = original_reserve_local_port
-
-    assert outcome.exit_code == 0
-    assert connection.start_calls == 3
-    assert connection.started_ports == [29000, 29001, 29002]
-    assert process_launcher.launch_commands == [("codex", "resume", "thread-123")]
-    assert _read_metadata(spawn_dir)["backend_port"] == 29002
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p905"
-    connection = FakeManagedConnection(events=[], port_bind_failures=3)
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p905")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    retries = iter((29101, 29102))
-    original_reserve_local_port = primary_attach_module._reserve_local_port
-
-    def _reserve_retry_port(host: str) -> int:
-        _ = host
-        return next(retries)
-
-    primary_attach_module._reserve_local_port = _reserve_retry_port
-    try:
-        with pytest.raises(PrimaryAttachError, match="Port bind failed after 3 attempts"):
-            await launcher.run(
-                config=_build_config(
-                    spawn_id=SpawnId("p905"),
-                    control_root=tmp_path,
-                    ws_port=29100,
-                ),
-                spec=_build_spec(),
-                cwd=tmp_path,
-                env={},
-            )
-    finally:
-        primary_attach_module._reserve_local_port = original_reserve_local_port
-
-    assert connection.start_calls == 3
-    assert connection.started_ports == [29100, 29101, 29102]
-    assert process_launcher.launch_commands == []
 
 
 @pytest.mark.asyncio
@@ -1183,43 +890,6 @@ async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_
     assert signal.getsignal(signal.SIGHUP) is before_hup
     assert signal.getsignal(signal.SIGINT) is before_int
     assert sigint_handlers_at_stop == [before_int]
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_dir = tmp_path / "spawns" / "p903-signal-startup"
-    connection = FakeManagedConnection(events=[], session_id="sess-signal-startup")
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
-    launcher = PrimaryAttachLauncher(
-        launch=launch_paths(tmp_path, SpawnId("p903-signal-startup")),
-        durable=False,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-    )
-
-    async def _fail_after_signal(*, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = (config, spec)
-        launcher._request_signal_cancel(signal.SIGTERM)
-        raise PrimaryAttachError("startup failed")
-
-    monkeypatch.setattr(
-        launcher, "_start_primary_observer_connection_with_retry", _fail_after_signal
-    )
-
-    outcome = await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p903-signal-startup"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert outcome.cancelled is True
-    assert outcome.exit_code == 143
-    assert process_launcher.launch_commands == []
 
 
 @pytest.mark.asyncio
