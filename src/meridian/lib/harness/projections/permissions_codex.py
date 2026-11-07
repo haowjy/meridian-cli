@@ -186,29 +186,41 @@ def _hook_carries(rule: ToolRule | ExtensionRule) -> bool:
 
 
 def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
-    """The shell rules Codex's ``PreToolUse`` hook enforces, when any rule is scoped.
+    """The shell rules Codex's ``PreToolUse`` hook enforces, when the shell switch would lose some.
 
     The hook sees one shell tool, so only ``bash`` and ``*`` rules go in; Mars names the tool
     ``exec_command`` for Codex, which the enforcer knows as ``bash``. A hook cannot ask, so
     an unscoped ``ask`` is carried as ``deny``: carrying nothing would let the command run.
     A scoped ``ask`` is not carried and stays ``unsupported``.
+
+    The switch (``shell_tool``) carries an unscoped ``bash`` allow or deny and nothing else,
+    so the hook turns on when a carried rule is not an allow and the switch would lose
+    something: a scoped rule, an unscoped ``bash: ask``, or Meridian commands beside a
+    ``bash: deny`` (the switch would disable the shell they run in). A ``*: deny`` allowlist
+    alone stays off the hook.
     """
 
+    carried = [rule for rule in extension_rules(policy.rules) if _hook_carries(rule)]
+    commands = command_grants(policy)
+    if not needs_extension(tuple(carried), meridian_commands=commands):
+        return None
+    switch_loses = any(
+        rule.pattern is not None
+        or (
+            rule.capability == "bash"
+            and (rule.action == "ask" or (rule.action == "deny" and commands))
+        )
+        for rule in carried
+    )
+    if not switch_loses:
+        return None
     rules: list[ExtensionRule] = []
-    for rule in extension_rules(policy.rules):
-        if not _hook_carries(rule):
-            continue
+    for rule in carried:
         if rule.action == "ask":
             rule = rule.model_copy(update={"action": "deny", "label": f"{rule.label} (ask)"})
         if rule.capability == "bash":
             rule = rule.model_copy(update={"tool": "bash"})
         rules.append(rule)
-    commands = command_grants(policy)
-    # Only a scoped rule turns the hook on, so profiles without one launch as before.
-    if not any(rule.pattern is not None for rule in rules) or not needs_extension(
-        tuple(rules), meridian_commands=commands
-    ):
-        return None
     return ExtensionPolicy(
         rules=tuple(rules),
         meridian_commands=commands,
@@ -238,8 +250,8 @@ def _compile_codex_permission_values(
 
     tool_hook = _compile_tool_hook(policy)
     if tool_hook is not None and switches["shell_tool"] is False:
-        # The hook carries an unscoped shell deny beside scoped allows; the switch would also
-        # refuse those allows.
+        # The hook carries the unscoped shell deny; the switch would also refuse the scoped
+        # allows and Meridian commands beside it.
         switches["shell_tool"] = None
 
     network = project_codex_network(policy)
