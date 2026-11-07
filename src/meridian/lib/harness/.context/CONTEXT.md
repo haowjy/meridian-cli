@@ -154,7 +154,12 @@ SessionStart-published inbox socket for that exact child PID appears in the laun
 boundary journal; each send re-reads the journal and writes the wire frame to the
 inbox, which is `DeliveryKind.POSTED`. The socket is unbound with the launcher's
 lexical block, so no PID-reuse check is needed. A harness with no port serves nothing
-from the black-box leg (Pi until its route lands).
+from the black-box leg: Codex and OpenCode primaries bind their own route (below), and Pi's
+route is not in the launcher either. The `meridian-message` extension binds the same path
+(`_MERIDIAN_PI_CONTROL_SOCKET`, set for primaries only) from `session_start` in TUI mode
+(from the first `agent_start` when the launch passes a prompt, `_MERIDIAN_PI_LAUNCH_PROMPT`)
+and unlinks any stale file first, so the launcher never serves a Pi primary's socket and
+`control_actions.jsonl` does not record its messages.
 
 Codex and OpenCode primaries run in managed attach and have no port: `PrimaryAttachLauncher`
 binds the socket itself with `serving_route`, routing to the observer connection's
@@ -167,8 +172,6 @@ it (`_tui_left_thread`, `_tui_left_session`) and `send_user_message` then raises
 sensor and `--continue` stay on the first session. The signals and the two gaps (OpenCode's
 new-session and switch-session commands are invisible until the human types):
 `docs/harness-integration.md`.
-`has_message_route` is still derived from the port, so these primaries' capabilities
-block does not yet state their address.
 
 ### `HarnessContract` as Inspectable Surface
 
