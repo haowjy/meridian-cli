@@ -17,8 +17,8 @@ into simple words, single quotes, double quotes without expansion/escaping, and 
 separators `&&`, `||`, `;`, `|`, and newline, and matches each simple command. What it does
 with other syntax is the policy's `bash_fail_closed`, which the Python compile sets: it
 refuses that syntax before rule matching when the rule deciding unmatched commands (bash's
-unscoped rule, else `*`'s) is `deny` or `ask` — every allowlist, including the unscoped
-deny the policy writes beside scoped allows — or when a scoped `ask` exists. Under an
+unscoped rule, else `*`'s) is `deny` or `ask` — every allowlist, including an explicit
+`bash: deny` beside scoped allows — or when a scoped `ask` exists. Under an
 unscoped `allow` (or no rule) only scoped denies can refuse, so they are best effort: an
 unsplittable command runs, and the report marks those denies `partial`. Refusing there
 would break ordinary shell use (`2>&1 | tail`, `$VAR`, redirects) for every profile with

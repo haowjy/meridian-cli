@@ -31,7 +31,7 @@ def _rule(pattern: str | None, action: str, tool: str = "bash") -> dict[str, obj
         "tool": tool,
         "pattern": pattern,
         "action": action,
-        "label": f"bash({pattern})" if pattern else "bash outside its scoped allows",
+        "label": f"bash({pattern})" if pattern else "bash",
     }
 
 

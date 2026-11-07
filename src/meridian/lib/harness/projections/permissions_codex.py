@@ -23,10 +23,10 @@ from meridian.lib.harness.projections.tool_extension_policy import (
     bash_fails_closed,
     command_grants,
     extension_rules,
+    needs_extension,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
-    ALLOWLIST_ORIGIN,
     CONSTRAINED_SANDBOX_MODES,
     Allow,
     ApprovalMode,
@@ -104,17 +104,9 @@ class CodexPermissions:
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
-    """Return the Codex switch an exact, unscoped tool rule controls.
+    """Return the Codex switch an exact, unscoped tool rule controls."""
 
-    An allowlist's deny has none: the switch would refuse the scoped allows too, and a shell
-    allowlist would leave Codex nothing to read files with.
-    """
-
-    if (
-        rule.pattern is not None
-        or rule.action == "ask"
-        or rule.origin in {ALLOWLIST_ORIGIN, PLATFORM_ORIGIN}
-    ):
+    if rule.pattern is not None or rule.action == "ask":
         return None
     enabled = rule.action == "allow"
     if rule.capability == "bash":
@@ -187,6 +179,12 @@ def effective_codex_policy(
     )
 
 
+def _hook_carries(rule: ToolRule | ExtensionRule) -> bool:
+    """Whether the hook can carry this rule: a shell rule, except a scoped ``ask``."""
+
+    return rule.capability in {"bash", "*"} and not (rule.action == "ask" and rule.pattern)
+
+
 def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
     """The shell rules Codex's ``PreToolUse`` hook enforces, when any rule is scoped.
 
@@ -198,18 +196,22 @@ def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
 
     rules: list[ExtensionRule] = []
     for rule in extension_rules(policy.rules):
-        if rule.capability not in {"bash", "*"} or (rule.action == "ask" and rule.pattern):
+        if not _hook_carries(rule):
             continue
         if rule.action == "ask":
             rule = rule.model_copy(update={"action": "deny", "label": f"{rule.label} (ask)"})
         if rule.capability == "bash":
             rule = rule.model_copy(update={"tool": "bash"})
         rules.append(rule)
-    if not any(rule.pattern is not None for rule in rules):
+    commands = command_grants(policy)
+    # Only a scoped rule turns the hook on, so profiles without one launch as before.
+    if not any(rule.pattern is not None for rule in rules) or not needs_extension(
+        tuple(rules), meridian_commands=commands
+    ):
         return None
     return ExtensionPolicy(
         rules=tuple(rules),
-        meridian_commands=command_grants(policy),
+        meridian_commands=commands,
         bash_fail_closed=bash_fails_closed(tuple(rules)),
     )
 
@@ -320,13 +322,8 @@ def _codex_report(
             )
         elif (
             permissions.tool_hook is not None
-            and rule.capability in {"bash", "*"}
-            and not (rule.action == "ask" and rule.pattern is not None)
-            and (
-                rule.pattern is not None
-                or rule.origin == ALLOWLIST_ORIGIN
-                or rule.action != "allow"
-            )
+            and _hook_carries(rule)
+            and (rule.pattern is not None or rule.action != "allow")
         ):
             lines.append(_hook_report_line(rule))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
@@ -338,7 +335,7 @@ def _codex_report(
                 ReportLine(
                     rule_element(rule),
                     "unsupported",
-                    "Codex's switch cannot express a scoped rule",
+                    "Codex can't pre-approve a scoped command; it follows approval_policy",
                 )
             )
         elif rule.action == "ask":

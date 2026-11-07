@@ -83,8 +83,8 @@ Meridian instead gives one line per loaded skill naming `/NAME` and the path to 
 
 - `edit: deny` removes edit tools, but an allowed shell can still write through
   redirection. `sandbox: read-only` stops shell writes where the harness enforces it;
-  elsewhere restrict the shell too, with `bash: deny` or scoped allows such as
-  `bash(rg *): allow`, which make Bash an allowlist.
+  elsewhere restrict the shell too, with `bash: deny`. Scoped allows such as
+  `bash(rg *): allow` only pre-approve their calls; they restrict nothing.
 - `network` (`allow`, `deny`, `allowlist` with `network-allow` / `network-deny` hosts)
   governs shell connections only; web search and fetch are `tools: web`. Unset, it
   denies under `read-only` and `workspace-write`, allows under `danger-full-access`, and
