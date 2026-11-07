@@ -130,6 +130,6 @@ MERMAID_CHECK_SPEC = ExtensionCommandSpec(
         }
     ),
     first_party=True,
-    # No cli_group/cli_name — extension-only, no direct CLI routing (D26).
-    # No sync_handler — direct CLI bypasses extension dispatch (D27).
+    # No cli_group/cli_name — extension-only, no direct CLI routing.
+    # No sync_handler — direct CLI bypasses extension dispatch.
 )

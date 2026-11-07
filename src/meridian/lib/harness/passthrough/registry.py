@@ -1,5 +1,3 @@
-"""Passthrough registry."""
-
 from __future__ import annotations
 
 from meridian.lib.core.types import HarnessId

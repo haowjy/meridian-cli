@@ -116,8 +116,8 @@ from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
 
-# Deprecated legacy log parser retained for older OpenCode installs. Modern
-# OpenCode stores session metadata in opencode.db and no longer emits this shape.
+# Older OpenCode installs emit this log shape; current installs store session
+# metadata in opencode.db.
 OPENCODE_SESSION_CREATED_RE = re.compile(
     r"^\w+\s+(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s+\+\d+ms\s+"
     r"service=session\s+id=(?P<session_id>\S+)\s+.*?\bdirectory=(?P<directory>\S+)\b.*\bcreated\b"
@@ -128,8 +128,8 @@ def _normalize_opencode_model(model: str) -> str:
     """Normalize whitespace in a provider/model identifier.
 
     OpenCode accepts raw provider/model IDs (e.g. ``opencode-go/kimi-k2.6``).
-    Meridian no longer strips harness-routing prefixes; use ``--harness``
-    to force routing instead.
+    Meridian preserves harness-routing prefixes; use ``--harness``
+    to force routing.
     """
     normalized = model.strip()
     if not normalized:

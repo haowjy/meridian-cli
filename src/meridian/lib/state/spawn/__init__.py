@@ -1,1 +1,0 @@
-"""Spawn state internals."""
