@@ -437,7 +437,7 @@ async def test_rearm_granted_at_first_candidate_does_not_deadlock_on_spawn_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Persisting the grant inside `candidate_transition()` re-took the spawn lock."""
+    """Persisting the grant takes the spawn lock, so no caller of `decide` may hold it."""
     from meridian.lib.state.spawn_signals import write_spawn_signal
     from meridian.lib.streaming import resident_drain as resident_drain_module
 

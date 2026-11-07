@@ -101,10 +101,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 assert close.error == "stream_closed_while_awaiting_done"
                 return
             if scenario == "rearm_quiet":
-                # #872: a rearm answers the nudge while the task still runs, so
-                # later turn ends are not nudged again (it was one per turn end).
-                while not messages:
-                    await asyncio.sleep(0.001)
+                # #872: a rearm while the task still runs keeps later turn ends quiet.
                 rearm = spawn_signal_path(launch_paths(tmp_path, spawn_id), "rearm")
                 rearm.parent.mkdir(parents=True, exist_ok=True)
                 rearm.touch()
@@ -114,7 +111,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                         await asyncio.sleep(0.001)
                     yield frame("result", subtype="success", result="Still running")
                     await asyncio.sleep(0.05)
-                assert len(messages) == 1
+                assert not messages
                 assert not outcomes
                 return
             if scenario == "no_result":
@@ -216,12 +213,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     assert delivered[-1].raw.payload["result"] == (
         "Final done report" if scenario.startswith("done") else "Marker read: done"
     )
-    if scenario == "natural":
-        assert len(messages) == 1
-        assert "meridian spawn done" in messages[0]
-        assert "meridian spawn rearm" in messages[0]
-    else:
-        assert not messages
+    assert not messages
     assert len(outcomes) == 1
     assert outcomes[0].status == "succeeded"
     assert outcomes[0].authoritative

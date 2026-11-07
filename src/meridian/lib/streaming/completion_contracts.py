@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from meridian.lib.harness.semantics import TerminalEventOutcome
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import EventSemantics
     from meridian.lib.streaming.drain_policy import DrainAction
@@ -80,6 +81,16 @@ class WorkAssessment:
             valid = not self.blockers and self.failure is not None
         if not valid:
             raise ValueError(f"invalid {self.disposition!r} work assessment")
+
+
+@dataclass(frozen=True)
+class FinishedChild:
+    """One finished background launch whose result its parent has not consumed."""
+
+    key: str  # the launch's ledger key
+    spawn_id: str
+    status: str
+    report: Path
 
 
 @dataclass(frozen=True)
@@ -249,8 +260,6 @@ class CompletionProfile(Protocol):
         """Take one harness event; return whether it renews the deadline."""
         ...
 
-    def candidate_transition(self) -> AbstractContextManager[None]: ...
-
     def consume_directives(
         self,
         state: CompletionState,
@@ -302,6 +311,7 @@ __all__ = [
     "EvidenceActivity",
     "EvidenceEventDecision",
     "EvidenceFailure",
+    "FinishedChild",
     "NativeTaskSource",
     "ProfileAction",
     "ProfileDecision",

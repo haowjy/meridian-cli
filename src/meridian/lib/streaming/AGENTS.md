@@ -35,7 +35,8 @@ row, a fact or a fold there, not a flag on the profile.
 
 Hold completion uses an idle limit: a harness event marked `work` inside a turn or an explicit
 `rearm` renews the window, Meridian's own nudges (even though they start turns) do not. An expired window gets one nudge
-and a 300 s answer window, then cleanup. `--timeout` /
+and a 300 s answer window, then cleanup. A harness with a native task source gets no ask at a
+turn end: nothing running closes, running work holds, and the report is its last real turn's text. `--timeout` /
 `MERIDIAN_TIMEOUT` is the opt-in absolute ceiling (outer attempt timer in
 `streaming_runner.py`); rearms, work and Pi waves cannot reset it. Pi completion is
 descendant-quiescence-driven with no default wall-clock bound, by design. Models, rearm

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionState,
     DiagnosticBlocker,
     EvidenceFailure,
+    FinishedChild,
     ProfileAction,
     ProfileDecision,
     WorkAssessment,
@@ -62,6 +64,8 @@ CHILD = DiagnosticBlocker(source="persisted_descendant", code="running", identit
 TASK = DiagnosticBlocker(source="native_task", code="running", identity="t1")
 FOLLOWUP = DiagnosticBlocker(source="native_task", code="awaiting_followup_result")
 BLOCKED = WorkAssessment(disposition="blocked", blockers=(CHILD,), generation=0)
+FIRST = FinishedChild("p2:1", "p2", "succeeded", Path("/r/p2/report.md"))
+SECOND = FinishedChild("p3:1", "p3", "failed", Path("/r/p3/report.md"))
 TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 GOOD_END = TurnEnd(GOOD, TERMINATE)
 CLOSED_END = TurnEnd(CLOSED, TERMINATE)
@@ -93,6 +97,8 @@ def facts(**overrides: Any) -> HoldFacts:
         "rearm": False,
         "dead": False,
         "accepts_signals": True,
+        "skips_ask": False,
+        "unread": (),
         "grace_seconds": 5.0,
         "timeout": TIMEOUT,
     }
@@ -174,21 +180,21 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         SETTLED,
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
-        HoldState(asked_at=90.0, rearmed=True, lease=SpacedLease(360.0)),
+        HoldState(asked_at=90.0, rearmed=True, stays=True, lease=SpacedLease(360.0)),
     ),
     (
         "B2",
         SETTLED,
         {"rearm": True, "end": GOOD_END, "assessment": BLOCKED},
         ProfileDecision(action="abandon_candidate", emit_turn_boundary=True, reset_deadline=True),
-        HoldState(asked_at=90.0, rearmed=True, lease=HeldLease(frozenset({CHILD}))),
+        HoldState(asked_at=90.0, rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD}))),
     ),
     (
         "B2",
         RESET,
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
-        HoldState(rearmed=True),
+        HoldState(rearmed=True, stays=True),
     ),
     (
         "C1",
@@ -294,6 +300,37 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         None,
     ),
     ("E6", HoldState(lease=SpacedLease(101.0)), {}, WAIT, None),
+    # A harness that reports its work: nothing runs closes, blockers hold, neither asks.
+    ("E5", RESET, {"skips_ask": True}, PUBLISH, None),
+    ("E5", RESET, {"skips_ask": True, "end": GOOD_END}, PUBLISH, None),
+    ("E6", RESET, {"skips_ask": True, "end": GOOD_END, "assessment": BLOCKED}, WAIT_END, None),
+    ("E3", RESET, {"skips_ask": True, "end": GOOD_END, "assessment": UNKNOWN}, WAIT_END, None),
+    # An ask still out there is answered first.
+    ("E6", SENT, {"skips_ask": True}, WAIT, None),
+    # A rearm stands until an ask ends it, on every harness.
+    ("E4", HoldState(stays=True), {"skips_ask": True}, ASK, HoldState(stays=True)),
+    (
+        "E4",
+        HoldState(stays=True, lease=HeldLease(frozenset({CHILD}))),
+        {"skips_ask": True},
+        ASK,
+        HoldState(stays=True),
+    ),
+    (
+        "E6",
+        HoldState(stays=True, lease=HeldLease(frozenset({CHILD}))),
+        {"skips_ask": True, "assessment": BLOCKED},
+        WAIT,
+        None,
+    ),
+    ("E5", HoldState(stays=True, ask=AskPhase.SETTLED), {"skips_ask": True}, PUBLISH, None),
+    (
+        "B2",
+        HoldState(woken=frozenset({"p2:1"})),
+        {"rearm": True},
+        ProfileDecision(action="abandon_candidate", reset_deadline=True),
+        HoldState(rearmed=True, stays=True, woken=frozenset({"p2:1"})),
+    ),
 ]
 
 
@@ -309,6 +346,71 @@ def test_row(
     assert step.decision == decision
     assert step.state == (before if after is None else after)
     assert step.leave_awaiting is (row in {"D2", "E2", "E3"} and "end" not in overrides)
+    assert step.wake == ()
+
+
+# state before, facts, children named, state after. Only a ready tree with no turn running
+# wakes, because anything else still has a turn to come.
+WOKEN_FIRST = HoldState(woken=frozenset({"p2:1"}))
+WAKES_PARENT: list[tuple[HoldState, dict[str, Any], tuple[FinishedChild, ...], HoldState]] = [
+    (RESET, {"unread": (FIRST,)}, (FIRST,), WOKEN_FIRST),
+    # On both kinds of harness, and with no candidate after a rearm.
+    (RESET, {"unread": (FIRST,), "skips_ask": True}, (FIRST,), WOKEN_FIRST),
+    (
+        HoldState(rearmed=True),
+        {"unread": (FIRST,), "candidate": None},
+        (FIRST,),
+        HoldState(rearmed=True, woken=frozenset({"p2:1"})),
+    ),
+    # A rearm's quiet covers a turn end, not what the child has not read.
+    (
+        HoldState(lease=SpacedLease(200.0)),
+        {"unread": (FIRST,)},
+        (FIRST,),
+        HoldState(lease=SpacedLease(200.0), woken=frozenset({"p2:1"})),
+    ),
+    # Once each: a second child gets its own wake, naming only it.
+    (
+        WOKEN_FIRST,
+        {"unread": (FIRST, SECOND)},
+        (SECOND,),
+        HoldState(woken=frozenset({"p2:1", "p3:1"})),
+    ),
+]
+
+
+@pytest.mark.parametrize(("before", "overrides", "wake", "after"), WAKES_PARENT)
+def test_wake_parent(
+    before: HoldState,
+    overrides: dict[str, Any],
+    wake: tuple[FinishedChild, ...],
+    after: HoldState,
+) -> None:
+    step = decide(before, facts(**overrides))
+    assert step.decision == ASK
+    assert step.wake == wake
+    assert step.state == after
+
+
+# No wake: the row falls through to what the same state does without an owed child.
+QUIET_PARENT: list[tuple[HoldState, dict[str, Any], ProfileDecision]] = [
+    (RESET, {"assessment": BLOCKED}, ASK),  # a partial clear stays silent
+    (RESET, {"assessment": BLOCKED, "skips_ask": True}, WAIT),
+    (RESET, {"active_turn": True}, WAIT),
+    (RESET, {"assessment": UNKNOWN}, WAIT),
+    (SENT, {}, WAIT),
+    (RESET, {"accepts_signals": False}, PUBLISH),
+    (HoldState(closing=True), {}, PUBLISH),  # `done` is the child's own word
+    (WOKEN_FIRST, {"skips_ask": True}, PUBLISH),  # woken and said nothing more
+    (WOKEN_FIRST, {}, ASK),
+]
+
+
+@pytest.mark.parametrize(("before", "overrides", "decision"), QUIET_PARENT)
+def test_no_wake(before: HoldState, overrides: dict[str, Any], decision: ProfileDecision) -> None:
+    step = decide(before, facts(unread=(FIRST,), **overrides))
+    assert step.wake == ()
+    assert step.decision == decision
 
 
 # kind, before the send (as `decide` left it), result, after; every attempt stamps `asked_at`
@@ -412,31 +514,27 @@ def test_defer_close(hold: HoldState, state: dict[str, Any], dead: bool, defers:
     assert defers_close(hold, completion(**state), dead=dead) is defers
 
 
-# state, done, rearm, has a candidate, state after, rearm stands
+# state, done, rearm, state after, rearm stands
 CLOSING = HoldState(closing=True)
-SIGNALS: list[tuple[HoldState, bool, bool, bool, HoldState, bool]] = [
-    (RESET, False, False, True, RESET, False),
-    (RESET, True, False, True, CLOSING, False),
-    (CLOSING, False, False, True, CLOSING, False),
-    (RESET, False, True, True, RESET, True),
-    (RESET, True, True, True, RESET, True),
-    (CLOSING, False, True, True, RESET, True),
-    # First turn: nothing to answer, and an earlier `done` is dropped too.
-    (RESET, True, True, False, RESET, False),
-    (CLOSING, False, False, False, RESET, False),
-    (REFUSED, True, True, False, REFUSED, False),
-    # An ask is out: the child may answer it before any candidate.
-    (SENT, True, False, False, replace(SENT, closing=True), False),
-    (SETTLED, False, True, False, SETTLED, True),
+SIGNALS: list[tuple[HoldState, bool, bool, HoldState, bool]] = [
+    (RESET, False, False, RESET, False),
+    (RESET, True, False, CLOSING, False),
+    (CLOSING, False, False, CLOSING, False),
+    (RESET, False, True, RESET, True),
+    (RESET, True, True, RESET, True),
+    (CLOSING, False, True, RESET, True),
+    # A `done` after a rearm: the state a rearm leaves still takes it.
+    (HoldState(rearmed=True), True, False, HoldState(rearmed=True, closing=True), False),
+    (SENT, True, False, replace(SENT, closing=True), False),
+    (SETTLED, False, True, SETTLED, True),
 ]
 
 
-@pytest.mark.parametrize(("before", "done", "rearm", "candidate", "after", "stands"), SIGNALS)
+@pytest.mark.parametrize(("before", "done", "rearm", "after", "stands"), SIGNALS)
 def test_signals(
-    before: HoldState, done: bool, rearm: bool, candidate: bool, after: HoldState, stands: bool
+    before: HoldState, done: bool, rearm: bool, after: HoldState, stands: bool
 ) -> None:
-    folded = after_signals(before, done=done, rearm=rearm, has_candidate=candidate)
-    assert folded == (after, stands)
+    assert after_signals(before, done=done, rearm=rearm) == (after, stands)
 
 
 # state, has a candidate, wake. The grace is 5 s.

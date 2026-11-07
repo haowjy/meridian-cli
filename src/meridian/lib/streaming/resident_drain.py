@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from contextlib import AbstractContextManager
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -13,7 +12,6 @@ from meridian.lib.core.delivery import Deliver, DeliveryRefused, TransportDead
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.spawn_aggregate import published_artifact_lock
 from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -23,6 +21,7 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionState,
     EvidenceEventDecision,
     EvidenceFailure,
+    FinishedChild,
     NativeTaskSource,
     ProfileDecision,
     ProfileExitDecision,
@@ -33,6 +32,7 @@ from meridian.lib.streaming.descendant_evidence import (
     DescendantRefreshOwner,
     ReconciledDescendantEvidence,
 )
+from meridian.lib.streaming.drain_coordinator import ReportStep
 from meridian.lib.streaming.hold_state import (
     BACKEND_DEAD_OUTCOME,
     HoldFacts,
@@ -114,6 +114,9 @@ class HoldEvidence:
             generation=generation,
         )
 
+    def unread(self) -> tuple[FinishedChild, ...]:
+        return self._descendants.unread
+
     def next_due_at(self) -> float | None:
         return self._descendants.next_due_at
 
@@ -144,6 +147,8 @@ class _HoldProfile:
         backend: ResidentBackendControl | None,
         backend_dead: Callable[[], bool],
         send_nudge: Deliver,
+        unread: Callable[[], tuple[FinishedChild, ...]],
+        skips_ask: bool,
         deadline_seconds: float,
         poll_seconds: float,
         rearm_budget: int | None,
@@ -162,6 +167,8 @@ class _HoldProfile:
         self._backend = backend
         self._backend_dead = backend_dead
         self._send_nudge = send_nudge
+        self._unread = unread
+        self.skips_ask = skips_ask
         self._accepted_signals: frozenset[SpawnSignalKind] = (
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
         )
@@ -169,6 +176,7 @@ class _HoldProfile:
         self._confirmation_grace_seconds = poll_seconds
         self._awaiting_done = False
         self._state = HoldState()
+        self._wake: tuple[FinishedChild, ...] = ()
 
     def allows_evaluation_without_candidate(self) -> bool:
         return self._state.rearmed
@@ -184,15 +192,12 @@ class _HoldProfile:
         self._state = after_event(self._state, turn_started=turn_started, work_in_turn=work_in_turn)
         return work_in_turn and state.deadline_at is not None
 
-    def candidate_transition(self) -> AbstractContextManager[None]:
-        return published_artifact_lock(self._runtime_root, self._spawn_id)
-
     def consume_directives(
         self,
         state: CompletionState,
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
-        del trigger
+        del state, trigger
         if not self._accepted_signals:
             return CompletionDirectives()
         signals = consume_resident_signals(self._launch)
@@ -200,7 +205,6 @@ class _HoldProfile:
             self._state,
             done=signals.done,
             rearm=signals.rearm and self._window.can_rearm(),
-            has_candidate=state.candidate is not None,
         )
         return CompletionDirectives(rearm=rearm)
 
@@ -222,11 +226,14 @@ class _HoldProfile:
                 rearm=context.directives.rearm,
                 dead=self._backend_dead(),
                 accepts_signals=bool(self._accepted_signals),
+                skips_ask=self.skips_ask,
+                unread=self._unread(),
                 grace_seconds=self._confirmation_grace_seconds,
                 timeout=self._window.timeout_decision(),
             ),
         )
         self._state = step.state
+        self._wake = step.wake
         if step.decision.action == "abandon_candidate":
             self._window.charge_rearm()
         if step.decision.action in {"clear", "fail", "cleanup"}:
@@ -313,8 +320,7 @@ class _HoldProfile:
     def accepted_signals(self) -> frozenset[SpawnSignalKind]:
         return self._accepted_signals
 
-    @staticmethod
-    def _nudge_message(state: CompletionState) -> str:
+    def _nudge_message(self, state: CompletionState) -> str:
         assert state.assessment is not None
         blockers = state.assessment.blockers
         descendants = [
@@ -334,6 +340,15 @@ class _HoldProfile:
             for blocker in blockers
         )
         details: list[str] = []
+        if self._wake:
+            finished = "; ".join(
+                f"{child.spawn_id} ({child.status}), report at {child.report}"
+                for child in self._wake
+            )
+            details.append(
+                f"Spawns you started have finished and you have not read their results: "
+                f"{finished}. Read them and act on them before you finish."
+            )
         if descendants:
             ids = " ".join(descendants)
             details.append(
@@ -348,17 +363,20 @@ class _HoldProfile:
             message = " ".join(details) + " "
         else:
             message = "Before this spawn closes, confirm whether you are actually finished. "
-        if state.candidate is not None:
+        if state.candidate is not None and not self.skips_ask:
             message += (
                 "Your previous reply is kept as this spawn's report. If it is the final report, "
                 "run `meridian spawn done` and end the turn. "
             )
         else:
-            # Codex and OpenCode take this nudge into the running turn, so the child's
-            # answer becomes the report: a "Done." here would replace it.
+            # Codex and OpenCode take this nudge into the running turn, and a harness that
+            # skips the ask reports every turn, so the child's answer becomes the report:
+            # a "Done." here would replace it.
+            if not self.skips_ask:
+                message += "No report is kept for this spawn yet. "
             message += (
-                "No report is kept for this spawn yet. If you are finished, run "
-                "`meridian spawn done`, then make your last message the complete report. "
+                "If you are finished, run `meridian spawn done`, then make your last message "
+                "the complete report. "
             )
         message += (
             "If more work remains, including waiting on background tasks or spawns, run "
@@ -447,6 +465,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
                 ReconciledDescendantEvidence(
                     runtime_root=runtime_root,
                     root_spawn_id=spawn_id,
+                    reads_unread=completion_signals_available,
                 ),
                 poll_seconds=resolved_poll,
                 clock=clock,
@@ -458,6 +477,8 @@ class ResidentDrainCoordinator(CompletionCoordinator):
             backend=backend,
             backend_dead=backend_dead,
             send_nudge=send_nudge,
+            unread=evidence.unread,
+            skips_ask=native is not None,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,
             poll_seconds=resolved_poll,
@@ -477,6 +498,14 @@ class ResidentDrainCoordinator(CompletionCoordinator):
     @property
     def accepted_signals(self) -> frozenset[SpawnSignalKind]:
         return self._hold.accepted_signals
+
+    def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
+        # A candidate may go at a rearm, but its report stays until a later turn replaces it.
+        # Where the ask remains, a reply must not replace the report it was asked about.
+        del published
+        if turn_ended and (self._hold.skips_ask or not had_candidate):
+            return "capture"
+        return "keep"
 
     async def stop(self) -> None:
         self._hold.clear()
