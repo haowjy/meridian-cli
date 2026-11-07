@@ -1,79 +1,29 @@
-# harness/connections/ — Context
+# Harness connection contracts
 
-**Pi injected prompts are acknowledged commands.** Every prompt carries an RPC `id`
-and `streamingBehavior: "followUp"`; the field is valid whether Pi is busy or idle.
-Injected prompts wait for the matching `response` before `send_user_message()` returns.
-A rejected inject is annotated as control-action response evidence, persisted, and
-reported to the injector without becoming a terminal event for the running spawn.
-Initial-prompt rejection remains spawn-fatal.
+Pi injected prompts use `streamingBehavior: "followUp"`, valid both busy and idle,
+and wait for their matching RPC response. A rejected inject is reported to its sender
+without terminating the spawn; initial-prompt rejection is fatal. One receive task runs
+independently of event consumption so a completion nudge cannot block its own receipt.
+A timeout after a write leaves delivery uncertain; do not replay it.
 
-**Codex has one thread: the one the `thread/start`, `thread/resume` or `thread/fork` reply returned.** The app-server announces its
-own helper threads (titles, memory) to every client with `thread/started`, and the TUI can
-open others; `_update_turn_state` ignores events for any thread but its own. Taking an
-announced id as its own sent `turn/steer` and `turn/start` to a thread the TUI is not on
-(`thread not found`). The same announcements are the only sign the TUI moved (the observer gets
-no turn events for threads it did not start): `_note_tui_thread` latches a non-ephemeral,
-parentless `thread/started`, or an idle/active status or goal event for an id never announced as
-a helper, and the connection then refuses sends. A misread helper would kill the route for the
-session, so `thread/closed` and `notLoaded` never count. Helpers are recorded before our own id is known, so one announced during init is not misread. OpenCode
-latches on a parentless `session.created` with another id (`_note_tui_session`, V1 and V2
-event shapes); V2 also on `session.forked` for another id and on `session.inbox.enqueued` for an
-id not recorded as a child.
+Codex's owned thread is the one returned by start, resume or fork. App-server helper
+thread announcements are not ownership changes: treating one as the TUI's thread
+would send to the wrong thread or disable the route. The connection records helpers
+before its own ID is known and latches a TUI move only on evidence of another
+non-helper thread. OpenCode similarly detects another parentless session, with V2
+fork and inbox events providing additional evidence.
 
-`PiRpcConnection` owns one receive task from successful startup through stop.
-Reception resolves prompt ACKs and observes protocol readiness independently of
-`events()` consumption; an awaited completion nudge cannot block its own ACK.
-The initial prompt has a 30-second first-protocol-event deadline. Follow-up
-writes and ACKs have a 30-second deadline; failures after writing are delivery
-uncertainty and must not replay the prompt. Stdout EOF gives the leader one
-second to exit before failing and cleaning its process scope.
+## OpenCode runtime requests
 
-The handler is injected; `HarnessConnection` implementations must not embed policy.
+The SSE drain dispatches permission requests in background tasks: a reply POST can
+stall, and waiting inline would stop event consumption. Pending requests are registered
+before dispatch; unknown IDs fail rather than falling back to a session ID.
 
-### OpenCode Runtime Requests and Event Multiplex
+A single startup deadline covers backend launch through session creation. Failed
+startup cleanup retains the lifecycle gate until publication is settled, even after a
+foreground timeout, so stop or another start cannot race a child between owners.
 
-OpenCode has no background reader: `events()` parses the SSE stream in the drain
-loop's own task. When it sees `permission.asked` / `permission.v2.asked`, it builds
-a `HarnessRequest`, registers the pending request and its liveness key synchronously,
-then dispatches the injected handler in a background task (returning without yielding
-the raw ask). The reply POST can stall, so the handler must not run inline on the
-drain path; the background dispatch is bounded by
-`_REQUEST_DISPATCH_TIMEOUT_SECONDS` and reports a dispatch failure through the handler
-on timeout or error. `respond_request` replies over the version's HTTP endpoint
-(`POST /session/{id}/permissions/{permissionID}` with `{"response": …}` for V1;
-`POST /api/session/{id}/permission/{requestID}/reply` with `{"decision": …}` for V2) and
-fails fast when the request id is unknown instead of falling back to the session id.
-
-Connections add no launch-local model, prompt or permission override: all ride the bound
-`OPENCODE_CONFIG_CONTENT` (see [OpenCode prompt, agent and model
-delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)), and
-Meridian's default config agent carries no model, so a native agent's model cannot
-shadow the selection and there is no backend replacement. The V1 transport still
-validates available providers and the effective config `model` before creating a
-session; V2 runs no inspection. One startup deadline covers launch, readiness,
-inspection and session creation; rejected configuration fails without black-box
-fallback.
-The existing lifecycle gate spans initial process publication through connected
-state. Failure cleanup retains this gate even if its foreground wait expires;
-stop/new start cannot cross unfinished publication or mutate old cleanup's fields.
-Concurrent stop can wait for startup to settle; it never acknowledges a child that
-has not yet been published.
-
-Session creation nests `model={id,providerID}`; prompts use
-`model={modelID,providerID}` with `variant` at the prompt top level. Later
-HTTP injection observes committed native session agent/model/variant, including
-an explicit default variant; absent session fields fall back to the last native
-user message, never replayed launch settings. Unsent TUI-local changes are not
-observable, and GET/POST is not atomic against simultaneous TUI submission.
-Continue preserves native choice. Dry-run projects serve/inspection/bootstrap/
-attach without native observations or a misleading black-box command.
-
-**Ownership-transfer guard: `reap_on_ownership_transfer_failure()`.** When external
-cancellation hits during adapter startup, dispatch, or manager registration, a
-child process can be stranded between owners. `reap_on_ownership_transfer_failure()`
-in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
-deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
-Durable `spawn_owned` process scopes and the reaper own any residue beyond that
-bound. The rejected alternative (`with suppress` single-shot) did not survive
-repeated cancellation.
-
+Injection uses the committed native session agent, model and variant, falling back to
+the last native user message when fields are absent. Unsent TUI changes are invisible,
+and reading then posting is not atomic against simultaneous TUI submission. Continue
+preserves native choices. See [OpenCode delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).

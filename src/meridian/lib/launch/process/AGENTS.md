@@ -1,76 +1,20 @@
-# launch/process/ — Primary Process Executor
+# launch/process — primary process execution
 
-Owns the primary harness process lifecycle: launcher selection, session tracking,
-process execution, managed-attach flow, post-exit finalization. `launch/__init__.py`
-calls it for Primary CLI launches.
+This layer runs primary harnesses, either by attaching a TUI to a managed backend
+or by running the harness directly. Harness-specific behavior belongs in adapter
+hooks, not harness-ID branches in the runner.
 
-`run_harness_process()` in `runner.py` is the sole external entry point:
-`session_scope()` → `lifecycle_service.start()` (spawn row) → `select_process_launcher()`
-→ managed attach (falls back to black-box on `PrimaryAttachError` when the adapter's
-policy says so: Codex raises, OpenCode falls back) → `conclude_native_run()` →
-`_finalize_lifecycle()`.
+- Bind assigned native identity before exec and conclude identity once, after
+  observation has drained and teardown has joined. Identity validation precedes
+  lifecycle completion and invocation attribution.
+- Give the TUI exclusive terminal ownership. Check terminal capabilities before
+  entering the ownership window, and attach a native TUI to the window's saved
+  descriptors. The shell owns native job control; never signal its shared group.
+- Signal callbacks run between Python bytecodes: taking a non-reentrant lock can
+  deadlock against the interrupted main thread. Latch and act outside the handler;
+  see [context](.context/CONTEXT.md) for cancellation and terminal contracts.
+- A primary control socket lives inside the launch lock and is removed before
+  finalization. Socket bind failures must not fail the launch: an exception in an
+  on-running callback can kill the child.
 
-Managed attach connects a TUI to a managed backend and observes owned IDs live;
-black-box runs the harness directly and observes artifact IDs after exit. The fallback
-does not run the managed idle sensor.
-
-`selector.py` maps the resolved `TerminalSurfaceMode` to a launcher. Codex/OpenCode
-default to native terminal inheritance; Claude/Pi keep the PTY relay. A TTY alone does
-not pick the managed mode, and adapter-derived mode is never persisted in launch-policy
-snapshots. Register any new launcher in `select_process_launcher()`.
-
-## Native-Primary Adapter Hooks
-
-`runner.py` stays harness-agnostic: per-harness concerns arrive through
-`SubprocessHarness` hooks (`resolve_primary_command`, `redact_primary_command`,
-`uses_native_primary_metadata`, `native_primary_runtime_metadata`, `observe_after_exit`,
-`native_observation_reader`, `build_primary_runtime_request_handler`,
-`capabilities.captures_blackbox_output`, `bootstrap.primary_stderr_log`), never
-`HarnessId` branches. Pi's `pi_runtime_meta.json` sidecar is written from
-`prepare_prelaunch`, so primary and spawn share one writer.
-
-## Rules
-
-- **`conclude_native_run()` runs once** after child exit, before lifecycle completion.
-  Managed attach routes owned IDs through `NativeRun.observe`; it does not bind or
-  decide identity itself.
-- **A primary's control socket is lexical too.** The black-box leg runs inside
-  `primary_control_socket(...)` (`primary_control_socket.py`): `serve(pid)` from the
-  on-running callback starts a daemon thread that binds the socket once the harness bundle's
-  `primary_message_route` returns a route, and leaving the block unbinds it and joins the
-  thread, inside the launch lock and before finalize. `serve` never raises, because a raising
-  on-running callback kills the child. The bind-and-journal body is `serving_route(launch,
-  route)`, an async context manager any launch leg on its own loop reuses. A dead launcher's
-  stale socket file is unlinked in `run_harness_process` once the launch lock is held (before
-  `reopen` for a continue), so a sender polls instead of seeing a refused connection. Managed
-  attach wraps its TUI phase in the same `serving_route` on its own loop
-  (`PrimaryAttachLauncher._bind_route`), routed to the observer connection; a bind failure logs
-  and never fails the launch.
-- **Assigned identity binds before exec.** A finalized `native_identity` with an ID
-  (minted create, verified resume, fork target) binds as `source="assigned"` before the
-  child starts; a conflict refuses the launch. Identities without an ID (Claude fork)
-  wait for the first owned observation. Observations bind once and never replace the key.
-- Each driver runs its child inside `with native_run.observing(...)`; leaving the block
-  final-drains and joins the drainer so observed IDs bind before conclusion and
-  session-scope close.
-- **`session_scope()` opens before the spawn row and closes in `finally`**, even if
-  `lifecycle_service.start()` fails.
-- **The TUI owns the terminal exclusively** (`terminal_ownership.py` dups the terminal fds,
-  redirects 0/1/2 away, yields the dups). New native-terminal drivers must enter that
-  window and attach the TUI to its yielded fds; run `isatty` checks before it. Detail:
-  [.context/CONTEXT.md](.context/CONTEXT.md).
-- **Native job control belongs to the shell.** Drivers enter `native_sigint_shield()`;
-  SIGTSTP is left alone; the native launch gate's guardian sends one TERM to the TUI
-  root process, never a group signal.
-- **Signal receivers only latch.** Every primary path registers a SIGTERM/SIGHUP
-  `SignalCallbackReceiver` with `escalate_on_repeat`, reports `cancelled`, exits and stores `128+signal` (143, 129). A SIGINT that reaches Meridian is a `KeyboardInterrupt`; the outer `except` records 130 `cancelled`. The
-  `finally` that decides the outcome runs under `mask_termination()`, and a signal it defers counts as the cancel. The
-  callback runs between bytecodes, so no non-reentrant lock: no `LaunchGate` call, no
-  `Event.set()`. Latch a bool and act from a main-thread poll. Dead-tty cleanup catches
-  `OSError` **and** `termios.error`. See [.context/CONTEXT.md](.context/CONTEXT.md).
-
-## Depth
-
-[.context/CONTEXT.md](.context/CONTEXT.md) — backend selection, managed-attach fallback,
-finalization, session ID observation, terminal ownership, signal cancellation.
-Parent: [../AGENTS.md](../AGENTS.md); sibling spawn path: [../streaming_runner.py](../streaming_runner.py).
+Parent: [launch](../AGENTS.md).
