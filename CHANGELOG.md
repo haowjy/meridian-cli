@@ -6,6 +6,81 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-07
+
+### Upgrade notes
+- `report_path` is gone from the JSON of `spawn show`, `spawn status`, `spawn report show` and `spawn report search`; read a report with `meridian spawn report show pN`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#json-output-no-longer-includes-report_path).
+- A primary started by an older build has no message route until it is relaunched. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#messages-to-a-primary-go-through-its-launcher).
+- A primary launch now exits with the harness's status, so a failed harness fails the shell command; scripts that ran under `set -e` or `&&` and relied on the old `0` need to handle it. See [A primary launch exits with the harness's status](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-primary-launch-exits-with-the-harnesss-status).
+- A primary cancelled by SIGTERM now exits and records `143`, and by SIGHUP `129`; both used to be `130`, the Ctrl-C status. A wrapper that read `130` as "cancelled" should also accept `143` and `129`. Every `meridian spawn cancel` now records `143` (it sends SIGTERM), live spawns included; a live spawn stored `130` before. A SIGINT that reaches a black-box primary now stores `130` and ends `cancelled`, where it stored `2` and ended `failed`; a native primary's TUI shields SIGINT, so `kill -INT` during the TUI does nothing. Once Meridian is writing the final result, a signal waits for the write and the `spawn.finished` hooks; a second one at least a second later ends it at once. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-primary-launch-exits-with-the-harnesss-status).
+- `approval: auto` now uses each harness's own auto: Claude gets `--permission-mode auto` (was `acceptEdits`), Codex gets `approval_policy="on-request"` plus `approvals_reviewer="auto_review"` (was `on-request` plus whatever `~/.codex/config.toml` set). A Claude classifier can refuse a call, and a Codex reviewer can approve a sandbox escalation. On a confined Claude profile the classifier also decides Edit/Write outside the working directories and WebFetch/WebSearch, which `acceptEdits` refused. Claude falls back to Manual on a model that does not offer `auto` (`claude-haiku-4-5`); the spawn report then carries a warning. `approval: confirm` on Codex now sets `approvals_reviewer="user"`, so a Codex home or forked thread that sets `auto_review` no longer approves it. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#approval-auto-uses-each-harnesss-own-auto).
+- `spawn rearm` wants a reason, a reply at the idle limit closes a child, and a child's close cancels what it started. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#spawn-rearm-wants-a-reason-and-a-childs-close-now-cancels-what-it-started).
+- Scoped `bash` denies, `*` rules beside scoped `bash` allows, and `bash` allowlists in a Codex profile are now enforced, and a Codex older than 0.129.0 refuses to launch such a profile. The hook is a guard against accidents, not a sandbox: rules are wildcard matches on each command segment, as on Pi, so `sudo git reset --hard`, `bash -c '...'`, substitutions and scripts are caught only if a rule matches them. An allowlist needs every segment to match an allow and refuses `$`, backticks and redirection. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#scoped-shell-rules-on-codex-need-codex-01290-or-newer).
+
+### Added
+- `meridian spawn subagents --all` lists every installed agent, including `model-invocable: false` ones, and marks those outside the caller's `subagents:` list.
+- `meridian spawn message` reaches Codex, OpenCode and Pi primaries. A message starts a turn when the session is idle and joins the running turn otherwise, and the TUI shows it. Meridian never answers an approval that turn raises: it stays in the TUI. Pi gives no receipt, so the CLI prints `posted (no receipt)`, and a message sent during a manual `/compact` is refused.
+- Codex spawns and primaries enforce scoped `bash` denies and allowlists through a Meridian-owned `PreToolUse` hook that matches wildcard rules on each command segment. The permission report marks these rules `partial`.
+- `meridian spawn rearm --reason "..."` and `--reason-file PATH` store why a child stays, and `spawn show` prints it.
+- `meridian spawn rearm --long` puts the next check at the idle limit, for a wait Meridian can't see such as remote CI.
+- `spawn wait` checkpoints show what a held child waits on and when it last worked.
+- Claude children get a guidance line on waiting: start the job in the background with a `timeout` that covers it, and end the turn.
+
+### Changed
+- Spawn-capable agents no longer carry the agent list in their system prompt. They run `meridian spawn subagents`, which reads the installed agents live, so a long session sees agents added after it started. The list cost 600–1,450 tokens per launch for typical leads.
+- `meridian spawn subagents` prints one line per agent with its description, marks `primary` agents and agents to launch with the harness's own agent tool (`native`), and leaves out `model-invocable: false` agents. When there is nothing to show (no calling agent, or an empty `subagents:` list), it says so and points at `--all`. If Mars can't list agents, the command fails with Mars's error instead of printing an empty list.
+- The prompt says "spawn ID" for `$MERIDIAN_SPAWN_ID` instead of "run ID", and a spawn's first-turn block is headed `# Meridian spawn`.
+- The capabilities block no longer repeats commands a bundled `*__meridian` skill already covers: work items, past sessions, notify, messaging, and Markdown/Mermaid validation.
+- Meridian pins `mars-agents==0.27.2`: the launch bundle no longer carries an agent list, and `mars agents list --json` reports `subagents` and routing facts. See [Mars 0.27.0](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0270).
+- `spawn message` reaches a Claude primary through a control socket its launcher serves, the same route a spawned session uses.
+- A message to a session with no route waits up to 30 seconds, then fails saying so. This includes `--bare` Claude primaries, which used to fail in about a second.
+- Messages are capped at 16 MiB. Claude's own inbox refuses somewhere between 1 and 2 MB.
+- A child whose harness process dies while it waits on running descendants now fails within seconds, and those descendants are cancelled.
+- A Codex or OpenCode primary refuses a message once the TUI leaves the session it started with, so a message can't run where nobody sees it. `meridian --continue <chat>` reopens the first session. An OpenCode message sent after the new-session or switch-session command, before the human types there, still goes to the first session and reports delivered.
+- Every primary's capabilities block names its message address.
+- A primary records the signal that cancelled it, as `128+N`: SIGTERM `143`, SIGHUP `129`, SIGINT `130`. The spawn ends `cancelled`.
+- `approval: auto` on Claude compiles to `--permission-mode auto`; a profile that gates a tool through the mode (including an unscoped `*: ask`) keeps `acceptEdits` or `manual`, and one with an allowlist keeps `dontAsk`.
+- `approval: auto` on Codex needs Codex 0.125.0 or later: 0.120.0 fails at launch with an unknown-variant config error, and 0.100.0 or older ignores the key, so no reviewer applies.
+- `approval: auto` on Codex sets `approvals_reviewer="auto_review"` on `codex exec`, `codex app-server` and the thread request, so the launch no longer depends on the user's Codex config. The profile's sandbox is kept.
+- `approval: confirm` on Codex sets `approvals_reviewer="user"` on the same three paths.
+- A Claude spawn whose init event reports a different `permissionMode` than the launch asked for gets a warning at the end of its report, once however many turns it runs. `meridian streaming serve` checks too.
+- A Claude profile with `sandbox: workspace-write` or `read-only` and an unscoped `*: ask` no longer auto-approves unmatched Bash; `autoAllowBashIfSandboxed` is set only when the compiled mode is `auto` and no rule asks.
+- Codex and OpenCode completion nudges now queue with other messages to the spawn and appear in `control_actions.jsonl` with `source: completion_nudge`, as Claude's already did.
+- Claude children no longer get a confirmation turn at each turn end. A turn end with nothing running closes the spawn with that turn's text, and running background work or spawns hold it with no message. Codex and OpenCode keep the ask.
+- `meridian spawn done` and `meridian spawn rearm` now work during a child's turn, including its first. Of the two run in one turn, the later one stands.
+- A Claude child's report is now its last real turn's text, including the reply to a `spawn message`. `report.md` still wins.
+- At the idle limit a child gets one ask naming what runs, what closing stops, and any finished child's unread report. A reply closes it and is its report; `rearm` keeps it open.
+- A short `rearm` now checks 270 s after the child goes idle, only when nothing visible is running. A rearm read at a turn end gets its check; it used to wait for the idle limit.
+- Spawned parents are told to wait by ending their turn. Primaries keep `spawn wait` and lose the "Before a child closes" line.
+
+### Deprecated
+- `meridian spawn rearm` without a reason warns. The next minor release requires one.
+
+### Removed
+- `report_path` in the JSON of `spawn show`, `spawn status`, `spawn report show` and `spawn report search`, deprecated in v0.18.0. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#json-output-no-longer-includes-report_path).
+- `spawn list --status queued`, `--status finalizing` and `--view queued`, deprecated in v0.18.0; the filters now fail as unsupported. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#new-spawns-start-running).
+- `spawn message --spawn-id`, deprecated in v0.16.4; pass the ref positionally. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#chat-and-session-references).
+- `spawn inject`, renamed to `spawn message` in v0.14.8 and kept as a hidden alias; use `spawn message`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#spawn-message-rename).
+
+### Fixed
+- A silent client on a control socket no longer hangs a spawn's shutdown.
+- A hung harness send no longer blocks a stop: sends are bounded at 33 seconds.
+- A message the harness rejected no longer reads as "may have arrived".
+- A Codex connection no longer takes an internal helper thread's id as its own, which sent messages to a thread the TUI wasn't on.
+- `meridian` (and `--continue`, `--fork`, `--from`, `bootstrap`) now exits with its harness's exit code. A harness that fails used to leave the shell at status 0 while the stored spawn said `failed`. A clean quit is still 0; a harness killed by signal N exits `128+N`; a session cancelled by a signal exits `128+N` (Ctrl-C `130`).
+- A SIGINT that reaches a black-box primary launcher (`kill -INT`, a redirected stdin) ended the spawn `failed` with code `2` while the shell saw `130`. It now stores `130` `cancelled`.
+- A Ctrl-C or SIGTERM just after the harness exits no longer leaves the spawn `crashed`: the code that decides the outcome and writes it now runs with signals deferred, and a signal it defers is recorded as the cancel.
+- A child with an expiry nudge outstanding whose backend has died now times out at its next turn end. A turn end could take a rearm or start publishing, and a rearm then waited a whole window for the same cleanup.
+- When a nudge's delivery is unknown, for example a send that timed out after the write, a ready spawn now waits out the grace before it publishes, so a child that did receive the nudge gets to answer.
+- A spawn no longer ends `succeeded` with its previous turn's report when its transport closes during a running turn. A cancel that loses the race to the close ends `cancelled`, and a crash mid-turn ends `failed` with the crash's message. A crash the hold sees with a report candidate ready also cancels the spawn's descendants; with no candidate, or where OpenCode's read error fails the drain first, it does not.
+- A rearm that arrives as the hold is ending no longer spends the rearm budget.
+- A parent with a finished background child it has not read is now woken once before it closes, with each spawn and report path named, and its answer becomes the report. Before, a parent could close without ever seeing the report.
+- `meridian spawn rearm` no longer deletes the spawn's kept report text.
+- `meridian spawn done` over running descendants now cancels them; it used to leave them running.
+- A `done` read at a transport close, with only background tasks running, closes the spawn; it used to end `failed` and lose the `done`.
+- A nudged child now gets 30 s to start its turn before a ready spawn publishes, on every harness. It used to get one poll interval, which could cut off a slow OpenCode model.
+- The Pi permission extension now refuses to load without its policy variable instead of running Pi with no checks. Meridian sets the old variable name beside the new one for one release.
+
 ## [0.19.8] - 2026-11-06
 
 ### Fixed
