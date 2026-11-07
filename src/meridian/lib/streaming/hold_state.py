@@ -62,6 +62,7 @@ class AnswerWindow:
     """Open from an expiry ask until the child works."""
 
     retry_left: bool
+    owed: tuple[FinishedChild, ...] = ()  # what the ask names, `woken` once it is delivered
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ class HoldStep:
     state: HoldState
     decision: ProfileDecision
     leave_awaiting: bool = False  # D2, E2, E3 away from a turn end change nothing
-    wake: tuple[FinishedChild, ...] = ()  # set on a nudge: name these, a wake and not an ask
+    wake: tuple[FinishedChild, ...] = ()  # set on a nudge: the finished children it must name
 
 
 def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
@@ -312,6 +313,7 @@ def after_send(state: HoldState, result: SendResult, *, now: float, active_turn:
             state,
             ask=AskPhase.SENT,
             answer=AnswerWindow(retry_left=False),
+            woken=state.woken | {child.key for child in state.answer.owed},
             reply_closes=state.reply_closes or landed,
             reply_replaces=state.reply_replaces or landed,
         )
@@ -360,8 +362,14 @@ def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
             nudge=True,
             reset_deadline=True,
         )
-        answer = AnswerWindow(retry_left=state.answer is None)
-        return HoldStep(replace(state, answer=answer), decision)
+        # A reply closes with blockers too, so this ask can't leave what is owed to a wake.
+        wake = tuple(child for child in facts.unread if child.key not in state.woken)
+        held = replace(
+            state,
+            answer=AnswerWindow(retry_left=state.answer is None, owed=wake),
+            reply_replaces=state.reply_replaces or bool(wake),
+        )
+        return HoldStep(held, decision, wake=wake)
     return _timeout(facts)
 
 
@@ -484,10 +492,22 @@ _REARM_FORMS = (
 )
 
 
-def _the_ask(blockers: Sequence[DiagnosticBlocker]) -> str:
-    """The expiry ask between turns: what runs, what closing stops, and the two answers."""
+def _unread_line(wake: Sequence[FinishedChild]) -> str:
+    finished = "; ".join(
+        f"{child.spawn_id} ({child.status}), report at {child.report}" for child in wake
+    )
+    return (
+        f"Spawns you started have finished and you have not read their results: {finished}. "
+        "Read them and act on them before you finish."
+    )
+
+
+def _the_ask(blockers: Sequence[DiagnosticBlocker], wake: Sequence[FinishedChild]) -> str:
+    """The expiry ask between turns: what is owed, what runs, what closing stops, the answers."""
     descendants, tasks, awaiting = _running_lines(blockers)
     parts = ["This spawn has gone idle."]
+    if wake:
+        parts.append(_unread_line(wake))
     if descendants or tasks or awaiting:
         running = [f"spawns {', '.join(descendants)}"] if descendants else []
         running += [f"background tasks {'; '.join(tasks)}"] if tasks else []
@@ -517,17 +537,11 @@ def nudge_text(
 ) -> str:
     """The text of the ask `decide` just asked for, with `state` as it left it."""
     if state.answer is not None and not active_turn:
-        return _the_ask(blockers)
+        return _the_ask(blockers, wake)
     descendants, tasks, awaiting = _running_lines(blockers)
     details: list[str] = []
     if wake:
-        finished = "; ".join(
-            f"{child.spawn_id} ({child.status}), report at {child.report}" for child in wake
-        )
-        details.append(
-            f"Spawns you started have finished and you have not read their results: "
-            f"{finished}. Read them and act on them before you finish."
-        )
+        details.append(_unread_line(wake))
     if descendants:
         details.append(
             f"Descendant spawns are still running: {', '.join(descendants)}. "

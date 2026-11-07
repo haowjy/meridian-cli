@@ -352,11 +352,13 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
         )
         await assert_still_pending(completion)
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
-        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
-        await next_turn_boundary(subscriber)
-        write_spawn_signal(launch_paths(tmp_path, spawn_id), "done")
+        # p2 was all the rearm held, and there is no candidate, so row C1c asks.
+        backend = connection.fake_resident_backend
+        await wait_until(
+            lambda: len(backend.injected_messages) == 1,
+            description="the ask once the rearm's blocker clears",
+        )
+        await assert_still_pending(completion)
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         outcome = await completion
         assert outcome is not None

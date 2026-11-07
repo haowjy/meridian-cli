@@ -501,6 +501,22 @@ WAKES_PARENT: list[tuple[HoldState, dict[str, Any], tuple[FinishedChild, ...], H
         (SECOND,),
         HoldState(woken=frozenset({"p2:1", "p3:1"}), reply_replaces=True),
     ),
+    # A refused ask marked nothing, so a ready tree still wakes rather than publishes.
+    (
+        HoldState(
+            ask=AskPhase.REFUSED,
+            answer=AnswerWindow(retry_left=True, owed=(FIRST,)),
+            reply_replaces=True,
+        ),
+        {"unread": (FIRST,)},
+        (FIRST,),
+        HoldState(
+            ask=AskPhase.REFUSED,
+            answer=AnswerWindow(retry_left=True, owed=(FIRST,)),
+            woken=frozenset({"p2:1"}),
+            reply_replaces=True,
+        ),
+    ),
 ]
 
 
@@ -513,6 +529,57 @@ def test_wake_parent(
 ) -> None:
     step = decide(before, facts(**overrides))
     assert step.decision == ASK
+    assert step.wake == wake
+    assert step.state == after
+
+
+# The expiry ask names what no wake has, with blockers too, because a reply to it closes.
+NAMED = HoldState(answer=AnswerWindow(retry_left=True, owed=(SECOND,)), reply_replaces=True)
+ASKS_NAME: list[tuple[str, HoldState, dict[str, Any], tuple[FinishedChild, ...], HoldState]] = [
+    ("C1", RESET, {"candidate": None, "expired": True}, (SECOND,), NAMED),
+    ("E1", RESET, {"expired": True, "assessment": BLOCKED}, (SECOND,), NAMED),
+    (
+        "C1c",
+        HoldState(rearmed=True, lease=HeldLease(frozenset({TASK}))),
+        {"candidate": None, "assessment": BLOCKED},
+        (SECOND,),
+        replace(NAMED, rearmed=True, lease=HeldLease(frozenset({TASK}))),
+    ),
+    # A mid-turn expiry names them too; the running turn's reply is then the report.
+    ("E1", RESET, {"expired": True, "active_turn": True}, (SECOND,), NAMED),
+    # A refused ask's retry: nothing arrived, so nothing was marked.
+    (
+        "E1",
+        HoldState(ask=AskPhase.REFUSED, answer=NAMED.answer),
+        {"expired": True},
+        (SECOND,),
+        HoldState(
+            ask=AskPhase.REFUSED,
+            answer=AnswerWindow(retry_left=False, owed=(SECOND,)),
+            reply_replaces=True,
+        ),
+    ),
+    # Woken before: the ask has nothing new to name.
+    (
+        "E1",
+        HoldState(woken=frozenset({"p3:1"})),
+        {"expired": True},
+        (),
+        HoldState(woken=frozenset({"p3:1"}), answer=OPEN),
+    ),
+]
+
+
+@pytest.mark.parametrize(("row", "before", "overrides", "wake", "after"), ASKS_NAME)
+def test_expiry_ask_names(
+    row: str,
+    before: HoldState,
+    overrides: dict[str, Any],
+    wake: tuple[FinishedChild, ...],
+    after: HoldState,
+) -> None:
+    step = decide(before, facts(unread=(SECOND,), **overrides))
+    assert step.decision.nudge, row
     assert step.wake == wake
     assert step.state == after
 
@@ -550,6 +617,23 @@ SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
         HoldState(ask=AskPhase.SENT, answer=SPENT),
     ),
     ("turn end delivered", RESET, SendResult.SENT, HoldState(ask=AskPhase.SENT)),
+    (
+        "expiry naming a child delivered",
+        NAMED,
+        SendResult.SENT,
+        HoldState(
+            ask=AskPhase.SENT,
+            answer=SPENT,
+            woken=frozenset({"p3:1"}),
+            reply_replaces=True,
+        ),
+    ),
+    (
+        "expiry naming a child refused",
+        NAMED,
+        SendResult.REFUSED,
+        replace(NAMED, ask=AskPhase.REFUSED),
+    ),
     ("expiry refused, unasked", EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
     ("expiry refused again", REFUSED_EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
     (
@@ -705,12 +789,25 @@ def test_spacing_restarts_at_each_turn_end() -> None:
     assert decide(state, facts(end=GOOD_END)).state.lease == SpacedLease(370.0)
 
 
-# state, blockers, has a candidate, skips the ask, a turn running; what must and must not show
+# state, blockers, has a candidate, skips the ask, a turn running; what must and must not show.
+# The children named are the ones `state.answer` owes.
 ASK_TEXT: list[
     tuple[
         HoldState, tuple[DiagnosticBlocker, ...], bool, bool, bool, tuple[str, ...], tuple[str, ...]
     ]
 ] = [
+    # The ask names what a reply would close over, with its report, before what runs.
+    (
+        NAMED,
+        (CHILD,),
+        True,
+        False,
+        False,
+        ("p3 (failed), report at /r/p3/report.md", "Read them", "spawns p2"),
+        ("Nothing Meridian can see is running. Spawns",),
+    ),
+    # Mid-turn it asks for new work, so "your previous reply" can't stand.
+    (NAMED, (), True, False, True, ("report at /r/p3/report.md",), ("is kept",)),
     # The ask between turns names what runs and what closing stops.
     (
         EXPIRY,
@@ -742,8 +839,9 @@ def test_nudge_text(
     shown: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
+    wake = state.answer.owed if state.answer is not None else ()
     text = nudge_text(
-        state, blockers, (), has_candidate=candidate, skips_ask=skips, active_turn=active
+        state, blockers, wake, has_candidate=candidate, skips_ask=skips, active_turn=active
     )
     assert all(part in text for part in shown), text
     assert not any(part in text for part in hidden), text

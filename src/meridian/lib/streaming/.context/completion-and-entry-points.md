@@ -146,8 +146,13 @@ admission gone, nothing needs signal reads to be atomic with installing a candid
 during the parent's turn never shows as a blocker. `unread` is `owed_launches` joined with
 what `spawn collect` consumed and live wait leases, read in the descendant refresh so the
 drain pays for it once per poll, and only with a completion channel. C1b and E3b send it
-through `HoldStep.wake` once per launch, only with a ready tree: a partial clear stays silent,
-and with blockers a later wake comes anyway. The read takes only the child's non-blocking
+through `HoldStep.wake` once per launch, only with a ready tree: a partial clear stays silent.
+No later wake is promised, because a reply to the expiry ask closes over blockers (row D0) and
+that row sits above E3b. So every expiry ask (`_expiry`, rows C1, C1c and E1) carries the same
+not-yet-woken children and names each with its report. It marks them `woken` when `after_send`
+sees it delivered, not in the row as a wake does: a refused ask reached nobody, its one retry is
+already bounded, and a ready tree may publish after a refusal, so E3b has to stay able to name
+them. The read takes only the child's non-blocking
 shared lock, never the parent's spawn lock. `woken` is set in the row, not by the send,
 because a failed send re-evaluates at once and would otherwise repeat. The wake sits below
 `closing`: a `done` is the child's own word. It is an ask for the phases, so on Codex and
