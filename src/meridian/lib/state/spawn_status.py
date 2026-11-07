@@ -1,5 +1,3 @@
-"""Read-only spawn status derived from launch-lock liveness."""
-
 from __future__ import annotations
 
 import asyncio
@@ -55,11 +53,6 @@ def read_cancel_intent(launch: LaunchPaths, row: SpawnRecord) -> CancelIntent | 
 
 
 def _observed_end(launch: LaunchPaths, row: SpawnRecord) -> str:
-    """When a dead launch last showed life, from files only: the same on every read.
-
-    Older runners recorded an exit time on the row; otherwise the newest write to a file
-    only the runner appends to (``LaunchPaths.runner_activity``), else the start.
-    """
     if row.runner_exit is not None:
         return row.runner_exit.exited_at
     if row.last_attempt_exited_at:
@@ -72,13 +65,6 @@ def _observed_end(launch: LaunchPaths, row: SpawnRecord) -> str:
 
 
 def derive(runtime_root: Path, row: SpawnRecord) -> SpawnRecord:
-    """Overlay status on a row read while its launch lock was free (no runner).
-
-    A durable report is a completion, so it wins: the launch is ``succeeded`` with or without
-    a cancel request, and a cancel never turns a crash into a success or the reverse. Without
-    a report, a cancel request makes it ``cancelled`` and otherwise it is ``failed``/``crashed``.
-    Everything that ends a dead launch (cancel, doctor, the repair pass) inherits this rule.
-    """
     if not is_active_spawn_status(row.status):
         return row
     launch = LaunchPaths.for_row(runtime_root, row)
@@ -119,13 +105,11 @@ class Claimed:
 
     @property
     def status(self) -> TerminalSpawnStatus:
-        """Return the terminal status guaranteed by a successful claim."""
 
         return cast("TerminalSpawnStatus", self.derived.status)
 
     @property
     def terminal(self) -> TerminalFacts:
-        """Return the terminal facts guaranteed by a successful claim."""
 
         return cast("TerminalFacts", self.derived.terminal)
 
@@ -154,12 +138,6 @@ type DeadLaunchClaim = Claimed | Settled | Live | Lockless
 def claim_dead_launch(
     runtime_root: Path, spawn_id: str, *, expected_n: int | None = None
 ) -> DeadLaunchClaim:
-    """Claim a lock-backed dead launch and return its lock-consistent rows.
-
-    ``expected_n`` pins the claim to the launch the caller observed. A guard under the lock,
-    not a new result: if the row has moved past it, the claim writes nothing and returns
-    ``Live`` (launch ``expected_n`` is finished and archived; the caller reads the archive).
-    """
     try:
         handle = acquire(runtime_root, spawn_id)
     except NotFound:
@@ -184,10 +162,6 @@ def claim_dead_launch(
 
 
 def _read_current(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None, bool]:
-    """Read the current launch's row with liveness consistent with its lock.
-
-    The flag says the row was derived (no runner), not read as stored.
-    """
     spawns_dir = runtime_root / "spawns"
     with shared_hold(lock_path(runtime_root, spawn_id)) as lock_free:
         row = read_state(spawns_dir, spawn_id, include_prompt=False)
@@ -203,11 +177,6 @@ def _read_current(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None
 
 
 def _read_launch(runtime_root: Path, spawn_id: str, n: int) -> tuple[SpawnRecord | None, bool]:
-    """``_read_current``, or launch ``n``'s archive once the spawn has moved past it.
-
-    The archive is terminal by construction: the holder that starts launch ``n+1`` writes
-    ``n``'s outcome before copying its row.
-    """
     row, derived = _read_current(runtime_root, spawn_id)
     if row is not None and row.launch_number > n:
         return read_launch_archive(runtime_root, spawn_id, n), False
@@ -215,12 +184,10 @@ def _read_launch(runtime_root: Path, spawn_id: str, n: int) -> tuple[SpawnRecord
 
 
 def read_derived(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
-    """Read one row with liveness consistent with its runner-lifetime lock."""
     return _read_current(runtime_root, spawn_id)[0]
 
 
 def read_launch(runtime_root: Path, spawn_id: str, n: int) -> SpawnRecord | None:
-    """Launch ``n``'s row: the current one (derived) or its archive."""
     return _read_launch(runtime_root, spawn_id, n)[0]
 
 
@@ -255,10 +222,6 @@ class LaunchNotFound(ValueError):
 
 
 def poll_launch(runtime_root: Path, spawn_id: str, n: int) -> LaunchPoll:
-    """One cheap answer to "has launch ``n`` finished", from a single ``read_derived``.
-
-    Once the spawn has moved past ``n``, the launch's archive answers (always ``Finished``).
-    """
     row, derived = _read_launch(runtime_root, spawn_id, n)
     if row is None:
         current = read_derived(runtime_root, spawn_id)
@@ -274,7 +237,6 @@ def poll_launch(runtime_root: Path, spawn_id: str, n: int) -> LaunchPoll:
 
 
 async def wait_until(runtime_root: Path, spawn_id: str, n: int, *, until: float) -> LaunchPoll:
-    """Poll until the launch finishes, loses its runner, or ``until`` (monotonic)."""
     while True:
         poll = poll_launch(runtime_root, spawn_id, n)
         remaining = until - time.monotonic()
@@ -284,7 +246,6 @@ async def wait_until(runtime_root: Path, spawn_id: str, n: int, *, until: float)
 
 
 def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[SpawnRecord]:
-    """Overlay liveness for stored-active rows from a scan or index query."""
     overlaid: list[SpawnRecord] = []
     for row in rows:
         if not is_active_spawn_status(row.status):
@@ -296,7 +257,6 @@ def overlay_derived(runtime_root: Path, rows: Iterable[SpawnRecord]) -> list[Spa
 
 
 def is_live(runtime_root: Path, spawn_id: str) -> bool:
-    """Return whether the lock-consistent status is active."""
 
     row = read_derived(runtime_root, spawn_id)
     return row is not None and is_active_spawn_status(row.status)
@@ -307,8 +267,6 @@ def quarantine_may_observe(
     report: SpawnStateQuarantineReport,
     chat_id: str,
 ) -> bool:
-    """Conservatively decide whether a quarantined row may observe one chat."""
-
     with shared_hold(lock_path(runtime_root, report.spawn_id)) as lock_free:
         if report.newer_version is not None:
             # A later build's runner holds the lock for its whole life; a free lock is no observer.

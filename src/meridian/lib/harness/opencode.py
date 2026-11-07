@@ -160,7 +160,6 @@ def project_opencode_spec_to_session_payload_for_project(
     *,
     project_root: Path,
 ) -> dict[str, object]:
-    """Project OpenCode managed-primary bootstrap payload for one project root."""
 
     _ = project_root
     return project_opencode_spec_to_session_payload(spec)

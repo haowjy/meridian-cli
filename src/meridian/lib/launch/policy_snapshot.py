@@ -1,5 +1,3 @@
-"""Launch-policy snapshot build and replay helpers."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -118,13 +116,7 @@ def overlay_continue_selection(
 
 
 def managed_model_override_from_persisted_model(model: str) -> str | None:
-    """Return managed model token from persisted snapshot data.
-
-    Legacy persisted snapshots may store an empty string to mean that Meridian
-    should not pass a managed model override and the harness should choose its
-    default.
-    """
-
+    # Legacy snapshots use an empty string to defer model choice to the harness.
     token = model.strip()
     return token or None
 
@@ -138,7 +130,6 @@ def build_launch_policy_snapshot(
     profile: AgentProfile | None = None,
     skill_delivery: SkillDeliveryMode,
 ) -> LaunchPolicySnapshot:
-    """Build a durable launch-policy snapshot from a resolved request."""
 
     model = (request.model or "").strip()
     harness = (request.harness or "").strip()
@@ -183,7 +174,6 @@ def replay_launch_policy_snapshot(
     harness_registry: HarnessRegistry,
     alias_catalog: dict[str, AliasEntry],
 ) -> ReplayedLaunchPolicySnapshot:
-    """Resolve policy fields directly from persisted snapshot data."""
 
     snapshot_harness = snapshot.harness.strip()
     if not snapshot_harness:

@@ -1,5 +1,3 @@
-"""Read the installed Claude CLI's version."""
-
 import re
 import subprocess
 from collections.abc import Mapping
@@ -9,12 +7,6 @@ _TIMEOUT_SECONDS = 10
 
 
 def claude_version(env: Mapping[str, str]) -> tuple[int, int, int] | None:
-    """Return ``(major, minor, patch)`` from ``claude --version`` run in ``env``, or None.
-
-    ``claude`` resolves through ``env``'s PATH, the binary a launch uses. The pattern is
-    matched over stdout and stderr and tolerates a pre-release suffix (``2.1.320-beta``).
-    None means the binary is missing, hung, or printed no version.
-    """
     try:
         proc = subprocess.run(
             ("claude", "--version"),

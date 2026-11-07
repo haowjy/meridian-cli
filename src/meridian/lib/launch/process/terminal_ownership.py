@@ -1,5 +1,3 @@
-"""Exclusive terminal ownership for interactive primary TUIs."""
-
 from __future__ import annotations
 
 import os
@@ -23,7 +21,6 @@ class TuiTerminalWindow:
 
 
 def format_launcher_diagnostics_pointer(path: Path) -> str:
-    """Return the single post-TUI pointer shown when launcher output was captured."""
 
     return f"Launcher output during the TUI was written to {path}"
 

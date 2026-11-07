@@ -1,5 +1,3 @@
-"""Shared Mars helpers used by Meridian operations and CLI wrappers."""
-
 from __future__ import annotations
 
 import json
@@ -260,7 +258,6 @@ def format_upgrade_availability(
     *,
     style: Literal["hint", "warning"] = "hint",
 ) -> tuple[str, ...]:
-    """Render upgrade availability grouped by available action."""
 
     lines: list[str] = []
     with_prefix = style == "hint"

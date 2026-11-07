@@ -1,5 +1,3 @@
-"""Shared pre-composition launch input resolution."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,14 +55,6 @@ def resolve_launch_inputs(
     caller_cwd: str | Path | None = None,
     inherit_context_work: bool = True,
 ) -> LaunchInputResolution:
-    """Resolve the shared launch surface before prompt composition.
-
-    Work precedence is:
-      1. explicit work
-      2. ambient/session work
-      3. first ``--from`` work when enabled
-    """
-
     resolved_authority_root = authority_root.expanduser().resolve()
     normalized_explicit_work_id = (explicit_work_id or "").strip() or None
     normalized_ambient_work_id = (ambient_work_id or "").strip() or None

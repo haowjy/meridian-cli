@@ -1,5 +1,3 @@
-"""Typed models for Meridian operational configuration."""
-
 from typing import Annotated
 
 from pydantic import (
@@ -491,7 +489,6 @@ _TIMEOUT_FIELD_NAMES = {
 
 
 def _timeout_field(name: str, kind: ValueKind) -> ConfigOptionMeta:
-    """Describe one timeout option and its accepted legacy field spelling."""
 
     field_name = _TIMEOUT_FIELD_NAMES.get(name, name)
     aliases = [file_alias("timeouts", name)]
@@ -658,7 +655,6 @@ class MeridianConfig(ConfigModel):
         return float(value)
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
-        """Return clamped wait-yield seconds for a harness or the unknown default."""
 
         configured = self.harness_profile(harness_id)
         raw_value = (
@@ -669,7 +665,6 @@ class MeridianConfig(ConfigModel):
         return max(float(raw_value), float(self.min_wait_yield_seconds))
 
     def harness_profile(self, harness_id: str | None) -> HarnessProfileConfig | None:
-        """Return the typed profile for a supported harness ID."""
 
         normalized = (harness_id or "").strip().lower()
         if normalized not in _HARNESS_TABLE_KEYS:

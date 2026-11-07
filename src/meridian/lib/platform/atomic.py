@@ -1,5 +1,3 @@
-"""Dependency-neutral atomic file replacement."""
-
 from __future__ import annotations
 
 import os
@@ -80,7 +78,6 @@ def _open_unique_temp(path: Path, creation_mode: int) -> tuple[int, Path]:
 
 
 def is_atomic_temp_name(name: str, filename: str) -> bool:
-    """Whether ``name`` is a same-directory staging temp staged for ``filename``."""
     return name.startswith(f".{filename}.") and name.endswith(_ATOMIC_TEMP_SUFFIX)
 
 
@@ -145,7 +142,6 @@ def atomic_replace(
 
 
 def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None:
-    """Atomically replace user-owned text while preserving an existing mode."""
 
     with atomic_replace(path, durable=durable) as handle:
         handle.write(content)

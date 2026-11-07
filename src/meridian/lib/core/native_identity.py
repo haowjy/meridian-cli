@@ -1,5 +1,3 @@
-"""Immutable harness-native identity values and typed refusals."""
-
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import ClassVar, Literal

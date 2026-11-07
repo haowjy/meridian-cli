@@ -1,5 +1,3 @@
-"""Collect and acknowledge background spawn results owed to an idle primary."""
-
 from __future__ import annotations
 
 import errno

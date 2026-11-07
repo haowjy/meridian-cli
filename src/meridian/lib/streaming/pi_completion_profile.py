@@ -1,5 +1,3 @@
-"""Pi completion policy, deadlines, lifecycle phases, and exit decisions."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

@@ -1,5 +1,3 @@
-"""Claude CLI harness adapter."""
-
 import json
 import os
 import secrets
@@ -178,7 +176,6 @@ def build_claude_adhoc_agent_json(
     description: str,
     prompt: str,
 ) -> str:
-    """Build a Claude `--agents` payload for one installed Meridian agent."""
 
     normalized_name = name.strip()
     if not normalized_name:
@@ -219,7 +216,6 @@ def bind_claude_spec(
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
-    """Extract --session-id value from passthrough args, or return empty string."""
     for i, token in enumerate(args):
         if token == "--session-id" and i + 1 < len(args):
             return args[i + 1].strip()
@@ -490,7 +486,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # prompt_file_path is owned by bind_launch_context, which sets it to
         # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
         prompt_file_path: str | None = None
-        # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
         plugin_names = (_BOUNDARY_PLUGIN,)
         if run.interactive:
@@ -622,7 +617,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if normalized_harness_session_id:
             return SessionSeed(session_id=normalized_harness_session_id)
 
-        # If user provided --session-id via passthrough, use that value.
         passthrough_session_id = _extract_passthrough_session_id(passthrough_args)
         if passthrough_session_id:
             return SessionSeed(session_id=passthrough_session_id)
@@ -632,12 +626,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
-        """Claude projection: route system content to append-system-prompt.
-
-        - SYSTEM_INSTRUCTION (skills, profile, report, capabilities, passthrough)
-          → --append-system-prompt channel
-        - USER_TASK_PROMPT + TASK_CONTEXT → positional prompt argument (user turn)
-        """
         system_prompt = render_system_instruction_blocks(content)
         reference_routing = build_reference_routing(content.reference_items)
         task_context = render_task_context(

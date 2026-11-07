@@ -27,7 +27,7 @@ class DeliveryError(RuntimeError):
 
 
 class DeliveryRefused(DeliveryError):
-    """The receiver is alive and nothing was written, so a retry cannot repeat the message."""
+    """The adapter asserts the message was not delivered, so retrying is safe."""
 
 
 class TransportDead(DeliveryError):

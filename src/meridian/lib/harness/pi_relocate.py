@@ -28,7 +28,6 @@ _HEADER_VERSION = 3
 
 
 def pi_native_cwd(identity: NativeKeyFields) -> Path | None:
-    """Header ``cwd`` of the chat's transcript; None when it is absent or unreadable."""
     try:
         header = _header_for(identity)
     except (NativeSessionUnavailable, NativeEntryMismatch):

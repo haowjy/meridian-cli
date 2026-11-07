@@ -32,7 +32,6 @@ class _TelemetryStatusResult(dict[str, Any]):
 
 
 def _resolve_telemetry_dirs(global_flag: bool) -> list[Path]:
-    """Return telemetry directories to read."""
     if global_flag:
         projects_dir = get_user_home() / "projects"
         dirs: list[Path] = []
@@ -56,7 +55,6 @@ def _resolve_telemetry_dirs(global_flag: bool) -> list[Path]:
 
 
 def _legacy_telemetry_dir() -> Path | None:
-    """Return legacy user-level telemetry dir if it exists."""
     legacy = get_user_home() / "telemetry"
     return legacy if legacy.is_dir() else None
 

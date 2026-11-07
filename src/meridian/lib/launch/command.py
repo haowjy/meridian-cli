@@ -1,5 +1,3 @@
-"""Command assembly helpers for primary launches."""
-
 from __future__ import annotations
 
 from typing import cast
@@ -14,7 +12,6 @@ from meridian.lib.safety.policy import PermissionPolicy
 def normalize_system_prompt_passthrough_args(
     passthrough_args: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Extract system-prompt passthroughs and return args without prompt duplicates."""
 
     cleaned: list[str] = []
     prompt_fragments: list[str] = []
@@ -52,24 +49,10 @@ def resolve_launch_spec_stage(
     permission_policy: PermissionPolicy,
     native_config: NativeConfig,
 ) -> ResolvedLaunchSpec:
-    """Stage-owned adapter callsite for `resolve_launch_spec`.
-
-    The adapter resolves harness facts and never sees the policies; this stage
-    attaches the transport-neutral permission policy and the selected harness's
-    native execution config that its compile reads.
-
-    Reference delivery flow: `SpawnParams.reference_items` is selectively
-    re-attached onto the resolved spec only when the active adapter advertises
-    native file injection support and the spec model exposes a `reference_items`
-    field. All current adapters have `supports_native_file_injection=False` so
-    the block below is a future-proofing hook.
-    """
-
     spec = adapter.resolve_launch_spec(run_inputs).model_copy(
         update={"permission_policy": permission_policy, "native_config": native_config}
     )
 
-    # If harness supports native file injection and we have reference_items, attach them.
     if run_inputs.reference_items and adapter.capabilities.supports_native_file_injection:
         spec = spec.model_copy(update={"reference_items": run_inputs.reference_items})
 
@@ -95,7 +78,6 @@ def build_launch_argv(
     adapter: SubprocessHarness,
     projected_spec: ResolvedLaunchSpec,
 ) -> tuple[str, ...]:
-    """Stage-owned subprocess argv assembly from one resolved launch spec."""
 
     return tuple(
         project_subprocess_spec(

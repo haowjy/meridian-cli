@@ -15,4 +15,11 @@
   definitions under `mcp.servers`, but Meridian must not reconstruct commands from tool
   permission names.
 
-- `control_action.py`: every journal row in `control_actions.jsonl` repeats the full message text, so a large message (up to the 16 MiB socket limit) costs three durable writes, each fsynced. Keeping the text on the `requested` row alone, with later rows referring to it by action id, would cut that to one.
+- Untangle in the rewrite: `control_action.py` repeats a message's full
+  payload on every durable transition. Store the payload once on the request and
+  reference its action ID in later transitions, while preserving old journal reads.
+
+- Untangle in the rewrite: `pi.py:prepare_prelaunch` mutates `child_env` and also returns `env_overrides`;
+  spawned and primary callers reconstruct the final environment differently. Accept
+  a read-only mapping and return all changes in one overlay, applied through a shared
+  launch helper.

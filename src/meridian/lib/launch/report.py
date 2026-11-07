@@ -1,5 +1,3 @@
-"""Report precedence over attempt-local facts and exact native replies."""
-
 from collections.abc import Callable
 from typing import Literal
 

@@ -1,5 +1,3 @@
-"""Shared launch artifact helpers."""
-
 from __future__ import annotations
 
 import json
@@ -38,7 +36,6 @@ def append_runner_lifecycle_event(
     phase: str,
     **details: object,
 ) -> None:
-    """Best-effort append of runner-owned crash diagnostics."""
 
     payload = {
         "event": event,
@@ -87,7 +84,6 @@ def record_identity_failure(
     lifecycle: LifecycleLog,
     phase: str,
 ) -> None:
-    """Write the same typed refusal payload at every runner boundary."""
     lifecycle(event=error.failure_code, phase=phase, **error.lifecycle_fields())
 
 
@@ -181,7 +177,6 @@ def write_projection_artifacts(
     launch_context: LaunchContext,
     surface: ProjectionSurface,
 ) -> None:
-    """Write launch observability artifacts for one prepared context."""
 
     projected = launch_context.projected_content
     run_params = launch_context.binding.run_params

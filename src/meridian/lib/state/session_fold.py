@@ -1,8 +1,3 @@
-"""Session event models and deterministic authority projections.
-
-Disk reads and lease ownership belong to session_store; replay accepts events.
-"""
-
 import logging
 import uuid
 from collections.abc import Iterable, Mapping
@@ -580,11 +575,6 @@ def validate_startup_identity(
 
 
 def fold_session_generations(events: Iterable[SessionEvent]) -> tuple[SessionRecord, ...]:
-    """Project generations in source order; chat acceptance uses the same fold.
-
-    Bucket keys retain raw generation spelling, unlike generation matching. Late
-    updates can still apply to an older bucket if compatible with the chat key.
-    """
     generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
     open_generations: dict[str, set[str]] = {}
     latest_blank: dict[str, str] = {}
@@ -726,11 +716,6 @@ def with_key[T: (SessionRecord, SessionStartEvent)](model: T, key: NativeKeyFiel
 def by_native_key(
     records: Mapping[str, SessionRecord],
 ) -> dict[NativeKey, tuple[SessionRecord, ...]]:
-    """Invert accepted chat records by complete key, retaining aliases in input order.
-
-    Incomplete bindings are omitted. Values retain all chats sharing a native key;
-    callers, not the fold, choose among aliases. No I/O or additional replay.
-    """
     grouped: dict[NativeKey, list[SessionRecord]] = {}
     for record in records.values():
         key = record.native_key()

@@ -1,5 +1,3 @@
-"""Process launch orchestration."""
-
 from __future__ import annotations
 
 import asyncio
@@ -146,7 +144,6 @@ def _write_native_primary_metadata(
     harness_session_id: str | None,
     runtime_metadata: NativePrimaryRuntimeMetadata | None = None,
 ) -> None:
-    """Best-effort metadata projection for native/black-box primary launches."""
 
     try:
         write_primary_metadata(
@@ -331,7 +328,6 @@ def run_primary_process_with_capture(
 
 
 def _cleanup_managed_primary_sidecars(launch: LaunchPaths) -> None:
-    """Delete managed sidecars when attach startup falls back to black-box launch."""
 
     for sidecar in (launch.primary_meta, launch.output):
         with suppress(OSError):
@@ -377,7 +373,6 @@ def _execute_via_managed_attach(
     on_running: Callable[[ProcessIdentity], None],
     usage_seed: UsageSeed,
 ) -> PrimaryExecutionResult:
-    """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
         harness_id,
@@ -411,7 +406,6 @@ def _execute_via_blackbox(
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[ProcessIdentity], None],
 ) -> PrimaryProcessResult:
-    """Run legacy black-box launch path and return process exit code."""
 
     return run_primary_process_with_capture_fn(
         command,
@@ -441,7 +435,6 @@ def _execute_primary_process(
     on_running: Callable[[ProcessIdentity], None],
     usage_seed: UsageSeed,
 ) -> PrimaryExecutionResult:
-    """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
@@ -595,7 +588,6 @@ def _create_managed_primary_connection(
     harness_adapter: SubprocessHarness,
     launch: LaunchPaths,
 ) -> HarnessConnection[Any]:
-    """Build one managed-primary connection configured from harness contract data."""
 
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
@@ -640,7 +632,6 @@ async def _run_primary_attach(
     session_id_observer: Callable[[str], None] | None = None,
     usage_seed: UsageSeed = None,
 ) -> PrimaryAttachOutcome:
-    """Launch managed backend + primary TUI attach flow for supported harnesses."""
 
     try:
         passthrough = get_passthrough(harness_id)
@@ -702,7 +693,6 @@ def run_primary_attach(
     session_id_observer: Callable[[str], None] | None = None,
     usage_seed: UsageSeed = None,
 ) -> PrimaryAttachOutcome:
-    """Run managed primary attach lifecycle from sync runner code."""
 
     try:
         asyncio.get_running_loop()
@@ -737,7 +727,6 @@ def run_harness_process(
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
     hold: ContinueHold | None = None,
 ) -> ProcessOutcome:
-    """Start session, spawn tracking, launch process, wait for exit."""
 
     config_root = launch_context.project_root
     control_root = launch_context.control_root
@@ -1079,7 +1068,6 @@ def run_harness_process(
                         runtime_metadata=native_primary_runtime_metadata,
                     )
 
-                # The observer's lifetime is this block, including exceptions.
                 with native_run.observing(
                     harness_adapter,
                     child_env=child_env,

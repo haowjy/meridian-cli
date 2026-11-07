@@ -1,21 +1,18 @@
-/** Detect `meridian spawn` CLI invocations in shell command strings. */
 export const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
 
 export function isMeridianSpawnCommand(command: string): boolean {
   return MERIDIAN_SPAWN_COMMAND_PATTERN.test(command);
 }
 
-/** `meridian spawn wait` (including `uv run meridian spawn wait`, env prefixes). */
 export function isSpawnWaitCommand(command: string): boolean {
   return /\bmeridian\s+spawn\s+wait\b/.test(command);
 }
 
-/** Spawn launcher, not wait/list/show — matches `uv run meridian spawn -m …`. */
 export function isSpawnLauncherCommand(command: string): boolean {
   return isMeridianSpawnCommand(command) && !isSpawnWaitCommand(command);
 }
 
-/** CLI background note: `Spawn id: p1234` ([_background_wait_note](models.py)). */
+// Keep this in sync with the CLI background spawn note.
 export const SPAWN_ID_FROM_LAUNCHER_LOG_PATTERN = /Spawn id:\s*(p\d+)/i;
 
 export function extractSpawnIdFromLauncherLog(text: string): string | null {
@@ -27,7 +24,6 @@ export function extractSpawnIdFromLauncherLog(text: string): string | null {
   return id;
 }
 
-/** Meridian spawn IDs emitted by the CLI (e.g. `p1234`). */
 export const MERIDIAN_SPAWN_ID_PATTERN = /\bp\d+\b/g;
 
 export function isMeridianSpawnId(value: string): boolean {

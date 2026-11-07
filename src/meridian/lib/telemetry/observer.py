@@ -1,5 +1,3 @@
-"""Spawn lifecycle projection into the telemetry stream."""
-
 from __future__ import annotations
 
 import threading
@@ -37,7 +35,6 @@ class SpawnTelemetryObserver:
     """
 
     def on_event(self, event: LifecycleEvent) -> None:
-        """Project approved lifecycle events to v1 telemetry."""
         if event.event not in TERMINAL_TELEMETRY_EVENTS:
             return
 
@@ -55,7 +52,6 @@ class SpawnTelemetryObserver:
 
 
 def register_spawn_telemetry_observer() -> None:
-    """Register the process-wide spawn telemetry observer once."""
     global _registered
     with _REGISTER_LOCK:
         if _registered:
@@ -65,7 +61,6 @@ def register_spawn_telemetry_observer() -> None:
 
 
 def _extract_terminal_data(event: LifecycleEvent) -> dict[str, object]:
-    """Extract relevant data from a sparse spawn lifecycle event."""
     data: dict[str, object] = {}
     for key in (
         "exit_code",

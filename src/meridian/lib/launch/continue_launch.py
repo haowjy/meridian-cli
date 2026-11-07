@@ -1,13 +1,3 @@
-"""Explicit continue, steps 1-4: take a finished spawn's launch lock and leave it ready to reopen.
-
-A continue keeps the spawn's ID. ``resolve_continue_target`` decides which spawn a continue
-reopens; the caller builds the whole launch from that spawn, then ``begin_continue`` takes its
-launch lock, ends the last launch (outcome written, processes swept, reaper claim resolved)
-and checks what would make the next one fail. Preparing the launch and committing it
-(``spawn_store.reopen_spawn``) belong to the caller, which holds the returned ``ContinueHold``
-until its runner owns the lock. Nothing is written for ``dry_run``.
-"""
-
 from __future__ import annotations
 
 import os
@@ -55,13 +45,6 @@ _TEARDOWN_GRACE_SECS = 5.0
 
 @dataclass(frozen=True)
 class ContinueHold:
-    """The reopened spawn's launch lock, held with its last launch finished and swept.
-
-    ``slot`` owns the lock: the caller enters it once (``with hold.slot``), and what it calls
-    uses it without closing; the runner's handover closes it early.
-    ``spawn`` is the stored row, whose launch has an outcome.
-    """
-
     slot: LaunchSlot
     spawn: SpawnRecord
 
@@ -164,15 +147,6 @@ def resolve_continue_target(
     parent_id: str | None,
     kind: SpawnKind,
 ) -> tuple[SpawnRecord, str | None]:
-    """Step 1: the spawn this continue reopens, and a notice when it is not the one named.
-
-    Pure reads. The caller builds the launch (model, goal, policy, session) from the returned
-    spawn, never from ``named``.
-
-    A chat's conversation belongs to the spawn that ran it last, so naming an older spawn of the
-    chat (chains continued before IDs were kept) or the chat itself reopens that spawn. The
-    caller never moves a spawn it did not name: a different parent or kind refuses.
-    """
     owner_id = chat_owner_spawn(runtime_root, chat_id) if chat_id else None
     if owner_id is None or str(owner_id) == named.id:
         target = named
@@ -292,14 +266,6 @@ def begin_continue(
     caller_spawn_id: str | None,
     dry_run: bool,
 ) -> ContinueHold | None:
-    """Steps 2-4 of a continue; ``None`` for ``dry_run``, which probes and writes nothing.
-
-    ``target`` is ``resolve_continue_target``'s spawn and ``chat_id`` the chat to resume.
-    ``parent_id`` is what the continue makes the spawn's parent: its caller, or none for a
-    primary. Refuses before any write when the spawn is running (a
-    repair or another continue holds the lock for seconds, so there is no retry), or when
-    the last launch's processes cannot be stopped.
-    """
     spawn_id = target.id
     if dry_run:
         lock_free = shared_try(lock_path(runtime_root, spawn_id))

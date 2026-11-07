@@ -1,5 +1,3 @@
-"""Readable and raw renderers for session-log output."""
-
 from __future__ import annotations
 
 import re
@@ -177,7 +175,6 @@ def _render_system_notification(body: str) -> str:
 
 
 def clean_content(text: str) -> str:
-    """Strip known harness wrappers while preserving unknown tags."""
 
     if not text:
         return text
@@ -244,7 +241,6 @@ def _truncate_preview(content: str) -> str:
 
 
 def _tool_result_body(content: str) -> str | None:
-    """Extract tool result content from text marker (fallback for untyped messages)."""
     stripped = content.strip()
     if not stripped.startswith(_TOOL_RESULT_PREFIX):
         return None
@@ -314,7 +310,6 @@ def _indent_block(content: str, *, prefix: str = "  ") -> list[str]:
 
 
 def _tool_line(tool_call: ToolCall) -> str:
-    """Render a normalized tool call as a collapsed one-liner."""
     name = tool_call.name
     detail = " ".join(tool_call.body.split())
 

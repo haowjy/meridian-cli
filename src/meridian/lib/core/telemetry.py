@@ -1,5 +1,3 @@
-"""Lifecycle event model and compatibility observer exports."""
-
 from __future__ import annotations
 
 import logging
@@ -49,7 +47,6 @@ class LifecycleEvent:
     Base fields are frozen because Mars hook compilation depends on their shape.
     """
 
-    # --- Base fields (frozen) ---
     event: str
     spawn_id: str
     harness_id: str
@@ -156,17 +153,14 @@ _GLOBAL_EVENT_COUNTER = SpawnEventCounter()
 
 
 def allocate_spawn_sequence(spawn_id: SpawnId | str) -> int:
-    """Allocate the shared per-spawn sequence counter."""
     return _GLOBAL_EVENT_COUNTER.allocate(spawn_id)
 
 
 def next_spawn_sequence(spawn_id: SpawnId | str) -> int:
-    """Return the next shared per-spawn sequence number."""
     return _GLOBAL_EVENT_COUNTER.next(spawn_id)
 
 
 def release_spawn_sequence(spawn_id: SpawnId | str) -> None:
-    """Release the shared per-spawn sequence counter."""
     _GLOBAL_EVENT_COUNTER.release(spawn_id)
 
 

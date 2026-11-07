@@ -2,15 +2,9 @@
 
 ## Composition and identity
 
-Preparation resolves policy and composes content once; binding supplies per-run
-values and can be repeated for preview and execution. Materialization performs
-adapter writes only for real launches. Dry-run preparation forwards `--no-refresh-models`
-to Mars bundle and alias-list paths, including snapshot replay. OpenCode catalog-only
-routing runs no native availability probes and materializes no managed backend or
-session to describe the launch. Other CLI setup may still write local files.
-The spawn path has overlapping runner,
-launch-helper and surface finalizers so partial setup and pre-run failures all
-settle the row; idempotent completion makes the overlap safe.
+Preparation resolves policy and composes content; binding supplies per-run values
+and may run for preview. Materialization writes only for real launches. Overlapping
+finalizers cover partial setup and pre-run failure, relying on idempotent completion.
 
 Bind replaces the inherited caller boundary with the new process's sandbox,
 spawn capability and network policy in the child environment; the child-spawn
@@ -20,14 +14,10 @@ guardrail. Mars owns model and harness selection and policy precedence; its rout
 trace is diagnostic, not a retry queue. The network default is resolved after final
 sandbox precedence, retaining denies; old durable snapshots may use scalar policy.
 
-Runners bind the assigned native session identity before exec, then conclude after
-teardown by validating and publishing the identity boundary: observe
-artifact and connection IDs, consult the adapter, verify entry, allocate an exact
-exit chat, write the boundary and attribute the invocation. A first observation of the launched process’s own native session ID
-that conflicts with assignment or reuses a fork source fails the attempt; subsequent
-IDs are diagnostics. Attribution waits for validation. An exact verified exit chat
-is the target for spawn references and resume hints; unresolved or mismatched runs
-retain the entry chat. Chat references themselves do not change.
+Identity is assigned before exec and validated after teardown, before attribution.
+An initial owned observation conflicting with the assignment or fork source fails the
+attempt; later IDs are diagnostic. Only a verified exit chat replaces the entry chat
+for spawn references and resume hints.
 
 ## Exact continue
 
@@ -81,12 +71,6 @@ agents without embedding the catalog in every prompt.
 
 ## Directories and references
 
-| Directory | Meaning |
-| --- | --- |
-| `authority_root` | Project/config root for profiles, skills and KB references. |
-| `logical_task_cwd` / `reference_anchor` | Where the agent is expected to work and where relative `-f` paths resolve. |
-| `actual_process_cwd` | Child process cwd, normally the control root even when the task directory differs. |
-
 A session's work and task paths are literal symlinks that follow work switches and
 moves. The task path resolves from an execution pin, then its work item, then the
 project root. Pin only a checkout the store cannot recompute: explicit task-dir, an
@@ -95,12 +79,9 @@ Do not inherit `MERIDIAN_TASK_DIR` itself: in a managed run it names the launche
 link. A checkout derived from an item follows later work switches. Restricted shells
 need literal paths because they cannot expand variables or run compound `cd` calls.
 
-Task directory precedence is explicit override, explicit work item, inherited pin,
-ambient work item, outside-project caller cwd, then authority root. A missing work
-item task directory falls through with a warning without changing stored work state;
-callers of `resolve_launch_inputs()` must carry that warning into the request.
-`kb:` references resolve under the authority KB root and cannot escape it. Launch
-uses worktree metadata for state and display, not to provision worktrees.
+A missing work-item task directory falls through with a warning without changing
+stored work state; callers must carry that warning into the request. `kb:` references
+cannot escape the authority KB root.
 
 Workspace projection grants access to relevant roots, including an external task
 cwd, runtime, temporary and control socket directories. Claude and Codex use

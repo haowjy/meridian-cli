@@ -1,5 +1,3 @@
-"""Shared gitignore-style pattern loading for kg and mermaid validators."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,15 +15,6 @@ def compile_gitwildmatch(patterns: list[str]) -> pathspec.PathSpec[Pattern]:
 
 
 def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Pattern] | None:
-    """Load gitignore-style patterns from a file.
-
-    Args:
-        root: Directory containing the ignore file
-        filename: Name of the ignore file (e.g., ".kgignore", ".mermaidignore")
-
-    Returns:
-        Compiled PathSpec if file exists and has patterns, None otherwise.
-    """
     ignore_file = root / filename
     if not ignore_file.exists():
         return None

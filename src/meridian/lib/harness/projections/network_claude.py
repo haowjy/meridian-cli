@@ -1,5 +1,3 @@
-"""Claude shell-network projection and enforcement reporting."""
-
 from __future__ import annotations
 
 import sys
@@ -49,7 +47,6 @@ def project_claude_network(
     *,
     native_config: Mapping[str, object] | None = None,
 ) -> NetworkProjection[ClaudeNetworkSettings | None]:
-    """Project only Meridian's resolved policy onto Claude network settings."""
 
     _ = native_config
     if policy.sandbox not in {"read-only", "workspace-write"}:
@@ -85,7 +82,6 @@ def effective_claude_policy(
     *,
     native_config: Mapping[str, object],
 ) -> EffectivePolicy:
-    """Return the sandbox and network Claude enforces from Meridian-owned inputs."""
 
     return EffectivePolicy(
         sandbox=policy.sandbox,
@@ -100,7 +96,6 @@ def claude_network_line(
     sandbox_enabled: bool,
     excluded_commands: tuple[str, ...],
 ) -> ReportLine:
-    """Report Claude's projection of Meridian's network policy."""
 
     element = network_policy_element(policy.network)
     if isinstance(policy.network, Allow):

@@ -1,5 +1,3 @@
-"""Claude bidirectional connection adapter via stdin/stdout stream-json."""
-
 from __future__ import annotations
 
 import asyncio
@@ -138,7 +136,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return None if child is None else child.scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        """Launch Claude subprocess and send the initial user prompt via stdin."""
 
         if self._state != "created":
             raise RuntimeError(f"Connection can only start from 'created', got '{self._state}'")
@@ -207,7 +204,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return DeliveryKind.POSTED
 
     async def send_cancel(self) -> None:
-        """Signal cancellation by transitioning state and sending SIGINT."""
         if self._cancel_requested:
             return
         if self._state in {"stopping", "stopped", "failed"}:
@@ -223,7 +219,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = True
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
-        """Yield RawHarnessEvent objects read line-by-line from Claude stdout."""
 
         child = self._child
         process = None if child is None else child.process
@@ -248,7 +243,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     return
 
                 if not line_bytes:
-                    # EOF — subprocess has exited and all output has been drained.
                     return_code = process.returncode
                     if return_code is None:
                         return_code = await process.wait()
@@ -401,7 +395,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return "" if child is None else child.read_stderr_tail() or ""
 
     def _parse_stdout_line(self, line: str) -> list[RawHarnessEvent]:
-        """Parse one line of NDJSON from Claude stdout into RawHarnessEvent objects."""
         payload_text = line.strip()
         if not payload_text:
             return []

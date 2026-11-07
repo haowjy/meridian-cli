@@ -324,8 +324,6 @@ def _read_marker(marker: Path) -> ImportReport | None:
         return None
 
 
-# --- What Meridian retained about a chat ------------------------------------
-
 TIME_SLACK = timedelta(seconds=120)
 
 
@@ -511,9 +509,6 @@ def retained_chat_facts(
         ]
         fact.add_texts(*(text.decode("utf-8", "replace") if text else None for text in texts))
     return facts
-
-
-# --- One-shot legacy Pi recovery --------------------------------------------
 
 
 @dataclass(frozen=True)

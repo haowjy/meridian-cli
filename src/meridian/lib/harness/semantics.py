@@ -1,5 +1,3 @@
-"""Harness event normalization through per-bundle semantic ports."""
-
 from __future__ import annotations
 
 import json
@@ -81,7 +79,6 @@ type ScopeIdResolver = Callable[[dict[str, object]], str | None]
 
 
 def stringify_terminal_error(error: object) -> str | None:
-    """Render an arbitrary upstream error payload for durable state."""
 
     if error is None:
         return None
@@ -99,7 +96,6 @@ def stringify_terminal_error(error: object) -> str | None:
 def connection_closed_outcome(
     event: RawHarnessEvent,
 ) -> TerminalEventOutcome:
-    """Build the shared outcome for a Meridian synthetic connection close."""
 
     error = stringify_terminal_error(event.payload.get("message")) or "connection_closed"
     return TerminalEventOutcome(
@@ -175,7 +171,6 @@ def normalize_event(
     *,
     primary_event_scope: PrimaryEventScope | None = None,
 ) -> NormalizedHarnessEvent:
-    """Dispatch by harness identity before interpreting the raw event name."""
 
     try:
         harness_id = HarnessId(event.harness_id)

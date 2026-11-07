@@ -1,5 +1,3 @@
-"""Normalize short, plain-text notification excerpts."""
-
 from __future__ import annotations
 
 import re
@@ -23,7 +21,6 @@ def _without_system_reminders(text: str) -> str:
 
 
 def trim_excerpt(text: str | None, limit: int, *, user: bool = False) -> str | None:
-    """Collapse whitespace and shorten one excerpt at a word boundary."""
 
     if text is None:
         return None
@@ -44,7 +41,6 @@ def trim_turn_excerpts(
     user_text: str | None,
     assistant_text: str | None,
 ) -> tuple[str | None, str | None]:
-    """Normalize the two excerpts stored with an idle turn."""
 
     return (
         trim_excerpt(user_text, USER_EXCERPT_CHARS, user=True),

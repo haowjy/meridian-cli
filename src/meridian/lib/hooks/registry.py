@@ -1,5 +1,3 @@
-"""Hook registry with deterministic event ordering."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,21 +62,17 @@ class HookRegistry:
         self._by_event = by_event
 
     def get_hook(self, name: str, event: HookEventName) -> Hook | None:
-        """Return the hook registered for an exact name and event."""
 
         return self._hooks.get((name, event))
 
     def get_hooks_named(self, name: str) -> list[Hook]:
-        """Return every event-specific hook registered under a name."""
 
         return [hook for hook in self._config.hooks if hook.name == name]
 
     def get_all_hooks(self) -> list[Hook]:
-        """Return all effective hooks after precedence/override resolution."""
 
         return list(self._config.hooks)
 
     def get_hooks_for_event(self, event: HookEventName) -> list[Hook]:
-        """Return enabled hooks for one event in deterministic execution order."""
 
         return list(self._by_event.get(event, []))

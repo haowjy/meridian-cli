@@ -1,12 +1,9 @@
-"""Plain-text report formatting for mermaid validation results."""
-
 from __future__ import annotations
 
 from meridian.lib.mermaid.style.types import CheckResult
 
 
 def format_check_output(result: CheckResult) -> tuple[str, str]:
-    """Format check output. Returns (stdout, stderr)."""
     validation = result.validation
     stdout_lines: list[str] = []
 
@@ -33,7 +30,6 @@ def format_check_output(result: CheckResult) -> tuple[str, str]:
 
 
 def _format_summary(result: CheckResult) -> str:
-    """Format final stdout summary line."""
     validation = result.validation
     warning_count = len(result.warnings)
 
@@ -47,7 +43,6 @@ def _format_summary(result: CheckResult) -> str:
 
 
 def _format_valid_block_count(valid_blocks: int, total_blocks: int) -> str:
-    """Format valid block count for success/warning summaries."""
     if total_blocks == 0:
         return "✓ No mermaid blocks found"
     if valid_blocks == 1:

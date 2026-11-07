@@ -1,5 +1,3 @@
-"""Shared launch-context assembly used by subprocess and streaming runners."""
-
 from __future__ import annotations
 
 import os
@@ -167,13 +165,6 @@ logger = structlog.get_logger(__name__)
 
 @dataclass(frozen=True)
 class ChildEnvContext:
-    """Sole producer for child `MERIDIAN_*` environment overrides.
-
-    Thin projection of ``ResolvedContext``; child-specific rule: ambient work
-    dirs bind to the concrete ``child_spawn_id`` at emit time, not the parent's
-    ambient ``MERIDIAN_ACTIVE_WORK_DIR``.
-    """
-
     resolved: ResolvedContext
 
     @classmethod
@@ -280,20 +271,12 @@ class LaunchContext:
     model_selection: ModelSelectionContext | None = None
 
     def enforcement_report(self) -> EnforcementReport:
-        """What this launch's harness enforces from the permission policy."""
 
         return get_harness_bundle(self.harness.id).projections.permission_report(self.binding.spec)
 
 
 @dataclass(frozen=True)
 class PreparedLaunchSurface:
-    """Expensive, spawn-stable launch resolution results.
-
-    This is the public in-memory boundary between launch preparation and
-    runtime binding. It deliberately excludes runtime-only values such as
-    spawn IDs, report paths, environment, argv, and permission outputs.
-    """
-
     request: SpawnRequest
     harness: SubprocessHarness
     composition_warnings: tuple[CompositionWarning, ...]
@@ -387,7 +370,6 @@ def resolve_task_context_inputs(
     authority_root: Path,
     reference_anchor: Path,
 ) -> TaskContextInputs:
-    """Render resolved ``--from`` refs and load ``-f`` files into user-turn context blocks."""
 
     resolved_authority_root = authority_root.expanduser().resolve()
     resolved_reference_anchor = reference_anchor.expanduser().resolve()
@@ -445,12 +427,6 @@ _PINNED_TASK_DIR_SOURCES = frozenset({"explicit-task-dir", "inherited-task-dir",
 
 
 def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> CompositionWarning | None:
-    """Warn when multiple file references with actual content route inline into prompt context.
-
-    Warning-only refs (binary, oversized, etc.) are excluded to avoid false positives
-    since they contribute metadata, not file content.
-    """
-
     reference_items = content.loaded_references
     if not reference_items:
         return None
@@ -485,7 +461,6 @@ def prepare_prompt_payload(
     appended_system_prompt: str | None = None,
     user_turn_content: str | None = None,
 ) -> PreparedPromptPayload:
-    """Normalize managed prompt payload for later launch binding."""
 
     projected_system_prompt = (
         projected_content.system_prompt.strip() if projected_content is not None else ""
@@ -505,7 +480,6 @@ def prepare_prompt_payload(
 
 
 def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPromptPayload:
-    """Convert internal prompt payload to the persisted request carrier."""
 
     return RequestPromptPayload(
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
@@ -538,7 +512,6 @@ def materialize_launch_artifacts(
     native_config: NativeConfig,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
 ) -> MaterializedLaunchArtifacts:
-    """Build shared run/spec/permission launch artifacts."""
 
     run_params = SpawnParams(
         prompt=prompt,
@@ -579,7 +552,6 @@ def _resolve_deny_headless_harnesses(
     runtime: LaunchRuntime,
     project_paths: ProjectConfigPaths,
 ) -> tuple[str, ...]:
-    """Resolve ``[spawn].deny_headless_harnesses`` from config."""
     if runtime.config_snapshot:
         try:
             return tuple(
@@ -633,7 +605,6 @@ def _missing_continue_session_error(source_ref: str | None) -> str:
 
 
 def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:
-    """Return configured clone roots for git-backed context entries."""
 
     if config is None:
         return ()
@@ -670,11 +641,6 @@ def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path
 def _collect_context_projection_roots(
     project_root: Path, config: ContextConfig | None
 ) -> tuple[Path, ...]:
-    """Return all meridian context paths for workspace projection.
-
-    Includes work_root, work_archive, kb_root, and any extra context dirs.
-    These are the paths that meridian exports as MERIDIAN_CONTEXT_*_DIR env vars.
-    """
     effective = config or ContextConfig()
     resolved = resolve_context_paths(project_root, effective)
     builtins = (
@@ -687,13 +653,8 @@ def _collect_context_projection_roots(
     ]
     candidates.extend((name, path) for name, (path, _source) in resolved.extra.items())
 
-    # Only project context roots that exist on disk. Sandboxed harnesses (codex
-    # bubblewrap) bind-mount every projected root at exec time and abort the whole
-    # namespace if a source path is missing — so a not-yet-created context dir
-    # (commonly `work_archive` before the first archive) would silently break all
-    # command execution in the worker. Skipping the missing root is correct (there
-    # is nothing to mount). Logged at debug, not warning: a missing context dir is
-    # the normal pre-archive state, so it must not pollute stderr on every launch.
+    # Codex bind-mounts projected roots and aborts if one is missing; an archive
+    # directory may not exist yet, so skip it without a warning.
     roots: list[Path] = []
     for name, path in candidates:
         if path.exists():
@@ -709,7 +670,6 @@ def _collect_context_projection_roots(
 
 
 def _dedupe_roots_in_order(roots: tuple[Path, ...]) -> tuple[Path, ...]:
-    """Deduplicate root paths while preserving the first-seen order."""
 
     deduped: list[Path] = []
     seen: set[str] = set()
@@ -755,7 +715,6 @@ _KNOWN_MODEL_FAMILIES: dict[str, str] = {
 
 
 def normalize_usage_model_family(model: str | None) -> str:
-    """Map provider model identifiers to a finite usage aggregation vocabulary."""
 
     normalized = (model or "").strip().lower()
     if not normalized:
@@ -799,7 +758,6 @@ def build_child_runtime_env_overrides(
     increment_depth: bool = True,
     additional_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build child runtime env overrides shared by launch/chat callers."""
 
     runtime_ctx = ChildEnvContext.from_environment(
         project_paths=project_paths,
@@ -834,12 +792,6 @@ def _reproject_capabilities_at_bind(
     spawn_capable: bool,
     primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
-    """Render the capability block with bound paths and re-project prompt channels.
-
-    ``launch_facts`` carries per-launch identity into the user turn; the system
-    prompt keeps only values that survive an exact continue unchanged.
-    """
-
     if composed_content is None or not has_capabilities_block(composed_content.guidance_blocks):
         existing_user_turn = (prompt_payload.user_turn_content or "").strip()
         user_turn = existing_user_turn
@@ -929,7 +881,6 @@ def compile_prepared_policy_surface(
     catalog: CatalogSession,
     dry_run: bool = False,
 ) -> PreparedPolicySurface:
-    """Compile the shared launch policy boundary before projector work."""
 
     requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
     project_paths = ProjectConfigPaths(
@@ -1012,7 +963,6 @@ def _build_shared_composition(
 
 
 def _goal_block(request: SpawnRequest) -> CompositionBlock | None:
-    """The completion contract as a system-prompt block, for a surface that needs one."""
 
     instruction = build_goal_instruction(request.goal)
     if not instruction:
@@ -1027,7 +977,6 @@ def _resolve_spawn_prepare_projection(
     policy: ResolvedLaunchPolicy,
     runtime: LaunchRuntime,
 ) -> PreparedLaunchContent:
-    """Compose the spawn's semantic content from the request inputs and project it."""
 
     profile = policy.profile
     harness = policy.adapter
@@ -1103,9 +1052,7 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    # A primary may launch with no task at all, and goal text must never create a
-    # turn: it would submit itself as the conversation's first message, fresh and on
-    # every resume. So the primary's goal is a block of its system prompt.
+    # A primary goal must not create a user turn, including on resume.
     goal_block = _goal_block(request)
     shared_blocks = _build_shared_composition(policy=policy, kind="primary")
     guidance_blocks = (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
@@ -1251,7 +1198,6 @@ def prepare_launch_surface(
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
 ) -> PreparedLaunchSurface:
-    """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
     policies = prepared_policy.resolved_policy
     if request.agent_opt_out:
@@ -1484,7 +1430,6 @@ def bind_launch_context(
     project_root: Path,
     harness_registry: HarnessRegistry,
 ) -> LaunchContext:
-    """Cheap materialization: env, cwd, spec, argv, permissions."""
 
     _ = harness_registry
 
@@ -1518,7 +1463,6 @@ def bind_launch_context(
             else load_config(project_paths.project_root)
         )
         ignore_direnv = config.environment.ignore_direnv
-    # Capture once before deriving any environment-dependent launch overlays.
     base_env = undo_direnv(os.environ) if ignore_direnv else dict(os.environ)
     harness = prepared.harness
     effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
@@ -1685,11 +1629,8 @@ def bind_launch_context(
     suppresses_ambient_work = requested_work_id is None and _suppresses_ambient_work(
         resolved_request
     )
-    # A primary's environment and prompt name per-chat links that work and task-dir
-    # commands repoint, so neither goes stale while the session runs. Every
-    # execution has its own chat and so its own links: a spawn's are named in its
-    # `# Meridian spawn` user turn, not the system prompt, so sibling spawns share the
-    # cached prefix. A dry run has no session, so it keeps concrete directories.
+    # Per-chat links follow work changes; spawn links go in the user turn so
+    # siblings share a system-prompt cache prefix.
     bound_work_link: Path | None = None
     bound_task_link: Path | None = None
     link_chat = execution_link_chat(
@@ -1718,9 +1659,7 @@ def bind_launch_context(
                 link_chat,
                 spawn_id=bindings.spawn_id,
             )
-    # Bind the child env before projection: it is the source of the prompt's launch
-    # facts, so the capability block and the `# Meridian spawn` block describe the same
-    # chat, spawn ID and work directory the child process actually receives.
+    # Bind the child env first so prompt facts match the launched process.
     launch_env_overrides: dict[str, str] = {}
     # Resolve before restoring the environment, then carry the decision to
     # descendants even when direnv originally supplied the setting itself.
@@ -1842,10 +1781,8 @@ def bind_launch_context(
     child_context_env["MERIDIAN_TASK_DIR"] = (
         bound_task_link or directory_context.logical_task_cwd
     ).as_posix()
-    # Pass the runtime down only when the launcher's own came from an override, so a
-    # scratch launch keeps its children on scratch. An ordinary launch sets nothing:
-    # a nested process then derives its runtime (e.g. under its own MERIDIAN_HOME)
-    # instead of inheriting one that looks like a deliberate override.
+    # Only inherit an explicitly overridden runtime; otherwise a nested process
+    # must resolve its own home rather than treating the parent's path as an override.
     derived_runtime_root = derive_runtime_root_from_project(resolved_control_root)
     if derived_runtime_root is None or runtime_root.resolve() != derived_runtime_root.resolve():
         child_context_env["_MERIDIAN_RUNTIME_DIR"] = runtime_root.as_posix()
@@ -1890,8 +1827,7 @@ def bind_launch_context(
                 )
             }
         )
-    # Native resume/fork may pin a recorded harness home in ``env``. Resolve
-    # environment-dependent adapter facts only after that final namespace is known.
+    # Resume or fork may pin a harness home, so resolve adapter facts from the final env.
     spec = bind_launch_spec(
         harness.id,
         spec,
@@ -1971,7 +1907,6 @@ def bind_launch_context(
 
 
 def materialize_launch_context(context: LaunchContext) -> LaunchContext:
-    """Perform real-launch-only adapter writes after pure context binding."""
 
     ensure_project_lifetime_lock(context.runtime_root)
     binding = context.binding

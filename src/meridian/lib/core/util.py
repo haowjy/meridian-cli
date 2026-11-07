@@ -1,5 +1,3 @@
-"""Formatting and serialization utilities."""
-
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -27,7 +25,6 @@ class TextFormattable(Protocol):
 
 
 def to_jsonable(value: Any) -> Any:
-    """Convert supported values to JSON-serializable payloads."""
 
     if isinstance(value, BaseModel):
         return to_jsonable(value.model_dump())

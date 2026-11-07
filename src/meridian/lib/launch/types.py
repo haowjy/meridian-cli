@@ -1,5 +1,3 @@
-"""Shared types for the launch pipeline."""
-
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -105,7 +103,6 @@ class PrimarySessionMetadata(BaseModel):
 
 
 def build_primary_prompt(request: LaunchRequest) -> str:
-    """Build launch prompt for primary sessions."""
 
     sections: list[str] = ["# Meridian Session"]
 

@@ -1,5 +1,3 @@
-"""Sync conflict query and resolution operations."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -125,7 +123,6 @@ def _to_entry(record: ConflictRecord) -> ConflictEntry:
 
 
 def _find_sync_roots() -> tuple[list[Path], Path | None]:
-    """Find sync roots by checking resolved context paths."""
 
     try:
         authority = resolve_runtime_authority_for_read()
@@ -154,7 +151,6 @@ def _find_sync_roots() -> tuple[list[Path], Path | None]:
 
 
 def list_conflicts_sync() -> ConflictListOutput:
-    """List unresolved conflicts across all sync roots."""
 
     conflicts: list[ConflictEntry] = []
     roots, runtime_root = _find_sync_roots()
@@ -169,7 +165,6 @@ def list_conflicts_sync() -> ConflictListOutput:
 
 
 def show_conflict_sync(conflict_id: str) -> ConflictShowOutput:
-    """Show details for one conflict id."""
 
     roots, runtime_root = _find_sync_roots()
     if runtime_root is None:
@@ -181,7 +176,6 @@ def show_conflict_sync(conflict_id: str) -> ConflictShowOutput:
 
 
 def resolve_conflict_sync(conflict_id: str) -> ConflictResolveOutput:
-    """Mark a conflict as resolved within its autosync transaction."""
 
     roots, runtime_root = _find_sync_roots()
     if runtime_root is None:

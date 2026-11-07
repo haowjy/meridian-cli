@@ -1,5 +1,3 @@
-"""Read Claude settings that affect projected permissions and network policy."""
-
 from __future__ import annotations
 
 import json
@@ -69,7 +67,6 @@ def claude_network_config_warnings(
     child_cwd: Path,
     env: Mapping[str, str],
 ) -> tuple[CompositionWarning, ...]:
-    """Warn when child-selected Claude user settings can widen projected network."""
 
     settings_path = resolve_claude_config_root(env, child_cwd) / "settings.json"
     settings = _read_settings_payload(settings_path)

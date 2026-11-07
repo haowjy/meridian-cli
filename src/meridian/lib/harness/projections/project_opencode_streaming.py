@@ -1,5 +1,3 @@
-"""OpenCode streaming projections for serve command and session payload."""
-
 from __future__ import annotations
 
 import logging
@@ -92,7 +90,6 @@ def project_opencode_spec_to_serve_command(
     host: str,
     port: int,
 ) -> list[str]:
-    """Build one ``opencode serve`` command from ``ResolvedLaunchSpec``."""
 
     _consume_streaming_lifecycle_fields(spec)
 
@@ -119,7 +116,6 @@ def project_opencode_model(
     *,
     id_field: Literal["id", "modelID"],
 ) -> dict[str, str] | None:
-    """Project the provider-qualified selection to OpenCode's endpoint-specific model ref."""
     if model is None:
         return None
     provider, model_id = opencode_model_parts(model)
@@ -127,7 +123,6 @@ def project_opencode_model(
 
 
 def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
-    """Build session-creation payload for the OpenCode HTTP API."""
 
     _consume_streaming_lifecycle_fields(spec)
 

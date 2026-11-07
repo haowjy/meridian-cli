@@ -1,6 +1,3 @@
-"""Typed connection startup failures."""
-
-
 class ConnectionStartupError(RuntimeError):
     """Base class for connection startup failures."""
 

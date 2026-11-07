@@ -1,5 +1,3 @@
-"""Export session transcripts as clean markdown."""
-
 from __future__ import annotations
 
 import re
@@ -235,7 +233,6 @@ def _session_metadata(subject: Located | None) -> list[str]:
 
 
 def _session_scope(subject: Located | None, ref: str) -> tuple[str | None, str | None, str | None]:
-    """Return (exact_chat_id, owner_chat_id, parent_spawn_id) for export grouping."""
 
     if subject is None:
         # An archived spawn is gone locally, but its children are not.

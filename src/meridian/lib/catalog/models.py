@@ -1,5 +1,3 @@
-"""Model resolution compatibility exports for catalog helpers."""
-
 from __future__ import annotations
 
 from contextlib import suppress
@@ -26,7 +24,6 @@ def load_merged_aliases(
     cache: MarsResultCache | None = None,
     no_refresh_models: bool = False,
 ) -> list[AliasEntry]:
-    """Load model aliases from mars packages."""
     resolved_root = (
         resolve_project_root_resolution(project_root).project_root
         if project_root is not None

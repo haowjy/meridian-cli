@@ -1,14 +1,3 @@
-"""Durable process-scope state projection.
-
-Persists process scope snapshots as part of spawn lifecycle state.
-All writes are atomic (tmp+rename). All reads tolerate missing or corrupt data.
-
-The sidecar file at ``<runtime_root>/spawns/<spawn_id>/process_scopes.json``
-stores scope metadata only — it is NOT authoritative for spawn state.  It is
-auxiliary metadata for cleanup (reaper, stop) only.  The data can be folded
-into the main spawn projection in a future phase.
-"""
-
 from __future__ import annotations
 
 import dataclasses
@@ -67,7 +56,7 @@ class ScopeRow(TypedDict):
     job_name: str | None
     degraded_reason: str | None
     release_id: NotRequired[str]
-    # Ignored legacy rows from before PR 1; remove after v0.11.
+    # Older records may include this ignored field.
     parent_death_linked: NotRequired[bool]
 
 
@@ -82,18 +71,11 @@ class ScopeProjectionSnapshot:
     released_ids: frozenset[str]
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
 def _read_raw(path: Path) -> ScopeProjection:
-    """Read sidecar JSON; return default payload on any error."""
     return read_model(path, ScopeProjection) or ScopeProjection()
 
 
 def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the stable lock for one scope sidecar."""
     return runtime_root / "locks" / "process-scopes" / f"{spawn_id}.lock"
 
 
@@ -101,7 +83,6 @@ def _mutate_scope_projection(
     launch: LaunchPaths,
     mutator: Callable[[ScopeProjection], ScopeProjection],
 ) -> ScopeProjection:
-    """Apply one sidecar RMW under its stable per-spawn lock."""
     updated, _ = mutate_model(
         launch.process_scopes,
         ScopeProjection,
@@ -115,7 +96,6 @@ def _mutate_scope_projection(
 
 
 def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
-    """Deserialize one scope dict; return None on any error."""
     try:
         row = _SCOPE_ROW_ADAPTER.validate_python(data)
         return ProcessScopeSnapshot(
@@ -137,7 +117,6 @@ def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
 
 
 def parse_scope_entries(entries: Iterable[object]) -> list[ProcessScopeSnapshot]:
-    """Deserialize the valid process scopes in one persisted entry list."""
     scopes: list[ProcessScopeSnapshot] = []
     for entry in entries:
         snapshot = scope_snapshot_from_dict(entry)
@@ -146,23 +125,10 @@ def parse_scope_entries(entries: Iterable[object]) -> list[ProcessScopeSnapshot]
     return scopes
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def record_scope(
     launch: LaunchPaths,
     snapshot: ProcessScopeSnapshot,
 ) -> None:
-    """Persist a process scope snapshot for a spawn.
-
-    Reads existing sidecar (or starts fresh), upserts the concrete scope release,
-    and writes atomically.  Re-recording the same process scope (same scope id,
-    PID, and birth time) replaces the previous projection so provisional launch
-    ownership can be upgraded without leaving duplicate cleanup targets. Distinct
-    concrete releases with the same human label are preserved.
-    """
     runtime_root = launch.runtime_root
     spawn_id = launch.spawn_id
     spawns_dir = runtime_root / "spawns"
@@ -209,13 +175,6 @@ def mark_scope_released(
     launch: LaunchPaths,
     release_id: str,
 ) -> None:
-    """Mark a scope as released (terminated / cleaned up).
-
-    Prevents double-cleanup when the reaper runs again after process exit.
-    Idempotent — safe to call multiple times for the same release_id.
-    Does nothing after the published spawn has been deleted.
-    """
-
     def mark_released(payload: ScopeProjection) -> ScopeProjection:
         if release_id in payload.released:
             return payload
@@ -269,20 +228,10 @@ def is_scope_released(
     launch: LaunchPaths,
     release_id: str,
 ) -> bool:
-    """Check if a scope has been marked as released.
-
-    Returns False on any read error so callers fail open (attempt cleanup).
-    """
     return release_id in read_scope_projection(launch).released_ids
 
 
 def read_scopes_from_disk(launch: LaunchPaths) -> list[ProcessScopeSnapshot]:
-    """Read scope snapshots directly from disk for a spawn.
-
-    Tolerates missing, truncated, or corrupt files — returns ``[]`` on any
-    error.  Use when the spawn record may not have been refreshed yet (e.g.
-    immediately after ``record_scope`` in the same process).
-    """
     return list(read_scope_projection(launch).scopes)
 
 

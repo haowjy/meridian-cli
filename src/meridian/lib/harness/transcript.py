@@ -1,5 +1,3 @@
-"""Transcript providers and parsers for session-facing read paths."""
-
 from __future__ import annotations
 
 import json
@@ -74,9 +72,7 @@ class NormalizedTranscriptEvent(NamedTuple):
 class TranscriptEventParser(Protocol):
     """Family parser for one transcript event dictionary."""
 
-    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent:
-        """Return extracted messages, boundaries and interpretation limits."""
-        ...
+    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent: ...
 
 
 class TranscriptProvider(Protocol):
@@ -123,33 +119,25 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
     return f"{compact[: limit - 3].rstrip()}..."
 
 
-# Harness tool names that map to shell execution.
 _EXEC_TOOL_NAMES = frozenset({"exec_command", "shell", "terminal", "run_command"})
 
-# Harness tool names for stdin interaction.
 _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 
-# Keys that carry the "interesting" payload in a Claude-style tool input dict.
 _TOOL_BODY_KEYS = ("file_path", "path", "command", "pattern", "description", "skill")
 
 
 def _normalize_tool(name: str, body: str) -> ToolCall:
-    """Normalize a raw tool name + body into a canonical ToolCall."""
     lowered = name.strip().lower()
 
-    # Shell-execution equivalents → bash
     if lowered == "bash":
         return ToolCall(name="bash", body=body)
     if lowered in _EXEC_TOOL_NAMES:
-        # Codex JSON body: {"cmd":"..."} → extract cmd
         extracted = _extract_json_field(body, "cmd")
         return ToolCall(name="bash", body=extracted or body)
 
-    # Stdin interaction → stdin
     if lowered in _STDIN_TOOL_NAMES:
         return ToolCall(name="stdin", body="")
 
-    # Standard file/search tools → lowercase canonical
     for verb in ("read", "write", "edit", "grep"):
         if lowered == verb:
             return ToolCall(name=verb, body=body)
@@ -158,7 +146,6 @@ def _normalize_tool(name: str, body: str) -> ToolCall:
 
 
 def _extract_json_field(body: str, field: str) -> str | None:
-    """Try to extract a string field from a JSON body."""
     try:
         parsed: object = json.loads(body)
         if isinstance(parsed, dict):
@@ -171,7 +158,6 @@ def _extract_json_field(body: str, field: str) -> str | None:
 
 
 def _tool_use_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
-    """Return (text_marker, normalized_tool_call) for a Claude tool_use block."""
     name = str(block.get("name", "tool")).strip() or "tool"
     tool_input = block.get("input")
     if not isinstance(tool_input, dict):

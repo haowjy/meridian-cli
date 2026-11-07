@@ -1,5 +1,3 @@
-"""Pure rendering for idle notifications."""
-
 from __future__ import annotations
 
 from typing import Literal
@@ -44,7 +42,6 @@ def stage_notice(
     now_ms: int,
     warn_email: bool,
 ) -> Notification:
-    """Build a waiting or cache-warning notice from persisted turn context."""
 
     countdown = _cache_countdown(state, now_ms)
     title = f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.sender}"
@@ -78,7 +75,6 @@ def needs_permission_notice(
     *,
     include_messages: bool,
 ) -> Notification:
-    """Build a stateless notice from a still-waiting permission signal."""
 
     return Notification(
         title=f"[permission] {label.sender}",

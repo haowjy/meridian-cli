@@ -1,5 +1,3 @@
-"""Fresh session re-entry policy for resume and fork decisions."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -60,7 +58,6 @@ type Launch = Resume | Fork | StartFromLaunch
 def decide_reentry(
     *, chat_id: str, live: bool, has_harness_session: bool
 ) -> SessionReentryDecision:
-    """Choose the safe action from already-materialized session metadata."""
 
     if not has_harness_session:
         return Blocked("no harness session recorded; cannot resume or fork")
@@ -78,7 +75,6 @@ def decide_start_from(*, chat_id: str, has_harness_session: bool) -> StartFromDe
 
 
 def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDecision:
-    """Resolve the authoritative re-entry action from fresh state reads."""
 
     roots = resolve_roots_for_read(project_root)
     if roots is None:

@@ -1,5 +1,3 @@
-"""Bidirectional Codex websocket connection adapter."""
-
 from __future__ import annotations
 
 import asyncio
@@ -125,7 +123,6 @@ def _ws_is_open(ws: object) -> bool:
 
 
 def _is_clean_websocket_close(exc: BaseException) -> bool:
-    """Return whether a websocket close exception represents normal closure."""
 
     if isinstance(exc, ConnectionClosedOK):
         return True
@@ -256,7 +253,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def completion_signals_available(self) -> bool:
-        """Whether this Codex launch can write Meridian's completion signals."""
 
         spec = self._launch_spec
         if spec is None or spec.permission_policy.sandbox != "read-only":
@@ -451,7 +447,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         config: ConnectionConfig,
         spec: ResolvedLaunchSpec,
     ) -> None:
-        """Start connection in primary observer mode."""
 
         self._primary_observer_mode = True
         await self.start(config, spec)
@@ -1279,7 +1274,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._state != "connected" or not process_running or not ws_open
 
     def _transition(self, next_state: ConnectionState) -> None:
-        """Validate and apply a state transition."""
         if next_state == self._state:
             return
         allowed = self._ALLOWED_TRANSITIONS.get(self._state, set())
@@ -1316,11 +1310,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         emitter.emit(phase)
 
     def _is_fresh_session(self, spec: ResolvedLaunchSpec) -> bool:
-        """Check if this is a fresh session (not resume or fork)."""
         return not (spec.continue_session_id or "").strip()
 
     def _effective_project_root(self) -> Path:
-        """Project root Codex should bind the app-server/thread/rollout to."""
 
         config = self._config
         if config is None:

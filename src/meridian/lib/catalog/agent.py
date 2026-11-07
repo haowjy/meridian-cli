@@ -1,5 +1,3 @@
-"""Agent profile parser for `.mars/agents/*.md`."""
-
 from pathlib import Path
 from typing import Literal, cast
 
@@ -91,7 +89,6 @@ def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
 
 
 def parse_agent_profile(path: Path) -> AgentProfile:
-    """Parse a single markdown agent profile file."""
 
     markdown = path.read_text(encoding="utf-8")
     frontmatter, body = _split_markdown_frontmatter(markdown)
@@ -139,7 +136,6 @@ def scan_agent_profiles(
     *,
     search_paths: object | None = None,
 ) -> list[AgentProfile]:
-    """Parse all agent profiles from configured search directories."""
 
     root = resolve_project_root_resolution(project_root).project_root
     _ = search_paths
@@ -168,7 +164,6 @@ def load_agent_profile(
     *,
     search_paths: object | None = None,
 ) -> AgentProfile:
-    """Load one agent profile by filename stem or frontmatter name."""
 
     normalized = name.strip()
     if not normalized:

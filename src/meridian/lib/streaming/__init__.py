@@ -1,5 +1,3 @@
-"""Streaming: active harness connections and their control endpoints."""
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import type { SpawnStateFile } from "./schemas";
 
-/** Mirrors ``pi_paths.resolve_meridian_pi_state_dir`` — extension runtime state root. */
+// Keep this path aligned with Python so the extension reads the launch's state.
 export function resolveStateRoot(): string {
   const explicit = process.env._MERIDIAN_PI_STATE_DIR?.trim();
   if (explicit) {
@@ -34,7 +34,6 @@ export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }
 
-/** Where the CLI running inside one managed-bash task writes its hold files (`<pid>.json`). */
 export function resolveBashHoldDir(bashId: string, spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "holds", bashId);
 }

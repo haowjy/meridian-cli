@@ -1,5 +1,3 @@
-"""Canonical schema and I/O helpers for managed primary metadata."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -115,7 +113,6 @@ class PrimarySurfaceMetadata:
 
 
 def read_primary_metadata(launch: LaunchPaths) -> PrimaryMetadata | None:
-    """Tolerant read with crash-only semantics. Returns None for missing/corrupt file."""
 
     return read_model(launch.primary_meta, PrimaryMetadata)
 
@@ -146,7 +143,6 @@ def write_primary_metadata(
 
 
 def read_primary_surface_metadata(launch: LaunchPaths) -> PrimarySurfaceMetadata:
-    """Read projection for CLI surfaces. Returns defaults if file missing."""
 
     metadata = read_primary_metadata(launch)
     if metadata is None:
@@ -189,7 +185,6 @@ def read_primary_surface_metadata(launch: LaunchPaths) -> PrimarySurfaceMetadata
 
 
 def read_primary_harness_session_id(launch: LaunchPaths) -> str | None:
-    """Read harness_session_id only. Used by session_log resolution."""
 
     metadata = read_primary_metadata(launch)
     if metadata is None:
@@ -198,7 +193,6 @@ def read_primary_harness_session_id(launch: LaunchPaths) -> str | None:
 
 
 def is_managed_primary(launch: LaunchPaths) -> bool:
-    """Check if spawn is a managed primary."""
 
     metadata = read_primary_metadata(launch)
     return bool(metadata is not None and metadata.managed_backend)

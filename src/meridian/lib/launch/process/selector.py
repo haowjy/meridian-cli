@@ -1,5 +1,3 @@
-"""Process backend selection from resolved terminal policy and platform capability."""
-
 from __future__ import annotations
 
 from pathlib import Path

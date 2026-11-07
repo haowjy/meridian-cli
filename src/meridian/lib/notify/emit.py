@@ -137,7 +137,6 @@ def emit(
     project_root: Path,
     env: Mapping[str, str],
 ) -> RouteReport:
-    """Fire the notification's hook event and report what its routes delivered."""
 
     from meridian.lib.hooks.config import load_hooks_config_report
     from meridian.lib.hooks.dispatch import HookDispatcher

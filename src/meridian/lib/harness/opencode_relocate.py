@@ -44,7 +44,6 @@ _PASSWORD_RE = re.compile(r"server password (\S+)")
 
 
 def opencode_native_cwd(identity: NativeKeyFields) -> Path | None:
-    """``session_v2.directory`` of the chat's session; None when the row is absent."""
     if identity.native_store is None or identity.session_id is None:
         return None
     return _read_directory(Path(identity.native_store), identity.session_id)
@@ -142,7 +141,6 @@ class _Termination:
 
 
 def _move_sessions(db: Path, moves: dict[str, Path]) -> dict[str, str]:
-    """Move each session through one serve on ``db``; returns a refusal per failure."""
     termination = _Termination()
     with tempfile.TemporaryFile() as out, termination.installed():
         process: subprocess.Popen[bytes] | None = None

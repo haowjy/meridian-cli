@@ -1,5 +1,3 @@
-"""Project-local bootstrap services for Meridian state."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,7 +38,6 @@ class ProjectLayoutSnapshot:
 
 
 def resolve_layout(project_root: Path) -> ProjectLayoutSnapshot:
-    """Resolve project-local layout without creating files or directories."""
 
     context_config = load_context_config(project_root)
     return ProjectLayoutSnapshot(
@@ -55,7 +52,6 @@ def _has_non_empty_remote(remote: str | None) -> bool:
 
 
 def ensure_project_dirs(project_root: Path) -> None:
-    """Create project-local directories required by the context policy."""
 
     context_config = load_context_config(project_root)
     project_paths = resolve_project_paths_for_write(project_root)

@@ -1,5 +1,3 @@
-"""Harness-native config projection and enforcement-report helpers."""
-
 from __future__ import annotations
 
 import json
@@ -57,7 +55,6 @@ _TOML_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def flatten_native_config(config: NativeConfig) -> tuple[NativeConfigLeaf, ...]:
-    """Flatten nested mappings while retaining their original key segments."""
 
     flattened: list[NativeConfigLeaf] = []
 
@@ -134,7 +131,6 @@ def codex_toml_literal(value: object) -> str | None:
 
 
 def codex_key_addressable(segments: tuple[str, ...]) -> bool:
-    """Whether Codex ``-c`` can address these nested key segments."""
 
     return all(
         segment
@@ -176,7 +172,6 @@ def reject_removed_codex_native_config(config: NativeConfig) -> None:
 def project_codex_native_config(
     config: NativeConfig,
 ) -> tuple[tuple[str, ...], EnforcementReport]:
-    """Build Codex ``-c`` pairs and report lines from one native config tree."""
 
     arguments: list[str] = []
     lines: list[ReportLine] = []
@@ -230,7 +225,6 @@ def project_codex_native_config(
 
 
 def unsupported_native_config_report(config: NativeConfig, *, harness: str) -> EnforcementReport:
-    """Report a non-empty native config that a harness does not project."""
 
     keys = tuple(".".join(segments) for segments, _value in flatten_native_config(config))
     if not keys:

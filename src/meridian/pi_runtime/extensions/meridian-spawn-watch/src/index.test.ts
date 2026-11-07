@@ -206,7 +206,6 @@ describe('durable result delivery', () => {
     writeFileSync(held[0]!.releasePath, 'release');
     await pause(300);
 
-    // The first filesystem await may finish, but no next row may start reading.
     expect(await exists(held[1]!.enteredPath)).toBe(false);
     expect(h.notices).toHaveLength(0);
   });
@@ -814,7 +813,6 @@ describe('durable result delivery', () => {
   });
 
   describe('a spawn continued into a second launch', () => {
-    // p1 is on launch 2; launch 1 is archived and still owed to the parent.
     async function continued(root: string) {
       await child(root, 'p1', null, { launch: { n: 2 }, owed_launches: [{ n: 1, parent_id: 'p-parent' }] });
       const canonical = JSON.parse(await readFile(new URL('../fixtures/canonical-child-state.json', import.meta.url), 'utf8'));

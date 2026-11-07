@@ -1,5 +1,3 @@
-"""Harness adapter contracts and shared data models."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -101,7 +99,6 @@ class HarnessCapabilities(BaseModel):
     # this disabled.
     requires_initial_prompt: bool = False
 
-    # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False
     # Whether a black-box primary launches with captured output in its
     # non-interactive print mode (Claude `--print`).
@@ -203,7 +200,6 @@ class SpawnParams(BaseModel):
     autocompact_pct: AutocompactPctValue = None
     skills: tuple[str, ...] = ()
     agent: str | None = None
-    # Pre-built ad-hoc native-agent payload. Empty string when not used.
     adhoc_agent_payload: str = ""
     extra_args: tuple[str, ...] = ()
     control_root: str | None = None
@@ -437,9 +433,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         command: tuple[str, ...],
         *,
         state: HarnessPrelaunchState,
-    ) -> tuple[str, ...]:
-        """Project the resolved argv for a native primary launch (e.g. runtime path)."""
-        ...
+    ) -> tuple[str, ...]: ...
 
     def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
         """Redact harness-specific secrets from an argv persisted to metadata."""
@@ -452,18 +446,14 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def native_primary_runtime_metadata(
         self,
         state: HarnessPrelaunchState,
-    ) -> NativePrimaryRuntimeMetadata:
-        """Project prelaunch state into primary_meta.json runtime fields."""
-        ...
+    ) -> NativePrimaryRuntimeMetadata: ...
 
     def build_primary_runtime_request_handler(
         self,
         *,
         launch: LaunchPaths,
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
-    ) -> ServerRequestHandler | None:
-        """Build a managed-primary runtime request handler for this harness."""
-        ...
+    ) -> ServerRequestHandler | None: ...
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
@@ -522,19 +512,11 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         passthrough_args: tuple[str, ...],
     ) -> SessionSeed: ...
 
-    def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
-        """Project semantic content blocks to harness channel assignments.
-
-        Takes harness-agnostic ComposedLaunchContent and returns
-        ProjectedContent with harness-specific channel routing decisions.
-        """
-        ...
+    def project_content(self, content: ComposedLaunchContent) -> ProjectedContent: ...
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
 
-    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
-        """Return True if this harness owns the given untracked session reference."""
-        ...
+    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool: ...
 
 
 class BaseHarnessAdapter(Generic[SpecT], ABC):
@@ -542,27 +524,19 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     @property
     @abstractmethod
-    def id(self) -> HarnessId:
-        """Harness identifier for this adapter."""
-        ...
+    def id(self) -> HarnessId: ...
 
     @property
     @abstractmethod
-    def contract(self) -> HarnessContract:
-        """Explicit inspectable contract for this adapter."""
-        ...
+    def contract(self) -> HarnessContract: ...
 
     @property
     @abstractmethod
-    def consumed_fields(self) -> frozenset[str]:
-        """SpawnParams fields actively consumed by this adapter."""
-        ...
+    def consumed_fields(self) -> frozenset[str]: ...
 
     @property
     @abstractmethod
-    def explicitly_ignored_fields(self) -> frozenset[str]:
-        """SpawnParams fields deliberately ignored by this adapter."""
-        ...
+    def explicitly_ignored_fields(self) -> frozenset[str]: ...
 
     @property
     def handled_fields(self) -> frozenset[str]:
@@ -572,7 +546,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
     tui_recovers_directory: ClassVar[bool] = False
-    # Relocate accepts the user's own transcript file (`--native`) for this harness.
     native_transcript_choice: ClassVar[bool] = False
     resolves_untracked_source: ClassVar[bool] = False
 
@@ -766,12 +739,9 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return None
 
     @abstractmethod
-    def resolve_launch_spec(self, run: SpawnParams) -> SpecT:
-        """Resolve typed launch spec from generic spawn parameters."""
-        ...
+    def resolve_launch_spec(self, run: SpawnParams) -> SpecT: ...
 
     def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
-        """Return non-fatal diagnostics produced while resolving a launch spec."""
 
         _ = spec
         return ()
@@ -782,13 +752,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         child_env: Mapping[str, str],
         child_cwd: Path,
     ) -> tuple[CompositionWarning, ...]:
-        """Return diagnostics selected by the final child environment and cwd."""
 
         _ = child_env, child_cwd
         return ()
 
     def reject_removed_native_config(self, native_config: Mapping[str, object]) -> None:
-        """Fail a fresh launch on native keys whose deprecation window has closed."""
 
         _ = native_config
 
@@ -810,7 +778,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return ""
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
-        """Fork one harness session and return the new session ID."""
 
         _ = source_session_id
         raise NotImplementedError
@@ -916,11 +883,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
-        """Default projection: all SYSTEM_INSTRUCTION inline at top, then context/user.
-
-        Concrete adapters (Claude, Codex, OpenCode) should override for
-        harness-specific channel routing.
-        """
         return project_inline_content(content)
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:

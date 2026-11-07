@@ -1,5 +1,3 @@
-"""Harness package bootstrap."""
-
 # ruff: noqa: I001
 
 from __future__ import annotations
@@ -10,9 +8,6 @@ _bootstrapped = False
 _bootstrap_imports: tuple[object, ...] = ()
 _bootstrap_lock = threading.RLock()
 
-# Adding one bundle-backed streaming harness requires touching the
-# harness-specific seams below. Generic dispatch helpers such as
-# `harness/connections/__init__.py` are intentionally omitted.
 HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
     "src/meridian/lib/core/types.py (HarnessId/TransportId registration)",
     (
@@ -49,8 +44,6 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
 
 
 def _run_bootstrap() -> None:
-    """Execute the load-bearing harness bootstrap sequence exactly once."""
-
     global _bootstrapped
     global _bootstrap_imports
 
@@ -116,7 +109,6 @@ def _run_bootstrap() -> None:
 
 
 def ensure_bootstrap() -> None:
-    """Ensure bundle/projection bootstrap has completed."""
 
     if _bootstrapped:
         return

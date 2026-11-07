@@ -1,5 +1,3 @@
-"""Shared launch-time resolution helpers for launch orchestration."""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -18,7 +16,6 @@ from meridian.lib.harness.registry import HarnessRegistry
 
 
 def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
-    """Normalize and de-duplicate skill names while preserving first-seen order."""
 
     seen: set[str] = set()
     ordered: list[str] = []
@@ -40,14 +37,6 @@ class AgentLaunchInput:
 
 
 def resolve_agent_launch_input(raw_agent: str | None) -> AgentLaunchInput:
-    """Map raw ``--agent`` input to launch request fields.
-
-    Three states:
-    - omitted (``None``) -> unset; fall through to ``primary.agent`` / inheritance
-    - ``-a ""`` -> explicit no agent
-    - ``-a coder`` -> named profile
-    """
-
     if raw_agent is None:
         return AgentLaunchInput()
     stripped = raw_agent.strip().lstrip("@")
@@ -63,17 +52,6 @@ def load_agent_profile_with_fallback(
     configured_default: str | None = None,
     agent_opt_out: bool = False,
 ) -> tuple[AgentProfile | None, str | None]:
-    """Load agent profile with a standard fallback chain.
-
-    Resolution order:
-    1. requested_agent (explicit --agent flag) -> load or raise
-    2. configured_default (from config) -> try load
-    3. None (no profile)
-
-    When ``agent_opt_out`` is true (``-a ""``), skip all profiles including the
-    configured default.
-    """
-
     if agent_opt_out:
         return None, None
 
@@ -116,7 +94,6 @@ class ResolvedSkills(BaseModel):
 
 
 def format_missing_skills_warning(missing_skills: tuple[str, ...]) -> str:
-    """Render a user-facing warning for unavailable skills."""
 
     if not missing_skills:
         return ""
@@ -148,7 +125,6 @@ def validate_harness_compatibility(
     model_entry: AliasEntry | None,
     harness_registry: HarnessRegistry,
 ) -> None:
-    """Validate that the selected harness is available for primary launch."""
 
     _ = model, model_entry
 
@@ -170,7 +146,6 @@ def resolve_harness(
     harness_override: str | None,
     harness_registry: HarnessRegistry,
 ) -> HarnessId:
-    """Determine final primary-launch harness from a resolved model entry."""
 
     normalized_override = (harness_override or "").strip()
     if not normalized_override:
@@ -263,7 +238,6 @@ def _resolve_timeout_field_from_config_snapshot(
 
 
 def parse_duration_seconds(value: str | None) -> float | None:
-    """Parse a duration token such as ``90m``, ``1h``, or ``3300`` (seconds)."""
 
     if value is None:
         return None
@@ -325,7 +299,6 @@ def resolve_pi_task_ping_interval_seconds(
     explicit_interval_seconds: float | None,
     config_snapshot: dict[str, object] | None,
 ) -> float | None:
-    """Resolve Pi background-task ping interval in seconds (None = extension default)."""
 
     if explicit_interval_seconds is not None and explicit_interval_seconds > 0:
         return float(explicit_interval_seconds)
@@ -341,14 +314,6 @@ def resolve_pi_child_wave_timeout_seconds(
     explicit_timeout_seconds: float | None,
     config_snapshot: dict[str, object] | None,
 ) -> float:
-    """Resolve Pi tracked-child wave timeout in seconds.
-
-    Preference order:
-    1) Explicit per-spawn override (when provided)
-    2) Configured timeout from launch config snapshot
-    3) Default 300s
-    """
-
     if explicit_timeout_seconds is not None and explicit_timeout_seconds > 0:
         return float(explicit_timeout_seconds)
     if config_snapshot:
@@ -363,7 +328,6 @@ def resolve_resident_deadline_seconds(
     config_snapshot: dict[str, object] | None,
     harness_id: HarnessId | str | None = None,
 ) -> float:
-    """Resolve the completion window from the calling harness wait interval."""
 
     if config_snapshot:
         timeout_from_config = _resolve_timeout_field_from_config_snapshot(
@@ -385,7 +349,6 @@ def resolve_resident_poll_seconds(
     *,
     config_snapshot: dict[str, object] | None,
 ) -> float:
-    """Resolve Codex/OpenCode resident outstanding-work poll interval."""
 
     if config_snapshot:
         timeout_from_config = _resolve_timeout_field_from_config_snapshot(
@@ -401,7 +364,6 @@ def resolve_startup_timeout_seconds(
     *,
     config_snapshot: dict[str, object] | None,
 ) -> float:
-    """Resolve the outer backend boot/connection/handshake watchdog."""
 
     try:
         config = (

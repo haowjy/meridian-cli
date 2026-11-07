@@ -1,5 +1,3 @@
-"""Shared runner helper functions used by subprocess and streaming paths."""
-
 from __future__ import annotations
 
 import asyncio
@@ -202,7 +200,6 @@ async def wait_for_process_returncode(
     timeout_seconds: float | None = None,
     poll_interval_seconds: float = 0.05,
 ) -> int:
-    """Wait until the subprocess exit status is available."""
 
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be > 0 when provided.")
@@ -223,7 +220,6 @@ async def terminate_process(
     *,
     grace_seconds: float = DEFAULT_KILL_GRACE_SECONDS,
 ) -> None:
-    """Gracefully terminate a process and force-kill if it does not exit."""
     await _terminate_tree(process, grace_secs=grace_seconds)
 
 
@@ -233,7 +229,6 @@ async def wait_for_process_exit(
     timeout_seconds: float | None,
     kill_grace_seconds: float = DEFAULT_KILL_GRACE_SECONDS,
 ) -> int:
-    """Wait for process completion with timeout-triggered termination."""
 
     if timeout_seconds is None:
         return await wait_for_process_returncode(process)

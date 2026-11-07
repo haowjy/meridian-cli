@@ -1,5 +1,3 @@
-"""OpenCode storage path helpers."""
-
 from __future__ import annotations
 
 import os
@@ -10,17 +8,7 @@ from meridian.lib.platform import IS_WINDOWS, get_home_path
 
 
 def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve the parent directory of OpenCode's data folder.
-
-    Precedence: ``XDG_DATA_HOME`` → explicit ``HOME`` (``.local/share``, all
-    platforms) → ``%LOCALAPPDATA%`` on native Windows → parent-process home.
-
-    An explicitly provided ``HOME``/``XDG_DATA_HOME`` always wins over the
-    platform default: callers pass a child ``launch_env`` deliberately, and
-    OpenCode itself honours ``HOME`` when set. ``%LOCALAPPDATA%`` is only the
-    default when no explicit home is provided (native Windows).
-    """
-
+    # OpenCode honors HOME even on Windows; a child's launch environment must win.
     env = launch_env if launch_env is not None else os.environ
 
     xdg_data_home = env.get("XDG_DATA_HOME", "").strip()
@@ -43,7 +31,6 @@ def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> P
 
 
 def resolve_opencode_home_dir(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve OpenCode's data directory (``opencode.db``, ``storage/``, ``log/``)."""
 
     env = launch_env if launch_env is not None else os.environ
 
@@ -55,13 +42,11 @@ def resolve_opencode_home_dir(launch_env: Mapping[str, str] | None = None) -> Pa
 
 
 def resolve_opencode_storage_root(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve OpenCode storage root from launch env with platform fallback."""
 
     return resolve_opencode_home_dir(launch_env) / "storage"
 
 
 def iter_opencode_session_files(storage_root: Path) -> Iterator[Path]:
-    """Yield OpenCode session JSON files from known storage directories."""
 
     for dirname in ("session_diff", "session"):
         candidate_dir = storage_root / dirname
@@ -71,7 +56,6 @@ def iter_opencode_session_files(storage_root: Path) -> Iterator[Path]:
 
 
 def opencode_session_id_from_path(path: Path) -> str | None:
-    """Return session id inferred from one OpenCode session filename."""
 
     if path.suffix != ".json":
         return None
@@ -86,7 +70,6 @@ def resolve_opencode_session_file(
     session_id: str,
     launch_env: Mapping[str, str] | None = None,
 ) -> Path | None:
-    """Resolve one OpenCode session file by id from known storage directories."""
 
     normalized_session_id = session_id.strip()
     if not normalized_session_id:

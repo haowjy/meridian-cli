@@ -1,5 +1,3 @@
-"""Pi CLI harness adapter."""
-
 from __future__ import annotations
 
 import json
@@ -165,7 +163,6 @@ def _write_pi_runtime_metadata_sidecar(
     launch: LaunchPaths,
     payload: dict[str, str | None],
 ) -> None:
-    """Persist the resolved Pi runtime metadata sidecar for one spawn."""
 
     if payload.get("runtime_path") is None:
         return

@@ -1,5 +1,3 @@
-"""Lazy Unix module proxies for cross-platform compatibility."""
-
 from importlib import import_module
 from typing import Any
 

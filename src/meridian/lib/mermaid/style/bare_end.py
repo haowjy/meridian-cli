@@ -1,5 +1,3 @@
-"""Bare lowercase end flowchart style check."""
-
 from __future__ import annotations
 
 import re

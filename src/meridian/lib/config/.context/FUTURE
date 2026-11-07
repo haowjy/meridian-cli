@@ -4,6 +4,7 @@
   get/set/reset and environment overrides cannot reach them. Review harness
   agent controls and Pi settings, `primary.timeout`, and work defaults; retain
   intentional TOML-only settings.
-- `loader.py:resolve_pi_harness_profile` rereads environment toggles after a
-  launch snapshot is chosen; its load-all branch also skips managed-bash
-  overrides. Resolve inputs at load time so the snapshot is authoritative.
+- Untangle in the rewrite: `loader.py:resolve_pi_harness_profile` rereads
+  environment toggles after choosing a launch snapshot, and its load-all branch
+  skips managed-bash overrides. Resolve all inputs into one authoritative snapshot
+  before launch.

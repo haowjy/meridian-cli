@@ -1,5 +1,3 @@
-"""Child-process environment helpers shared by launch and spawn paths."""
-
 import json
 import math
 import shutil
@@ -26,15 +24,10 @@ def path_within(path: Path, root: Path) -> bool:
 
 
 def undo_direnv(base_env: Mapping[str, str]) -> dict[str, str]:
-    """Ask direnv to reverse its diff without evaluating shell output or loading an rc.
-
-    The filesystem root has no ancestors to search. Refuse a root rc rather
-    than accidentally load another environment. Never expose captured env or
-    direnv stderr in an exception: either can contain credentials.
-    """
     if not base_env.get("DIRENV_DIFF"):
         return dict(base_env)
     root = Path("/")
+    # Root has no ancestors, but a root rc would load another environment.
     if any((root / name).exists() for name in (".envrc", ".env")):
         raise ValueError("Cannot ignore direnv: the filesystem root contains an environment file.")
     executable = shutil.which("direnv", path=base_env.get("PATH", ""))
@@ -56,6 +49,7 @@ def undo_direnv(base_env: Mapping[str, str]) -> dict[str, str]:
         ):
             raise ValueError("Invalid direnv environment")
     except (OSError, subprocess.SubprocessError, ValueError):
+        # Captured output and stderr can contain credentials.
         raise ValueError("Cannot ignore direnv: environment restoration failed.") from None
     return cast("dict[str, str]", restored)
 
@@ -68,7 +62,6 @@ def apply_pi_bind_time_env(
     interval_seconds: float | None,
     reset_on_activity: bool | None,
 ) -> None:
-    """Bake resolved Pi runtime settings into a complete child environment."""
 
     if (
         launch_role == "spawned"
@@ -84,10 +77,6 @@ def apply_pi_bind_time_env(
 
 
 def _normalize_meridian_env(env: dict[str, str]) -> None:
-    """Normalize MERIDIAN_CONTEXT_*_DIR path overrides.
-
-    Trims whitespace and drops blank placeholders.
-    """
     import re
 
     context_pattern = re.compile(r"^MERIDIAN_CONTEXT_[A-Z][A-Z0-9_]*_DIR$")
@@ -111,7 +100,6 @@ def inherit_child_env(
     *,
     blocked: Collection[str] = BLOCKED_CHILD_ENV_VARS,
 ) -> dict[str, str]:
-    """Return an inherited child environment with targeted non-propagation."""
 
     blocked_keys = {name.upper() for name in blocked}
     inherited = {
@@ -126,7 +114,6 @@ def inherit_child_env(
 
 
 def resolve_pi_session_role(*, interactive: bool) -> PiSessionRole:
-    """Resolve canonical Pi role used by both runtime env and manager policy."""
 
     return "primary" if interactive else "spawned"
 
@@ -136,13 +123,6 @@ def merge_env_overrides(
     plan_overrides: Mapping[str, str],
     runtime_overrides: Mapping[str, str],
 ) -> dict[str, str]:
-    """Merge env overrides and reject ``MERIDIAN_*`` leaks from the plan.
-
-    Keys in :data:`~meridian.lib.core.child_env.ALLOWED_CHILD_ENV_KEYS` must
-    only enter the child environment via ``ChildEnvContext.child_context()``,
-    which is in ``runtime_overrides``.  Any ``MERIDIAN_*`` key appearing in
-    ``plan_overrides`` is a contract violation.
-    """
     forbidden: list[tuple[str, str]] = []
     for key in plan_overrides:
         if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
@@ -168,7 +148,6 @@ def build_harness_child_env(
     run_params: SpawnParams,
     runtime_env_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build one inherited child env for a trusted harness launch."""
 
     blocked_child_env_vars = getattr(adapter, "blocked_child_env_vars", None)
     adapter_blocked: frozenset[str]
@@ -194,7 +173,6 @@ def build_env_plan(
     run_inputs: SpawnParams,
     runtime_env_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Stage-owned entrypoint for launch child-environment construction."""
 
     return build_harness_child_env(
         base_env=base_env,

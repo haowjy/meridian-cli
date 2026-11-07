@@ -1,5 +1,3 @@
-"""Diagnostic capture helpers for launch boundaries."""
-
 from __future__ import annotations
 
 import logging

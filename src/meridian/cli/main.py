@@ -146,7 +146,6 @@ def _resolve_output_format_for_command(
     explicit_format: OutputFormat | None,
     render_mode: RenderMode,
 ) -> OutputFormat:
-    """Resolve effective output format based on command and context."""
     from typing import Literal
 
     from meridian.cli.output import resolve_effective_format
@@ -613,7 +612,6 @@ def init_alias(
         emit(result)
         return
 
-    # Truly bare init (no --add, no --link): bootstrap config only
     emit(config_init_sync(ConfigInitInput(project_root=project_root.as_posix())))
 
 
@@ -629,7 +627,6 @@ def _is_help_request(argv: Sequence[str]) -> bool:
 
 
 def _register_commands_for_invocation(argv: Sequence[str]) -> None:
-    """Register only the command group needed for the current invocation."""
 
     global _group_commands_registered
 
@@ -821,7 +818,6 @@ def _operation_error_message(exc: Exception) -> str:
 
 
 def _emit_idle_error(message: str) -> None:
-    """Emit the adapter-facing idle error envelope on stdout."""
 
     import json
 
@@ -867,7 +863,6 @@ def _bootstrap_setup_requested(argv: Sequence[str]) -> bool:
 
 
 def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
-    """Return whether startup belongs to a primary launch that continues a spawn."""
 
     if command_path != ():
         return False
@@ -880,7 +875,6 @@ def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | 
 
 
 def _is_launch_dry_run(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
-    """Return whether startup belongs to a non-mutating launch preview."""
 
     if command_path not in {(), ("spawn",)}:
         return False
@@ -939,7 +933,6 @@ def _install_cli_telemetry(
     startup_class: StartupClass | None,
     project_root: Path | None,
 ) -> None:
-    """Install CLI telemetry from descriptor policy after bootstrap resolution."""
 
     if telemetry_mode in {None, StartupTelemetryMode.NONE}:
         return
@@ -1127,7 +1120,6 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
 
     descriptor = classify_invocation(cleaned_args, COMMAND_CATALOG)
 
-    # Resolve output format based on command and agent mode
     resolved_format = _resolve_output_format_for_command(
         argv=cleaned_args,
         explicit_format=options.explicit_format,
@@ -1196,7 +1188,6 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 render_mode=options.render_mode,
                 plan=bootstrap_plan,
             )
-    # Prefer bootstrap's resolved root; fall back to -C path if bootstrap was skipped/no-op.
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
     )

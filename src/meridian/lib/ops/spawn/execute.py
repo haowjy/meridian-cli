@@ -1,5 +1,3 @@
-"""Spawn execution entry points: execute_spawn_blocking, execute_spawn_background."""
-
 import asyncio
 import os
 import subprocess
@@ -449,9 +447,7 @@ def execute_spawn_background(
                 session_log_available=False,
             )
 
-        # The Popen object goes out of scope without wait(). This is intentional:
-        # the child spawns in its own session (start_new_session=True) and is
-        # re-parented to init/systemd. We only need the PID for diagnostics.
+        # The detached worker outlives this invocation, so returning must not wait for it.
         return SpawnActionOutput(
             command="spawn.create",
             status="running",

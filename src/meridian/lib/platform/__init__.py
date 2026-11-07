@@ -1,5 +1,3 @@
-"""Platform detection constants for cross-platform code."""
-
 from __future__ import annotations
 
 import os
@@ -33,7 +31,6 @@ def get_home_path(*, env: Mapping[str, str] | None = None) -> Path:
 
 
 def expand_home_path(value: str, *, env: Mapping[str, str] | None = None) -> Path:
-    """Expand the current user's tilde against the supplied environment."""
     if value == "~" or value.startswith("~/"):
         return get_home_path(env=env) / value[2:]
     return Path(value).expanduser()

@@ -73,7 +73,6 @@ async def streaming_serve(
     start_monotonic = time.monotonic()
     spawn_service = build_spawn_application_service(prepared)
 
-    # Build the request and runtime before allocating the spawn ID.
     spawn_req = SpawnRequest(
         prompt=normalized_prompt,
         model=normalized_model,
@@ -94,8 +93,7 @@ async def streaming_serve(
         debug=debug,
     )
 
-    # Resolve-before-persist: prepare_spawn builds launch context first,
-    # then atomically creates the row with resolved metadata.
+    # Prepare before creating a row so invalid requests leave no spawn state.
     with LaunchSlot() as launch_lock:
         prepared = await spawn_service.prepare_spawn(
             request=spawn_req,
@@ -110,7 +108,6 @@ async def streaming_serve(
         connection_config = prepared.connection_config
         launch_ctx = prepared.launch_context
 
-        # Now create debug tracer with actual spawn_id if requested
         if debug:
             from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -182,7 +179,6 @@ async def streaming_serve(
                 connection_config = replace(connection_config, child_env=child_env)
                 run_error: BaseException | None = None
                 try:
-                    # The observer's lifetime is this block, including exceptions.
                     with native_run.observing(
                         launch_ctx.harness, child_env=child_env
                     ) as observe_child:

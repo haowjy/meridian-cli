@@ -1,5 +1,3 @@
-"""Lifecycle correlation context helpers for structured logging."""
-
 from __future__ import annotations
 
 from collections.abc import Generator, Mapping
@@ -42,7 +40,6 @@ class LifecycleCorrelation:
     failure_category: str | None = None
 
     def to_context(self) -> dict[str, str]:
-        """Return only populated correlation fields for structlog binding."""
 
         context: dict[str, str] = {}
         for field_name in _CANONICAL_CORRELATION_FIELDS:
@@ -56,7 +53,6 @@ class LifecycleCorrelation:
 def bind_lifecycle_correlation(
     correlation: LifecycleCorrelation,
 ) -> Generator[LifecycleCorrelation, None, None]:
-    """Bind lifecycle correlation fields for the current synchronous scope."""
 
     tokens = structlog.contextvars.bind_contextvars(**correlation.to_context())
     try:
@@ -69,7 +65,6 @@ def lifecycle_correlation_from_mapping(
     values: Mapping[str, str | None] | None = None,
     **kwargs: str | None,
 ) -> LifecycleCorrelation:
-    """Build correlation fields from sparse values."""
 
     merged: dict[str, str | None] = {}
     if values is not None:

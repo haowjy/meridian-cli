@@ -37,7 +37,6 @@ export function withRuntimeError(base: Published, runtimeError: string | undefin
   return { rows: base.rows, ...(runtimeError === undefined ? {} : { runtimeError }) };
 }
 
-/** Stage one row's change; `change` returns the fields to set, or `null` to decline. */
 export function changeRow(id: string, change: (row: Readonly<BashRecord>) => Partial<BashRecord> | null) {
   return (base: Published): Published | null => {
     const row = base.rows.get(id);
@@ -56,13 +55,11 @@ export class BashPublication {
   constructor(private readonly options: {
     path: string;
     spawnId: string;
-    /** Merges live evidence (progress, failure overlays) into the value a slot stages against. */
     evidence: (published: Published) => Published;
   }) {}
 
   get current(): Published { return this.published; }
 
-  /** Resolves `false` when staging declined. */
   publish(publication: Publication): Promise<boolean> {
     const slot = this.tail.then(async () => {
       let next: Published | null;

@@ -1,5 +1,3 @@
-"""Composition root for streaming drain plans."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -54,7 +52,6 @@ def build_drain_plan(
     deliver: SerializedDeliver,
     build_spawn_application_service: BuildSpawnApplicationService,
 ) -> DrainPlan:
-    """Build the complete drain-loop configuration for one active spawn."""
 
     runtime_root = launch.runtime_root
     spawn_id = launch.spawn_id

@@ -26,4 +26,4 @@ foreground timeout, so stop or another start cannot race a child between owners.
 Injection uses the committed native session agent, model and variant, falling back to
 the last native user message when fields are absent. Unsent TUI changes are invisible,
 and reading then posting is not atomic against simultaneous TUI submission. Continue
-preserves native choices. See [OpenCode delivery](../../.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery).
+preserves native choices. See [OpenCode delivery](../../.context/CONTEXT.md).

@@ -1,5 +1,3 @@
-"""HTTP-backed bidirectional OpenCode harness connection."""
-
 from __future__ import annotations
 
 import asyncio
@@ -106,7 +104,6 @@ def project_opencode_spec_to_session_payload(
     *,
     project_root: Path | None = None,
 ) -> dict[str, object]:
-    """Project OpenCode managed-primary session payload through the contract seam."""
 
     if project_root is None:
         return _project_opencode_spec_to_session_payload(spec)
@@ -178,9 +175,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
     _EVENT_RETRY_MAX_DELAY_SECONDS: ClassVar[float] = 10.0
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
-    # A spawned drain that keeps hearing "still running" without a single event
-    # gives up here. About 15 liveness windows; long enough for any real tool,
-    # short enough that a wedged server does not pin a spawn forever.
+    # Bound a silent spawned drain even if the backend reports it is still running;
+    # otherwise a wedged server can pin the spawn forever.
     _BUSY_STALL_LIMIT_SECONDS: ClassVar[float] = 1800.0
     # The session-running probe is a local HTTP GET on the stall path. Bound it
     # like the reconcile GET so a wedged server cannot hold the stall decision
@@ -338,7 +334,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         await self._start(config, spec, observer=False)
 
     async def start_observer(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        """Start connection in primary observer mode."""
         await self._start(config, spec, observer=True)
 
     def configure_primary_runtime_requests(
@@ -813,7 +808,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             return None
 
     def _session_running_from_status(self, payload: object, session_id: str) -> bool:
-        """Read one session's running state from the version's status payload."""
 
         return v1_session_running(payload, session_id)
 
@@ -838,11 +832,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     async def _handle_stall(self) -> tuple[RawHarnessEvent | None, _StallAction]:
-        """Resolve a liveness stall into an event and a stream action.
-
-        The busy window lives in ``BackendLivenessPolicy``: this decides from the
-        probe answer and the real silence, and keeps no stall state of its own.
-        """
 
         if self._process_exited():
             return self._process_exit_event(), _StallAction.STOP
@@ -1333,7 +1322,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         return body
 
     async def _validate_selected_model(self, model: str) -> None:
-        """Fail early when the bound config's model is unavailable or overridden."""
         provider, model_id = opencode_model_parts(model)
         providers = await self._native_json("/config/providers")
         available = (
@@ -1483,7 +1471,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     else http_rejection(status, detail)
                 )
 
-        # Only 4xx statuses reach here: the server answered and acted on nothing.
+        # Retry treats a 4xx as non-delivery; this relies on rejection before side effects.
         raise DeliveryRefused(last_error)
 
     async def _post_json(
@@ -1963,7 +1951,6 @@ def _extract_opencode_permission_context(
 
 
 def _extract_opencode_permission_reply(payload: Mapping[str, object]) -> str | None:
-    """Read the native ``reply`` (once/always/reject) from a permission reply."""
 
     for source in _permission_payload_sources(payload):
         reply = _nonempty_str(source.get("reply"))
@@ -2040,7 +2027,6 @@ def find_free_port(host: str = "127.0.0.1") -> int:
 
 
 def http_rejection(status: int, text: str) -> RuntimeError:
-    """A 4xx answered a POST and acted on nothing; a 5xx may have acted, so it stays unknown."""
 
     return DeliveryRefused(text) if 400 <= status < 500 else RuntimeError(text)
 

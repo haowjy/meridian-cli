@@ -1,5 +1,3 @@
-"""Workspace topology file parsing and evaluated snapshot state."""
-
 from __future__ import annotations
 
 import re
@@ -124,7 +122,6 @@ class WorkspaceSnapshot(BaseModel):
 
 
 def get_projectable_roots(snapshot: WorkspaceSnapshot) -> tuple[Path, ...]:
-    """Return ordered enabled existing roots for projection."""
 
     return tuple(root.resolved_path for root in snapshot.roots if root.enabled and root.exists)
 
@@ -313,7 +310,6 @@ def resolve_workspace_snapshot(
     *,
     config_paths: ProjectConfigPaths | None = None,
 ) -> WorkspaceSnapshot:
-    """Resolve canonical workspace snapshot from project-root paths."""
 
     resolved_config_paths = config_paths or resolve_project_config_paths(project_root)
     committed_path = resolved_config_paths.meridian_toml

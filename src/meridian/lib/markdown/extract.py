@@ -1,5 +1,3 @@
-"""Markdown extraction using markdown-it-py — token walking and wikilink regex."""
-
 from __future__ import annotations
 
 import re
@@ -216,14 +214,12 @@ def _walk_wikilinks(tokens: list[Token], path: Path) -> list[ExtractedLink]:
     links: list[ExtractedLink] = []
 
     for token in tokens:
-        # Skip fence content entirely
         if token.type == "fence":
             continue
 
         if token.type == "inline" and token.children:
             line = (token.map[0] + 1) if token.map else 0
             for child in token.children:
-                # Skip inline code spans
                 if child.type == "code_inline":
                     continue
                 if child.type == "text" and child.content:
@@ -253,7 +249,6 @@ def _resolve_target(target: str, parent_dir: Path) -> Path | None:
     if not target or any(target.startswith(prefix) for prefix in _EXTERNAL_PREFIXES):
         return None
 
-    # Resolve relative to parent directory
     try:
         resolved = (parent_dir / target).resolve()
         return resolved

@@ -1,5 +1,3 @@
-"""Codex streaming projections for app-server command and thread bootstrap."""
-
 from __future__ import annotations
 
 import json
@@ -148,7 +146,6 @@ def project_codex_spec_to_appserver_command(
     host: str,
     port: int,
 ) -> list[str]:
-    """Build one ``codex app-server`` command from ``ResolvedLaunchSpec``."""
 
     _consume_streaming_lifecycle_fields(spec)
 
@@ -203,7 +200,6 @@ def project_codex_spec_to_thread_request(
     *,
     cwd: str,
 ) -> tuple[str, dict[str, object]]:
-    """Build thread bootstrap method+payload for the Codex app-server JSON-RPC."""
 
     _consume_streaming_lifecycle_fields(spec)
 

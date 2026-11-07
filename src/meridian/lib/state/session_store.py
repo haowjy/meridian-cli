@@ -1,5 +1,3 @@
-"""File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
-
 import json
 import os
 import re
@@ -152,12 +150,7 @@ def _row_may_name_native(raw: bytes, native_id: str) -> bool:
 
 
 class ChatRows(dict[str, list[SessionEvent]]):
-    """Per-chat rows plus their shared source order, never reconstructed from clocks.
-
-    Grouping alone loses interleaving across chats. ``ordered`` is the same rows
-    in global log order; #418's per-chat journals must supply their stable
-    per-stream merge here.
-    """
+    """Preserve global log order: grouping by chat loses interleaving."""
 
     def __init__(self, ordered: list[SessionEvent]) -> None:
         super().__init__()
@@ -271,14 +264,7 @@ def native_observations(
 
 @contextmanager
 def session_writes(root: Path, *, timeout: float | None = None) -> Generator[None]:
-    """Hold the session write epoch: the history mutation gate (shared), then the sessions lock.
-
-    The one order every session writer takes. An exclusive holder of the gate
-    (restore, archive, index rebuild) takes the sessions lock after it, so a writer
-    that took them the other way round would deadlock against it. Both locks are
-    reentrant per thread, so a write inside this block re-enters them. The work
-    store's lock is never held at the same time, in either order.
-    """
+    # Exclusive gate holders also take sessions second; reversing the order deadlocks.
     with (
         lock_file(HistoryChanges(root).mutation_lock, mode="shared", timeout=timeout),
         lock_file(RuntimePaths.from_root_dir(root).sessions_flock, timeout=timeout),
@@ -287,11 +273,7 @@ def session_writes(root: Path, *, timeout: float | None = None) -> Generator[Non
 
 
 def append_chat_rows(root: Path, batches: Mapping[str, Iterable[SessionEvent]]) -> None:
-    """Validate and durably append a chat batch once, inside one writer epoch.
-
-    Iterators may perform validation/dedup under these locks. Bulk bindings use
-    the same path and pay one fsync, not one fsync per chat.
-    """
+    # Iterators may validate and deduplicate under this lock.
     paths = RuntimePaths.from_root_dir(root)
     with session_writes(root):
         rows: list[BaseModel] = []
@@ -451,11 +433,6 @@ def resolve_session_instance_id(
     chat_id: str,
     record: SessionRecord | None = None,
 ) -> str:
-    """Choose the generation a write to *chat_id* names.
-
-    A caller that already folded the chat passes its *record*, so the journal is
-    not scanned again.
-    """
     held = _SESSION_LOCK_HANDLES.get(_session_lock_key(runtime_root, chat_id))
     held_generation = held.session_instance_id if held is not None else None
     lease_generation = ""
@@ -490,14 +467,7 @@ def read_session_events(
     *,
     require_supported: bool = False,
 ) -> list[SessionEvent]:
-    """Parse every session event in source order, or only those of ``chat_ids``.
-
-    One chat's projection reads no other chat's events, so folding the selected
-    events equals folding all of them for those chats. The one intended
-    difference: a full fold raises on any chat whose historical record is
-    followed by a mutation, while a selected fold raises only when that chat is
-    selected, so a poisoned chat no longer blocks other chats' reads and binds.
-    """
+    # Selecting before folding prevents a corrupt unrelated chat from blocking this read.
     paths = RuntimePaths.from_root_dir(runtime_root)
     unsupported = UnsupportedSessionRecords()
 
@@ -765,13 +735,6 @@ def update_session_harness_id(
 
 
 def set_work_attachments(runtime_root: Path, changes: Mapping[str, str | None]) -> frozenset[str]:
-    """Attach chats to a work item, or detach them with ``None``, in one batch.
-
-    The one write behind an execution's attachment changing: one journal read for
-    the chats, one append, one fsync. A chat whose attachment already is the wanted
-    value is not written, an unknown chat is skipped, and a historical record is
-    inert and never written. Returns the chats that now carry their wanted value.
-    """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     with session_writes(runtime_root):
@@ -802,7 +765,6 @@ def set_work_attachments(runtime_root: Path, changes: Mapping[str, str | None]) 
 
 
 def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
-    """Record the canonical primary spawn relationship for a session."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     from meridian.lib.state.spawn.repository import read_state
@@ -840,7 +802,6 @@ def update_session_claude_config_dir(
     chat_id: str,
     claude_config_dir: str,
 ) -> None:
-    """Append a session update event carrying the isolated Claude config dir."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
@@ -904,13 +865,11 @@ def is_session_lease_owner_alive(
 
 
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
-    """Return materialized records for active sessions."""
 
     return get_session_records(runtime_root, set(list_active_sessions(runtime_root)))
 
 
 def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
-    """Return all materialized records, including stopped sessions."""
 
     return list(_records_by_session(runtime_root).values())
 
@@ -1145,16 +1104,6 @@ def record_model_observation(
     *,
     lock_timeout: float | None = None,
 ) -> bool:
-    """Durably append an executed-model observation; false means already recorded.
-
-    Independent of intent: this fact keys on ``(harness, harness_session_id)`` and
-    may exist for native sessions Meridian did not start, so no matching
-    ``SessionStartEvent`` generation is required. Dedupes against the latest
-    observation for the identity to keep the JSONL bounded. ``lock_timeout=0`` makes
-    every lock acquisition one non-blocking attempt and raises ``FileLockTimeout`` on
-    contention.
-    """
-
     recorded = False
 
     def rows() -> Iterator[SessionModelObservationEvent]:
@@ -1193,7 +1142,6 @@ def get_last_executed_model(
     *,
     require_supported: bool = False,
 ) -> str | None:
-    """Return the latest observed executed model token for a native session, or None."""
 
     latest: str | None = None
     for event in native_observations(
@@ -1212,7 +1160,6 @@ def get_session_records(
     *,
     require_supported: bool = False,
 ) -> list[SessionRecord]:
-    """Return materialized records for a set of Meridian chat/session IDs."""
 
     if not chat_ids:
         return []
@@ -1240,15 +1187,6 @@ def native_generations(
     *,
     harness: str | None = None,
 ) -> list[SessionRecord]:
-    """Every generation recorded under a native ID, best pick last.
-
-    The one native-ID lookup and the one pick rule, shared by resume and read: the
-    newest generation that can name its session file (a legacy binding has no native
-    store), else the newest. A native ID names one session file: ownership split across
-    harnesses or native stores is ambiguous and refused. Ties on start time go to the
-    higher chat number.
-    """
-
     normalized = ref.strip()
     if not normalized:
         return []
@@ -1277,14 +1215,12 @@ def native_generations(
 
 
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
-    """Return the active work item ID for a session, or None."""
 
     record = chat_record(runtime_root, chat_id)
     return record.active_work_id if record else None
 
 
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
-    """Return harness session ID for a Meridian session ID."""
 
     record = chat_record(runtime_root, chat_id)
     if record is None:
@@ -1435,16 +1371,6 @@ def get_or_create_observed_chat(
     spawn_id: str,
     native_exists: Callable[[], bool] | None = None,
 ) -> str | None:
-    """Materialize and publish the current chat in one source-lock epoch.
-
-    The single continuation writer for owned live observations and verified
-    post-exit keys. The caller admits native evidence; this seam owns context
-    inheritance and publication. ``native_exists`` is the post-exit proof: it
-    runs under the locks before any alias is reused or created, and a refusal
-    publishes nothing (``None``). A missing/deleted run cannot create an orphan
-    chat. Settings come from the current pointer read under the lock, not a
-    stale caller read. Session events and spawn state remain separate files.
-    """
     from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.state.spawn.repository import (
         Applied,
@@ -1460,6 +1386,7 @@ def get_or_create_observed_chat(
     ):
 
         def observe(row: SpawnRecord) -> SpawnRecord | Decline:
+            # Check post-exit evidence under the locks before publishing an alias.
             if native_exists is not None and not native_exists():
                 return Decline("native session unproven")
             chat_id = _get_or_create_observed_chat_locked(
@@ -1495,12 +1422,6 @@ def _get_or_create_observed_chat_locked(
     session_id: str,
     spawn_id: str | None = None,
 ) -> str:
-    """Materialize context, not a second live execution or a copy of its lineage.
-
-    Both live starts and observations use SessionStartEvent/SessionSettings as
-    their schema. Work is part of the initial event, not a later repair/update.
-    The owning execution keeps its own entry chat and lifetime lease.
-    """
     source = chat_record(runtime_root, source_chat_id, require_supported=True)
     if source is None or source.record_mode != "live":
         raise ValueError(f"Source chat is missing or historical: {source_chat_id}")

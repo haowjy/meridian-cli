@@ -1,5 +1,3 @@
-"""Per-session control action coordinator for managed runtime actions."""
-
 from __future__ import annotations
 
 import asyncio
@@ -96,12 +94,6 @@ class ControlActionCoordinator:
         source: str,
         send: Callable[[], Awaitable[T]],
     ) -> T:
-        """Run one action via serialized send + durable transition records.
-
-        Only ``DeliveryRefused`` is retried: a connection raises it before writing
-        anything. Any other failure may follow the write, so a retry could repeat the
-        action (a second Codex turn); it is journaled FAILED and raised once.
-        """
 
         submission_seq = self._reserve_submission_seq()
         action_id = self._next_action_id()
@@ -160,6 +152,7 @@ class ControlActionCoordinator:
                     async with bound:
                         delivery = await send()
                 except Exception as exc:
+                    # Other failures may have delivered; retry only an asserted non-delivery.
                     if attempt < _MAX_ATTEMPTS and isinstance(exc, DeliveryRefused):
                         await asyncio.sleep(_RETRY_DELAY_SECONDS)
                         continue

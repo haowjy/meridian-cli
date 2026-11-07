@@ -1,5 +1,3 @@
-"""Bidirectional spawn execution with lifecycle-owned terminal finalization."""
-
 from __future__ import annotations
 
 import asyncio
@@ -181,7 +179,6 @@ class StreamingRunConclusion:
         *,
         received_signal: signal.Signals | None,
     ) -> ExecutionTerminalFacts:
-        """Project accumulated runner evidence into lifecycle terminal facts."""
 
         cancellation_observed = (
             self.cancellation_observed
@@ -202,13 +199,6 @@ class StreamingRunConclusion:
 def _inactivity_terminal_outcome(
     extraction: FinalizeExtraction,
 ) -> tuple[int | None, str | None]:
-    """Map inactivity termination to terminal exit_code/failure_reason updates.
-
-    When a durable last-message report was recovered, treat the run as success.
-    Otherwise finalize as ``stalled`` without rewriting exit_code (caller keeps
-    the drain exit code from the inactivity stop).
-    """
-
     if extraction.durable_report_completion:
         return 0, None
     return None, "stalled"
@@ -220,14 +210,6 @@ def _install_signal_handlers(
     received_signal: list[signal.Signals | None],
     on_signal: Callable[[signal.Signals], None] | None = None,
 ) -> Callable[[], None] | None:
-    """Install portable signal handlers that set the shutdown event.
-
-    Uses signal.signal() instead of loop.add_signal_handler() for Windows
-    compatibility (ProactorEventLoop does not support add_signal_handler).
-
-    Returns a cleanup callable that restores previous handlers, or None if
-    installation failed (non-main thread).
-    """
     import threading
 
     if threading.current_thread() is not threading.main_thread():
@@ -243,6 +225,7 @@ def _install_signal_handlers(
                     on_signal(received_signal[0])
         loop.call_soon_threadsafe(shutdown_event.set)
 
+    # ProactorEventLoop does not support add_signal_handler.
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
             previous_handlers[int(signum)] = signal.getsignal(signum)
@@ -346,7 +329,6 @@ async def _consume_subscriber_events(
 
 
 async def _wait_for_event_or_timeout(event: asyncio.Event, timeout_seconds: float) -> bool:
-    """Return whether *event* was set before the bounded polling timeout."""
 
     if event.is_set():
         return True
@@ -396,12 +378,7 @@ async def _report_watchdog(
 
 
 async def _runner_heartbeat(*, launch: LaunchPaths, completion_event: asyncio.Event) -> None:
-    """Touch the runner's lifecycle log while the turn runs.
-
-    A turn can go minutes without the runner writing a file, and a dead launch's derived
-    ``finished_at`` is the newest mtime of ``LaunchPaths.runner_activity``; without this it
-    would read as the start.
-    """
+    # A quiet turn needs activity timestamps so crash recovery does not report its start as end.
     while not await _wait_for_event_or_timeout(completion_event, RUNNER_HEARTBEAT_SECONDS):
         with suppress(OSError):
             os.utime(launch.runner_lifecycle)
@@ -449,7 +426,6 @@ async def _start_spawn_with_timeout(
     timeout_seconds: float,
     event_hook: Callable[[RawHarnessEvent], None] | None = None,
 ) -> HarnessConnection[Any]:
-    """Start a managed connection within the shared startup-phase bound."""
 
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -472,13 +448,6 @@ async def run_streaming_spawn(
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
     event_hook: Callable[[RawHarnessEvent], None] | None = None,
 ) -> DrainOutcome:
-    """Run one streaming spawn to completion without spawn-store finalization.
-
-    Callers are responsible for resolving *spec* through the launch prepare/bind
-    pipeline before calling this function. Executors stay mechanism-only: this
-    executor accepts a fully-composed spec and MUST NOT perform composition.
-    """
-
     manager = SpawnManager(
         runtime_root=runtime_root,
         project_root=project_root,
@@ -887,13 +856,6 @@ async def execute_with_streaming(
     debug: bool = False,
     clock: Clock | None = None,
 ) -> int:
-    """Execute one streaming spawn and always finalize the spawn row.
-
-    Composition happens in driving adapters. This executor
-    consumes pre-composed `LaunchContext` and does subprocess/transport
-    mechanics only.
-    """
-
     _ = stream_stderr_to_terminal
     runtime_root = launch.runtime_root
     resolved_clock = clock or RealClock()

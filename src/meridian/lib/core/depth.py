@@ -1,5 +1,3 @@
-"""Canonical helpers for Meridian delegation depth."""
-
 import os
 from collections.abc import Mapping
 from contextlib import suppress
@@ -9,7 +7,6 @@ MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
 
 
 def parse_meridian_depth(raw: str | None) -> int:
-    """Parse a ``_MERIDIAN_DEPTH`` value as a non-negative integer."""
     value = (raw or "0").strip()
     with suppress(ValueError, TypeError):
         return max(0, int(value))
@@ -17,13 +14,11 @@ def parse_meridian_depth(raw: str | None) -> int:
 
 
 def current_meridian_depth(env: Mapping[str, str] | None = None) -> int:
-    """Return the current process's normalized Meridian depth."""
     source = os.environ if env is None else env
     return parse_meridian_depth(source.get(DEPTH_ENV))
 
 
 def has_valid_meridian_depth(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether the current depth env value is absent/empty or parseable."""
     source = os.environ if env is None else env
     raw = (source.get(DEPTH_ENV) or "").strip()
     if not raw:
@@ -36,18 +31,15 @@ def has_valid_meridian_depth(env: Mapping[str, str] | None = None) -> bool:
 
 
 def child_meridian_depth(parent_depth: int, *, increment_depth: bool = True) -> int:
-    """Return the depth to project into a child process."""
     normalized = max(0, parent_depth)
     return normalized + 1 if increment_depth else normalized
 
 
 def is_nested_meridian_depth(depth: int) -> bool:
-    """Return whether a depth represents execution below the primary root."""
     return depth > 0
 
 
 def is_nested_meridian_process(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether the current environment is inside delegated Meridian execution."""
     return is_nested_meridian_depth(current_meridian_depth(env))
 
 
@@ -80,7 +72,6 @@ def is_root_side_effect_process(env: Mapping[str, str] | None = None) -> bool:
 
 
 def max_depth_reached(current_depth: int, max_depth: int) -> bool:
-    """Return whether creating another depth-child would exceed the configured ceiling."""
     if max_depth < 0:
         raise ValueError("max_depth must be >= 0.")
     return current_depth >= max_depth

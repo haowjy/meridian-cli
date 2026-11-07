@@ -1,5 +1,3 @@
-"""Plain-text report formatting for KG analysis results."""
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -18,7 +16,6 @@ def _is_external_str(target: str) -> bool:
 
 
 def _rel(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:
@@ -35,7 +32,6 @@ class _Child:
 
 
 def format_summary(result: AnalysisResult) -> str:
-    """Return compact single-line summary string."""
     parts = [
         f"{len(result.nodes)} files",
         f"{len(result.edges)} links",
@@ -46,7 +42,6 @@ def format_summary(result: AnalysisResult) -> str:
 
 
 def format_root_summary(result: AnalysisResult, root: Path) -> str:
-    """Format output for bare 'meridian kg' command."""
     lines = [
         f"Knowledge Graph: {root.as_posix()}",
         f"  {format_summary(result)}",
@@ -65,14 +60,6 @@ def format_tree(
     depth: int = 3,
     show_external: bool = False,
 ) -> str:
-    """Render link topology tree for kg graph command.
-
-    Args:
-        result: Analysis result from build_analysis().
-        root: Scan root directory for path relativization.
-        depth: Max link-hops to traverse from each tree root. Default 3.
-        show_external: If True, show external URLs as leaf nodes.
-    """
     outbound: dict[Path, list[_Child]] = defaultdict(list)
     inbound_count: dict[Path, int] = defaultdict(int)
 
@@ -132,7 +119,6 @@ def _render_child(
     root: Path,
     lines: list[str],
 ) -> None:
-    """Recursively render one child node into lines."""
     connector = "└──" if is_last else "├──"
     child_prefix = prefix + ("    " if is_last else "│   ")
 
@@ -182,7 +168,6 @@ def _render_child(
 
 
 def format_check_output(result: AnalysisResult, root: Path) -> tuple[str, str]:
-    """Format output for kg check. Returns (stdout, stderr)."""
     total_files = len(result.nodes)
     total_links = len(result.edges)
 
@@ -201,7 +186,6 @@ def format_check_output(result: AnalysisResult, root: Path) -> tuple[str, str]:
 
 
 def format_check_findings(result: CheckResult, root: Path) -> tuple[str, str]:
-    """Format check findings for text output. Returns (stdout, stderr)."""
     total_files = len(result.analysis.nodes)
     total_links = len(result.analysis.edges)
 

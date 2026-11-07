@@ -38,7 +38,6 @@ _ADVANCED_PARAM_GROUP_NAME = ADVANCED_PARAMS.name
 
 
 def _negative_names_are_meaningful(entry: HelpEntry) -> bool:
-    """Return whether a negative form changes the parameter's default behavior."""
 
     if entry.default == "True":
         return True
@@ -50,7 +49,6 @@ def _negative_names_are_meaningful(entry: HelpEntry) -> bool:
 
 
 def _compact_parameter_entry(entry: HelpEntry) -> HelpEntry:
-    """Hide generated aliases without changing which forms Cyclopts accepts."""
 
     positive_names = entry.positive_names
     if any(name.startswith("--") for name in positive_names):

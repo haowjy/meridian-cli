@@ -1,5 +1,6 @@
 # Spawn follow-ups
 
-- `api.py`: renew a wait lease only when the pending set changes or part of its
-  lifetime has elapsed; each 0.25-second poll currently rewrites a lease lasting
-  at least 30 seconds.
+- Untangle in the rewrite: `api.py` renews a wait lease on every poll, even
+  though the lease lasts at least 30 seconds and polling defaults to 0.25 seconds.
+  Renew when the pending set changes or a portion of the lease has elapsed.
+- Untangle in the rewrite (#943): src/meridian/lib/ops/spawn/execute.py:370-453 starts a background worker in a new session, drops its Popen handle and does not wait; spawn.create is also reachable from the long-lived server. setsid does not reparent a child while that parent lives. A temporary stdlib subprocess probe observed the exited child as a zombie until a subprocess cleanup pass. Give a long-lived launcher an asynchronous child-reaping owner while retaining immediate background return and launch-lock handoff.

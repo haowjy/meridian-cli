@@ -8,7 +8,6 @@ from pathlib import Path
 
 from meridian.cli.invocation import get_global_options
 
-# Maps bare alias names to the env-var that holds their resolved directory.
 _CONTEXT_ALIASES: dict[str, str] = {
     "kb": "MERIDIAN_CONTEXT_KB_DIR",
     "strategy": "MERIDIAN_CONTEXT_STRATEGY_DIR",

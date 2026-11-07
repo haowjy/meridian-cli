@@ -27,7 +27,6 @@ class MarsRoots(BaseModel):
 
 
 def user_mars_root() -> Path:
-    """Return the user-scoped Mars project root."""
 
     return (get_user_home() / "mars").resolve()
 
@@ -61,7 +60,6 @@ def mars_content_roots(
     *,
     executable: str | None = None,
 ) -> tuple[Path, ...]:
-    """Return content roots that the installed Mars can launch from."""
 
     fallback_root = mars_fallback_active(roots, executable=executable)
     if fallback_root is None:
@@ -74,7 +72,6 @@ def mars_fallback_active(
     *,
     executable: str | None = None,
 ) -> Path | None:
-    """Return the active user package fallback root, if available."""
 
     if roots.user is None:
         return None
@@ -88,7 +85,6 @@ def mars_fallback_label(
     *,
     executable: str | None = None,
 ) -> Literal["active", "unsupported", "n/a"]:
-    """Describe whether project content can fall back to user packages."""
 
     if roots.user is None:
         return "n/a"
@@ -98,7 +94,6 @@ def mars_fallback_label(
 
 
 def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
-    """Build the optional Mars content-fallback arguments for *roots*."""
 
     fallback_root = mars_fallback_active(roots, executable=executable)
     if fallback_root is None:

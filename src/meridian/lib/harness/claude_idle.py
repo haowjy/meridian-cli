@@ -1,5 +1,3 @@
-"""Claude-specific idle policy observations."""
-
 from __future__ import annotations
 
 import json
@@ -83,7 +81,6 @@ def detect_ttl(
     provider: str | None,
     env: Mapping[str, str],
 ) -> CacheTtl | None:
-    """Detect Claude's known TTL from the latest cache-writing transcript row."""
 
     _ = provider, env
     if native_store is None:

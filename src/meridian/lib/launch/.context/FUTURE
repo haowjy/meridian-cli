@@ -1,18 +1,12 @@
-- [#454] Bind-seam env projection is not structurally final. Pi timeout/ping
-  are projected post-bind by two writers (spawn_service, streaming_runner) and
-  the primary path skips apply_pi_bind_time_env; bindings.chat_id is set after
-  bind; generic env.py holds adapter.id branches. Consolidate to an
-  adapter-owned projection hook invoked inside bind_launch_context(), building
-  ResolvedLaunchEnvironment.final_env only after it.
-- [#454] prepare_prelaunch() has two output channels — a mutable child_env and
-  a returned env_overrides — handled differently by spawned vs primary callers.
-  Make child_env a read-only Mapping and env_overrides the sole output, applied
-  once via a shared launch helper.
-- `request.py` and `tests/support/launch.py`: production rejects the `DIRECT`
-  composition surface, but `LaunchRuntime.composition_surface` still defaults to
-  `DIRECT` and 18 test/support files reference a facade that reimplements direct
-  preparation. In a test-architecture pass, remove the production-invalid default
-  and migrate those tests through the production prepare/bind pipeline.
+- Untangle in the rewrite: `context.py` builds the final launch environment
+  before `core/spawn_service.py` and `streaming_runner.py` apply Pi timeout and
+  ping settings, while the primary path omits that projection. Build one final
+  environment at the adapter bind seam so every launch surface uses the same
+  projection.
+- Untangle in the rewrite: `request.py` defaults `LaunchRuntime` to `DIRECT`,
+  while ordinary production policy resolution rejects that surface and
+  `tests/support/launch.py` recreates its preparation path. Use explicit
+  production surfaces and exercise the real prepare/bind pipeline in tests.
 - ops/spawn/api.py fork path: `inherited_skills` re-passes the source spawn's
   resolved skill names to Mars as extra skills, duplicating the profile's own
   loads (Mars dedupes, so it is harmless). Pass only the source's caller-requested
@@ -21,18 +15,20 @@
   `{file:}` agent prompt) but `write_projection_artifacts()` writes it, and each
   caller must run it after the spawn is persisted. Bind cannot own the write:
   `SpawnService.prepare()` binds before `lifecycle.start()` publishes the spawn dir,
-  and `atomic_publish_dir` refuses an existing dir (a bind-time write failed 15
-  streaming tests). To make it structural, have bind return the launch files and let
+  and `atomic_publish_dir` refuses an existing dir. To make it structural, have bind return the launch files and let
   `start_spawn` write them into the staged dir before publishing, or start the spawn
   before bind and roll the row back on composition failure.
-- [#764] Launching-build shim (`cli_shim.py`) known limits: login shells rewrite PATH, so
+- Launching-build shim (`cli_shim.py`) known limits: login shells rewrite PATH, so
   Codex (`bash -lc`) and a profile that resets PATH drop the shim from the model's shell.
   The shim pins the interpreter, not the build, so `uv tool upgrade`
   under a live session moves it. A dead shim is silent where a caller discards errors
   (Mars `context-autosync/run.sh`). `-P` breaks an uninstalled `cd src && python -m
   meridian` launch. Old `bin/<hash>/` directories are never cleaned.
-- [#764] Launching-build shim, two more limits. The primary preview bind
+- Launching-build shim, two more limits. The primary preview bind
   (`launch/__init__.py`) passes no `plan_overrides`, so it ignores `config.env`: a project
   `[env] PATH` that puts an old build first makes the real launch skewed where the preview
   saw none, and the refusal warning is silent. Passing the same config env to the preview
   closes it.
+- Untangle in the rewrite: src/meridian/lib/launch/reference.py:135-160 increments the entry count once while filtering a blocked directory and again while rendering it. In a temporary directory containing only node_modules, max_entries=1 returned a truncation warning without printing the blocked entry; an ordinary single directory rendered normally. Count each displayed entry once in the rendering pass.
+- Untangle in the rewrite: src/meridian/lib/launch/compiler.py:175-324 contains a local launch-parameter compiler with no in-repository callers; only its types and match_model_policy are imported by other modules. This leaves a second apparent policy-precedence implementation beside Mars launch-bundle. Do not port the unused compiler without a demonstrated consumer; retain the shared data and matching behavior only where needed, and check external imports before deleting the Python entry point.
+- Untangle in the rewrite: src/meridian/lib/launch/command.py:48-57 carries a native reference-file injection path guarded by a capability that all five registered harnesses set false (src/meridian/lib/harness/adapter.py:102 and adapter declarations). This is an unexercised extension seam with no current native target; project references through the existing path until a supported harness needs native injection, then add the seam with that adapter. Verify external adapters before removing the Python field.

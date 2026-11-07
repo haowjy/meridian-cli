@@ -1,5 +1,3 @@
-"""JSON serialization for mermaid validation results."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +7,6 @@ from meridian.lib.mermaid.style.types import CheckResult
 
 
 def serialize_check(result: CheckResult, path: Path) -> dict[str, Any]:
-    """Serialize validation and style-check result to JSON-safe dict."""
     validation = result.validation
     return {
         "path": path.as_posix(),

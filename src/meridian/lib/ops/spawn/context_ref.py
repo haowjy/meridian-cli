@@ -1,5 +1,3 @@
-"""Resolve and render prior context references for spawn prompts."""
-
 import re
 from pathlib import Path
 
@@ -22,7 +20,6 @@ _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def _is_filesystem_path_ref(value: str) -> bool:
-    """Return True when a ``--from`` value looks like a filesystem path, not a session ref."""
 
     normalized = value.strip()
     if not normalized or normalized.startswith("@"):
@@ -132,7 +129,6 @@ def _session_context_ref(
 def _session_context_ref_from_record(
     session: session_store.SessionRecord,
 ) -> SessionContextRef:
-    """Build transcript context when a primary session has no spawn row."""
 
     return SessionContextRef(
         chat_id=session.chat_id,

@@ -1,5 +1,3 @@
-"""Refresh disposable search rows from authoritative bindings and exact native sources."""
-
 from __future__ import annotations
 
 import sqlite3

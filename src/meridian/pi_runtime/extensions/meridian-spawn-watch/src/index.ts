@@ -36,11 +36,7 @@ import { formatDurationSecs, renderTable } from "../../shared/ui";
 
 /** One launch of a spawn: the unit that is owed, delivered and consumed. */
 type LaunchRef = { id: string; n: number };
-/**
- * What the spawn state files say about the children: the current rows this session owns, and
- * the launches a continue moved past while still owed to one of its parents (their rows are
- * archives, read only if unconsumed).
- */
+/** A continued spawn can still owe an earlier launch. */
 type ChildScan = { rows: SpawnStateFile[]; moved: LaunchRef[] };
 type ChildDiscovery = ChildScan & { revision: number };
 type NotificationFields = {
@@ -65,7 +61,6 @@ type NotificationFrame = {
 type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
 type ClearedLaunchesFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_launches: string[] };
 type LegacyClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
-/** The consumption files one parent can hold, read independently. */
 type ConsumptionSource = "receipts" | "legacy-receipts" | "observations" | "legacy-observations" | "cleared" | "legacy-cleared";
 // Each current file and its legacy (bare-ID, launch 1) predecessor are separate sources, as in core's
 // read_pi_consumption_state: a damaged one must not drop the other's ids.
@@ -80,7 +75,6 @@ const NOTIFICATION_SEPARATOR = "\n\n";
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
-  /** Parents whose direct children this session delivers (core's owed scope). */
   private readonly parentIds = owedParentIdsFromEnv(this.currentSpawnId);
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
@@ -89,7 +83,6 @@ export class SpawnWatchRuntime {
   private readonly receiptsPath = resolveDeliveryReceiptsPath(this.currentSpawnId);
   private readonly spawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly queued = new Map<string, string[]>();
-  /** Launches worth rereading on an idle tick, by launch key; rebuilt by every full scan. */
   private candidates = new Map<string, LaunchRef>();
   /** Damaged consumption sources already reported, so a skip logs once. */
   private readonly skippedSources = new Set<string>();
@@ -139,7 +132,6 @@ export class SpawnWatchRuntime {
         watcher.unref(); this.watchers.push(watcher);
       } catch (error) { this.logWarning(error); }
     }
-    // Ordinary idle ticks reread only known candidates and parent-local files.
     this.polling = setInterval(() => this.requestIdleDelivery(), POLL_MS);
     this.polling.unref();
     // The root watcher can miss events, including state publication after a new

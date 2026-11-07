@@ -70,7 +70,6 @@ _RECONCILE_TIMEOUT_SECONDS = 5.0
 
 
 def _v2_session_id(body: object | None) -> str | None:
-    """Read a session id from the V2 ``{data: {...}}`` response envelope."""
 
     if not isinstance(body, Mapping):
         return None
@@ -88,7 +87,6 @@ def _v2_session_id(body: object | None) -> str | None:
 
 
 def _v2_session_data(body: object | None) -> Mapping[str, object] | None:
-    """Unwrap the ``{data: {...}}`` V2 response envelope, if present."""
 
     if not isinstance(body, Mapping):
         return None
@@ -100,7 +98,6 @@ def _v2_session_data(body: object | None) -> Mapping[str, object] | None:
 
 
 def v2_session_idle_marker(body: object | None) -> tuple[str | None, float | None]:
-    """Return the durable V2 outcome and idle timestamp in epoch milliseconds."""
 
     data = _v2_session_data(body)
     if data is None:
@@ -307,7 +304,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
 
     async def _switch_session_agent(self, session_id: str, agent: str) -> None:
-        """Select ``agent`` for a resumed session's subsequent turns."""
 
         await self._post_session_switch(session_id, "agent", {"agent": agent})
 
@@ -548,7 +544,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
 
     def _session_running_from_status(self, payload: object, session_id: str) -> bool:
-        """Read the active-session listing: presence means the turn is executing."""
 
         return v2_session_running(payload, session_id)
 

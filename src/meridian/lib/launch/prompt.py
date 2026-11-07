@@ -1,10 +1,7 @@
-"""Prompt composition helpers for launch flows."""
-
 import html
 
 
 def build_report_instruction() -> str:
-    """Build the report instruction appended to each composed run prompt."""
 
     return (
         "# Report\n\n"
@@ -16,13 +13,6 @@ def build_report_instruction() -> str:
 
 
 def build_goal_instruction(goal: str | None) -> str:
-    """Render the deterministic goal completion contract block.
-
-    One text for both surfaces: a primary launch with a goal and a spawn with a goal
-    hold the same contract, and each composer places the block itself — a spawn in
-    its task turn, a primary in its system prompt.
-    """
-
     if goal is None:
         return ""
     if goal == "" or goal != goal.strip():
@@ -41,13 +31,6 @@ def build_goal_instruction(goal: str | None) -> str:
 
 
 def build_spawn_preamble() -> str:
-    """Render behavioral framing for spawned subagents.
-
-    Foreground and background share one text: continuing a background spawn in the
-    foreground must not change the system prompt, and both are the same situation —
-    the caller is blocked on the report, so escalation means reporting back.
-    """
-
     return (
         "# Session Context\n\n"
         "This is a **sub-agent session**. You are not talking to the user. "
@@ -57,7 +40,6 @@ def build_spawn_preamble() -> str:
 
 
 def build_primary_preamble() -> str:
-    """Render session-context framing for primary (user-facing) sessions."""
 
     return (
         "# Session Context\n\nThis is a **primary session**. You are talking directly to the user."

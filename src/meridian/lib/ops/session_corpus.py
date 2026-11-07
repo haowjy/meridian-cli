@@ -1,5 +1,3 @@
-"""Session-search corpus resolution helpers."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,7 +72,6 @@ def resolve_session_search_corpus(
     global_scope: bool,
     work_id: str | None,
 ) -> tuple[SessionCorpusScope, ...]:
-    """Resolve ordered search scope roots for session search."""
 
     normalized_work_id = (work_id or "").strip()
     if sum((workspace, global_scope, bool(normalized_work_id))) > 1:

@@ -2,15 +2,8 @@
 
 ## Startup and parsing
 
-Read-only invocation classes install no telemetry, start no writer thread, and
-create no UUID. A named `skills` read can refresh Meridian's provided copy in an
-existing Mars project without preparing Meridian runtime state. `skills` uses
-positional dispatch because `list` and a skill name occupy the same argument slot.
-
-Invocation state lives outside the root dispatcher so command modules need not
-import it. In-process callers must provide an invocation scope; no default
-options are fabricated. Result objects provide their own CLI output, keeping
-spawn operations and output models out of the root dispatcher.
+Read-only invocations avoid preparing runtime state. In-process callers must
+provide an invocation scope; the root dispatcher does not fabricate options.
 
 Cyclopts requires a value for optional string parameters, so bare `--fork` and
 `--from` become the synthetic value `__SELF__` before parsing. Argument splitting
@@ -33,11 +26,9 @@ The launch uses the values shown in the picker; its resolver checks validity.
 It always supplies the agent, avoiding the configured default for an agentless
 source, and uses `--opt=value` so prompt text beginning with `-` stays a value.
 
-The list filter is the history index query, applied before the result limit;
-transcript search instead narrows the loaded rows. Browse preloads cyclic
-transcript, search and lineage imports before worker lanes run, because concurrent
-first imports can see partially initialized packages. Nothing may write to stderr
-while the full-screen application runs.
+Browse preloads cyclic imports before worker lanes run: concurrent first imports
+can see partially initialized packages. Nothing may write to stderr while the
+full-screen application runs.
 
 ## Spawn output and messages
 

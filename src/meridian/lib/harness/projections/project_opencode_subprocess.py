@@ -1,5 +1,3 @@
-"""OpenCode subprocess command projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import logging
@@ -97,7 +95,6 @@ def project_opencode_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
 
     harness_session_id = (spec.continue_session_id or "").strip()
     resume_with_model = bool(harness_session_id) and spec.model is not None and not spec.interactive
@@ -190,7 +187,6 @@ def project_opencode_spec_to_cli_args(
             command.append("--fork")
 
     if spec.interactive and spec.prompt:
-        # This is the bare-TUI fallback when managed attach is unavailable.
         command.extend(("--prompt", check_prompt_argument(spec.prompt)))
 
     return command

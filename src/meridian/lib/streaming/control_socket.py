@@ -1,5 +1,3 @@
-"""Per-spawn control server."""
-
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +36,6 @@ _STALE_SOCKET_AGE_SECONDS = 120
 
 
 def socket_directory() -> Path:
-    """Return the shared per-user directory for POSIX control sockets."""
 
     return _POSIX_SOCKET_ROOT / f"meridian-{os.getuid()}"
 
@@ -48,7 +45,6 @@ def bounded_socket_path(
     kind: Literal["app", "control"],
     key: str | None = None,
 ) -> Path:
-    """Return a deterministic Unix socket path below the platform limit."""
 
     identity = os.fsencode(runtime_root.resolve())
     if key is not None:
@@ -66,7 +62,6 @@ def bounded_socket_path(
 
 
 def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the deterministic, bounded control endpoint for a spawn."""
 
     if IS_WINDOWS:
         return runtime_root / "spawns" / str(spawn_id) / "control.sock"
@@ -75,7 +70,6 @@ def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
 
 
 def prepare_socket_directory(path: Path) -> None:
-    """Create a private per-user socket directory under the fixed POSIX root."""
 
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory_stat = path.lstat()
@@ -135,7 +129,6 @@ class ControlSocketServer:
 
     @property
     def endpoint(self) -> str:
-        """Return the platform-aware control endpoint for operator display."""
 
         if IS_WINDOWS:
             port = self._port
@@ -148,7 +141,6 @@ class ControlSocketServer:
         return f"unix://{self._socket_path}"
 
     async def start(self) -> None:
-        """Create and bind the per-spawn control endpoint."""
 
         if IS_WINDOWS:
             self._socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +178,6 @@ class ControlSocketServer:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        """Read one request, deliver it through the route, and write one response."""
 
         response: dict[str, object]
         try:
@@ -221,7 +212,6 @@ class ControlSocketServer:
         self,
         raw: bytes,
     ) -> dict[str, object]:
-        """Decode and route one control request."""
 
         try:
             payload_value: object = json.loads(raw.decode("utf-8"))
@@ -248,7 +238,6 @@ class ControlSocketServer:
         return response
 
     async def stop(self) -> None:
-        """Close the server and remove its discovery artifact."""
 
         server, self._server = self._server, None
         if server is not None:

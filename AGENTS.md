@@ -91,30 +91,11 @@ Derived fields inherit the precedence level of their source.
 
 ## Release & PRs
 
-Read `docs/releasing.md` before releasing or opening a PR. The pre-push hook runs
-the fast gate: push after the last review fix.
-
-Docs never state release status ("unreleased", "next release"): the release
-commit stamps the version into `CHANGELOG.md`, and `[Unreleased]` is only an
-empty anchor. Changelog entries go in the PR body's `## Changelog` section; the
-release job renders them, so never edit `CHANGELOG.md` in a PR. Title upgrade
-notes in `docs/upgrading.md` by topic; the changelog entry that links to them
-dates them.
-
-Docs-only changes (`docs/`, `AGENTS.md`, `.context/`) and tiny, obvious bug fixes need no
-PR: push them straight to `main`. A direct push to `main` releases nothing.
-
-PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
-`release:*` label before merging; no label defaults to RC.
-
-Minor and major changes never merge to `main` piece by piece: each one goes to the open
-`release/v<X>.<Y>.0` branch (create it if none is open), and that branch's single PR to
-`main` carries the
-`release:minor`/`release:major` label
-(`docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch`).
-
-Prompt packages: `meridian mars version patch [--push]` from the prompt repo.
-meridian-cli and mars-agents: CI auto-release on labeled PR merge.
+Read `docs/releasing.md` before releasing or opening a PR. The pre-push hook
+runs the fast gate: push after the last review fix. Put changelog entries in
+the PR body's `## Changelog`, not `CHANGELOG.md`; use the PR template and
+select a `release:*` label. Docs-only changes and tiny, obvious bug fixes need
+no PR. Pushing requires a request.
 
 ## Testing
 

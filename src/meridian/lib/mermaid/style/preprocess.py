@@ -1,5 +1,3 @@
-"""Preprocessing helpers for Mermaid style checks."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

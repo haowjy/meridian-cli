@@ -1,5 +1,3 @@
-"""Report operations for spawn-scoped report files."""
-
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict

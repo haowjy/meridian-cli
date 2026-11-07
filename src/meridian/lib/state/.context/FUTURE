@@ -1,15 +1,10 @@
-# state/ — nice-to-have follow-ups
+# State follow-ups
 
-[#211 follow-up] normalize_path_for_write (paths.py) is applied only to
-control_root/task_cwd/execution_cwd at spawn/session write sites. Other
-persisted path-like fields (claude_config_dir, agent_path, skill_paths) still
-accept raw strings — extend the same write-boundary normalization if their
-consumers ever compare or dedupe on path equality.
-
-[current-chat settings] Each entry generation (at final launch binding) and each
-newly observed conversation stores an immutable LaunchPolicySnapshot inline in
-sessions.jsonl, including skill bodies, profile and env. This keeps replay independent of a pruned observing
-run and preserves the selected chat's policy across /resume -> /new. Measure
-journal growth and fold cost before frequent-switch workloads; if material,
-deduplicate immutable snapshots by content, without making a cache authoritative
-or reverting to the observing run's potentially different settings.
+- `paths.py`: extend write-boundary normalization to `claude_config_dir`,
+  `agent_path` and `skill_paths` if consumers need path equality or deduplication.
+- `session_store.py`: measure journal growth and fold cost from inline
+  `LaunchPolicySnapshot` values under frequent session switches. If material,
+  deduplicate by content while keeping replay independent of the observing run
+  and keeping the journal authoritative.
+- Untangle in the rewrite: src/meridian/lib/state/spawn_status.py:40-64, 143-190; src/meridian/lib/core/spawn_service.py:673-704; src/meridian/lib/state/reaper.py:277-285; and src/meridian/lib/launch/continue_launch.py:75-90 distribute legacy lockless launch handling among status, cleanup and continuation. The same old-row distinction leaks across these policies. Consider a versioned legacy adapter that owns liveness and mutation decisions, while preserving old file reads and coexistence with older active runners.
+- Untangle in the rewrite (#940): src/meridian/lib/state/liveness.py:58-76 collapses process identity checks and per-target signal attempts into one Boolean, returning true even when every signal fails with a suppressed psutil error. Give callers a typed result separating unverified identity, attempted delivery and successful signal calls; audit existing callers before changing semantics.

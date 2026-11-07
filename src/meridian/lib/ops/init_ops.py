@@ -1,5 +1,3 @@
-"""Init-with-add orchestration for meridian project setup."""
-
 from __future__ import annotations
 
 import json
@@ -80,7 +78,6 @@ def _run_mars_json(
     *,
     executable: str,
 ) -> dict[str, Any]:
-    """Run a mars command with --json and return parsed output."""
 
     from meridian.cli.mars_passthrough import (
         execute_mars_passthrough,
@@ -128,7 +125,6 @@ def run_mars_add_json(
     *,
     executable: str,
 ) -> InitAddResult:
-    """Run mars add with JSON output and scan materialized content."""
 
     parsed = _run_mars_json(project_root, "add", sources, executable=executable)
     content = _scan_mars_content(project_root)
@@ -145,7 +141,6 @@ def maybe_set_primary_agent(
     project_root: Path,
     declared_primary_agent: str | None,
 ) -> PrimaryAgentAction:
-    """Set primary.agent if unset. Returns what happened."""
 
     if not declared_primary_agent:
         return PrimaryAgentAction(action="none")
@@ -257,25 +252,12 @@ def run_init_flow(
     link_targets: list[str] | None = None,
     output_format: str = "text",
 ) -> InitResult | dict[str, Any]:
-    """Full init-with-add orchestration.
-
-    Sequence:
-    1. Bootstrap meridian.toml (config_init_sync)
-    2. mars init if no mars.toml
-    3. mars add <sources>  (skipped when add_sources is empty)
-    4. Determine targets (--link overrides, else declared)
-    5. mars link for each target
-    6. Set primary agent if applicable
-    7. Return result
-    """
 
     from meridian.cli.mars_passthrough import resolve_mars_executable
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
 
-    # 1. Bootstrap meridian.toml
     config_result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
 
-    # Resolve mars executable
     executable = resolve_mars_executable()
     if executable is None:
         sys.stderr.write(
@@ -283,32 +265,25 @@ def run_init_flow(
         )
         raise SystemExit(1)
 
-    # 2. mars init if no mars.toml
     mars_toml = project_root / "mars.toml"
     if not mars_toml.is_file():
         _run_mars_json(project_root, "init", [], executable=executable)
 
-    # 3. mars add (skipped when no sources requested)
     add_result: InitAddResult | None = None
     if add_sources:
         add_result = run_mars_add_json(project_root, add_sources, executable=executable)
 
-    # 4. Determine targets
     declared_targets = add_result.declared_targets if add_result else []
     targets: list[str] = link_targets if link_targets is not None else declared_targets
 
-    # 5. mars link for each target
     for target in targets:
         _run_mars_json(project_root, "link", [target], executable=executable)
 
-    # 5b. Enable Claude native agent copies when a .claude target is linked.
     maybe_scaffold_claude_agent_copy(project_root, targets)
 
-    # 6. Primary agent
     declared_primary_agent = add_result.declared_primary_agent if add_result else None
     primary_action = maybe_set_primary_agent(project_root, declared_primary_agent)
 
-    # 7. Build result
     content: dict[str, list[str]] = add_result.content if add_result else {}
 
     result = InitResult(

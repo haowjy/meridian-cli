@@ -22,7 +22,6 @@ from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import build_first_party_registry, compute_manifest_hash
 from meridian.lib.extensions.types import ExtensionErrorResult, ExtensionSurface
 
-# Exit codes for `meridian ext run`.
 EXIT_GENERAL_ERROR = 1
 EXIT_ARGS_ERROR = 7
 

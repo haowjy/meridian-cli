@@ -1,5 +1,3 @@
-"""Telemetry initialization helpers for process entry seams."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,7 +14,6 @@ def setup_telemetry(
     sink: TelemetrySink | None = None,
     logical_owner: str | None = None,
 ) -> None:
-    """Select and install the process telemetry sink."""
     if sink is not None:
         init_telemetry(sink=sink, runtime_root=runtime_root)
         return

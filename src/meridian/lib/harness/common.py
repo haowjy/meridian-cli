@@ -1,14 +1,8 @@
-"""Shared helpers for harness adapters."""
-
 import json
 import math
 from typing import cast
 
 from meridian.lib.harness.adapter import StreamEvent
-
-# ---------------------------------------------------------------------------
-# Shared helpers (from _common.py)
-# ---------------------------------------------------------------------------
 
 
 def _payload_text(payload: dict[str, object], key: str, *, default: str = "?") -> str:
@@ -70,7 +64,6 @@ def parse_json_stream_event(line: str) -> StreamEvent | None:
     payload = cast("dict[str, object]", payload_obj)
     event_type = str(payload.get("type") or payload.get("t") or payload.get("event") or "line")
     text = payload.get("text") or payload.get("message")
-    # Recognize both "spawn.*" and "meridian.spawn.*" as meridian protocol events.
     synth_type = event_type
     if synth_type.startswith("meridian."):
         synth_type = synth_type[len("meridian.") :]
@@ -172,7 +165,6 @@ def extract_text(value: object) -> str:
 
 
 def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
-    """Read a Codex thread id from a turn/item notification payload."""
 
     thread_obj = payload.get("thread")
     if isinstance(thread_obj, dict):

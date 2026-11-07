@@ -1,5 +1,3 @@
-"""Harness connection dispatch for streaming spawns."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -23,7 +21,6 @@ async def dispatch_start(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> HarnessConnection[Any]:
-    """Dispatch one start call through bundle lookup and runtime type guard."""
 
     from meridian.lib.harness.connections import get_connection_class
 
@@ -84,7 +81,6 @@ async def dispatch_start(
 def select_dispatch_transport(
     declared_transports: tuple[TransportId, ...],
 ) -> TransportId:
-    """Choose dispatch transport from adapter contract declarations."""
 
     if len(declared_transports) == 1:
         return declared_transports[0]

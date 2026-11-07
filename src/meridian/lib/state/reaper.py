@@ -57,7 +57,6 @@ class ScopeLiveness(TypedDict):
 
 
 def scope_liveness(scope: ProcessScopeSnapshot) -> ScopeLiveness:
-    """Project root identity and group reachability into one diagnostic view."""
 
     root_alive = is_process_alive(
         scope.root_pid,
@@ -162,7 +161,6 @@ def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRec
 
 
 def iter_repair_candidates(runtime_root: Path) -> Iterator[SpawnRecord]:
-    """Stream active rows and terminal rows with unfinished cleanup claims."""
 
     spawns_dir = runtime_root / "spawns"
     for spawn_id in iter_spawn_ids(spawns_dir):
@@ -228,7 +226,6 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
         claimed_ids: set[str] = set()
 
         def claim_cleanup(stored: SpawnRecord) -> None:
-            # Runs only after this pass won the dead-launch claim.
             _claim_reaper_cleanup(
                 runtime_root,
                 stored,

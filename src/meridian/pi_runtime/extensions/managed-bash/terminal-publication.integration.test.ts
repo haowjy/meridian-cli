@@ -138,7 +138,6 @@ describe("managed Bash terminal publication", () => {
       // Failure evidence reaches memory before its repair write; wait for what the file says.
       await until(async () => (await h.disk(id)).status !== "running");
       const record = await h.disk(id);
-      // The completion notice stays owed in both outcomes.
       expect(record.notification_consumed_at_ms).toBeUndefined();
       if (verdict === "ok") expect(record).toMatchObject({ status: "exited", exit_code: 0 });
       else expect(record).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
@@ -161,7 +160,6 @@ describe("managed Bash terminal publication", () => {
       }
       for (const wait of waits) expect(await wait).toMatchObject({ kind: "wait", error: expect.stringContaining("EIO") });
       expect(h.row(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
-      // A persistent fault publishes nothing: the durable row is still the running one.
       const record = await h.disk(id);
       expect(record.notification_consumed_at_ms).toBeUndefined();
       expect(record.status).toBe(verdict === "fail" ? "killed" : "running");
@@ -219,7 +217,6 @@ describe("managed Bash terminal publication", () => {
       abort.abort();
       expect(await result).toMatchObject(aborted);
       await hold.hit;
-      // Stopped, but its outcome is not durable: still unpublished, not claimed, not consumed.
       expect(h.row(id)).toMatchObject({ status: "running", ended_at_ms: null });
       expect(() => process.kill(-pid!, 0)).toThrow();
       expect((await h.disk(id)).status).toBe("running");
@@ -264,7 +261,6 @@ describe("managed Bash terminal publication", () => {
       const detaching = h.runtime.manage({ action: "detach", bash_id: a });
       w0.settle("ok");
 
-      // B's slot publishes B's exit and nothing speculative about A.
       const published = await w1.hit;
       expect(published.records[b]).toMatchObject({ status: "exited" });
       expect(published.records[a]!.is_tracked).toBe(true);
@@ -282,7 +278,6 @@ describe("managed Bash terminal publication", () => {
   it("a failure that claims the record before its terminal slot stages prevents a clean terminal snapshot", async () => {
     await withRuntime(async (h) => {
       const a = (await h.runtime.execute({ command: "sleep 30", background: true }, undefined) as { bash_id: string }).bash_id;
-      // Public path: the background publication of a task that is exiting fails, ahead of its terminal write.
       const backgrounding = h.arm((file) => Object.values(file.records).some((r) => r.command === h.command && r.is_background));
       const started = h.runtime.execute({ command: h.command, background: true }, undefined).then(() => "started", (error: Error) => error.message);
       await backgrounding.hit;
@@ -298,7 +293,6 @@ describe("managed Bash terminal publication", () => {
       expect(await started).toContain("EIO");
       await detaching;
       await until(async () => (await h.disk(b.bash_id)).status === "killed");
-      // The exit was never staged: no attempted snapshot published it, and the error stays owed.
       expect(gate.log.filter((file) => file.records[b.bash_id]?.status === "exited")).toEqual([]);
       expect(await h.disk(b.bash_id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
       expect((await h.disk(b.bash_id)).notification_consumed_at_ms).toBeUndefined();
@@ -316,7 +310,6 @@ describe("managed Bash terminal publication", () => {
       await h.exit();
       await h.gone(h.row(id).pid!); // the exit is observed and its terminal write queued behind the claim
 
-      // The first non-running payload attempted from here is either the terminal success or the failure repair.
       const next = h.arm(holdsTerminal);
       claim.settle("fail");
       const attempted = await next.hit;
@@ -348,7 +341,6 @@ describe("managed Bash terminal publication", () => {
       write.settle("ok");
       await detaching;
       const c = (await creating).bash_id;
-      // Adopting A's snapshot lost neither the new row nor the live fault.
       expect(h.row(b).execution_error).toContain("pipe broke");
       expect(h.row(c)).toMatchObject({ status: "running", is_background: true });
       await until(() => h.row(b).status === "killed");
@@ -356,7 +348,6 @@ describe("managed Bash terminal publication", () => {
       expect(await h.disk(a)).toMatchObject({ is_tracked: false, status: "running" });
       expect(await h.disk(b)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("pipe broke") });
       expect(await h.disk(c)).toMatchObject({ status: "running", is_background: true });
-      // Only published metadata reaches the file: no live handle, progress or fault latch is serialized.
       const live = ["task", "outputQueue", "finished", "fault", "repair", "proposal", "logPaths", "logBytes", "pingTimer", "foregroundFinish", "terminationReason"];
       for (const file of gate.log) for (const record of Object.values(file.records)) expect(Object.keys(record).filter((key) => live.includes(key))).toEqual([]);
     });
@@ -409,7 +400,6 @@ describe("managed Bash terminal publication", () => {
       expect((await h.disk(b)).notification_consumed_at_ms).toBeUndefined();
       expect(await h.runtime.manage({ action: "output", bash_id: b })).toMatchObject({ output: "x" });
       expect((await h.disk(b)).notification_consumed_at_ms).toEqual(expect.any(Number));
-      // Nothing was claimed: no failure notice was ever carried to the file.
       expect(gate.log.every((file) => file.runtime_error === undefined)).toBe(true);
     });
   });
@@ -422,7 +412,6 @@ describe("managed Bash terminal publication", () => {
       const { bash_id: id, pid } = h.runtime.list(true)[0]!;
       creation.settle("fail");
       await expect(starting).rejects.toThrow("EIO");
-      // The unpublished proposal gets its repair row, and the task it started is gone.
       expect(await h.disk(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
       expect(() => process.kill(-pid!, 0)).toThrow();
     });

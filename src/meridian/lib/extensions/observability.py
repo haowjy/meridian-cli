@@ -1,5 +1,3 @@
-"""Observability helpers for extension command invocations."""
-
 from __future__ import annotations
 
 import json

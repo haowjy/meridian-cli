@@ -1,5 +1,3 @@
-"""Pi RPC command projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import logging
@@ -137,7 +135,6 @@ def project_pi_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered Pi RPC command list."""
 
     command: list[str] = list(base_command)
     passthrough_tail = spec.extra_args

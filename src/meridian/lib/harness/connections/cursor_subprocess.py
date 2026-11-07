@@ -1,5 +1,3 @@
-"""Cursor subprocess transport connection over stdout NDJSON."""
-
 from __future__ import annotations
 
 import asyncio

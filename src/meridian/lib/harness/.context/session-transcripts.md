@@ -26,12 +26,9 @@ changes are typed annotations in append order, not reconstructed active context.
 Unknown material records/content set `rendering_reason`; consumers must not call
 that a complete empty rendering. Raw storage remains unchanged.
 
-The DB provider emits `record=opencode.transcript`, version 1: one session row,
-message rows with their raw part rows, then unassociated session parts. All native
-columns and original payload strings survive; blobs use a typed base64 value.
-Session existence and the complete row read share one read-only transaction.
-Missing sources and DB errors must not become empty iteration. A present DB session
-wins over legacy JSON even when empty.
+OpenCode session existence and the complete row read share one read-only
+transaction. Missing sources and database errors must not become empty iteration;
+a present DB session wins over legacy JSON even when empty.
 
 Only the shared normalizer translates these records. It preserves initial-user
 setup and summary compactions; unsupported roles,

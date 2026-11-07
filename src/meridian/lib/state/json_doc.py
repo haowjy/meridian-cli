@@ -1,5 +1,3 @@
-"""Crash-safe JSON document persistence for small state sidecars."""
-
 from __future__ import annotations
 
 import os
@@ -33,7 +31,6 @@ class VersionedPrivateDoc(BaseModel):
 
 
 def read_model(path: Path, model_type: type[ModelT]) -> ModelT | None:
-    """Read and validate one JSON document, tolerating missing or corrupt state."""
 
     try:
         return model_type.model_validate_json(path.read_bytes())
@@ -48,7 +45,6 @@ def write_model(
     indent: int | None = None,
     exclude_none: bool = False,
 ) -> None:
-    """Atomically replace one JSON document with runtime-state permissions."""
 
     atomic_write_text(
         path,
@@ -63,7 +59,6 @@ def write_model_once(
     indent: int | None = None,
     exclude_none: bool = False,
 ) -> bool:
-    """Atomically publish a JSON document only when no document exists yet."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.parent / f".{path.name}.{uuid4().hex}.create"
@@ -92,7 +87,6 @@ def mutate_model(
     indent: int | None = None,
     exclude_none: bool = False,
 ) -> tuple[ModelT | None, ResultT]:
-    """Lock, re-read, mutate, and atomically replace one JSON document."""
 
     with lock:
         current = read_model(path, model_type) if read_current is None else read_current()

@@ -9,7 +9,6 @@ from meridian.lib.extensions.registry import get_first_party_registry
 
 
 def register_workspace_commands(app: App) -> None:
-    # workspace commands have no required CLI args — handlers are auto-generated.
     handlers: dict[str, Callable[[], Callable[..., None]]] = {}
     register_extension_cli_group(
         app,

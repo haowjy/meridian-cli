@@ -1,5 +1,3 @@
-"""Codex CLI harness adapter."""
-
 import json
 import logging
 import os
@@ -175,7 +173,6 @@ def project_codex_spec_to_thread_request_for_project(
     *,
     project_root: Path,
 ) -> tuple[str, dict[str, object]]:
-    """Project Codex managed-primary bootstrap payload for one project root."""
 
     return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
 
@@ -185,7 +182,6 @@ def project_codex_primary_preview(
     *,
     project_root: Path,
 ) -> ManagedPrimaryPreview:
-    """Describe the managed Codex backend, JSON-RPC bootstrap, and TUI attach."""
 
     backend = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=0)
     listen_index = backend.index("--listen") + 1

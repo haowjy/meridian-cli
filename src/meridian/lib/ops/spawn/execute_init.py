@@ -1,5 +1,3 @@
-"""Spawn initialization helpers: init_spawn, write_params, depth utilities."""
-
 import json
 import time
 from pathlib import Path
@@ -185,7 +183,6 @@ def build_spawn_reservation(
     runtime_root: Path,
     ctx: RuntimeContext | None = None,
 ) -> SpawnReservation:
-    """Build the typed reservation for a child spawn row."""
     resolved_context = runtime_context(ctx)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
     owner_chat_id = resolve_chat_id(ctx=resolved_context, fallback="c0")
@@ -334,7 +331,6 @@ def _build_params_request_metadata(
     desc: str = "",
     work_id: str | None = None,
 ) -> ParamsRequestMetadata:
-    """Snapshot request metadata before any bind-time values exist."""
 
     return ParamsRequestMetadata(
         model=request.model or "",
@@ -391,7 +387,6 @@ def _write_params_json(
     request_metadata: ParamsRequestMetadata,
     binding: ResolvedLaunchBinding | None = None,
 ) -> None:
-    """Write resolved execution params to the spawn directory."""
     params_path = launch.params
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = _params_payload(request_metadata, binding=binding)

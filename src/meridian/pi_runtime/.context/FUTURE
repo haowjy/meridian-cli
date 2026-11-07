@@ -1,5 +1,15 @@
 # Deferred runtime work
 
-- `extensions/managed-bash/src/bash_runtime.ts` and `index.ts`: Consider one foreground attachment owner if it removes duplicated settlement, abort and UI bookkeeping while preserving model and human APIs, physical stop, and reload/background handoff.
+- Untangle in the rewrite: `extensions/managed-bash/src/bash_runtime.ts`
+  duplicates foreground settlement, abort handling and UI bookkeeping for model
+  and human commands. Share a foreground attachment owner while preserving each
+  API, physical stop, and reload/background handoff.
 - `extensions/managed-bash/src/shell_task.ts`: Qualify polling cadence on the full runtime and macOS, including output drain, cancellation, failed process inspection, publication delays and ownership retirement.
 - `extensions/meridian-spawn-watch/src/index.ts`: Reproduce whether clearing Pi's native queue can leave automatic publication closed until a lifecycle callback or reload. Queueing is not consumption.
+
+- Untangle in the rewrite: `extensions/meridian-spawn-watch/src/index.ts` and
+  `lib/harness/pi_private_state.py` independently decode and combine the same
+  consumption records. Define the wire schema and shared semantics once, with
+  the watcher's current-parent failure policy explicit, so readers cannot drift.
+- Untangle in the rewrite: src/meridian/pi_runtime/extensions/shared/meridian_spawn.ts:11-13 names any `meridian spawn` command except `wait` a launcher, so `spawn list` and `spawn show` also return true. It has no production callers in this checkout. Remove the unused predicate, or classify the command grammar explicitly if a caller needs it.
+- Untangle in the rewrite: src/meridian/pi_runtime/extensions/shared/schemas.ts:78-99 duplicates Python's owed-child decision, launch key and legacy-ledger translation in src/meridian/lib/state/spawn_ownership.py:19-26, spawn_observations.py:37-51 and harness/pi_private_state.py:171-175. Two runtimes must evolve the same durable-state rules in step. Consider a stable Rust-owned read/decision boundary for both clients, preserving low-latency Pi event handling, fail-closed reads and old-ledger compatibility.

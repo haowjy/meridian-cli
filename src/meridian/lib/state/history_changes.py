@@ -27,15 +27,12 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
-# Project conversation lineage and native model observations. A bump gives the index a
-# new sqlite file, marker namespace and failure latch (``versioned``), so an older build
-# never validates a row shape it cannot read. v14: the session ``relocate`` row. v13: spawn
-# state v4 and the ``owed_launches`` side table.
+# A schema bump creates a separate index and marker namespace, so older builds
+# never validate rows they cannot read.
 SCHEMA_VERSION = 14
 
 
 def versioned(stem: str) -> str:
-    """Name a file in this index-schema and session-format namespace."""
     session_version = max(SUPPORTED_SESSION_EVENT_VERSIONS)
     return f"{stem}-v{SCHEMA_VERSION}-sessions-v{session_version}"
 
@@ -107,7 +104,6 @@ class HistoryChanges:
             atomic_write_text(self.directory / source.name, marker.model_dump_json() + "\n")
 
     def read_generation(self) -> str | None:
-        """Inspect coordination without creating a generation."""
         try:
             return str(UUID((self.directory / "GENERATION").read_text().strip()))
         except FileNotFoundError:
@@ -142,7 +138,6 @@ class HistoryChanges:
     def inspect(
         self, *, timeout: float | None = None
     ) -> tuple[str | None, tuple[DirtySource, ...]]:
-        """Read coordination and pending work without initializing either."""
         with lock_file(self.marker_lock, timeout=timeout):
             return self.read_generation(), self._pending()
 

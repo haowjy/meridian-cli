@@ -60,7 +60,6 @@ describe("BashPublication ordering contract", () => {
     expect(claims).toEqual([]);
     await expect(publication.publish({ stage: (base) => withRow(base, row("b-a")), fatal: (error) => claims.push(error) })).rejects.toThrow();
     expect(claims).toHaveLength(1);
-    // A declined stage is not a failure.
     expect(await publication.publish({ stage: () => null, fatal: (error) => claims.push(error) })).toBe(false);
     expect(claims).toHaveLength(1);
   });
@@ -90,7 +89,6 @@ describe("BashPublication adoption", () => {
       publication.publish({ stage: (base) => { events.push(`stage-2:${[...base.rows.keys()]}`); return changeRow("b-a", () => ({ is_tracked: false }))(base); }, adopted: () => events.push("adopted-2") }),
     ];
     expect(await Promise.all(slots)).toEqual([true, true]);
-    // Each slot stages against its predecessor's adopted value; nothing overlaps.
     expect(events).toEqual(["stage-1", "adopted-1", "stage-2:b-a", "adopted-2"]);
     expect(publication.current.rows.get("b-a")?.is_tracked).toBe(false);
     expect((await disk()).records["b-a"]).toEqual(publication.current.rows.get("b-a"));
