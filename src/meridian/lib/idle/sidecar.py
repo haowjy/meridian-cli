@@ -15,7 +15,7 @@ from meridian.lib.harness.idle_types import (
     IdleSensorContext,
 )
 from meridian.lib.idle.service import ArmResult, IdleService
-from meridian.lib.observability import DebugTracer
+from meridian.lib.observability.debug_tracer import DebugTracer
 from meridian.lib.state.idle_store import IdleState, Stage
 
 

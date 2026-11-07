@@ -30,7 +30,7 @@ from typing_extensions import TypedDict
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import REAPER_CLEANUP_CLAIM_FILENAME, LaunchPaths, resolve_spawn_dir

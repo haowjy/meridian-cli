@@ -82,10 +82,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform.process_scope import (
-    ProcessScopeSnapshot,
-    ScopedProcessHandle,
-)
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, ScopedProcessHandle
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024

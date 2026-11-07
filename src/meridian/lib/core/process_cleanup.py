@@ -12,12 +12,13 @@ from pathlib import Path
 import psutil
 import structlog
 
-from meridian.lib.platform.process_scope import terminate_scope_sync, terminate_tree_sync
 from meridian.lib.platform.process_scope.base import (
     CleanupResult,
     ProcessScopeSnapshot,
     birth_time_unverified,
 )
+from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
+from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 from meridian.lib.state.launch_lock import LaunchHandle, try_exclusive
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.paths import LaunchPaths

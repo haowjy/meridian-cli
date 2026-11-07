@@ -43,10 +43,11 @@ from meridian.lib.launch.signals import (
     signal_to_exit_code,
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
+    scope_from_identity,
 )
+from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope

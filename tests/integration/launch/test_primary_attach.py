@@ -32,7 +32,7 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachLauncher,
 )
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 from meridian.lib.state.spawn_store import start_spawn

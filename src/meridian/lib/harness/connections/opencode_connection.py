@@ -42,7 +42,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
-    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 
 class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
