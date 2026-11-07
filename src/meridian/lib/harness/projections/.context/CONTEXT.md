@@ -186,36 +186,25 @@ shared `CODEX_HOME` is untouched; the policy reaches the stdlib-only enforcer
 (`codex_runtime/tool_hook.py`) in `_MERIDIAN_TOOL_POLICY`, which a launch never inherits.
 Codex skips an untrusted hook silently and fails open on every hook failure, so:
 
-- the hook command is a `python -I -c` bootstrap that hashes the enforcer file against the
-  digest on the argv and runs the bytes it hashed, so an agent that can write the file cannot
-  turn the hook off; a mismatch exits 2. What remains: an agent that can replace the
-  interpreter or its standard library. Upgrading Meridian under a running launch makes the
-  digest stale, which blocks every shell call until the launch restarts;
-- the command turns any other enforcer failure into a block (`... || exit 2` with a message);
+- the hook command is `"<py>" -I "<script>" || exit 2`, with a message for any failure other
+  than the enforcer's own deny (exit 2);
 - `CodexConnection.start` calls `hooks/list` before the thread starts and refuses the launch
   unless exactly one `sessionFlags` `preToolUse` entry is trusted, enabled and has the
   expected `currentHash` (a Codex without `hooks/list` is refused too). A project
-  `.codex/config.toml` that turns hooks off is caught here;
-- a Codex hook timeout stays open (the connection logs the `failed` `hook/completed`), so the
-  enforcer sets its own `SIGALRM` deadline (`DEADLINE_SECONDS`, 5 s against Codex's 10 s) whose
-  handler denies and exits. It catches every slow path at once (candidate explosion in `_peel`,
-  nested braces, any later parser bug); don't fix a slow input by making it faster only.
+  `.codex/config.toml` that turns hooks off is caught here.
 
-The enforcer has two readers. Under `bash_fail_closed` (an allowlist, or any rule denying
-commands no scoped rule names) it accepts only a closed grammar of simple commands and refuses
-everything else, so a bash feature it does not know cannot slip through; it also requires a
-program given by path to sit in a system bin directory, since a rule matches the program by
-name. Deny-lists use a best-effort reader that sees through wrappers (per-wrapper option
-tables), `sh -c`/`eval`, substitutions, braces and `$'..'`; what it cannot see is named in the
-report line. A shell reading stdin is refused whenever a rule denies, because Codex's
-`write_stdin` would feed it commands the hook never sees; REPLs (`python`) stay open. The hook
-payload carries only `command`: `exec_command`'s `shell` parameter picks among the installed
-shells and is not visible to the hook. The enforcer is a copy of Pi's ranking with a different
-parser, so the two are kept equal by hand. `codex exec` is not a live Codex path (the contract
-lists only the streaming transport, and a primary is a managed attach), so its argv is preview
-only and has no `hooks/list` check. The hook does not see `apply_patch` or MCP calls. Every
-hook report line is `partial`: the interpreter caveat above, and those tools, hold whatever
-the policy.
+The enforcer is wildcard matching and nothing else, deliberately: it splits the command on
+`;`, `&&`, `||`, `|`, `&` and newlines (outside quotes) and ranks each segment against the rules
+exactly as Pi's `policyDecision` does, so a rule means the same on both. It is a guard against
+accidents, not a sandbox (owner's call: don't harden it); wrapped and compound forms it does
+not see (`sudo git reset --hard`, `bash -c`, substitutions, subshells, scripts, interpreters,
+`git -C <dir> reset --hard`) are known gaps, not bugs, so don't add a parser to close one.
+Under `bash_fail_closed` it also applies Pi's simple-command check (no `$`, backticks,
+redirection, `( )`, `{ }`, `#`, backslash outside quotes). Matching is linear, so no input can
+reach Codex's 10 s timeout, which fails open. The hook payload carries only `command`. `codex
+exec` is not a live Codex path (the contract lists only the streaming transport, and a primary
+is a managed attach), so its argv is preview only and has no `hooks/list` check. The hook does
+not see `apply_patch` or MCP calls. Every hook report line is `partial`.
 
 OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
 from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule
