@@ -1,286 +1,100 @@
-# Completion models, DrainPlan, module inventory
+# Hold completion
 
-Moved from `AGENTS.md`; look up when changing completion, drain plans or the module list. Generic drain runtime: [CONTEXT.md](CONTEXT.md).
+A **candidate** is a finished turn's outcome awaiting publication; retained report text
+is separate. An **ask** is a completion nudge; its **answer window** gives an expiry ask
+300 seconds for work. An ask is **turn-end** kind outside that window and **expiry** kind
+inside it. A **rearm** renews the idle limit and holds completion until an ask; it can
+drop the candidate without deleting retained report text. A **lease** delays that ask
+while its blockers remain or its spacing or idle window lasts.
 
-### Completion and Idle-Limit Models
+Hold completion uses an idle limit, renewed by `rearm` and work inside a turn. Turn starts,
+Meridian nudges, heartbeats and background activity do not renew it: otherwise a nudge or a
+chatty idle child could keep itself alive forever. A silent command lasting the whole window
+is idle. Pi instead waits for descendant quiescence without a default total wall-clock bound;
+its child-wave windows do not slide with activity. `--timeout` / `MERIDIAN_TIMEOUT` is a
+separate opt-in absolute ceiling that neither hold work nor Pi waves reset.
 
-Hold completion uses an idle limit. The window arms at the first turn end and renews on
-an explicit `rearm` and on a harness event whose semantics set `work` while a turn is
-active. `work` is separate from `activity`: Codex `turn/started` is a turn start but not
-work, because a Meridian nudge starts a turn too, and Codex's echo of the nudge
-(`item/started` with a `userMessage` item) is filtered. Heartbeats, usage and rate-limit
-updates and Claude's background Agent frames are unmarked. The child's own items, deltas
-and tool or shell progress are work and also answer an outstanding expiry nudge. Work
-counts only inside a turn (`CompletionState.active_turn`): output from a background
-process or a late item after the turn ended renews nothing, so a chatty idle child is
-still nudged and cleaned up. A single command that stays silent for a whole window is
-still idle. Descendant activity renews nothing.
-After a rearm, no nudge goes out while the blockers the rearm answered are unchanged. If
-no blocker was visible (OpenCode and Codex background shells), the next nudge waits
-`COMPLETION_NUDGE_INTERVAL_SECONDS` past the last turn end, or the idle limit with `--long`. A Codex nudge sent mid-turn goes through `turn/steer` (`turn/start` when idle, and when the
-steer races a turn end). A nudge taken into a running turn starts no new turn, so its
-answer becomes the report; with no candidate kept, the wording says so. A refused expiry
-nudge is retried once at the next expiry, then the hold cleans up; on a dead backend, or
-a transport close at expiry with no ready tree, it cleans up without nudging. A `done`
-waits out an active turn but a turn idle for the whole window is nudged once, not
-published as success.
-Rearm grants are unlimited by default and the budget caps only rearms. `--resident-rearm-budget`,
-`MERIDIAN_RESIDENT_REARM_BUDGET`, profile
-`harness-overrides.meridian-cli.resident-rearm-budget`, or
-`timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.
-The running grant count is persisted as `state.json`'s `resident_rearm_count`.
+The hold selects behavior by capability. A native task source reports its own work, so a
+normal turn end needs no confirmation; without one, a writable signal channel allows a
+confirmation ask. A hold without a writable channel skips confirmation but still checks
+evidence and deadlines. Rearms are unlimited by default; the configured budget limits only
+rearms granted, and the count persists.
 
-Pi completion is descendant-quiescence-driven and intentionally has no default total
-wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordinary
-activity; successive legitimate waves may establish new windows. This
-unbounded-while-descendants-live behavior is by design.
+## Why the table is ordered this way
 
-Explicit `done` closes over whatever runs: rows D3 and A4b take `cleanup`, which cancels
-descendants, and managed-scope teardown stops leftover native tasks. A harness with a native task
-source reports its own work, so a turn end needs no confirmation: nothing running closes on
-the first fresh assessment, and running work holds silently. Without one, a writable
-completion-signal channel gives a successful candidate one best-effort confirmation
-turn: `done` accepts, `rearm` opens another window and waits for a genuinely new
-successful/idle candidate, and silence accepts only after evidence is ready. A rearm that
-saw blockers snapshots them: later turn ends are not nudged while the outstanding blockers
-are all in the snapshot (Claude's own `awaiting_followup_result` follow-up does not count
-as a change), and a new blocker or a clear nudges again. A rearm with no blockers takes the
-270 s spacing, or the idle limit with `--long`. Compare blockers, not `generation`: Claude
-bumps it on every `result`. At expiry a hold that accepts signals sends one nudge and waits
-`IDLE_NUDGE_ANSWER_SECONDS` (300 s) for the child to work, then cleans up; a hold without
-signals cleans up at expiry. A hold
-without that channel skips confirmation and reads no signals, but keeps the same
-evidence, blocker, and deadline policy. This no-signal path is live for read-only Codex
-without spawn capability (no `subagents`, e.g. explorer), and for spawn-capable read-only
-Codex when Meridian could not write its execpolicy rules file. The default completion window
-is the calling harness's configured wait-yield interval unless
-`timeouts.resident_deadline_seconds` overrides it.
+The pure table and its folds are in `hold_state.py`; `tests/unit/streaming/test_hold_state.py`
+pins the rows. Timers retire before decisions, so expired timers cannot cause repeated
+immediate wakes.
 
-For both profiles, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
-ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
-defaults to `None`; resident rearms and Pi waves cannot reset it.
+A running turn outdates a candidate. A transport close during that turn fails and cleans up
+immediately: later evidence must not publish the old reply. A close with a ready tree and
+no active turn can publish the candidate. An idle `spawn cancel` normally reaches the
+runner's cancellation path first. If the drain reads a ready close first, it proposes
+success.
 
-### The hold's table
+A first turn end has unknown evidence until the refresh completes. When a native hold clears
+at a turn end, it settles briefly before publication: a queued native wake may start a turn
+after evaluation. Claude's `system/init` marks that turn active before assistant output,
+without renewing the idle clock. Activity cancels settlement; validation must not settle a
+second time.
 
-`hold_state.py` is the hold's whole lifecycle: one frozen `HoldState`, `decide(state, facts)`
-and the folds and readers around them, all pure. `_HoldProfile` reads the signal files and
-the clock, sends, and applies what they return. The rows live in `decide`, and
-`tests/unit/streaming/test_hold_state.py` pins them; this page says why they are that way.
-An **ask** is any question the hold sends. Its kind is expiry if `answer` is open when the
-send starts, otherwise turn-end. "Nudge" stays the wire word (`source="completion_nudge"`).
+Rearm holds completion until an ask ends that hold, even on a native source; otherwise
+invisible work would close at the next turn end. Visible blockers form a lease until they
+change or clear; compare blockers,
+not generations, because Claude changes generation on each result. An invisible wait uses
+spacing from the last turn end, or the idle limit with `--long`. Spacing does not expire or
+schedule a past-due wake during a turn, which would spin the drain. When visible blockers
+appear, they become the lease because their clearance is observable. Native blockers remain
+visible even when descendant evidence is unknown, so a rearm can lease them.
 
-`decide` runs its timers first: a `SENT` ask past its grace becomes `SETTLED`, and a
-`SpacedLease` past `not_before` retires. So neither can stay a wake, and `next_wake` needs
-no clock. A timer the shell has to guard with the clock is how the 1 ms spin got in. Then the
-first matching row wins, and success turn ends and wait evaluations share every row from
-B1 down, which is why a hold behaviour has one place to live.
+A rearm consumed at turn end drops the candidate, while retaining the previous report
+text. If the lease ends before another candidate exists, the ask must be expiry-kind: an unanswered turn-end ask would otherwise wait until
+the idle limit. A rearm costs budget only when the table takes it; a higher-priority outcome
+must not spend a grant.
 
-**Success never publishes over a running turn.** A candidate stands for a finished turn, so
-a turn running at a close outdates it. A2, D3, E2 and `outcome_at_close` all read
-`active_turn`. A transport close during a turn takes its own row, A3b, which fails with the
-close's outcome and cancels descendants, and ends the hold there: no later evaluation can see evidence
-come back and publish the old reply. For the same reason `_active_turn` stays set at a failed
-terminal event: clearing it first would blind those rows. A candidate at an idle child stays
-good, so a close with a ready tree publishes it. A `spawn cancel` of an idle child usually
-ends `cancelled` first, through the runner's SIGTERM path; `outcome_at_close` decides only
-when the drain reads the close first, and whether that should stay `succeeded` is an open
-owner call.
+An expiry ask sent between turns promises that the reply is the report and closes over
+remaining work. Set that promise after a successful or ambiguous send, not at decision time: only a send made while
+no turn is running qualifies, and work in the answering turn closes the answer window first.
+There is no reply ID: after a send between turns, the next turn end is treated as the
+reply. The drain waits for the serialized send; a send during a turn does not make that
+turn its closing reply. Rearm at the same turn end takes precedence over the reply close.
+A failed reply retains its failure and the previous report; an expiry reply also cleans up because the ask promised to
+close. Explicit `done` likewise cleans up remaining work but waits for an active turn and
+cannot override unknown evidence. An active turn that never ends still reaches expiry.
 
-**The ask is skipped on capability, never on a harness.** `skips_ask` comes from
-`native_task_source()`. At a first turn end the evidence is `unknown`, because refresh starts
-there, so E3 waits and the close comes from the first fresh assessment. E1 still asks at
-expiry on every harness: a child held past the window has to say why.
+Signals can be read without a candidate: the mailbox is read at turn ends and evaluations,
+so a signal is not reserved to pre-accept a future candidate. If `done` and `rearm` appear
+in one read, the later file timestamp wins (a tie favors `rearm`); `done` waits for the turn that wrote it.
 
-**A hold that clears at a turn end settles before it closes.** The ask used to hide every "a
-turn is about to start" race, because it gave the child one more turn. Two things replace it.
-Claude's `system/init` is a `turn_active` event with no work, so a queued task notification
-marks the turn running a model call before its first `assistant` frame, without renewing the
-idle clock or closing `answer`. And `init` can still land after the evaluation, so row E5a
-holds a publish for `NATIVE_WAKE_SETTLE_SECONDS` when `cleared_in_turn` says the turn end
-released a hold. A turn starting cancels the settle through `note_activity_transition`.
-Publishing runs through the coordinator's existing `stabilizing` phase, and the
-`validating` pass after it must not settle again, which is why `wake_coming` reads the phase.
+Wake a parent for unread child results, not merely for a blocker clearing: a child can finish
+while the parent is in a turn and never appear as a blocker. Wake only on a ready tree and
+name each owed launch once. A `done` takes precedence over a wake. A wake requests new work,
+so its answer replaces the report. Every expiry ask also names unwoken owed results: its
+reply may close over remaining blockers before a later wake is possible. Mark those results
+woken only after the ask is delivered, so a refused ask cannot hide them. A regular wake is
+marked before sending, so a failed send cannot trigger an immediate retry loop.
 
-**A rearm stands until an ask ends it.** `stays` is the one thing that overrides `skips_ask`:
-otherwise a child that rearmed to stay for something invisible would close at its next turn
-end. So a rearm is followed by an ask on every harness.
-
-**The rearm's forms are leases.** `HeldLease` for what is visible, in both forms; with nothing
-visible `SpacedLease`, or `WindowLease` for `--long`, which is quiet until E1. Spacing anchors
-at the last turn end, not at the last ask, so `_run_spacing` restarts it at every turn end and
-never ends it during a turn. `next_wake` must stop asking for a wake then too, or a past-due
-lease spins the 1 ms floor until the turn ends. When spacing ends with blockers showing, they
-become a `HeldLease`: 270 s is for a wait Meridian cannot see, and a wait it can see ends itself.
-
-**A rearm with no candidate still gets its ask.** A rearm consumed at a turn end drops the
-candidate, and nothing brings one back without a turn. C1c asks once the lease stops being
-quiet, and it takes the expiry kind: with nothing to publish, a turn-end ask that went unanswered
-would fall through to C2 and sit to the idle limit. Where a candidate exists (a rearm consumed
-mid-turn, so the turn's end made one), E4 asks the turn-end kind, and a silent child publishes it.
-
-**A reply to the ask is a close.** `reply_closes` is set in `after_send`, not in the row, because
-only a send that landed with no turn running qualifies: `answer` can't carry it, since work in
-the answering turn closes `answer` first. It closes at D0, above `closing`, so on any evidence,
-and it sets `reply_replaces`, because the ask says the reply is the report on every harness. A
-mid-turn expiry sets nothing: its text keeps #886's wording, and that turn's end is an ordinary
-turn end. B2 sits above D0, so a `rearm` read at the same turn end wins, and the fresh state
-drops the pending close. `_close` goes through `cleanup` for both `done` and a reply, so nothing
-it leaves behind needs success validation, and a child started just before the close is cancelled too.
-
-**A failed reply keeps its failure.** The issue was whether a failed turn may replace a good
-candidate. It may: nothing vouches for a child whose last turn failed, and the retained report
-stays either way. So A5 stands, and A5a only adds the cleanup, because the ask told the child that
-closing cancels what runs. A turn-end ask's failed reply takes plain A5.
-
-**Signals need no candidate.** Round 3 of the child-completion review discarded them, because
-a signal file is a mailbox: a stale `done` could pre-accept the next candidate and a stale
-`rearm` could spend budget. That is now safe to drop. With no candidate and no rearm, nothing
-reads the files until the turn end that creates the candidate, so what a read finds was
-written in that turn; everywhere else the files are read at every evaluation. `done` waits
-out the turn it was written in. Of two signals in one read the later stands
-(`consume_resident_signals`), because a first turn's signals all wait for its end. With
-admission gone, nothing needs signal reads to be atomic with installing a candidate, so the
-`candidate_transition` lock went too.
-
-**A parent is woken for what it is owed, not for a blocker clearing.** A child that finished
-during the parent's turn never shows as a blocker. `unread` is `owed_launches` joined with
-what `spawn collect` consumed and live wait leases, read in the descendant refresh so the
-drain pays for it once per poll, and only with a completion channel. C1b and E3b send it
-through `HoldStep.wake` once per launch, only with a ready tree: a partial clear stays silent.
-No later wake is promised, because a reply to the expiry ask closes over blockers (row D0) and
-that row sits above E3b. So every expiry ask (`_expiry`, rows C1, C1c and E1) carries the same
-not-yet-woken children and names each with its report. It marks them `woken` when `after_send`
-sees it delivered, not in the row as a wake does: a refused ask reached nobody, its one retry is
-already bounded, and a ready tree may publish after a refusal, so E3b has to stay able to name
-them. The read takes only the child's non-blocking
-shared lock, never the parent's spawn lock. `woken` is set in the row, not by the send,
-because a failed send re-evaluates at once and would otherwise repeat. The wake sits below
-`closing`: a `done` is the child's own word. It is an ask for the phases, so on Codex and
-OpenCode it replaces that turn end's confirmation rather than adding one. A wake asks for new
-work, so its answer can't be held to the ask's "your previous reply is kept": `reply_replaces`
-makes the next turn end capture the report, and the ordinary ask keeps the kept-reply rule.
-
-**`unknown` still names native blockers.** Native facts come from the stream and don't depend
-on the descendant read that failed or hasn't finished. A rearm read during that window leases
-what the assessment shows, so without them it takes no lease and the next ready evaluation
-asks over a task the rearm was meant to cover.
-
-**A rearm is charged only when `decide` takes it.** `after_signals` reads the budget and row
-B2 spends it, so a rearm dropped by a row above B2 costs nothing.
-
-**A `closing` child in a turn falls through to expiry,** which is why a wedged `done` is asked
-and not published.
-
-`after_send` runs once on every outcome, including failures, and stamps `asked_at` when the
-attempt ends, so the grace starts when the send ends. Only cancellation skips it, and that
-stops the coordinator.
+The send grace starts when the attempt ends. An unknown delivery counts as sent: some
+harnesses provide no receipt even on success, and retrying could duplicate the message. A
+refusal can be retried once at the next expiry. An unanswered expiry leads to cleanup
+after its 300 s answer window; work inside the turn closes that window.
 
 | Outcome of `deliver` | Means | `ask` | `answer` | Then |
 |---|---|---|---|---|
-| Returned | Delivered | `SENT` | `retry_left = False` | With no turn running, `reply_closes` |
+| Returned | Send did not fail; without a receipt this is `posted`, not proof of delivery | `SENT` | If open, `retry_left = False` | With an open window and no turn running, `reply_closes` |
 | `DeliveryRefused` | Alive, nothing written | Expiry with nothing asked: `REFUSED`. Else `SETTLED` | unchanged | Raise |
-| `TransportDead`, or `backend_dead()` | Gone | `SETTLED` | `retry_left = False` | Raise |
-| Any other exception | May have arrived | As returned | As returned | Log |
+| `TransportDead`, or `backend_dead()` | Gone | `SETTLED` | If open, `retry_left = False` | Raise |
+| Any other exception | May have arrived | `SENT` | If open, `retry_left = False` | Log; with no turn running and an open window, `reply_closes` |
 
-The raise reaches the coordinator's `except` around `send_nudge`, which re-evaluates at
-once: that is how a ready tree publishes after a failed ask, and how B1 fires. An unknown
-send counts as sent because Claude's normal success is a write with no receipt, so "sent"
-already means "may have been dropped", and resending could put the same nudge in front of
-the child twice. If it never arrived, no turn comes, and the answer window ends in cleanup.
+A raised send failure causes immediate reevaluation, allowing a ready tree to publish. A
+turn-end ask has no answer window: a ready tree can publish, while blocked descendants wait
+for close or expiry. A known dead backend with an open answer window times out and cleans
+up on reevaluation. If death is not detected, an unanswered expiry waits for that window
+to expire.
 
-`hold.json` and `rearms.jsonl` sit beside `accepted-signals.json`, for the same reason: spawn
-rows forbid unknown keys. `hold.json` is advisory, for the `spawn wait` checkpoint, and is
-written only when what it says changes, so a work event costs a clock read and a turn end one
-write. It exists only between turns. `rearms.jsonl` is the record `spawn show` reads, appended
-when a rearm is charged, not when the CLI runs, so it holds only rearms that took effect.
+The drain waits for a send, including its place in the serialized action queue. A user
+message to a held child is neither work nor an ask; only the resulting turn's work renews
+the limit. Otherwise repeated messages could keep a wedged child alive indefinitely.
 
-A dead transport reaches the hold as a close event, usually before B1 can see it. With no
-turn running and a ready tree, A2 publishes, even with an expiry ask out: a Codex child
-SIGKILLed while idle ends `succeeded`. With a turn running it ends `failed` with the close's
-message, as above. OpenCode differs: a SIGKILLed server surfaces as a read error that fails
-the drain with no hold row involved, idle or not. Blocked or unknown evidence waits in A4, and then `defers_close` and
-`outcome_at_close` decide. B1 covers a backend found dead with no close event yet, so it fires
-at the next turn end or expiry. A turn-end ask has no window: a ready tree publishes, and
-otherwise the stream close or the next expiry ends it. Row A4 and `defers_close` hold for
-descendants on purpose, so B1 must not widen to turn-end asks.
-
-An ask that goes unanswered ends at the next expiry only if `answer` has no retry left. A
-blocked turn-end ask opens a window at the first expiry and cleans up 300 s later. An expiry
-ask that was sent has no retry, so its next expiry cleans up.
-
-The drain blocks during a send. One send is bounded at 33 s, but the wait for `run_action`'s
-lock is not: it is first in, first out, so every queued `spawn message` adds a send, and a
-stop with no budget waits behind them. Nothing deadlocks: the drain holds no lock while it
-waits, and the Codex and OpenCode event queues are unbounded, so their reply is still read.
-
-A `spawn message` to a held child is neither work nor an ask. The hold does not see it.
-What follows is an ordinary turn: `turn_active` settles an ask, the child's work renews the
-clock and closes `answer`, and the turn end runs the table. Do not give it a window: a
-parent polling a wedged child would hold it open forever.
-
-## DrainPlan / DrainPolicy
-
-`DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
-session teardown for one active spawn. Its `coordinator=None` value is the plain path.
-`accepted_signals` names the `spawn done`/`rearm` signals the coordinator consumes:
-hold plans with a writable completion-signal channel `{done, rearm}`, holds without one
-none, Pi `{done}`, plain none. The hold coordinator derives and exposes its set from the
-connection capability; the factory copies it into the plan and sets the Pi/plain sets
-directly. `SpawnManager.start_spawn` writes the plan's set once to
-`spawns/<id>/accepted-signals.json` before the drain starts, and the CLI refuses a
-signal the file doesn't list. Don't move it onto the spawn row (see [`CONTEXT.md`](CONTEXT.md)).
-`DrainPolicy` governs terminal event behavior:
-
-| Policy | On terminal event | Action |
-|---|---|---|
-| `SingleTurnDrainPolicy` (default) | any | terminate |
-| `PersistentDrainPolicy` | `succeeded` | emit `meridian/turn_completed`, continue |
-| `PersistentDrainPolicy` | error/cancel | terminate |
-
-Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for long-lived
-session drains that keep the harness alive across turns.
-
-## Entry Points
-
-- `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
-- `spawn_dispatch.py` — connection creation/start dispatch
-- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification, `resolve_terminal_outcome` priority resolver
-- `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
-- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
-- `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
-- `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
-- `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
-- `completion_coordinator.py` — shared candidate/wait/deadline state machine, with
-  distinct stabilization and fresh-evidence validation phases
-- `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
-- `spawn_session.py` — `SpawnSession`, `DrainOutcome`
-- `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
-  policy
-- `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
-- `pi_work_ledger.py` — sole mutable owner of Pi-private disk blockers; exposes
-  immutable categorized snapshots
-- `hold_state.py` — the hold's state value, `decide` table, folds and close rules; pure
-- `resident_drain.py` — `HoldEvidence`, `_HoldProfile` (the shell around `hold_state.py`),
-  cleanup, and the hold coordinator
-- `rearm_window.py` — shared resident/native idle-limit arithmetic and persisted rearm budget
-- `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
-- `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
-  observation and exact public-message admission fencing; consumption uses the shared
-  `harness/pi_private_state.py` reader, and its per-source failures feed the ledger
-- `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
-- `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
-- `control_socket.py` — per-spawn message endpoint
-
-Codex/OpenCode and Pi completion use the shared reconciled transitive spawn-tree assessment as
-their sole persisted-descendant authority. The derived rows also decide Pi result
-publication: a dead child with no written outcome reads terminal and waits on result
-delivery. `pi_result_publication_pending` remains only for a row that vanishes between
-the index read and the authority read. Pi's disk watcher observes private task, consumption, receipt,
-public-observation and fault files; incomplete or wrong-parent spawn directories are not descendant
-evidence. Accessors read one immutable cached assessment; a single-flight worker catches
-up the history index, selects the transitive subtree (including archived ancestry), and
-authoritatively rereads selected loose rows. Refresh completion uses the auxiliary-wake
-path. Every successful publication attempt requires a refresh that started after that
-attempt. A closed event stream disables further event reads but remains in the same
-auxiliary-wake/timeout arbitration until that attempt is accepted or rejected. This
-freshness check is not an atomic child-admission barrier.
+`hold.json` is an advisory between-turn checkpoint; `rearms.jsonl` records grants that took
+effect, not requests. They are side files because spawn rows reject unknown fields.
