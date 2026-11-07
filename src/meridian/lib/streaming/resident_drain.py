@@ -152,6 +152,11 @@ class HoldEvidence:
         return self._descendants.validated(request)
 
 
+# How long a sent ask waits for a turn to start before a ready tree publishes. OpenCode marks
+# a turn active only at its first output, so a slow model needs more than the poll interval.
+ASK_GRACE_SECONDS = 30.0
+
+
 class _HoldProfile:
     """Gather facts for `decide`, apply its step, and own the send and the signals."""
 
@@ -166,7 +171,7 @@ class _HoldProfile:
         native_cleared: Callable[[], bool],
         skips_ask: bool,
         deadline_seconds: float,
-        poll_seconds: float,
+        grace_seconds: float,
         rearm_budget: int | None,
         clock: Callable[[], float],
         completion_signals_available: bool,
@@ -190,7 +195,7 @@ class _HoldProfile:
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
         )
         self._clock = clock
-        self._confirmation_grace_seconds = poll_seconds
+        self._ask_grace_seconds = grace_seconds
         self._awaiting_done = False
         self._state = HoldState()
         self._wake: tuple[FinishedChild, ...] = ()
@@ -258,7 +263,7 @@ class _HoldProfile:
                 wake_coming=self._native_cleared()
                 and not context.stabilization_elapsed
                 and context.state.phase != "validating",
-                grace_seconds=self._confirmation_grace_seconds,
+                grace_seconds=self._ask_grace_seconds,
                 timeout=self._window.timeout_decision(),
             ),
         )
@@ -295,7 +300,7 @@ class _HoldProfile:
         del assessment
         return next_wake(
             self._state,
-            self._confirmation_grace_seconds,
+            self._ask_grace_seconds,
             active_turn=state.active_turn,
         )
 
@@ -482,7 +487,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
             skips_ask=native is not None,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,
-            poll_seconds=resolved_poll,
+            grace_seconds=ASK_GRACE_SECONDS,
             rearm_budget=rearm_budget,
             clock=clock,
         )
