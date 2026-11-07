@@ -715,6 +715,35 @@ def test_claude_error_tail_is_known_incomplete(tmp_path: Path):
         capture.finish()
 
 
+def test_claude_request_blob_copy_does_not_reopen_an_answered_tool(tmp_path: Path):
+    tool_use = {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}}
+    answered = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [tool_use]}},
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}],
+            },
+        },
+        {
+            "type": "api-request-blob",
+            "sessionId": "s",
+            "hash": "h",
+            "message": {"role": "assistant", "content": [tool_use]},
+        },
+    ]
+    capture = _native_file_capture(tmp_path, "claude", answered)
+    list(capture.records())
+    capture.finish()
+
+    (tmp_path / "open").mkdir()
+    unanswered = _native_file_capture(tmp_path / "open", "claude", answered[:1])
+    list(unanswered.records())
+    with pytest.raises(ValueError, match="incomplete"):
+        unanswered.finish()
+
+
 def test_corrupt_published_snapshot_is_not_overwritten(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     captured = _snapshot_path(root, key)
