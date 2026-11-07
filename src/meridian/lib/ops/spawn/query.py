@@ -266,6 +266,7 @@ def detail_from_row(
         status=row.status,
         model=row.model or "",
         harness=row.harness or "",
+        agent=row.agent,
         parent_id=row.parent_id,
         work_id=row.work_id,
         authority_root=row.control_root,

@@ -155,6 +155,8 @@ timestamps, paths, model) is hidden by default.
 | `--bg` | Spawn ID + wait instructions (unchanged) |
 
 `spawn show` and `spawn status` default to a moderate tier: status/model/duration plus actionable failure context.
+Both also print `Agent:` (the spawn's agent profile) and `Work:` (the work item the chat is attached to now,
+which `work start`/`switch` may have changed since launch), each omitted when empty; JSON carries `agent` and `work_id`.
 Inside a spawn, printing a non-empty terminal report through `spawn show`,
 `spawn status --full`, or `spawn report show` consumes its pending completion
 notice. `spawn cancel` likewise consumes an outcome it reports as `cancelled`.
