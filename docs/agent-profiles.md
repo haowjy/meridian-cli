@@ -545,9 +545,10 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
   rules (a `*` rule, if any) and `approval`, as if the scoped allow were absent. To restrict
   the rest, write `bash: deny` beside the scoped allows. On Claude that deny is carried by
   the permission mode (`manual`) rather than `--disallowedTools Bash`; see below.
-- Narrower capabilities win where they overlap. `edit` covers writes too, but
-  `edit: allow` with `'write(src/*)': allow` still permits writes only under `src/`, just
-  as `edit: deny` with `write: allow` leaves writes allowed.
+- Narrower capabilities win where they overlap. `edit` covers writes too: `edit: deny` with
+  `write: allow` leaves writes allowed. A scoped `'write(src/*)': allow` only pre-approves
+  writes under `src/`, even beside `edit: allow`; to confine writes to `src/`, write
+  `write: deny` beside it.
 - `approval: never` means "do not prompt"; it does not mean "ignore `tools`."
 - On a Claude spawn under `approval: default` or `confirm`, a plain `bash: deny` is not
   emitted as `--disallowedTools Bash`, which would also block the spawn's

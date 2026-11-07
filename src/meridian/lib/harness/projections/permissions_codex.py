@@ -328,7 +328,7 @@ def _codex_report(
                 ReportLine(
                     rule_element(rule),
                     "unsupported",
-                    "Codex's switch cannot express a scoped rule",
+                    "Codex can't pre-approve a scoped command; it follows approval_policy",
                 )
             )
         elif rule.action == "ask":

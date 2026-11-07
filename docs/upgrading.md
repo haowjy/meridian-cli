@@ -14,6 +14,9 @@ is carried by the permission mode (`manual`) instead of `--disallowedTools Bash`
 still runs Bash calls it classifies as read-only, and the spawn's own `meridian spawn done`
 grant stays usable. A whole-policy `'*': deny` allowlist is unchanged.
 
+The same holds across capabilities. `edit: allow` with `'write(src/*)': allow` used to confine
+writes to `src/`; now writes run anywhere. Add `write: deny` to keep the confinement.
+
 ## `spawn --continue` without a prompt gives a clearer error
 
 `meridian spawn --continue pN` always needed a prompt (`-p`, `--prompt-file`, or `--prompt-file -`
@@ -77,8 +80,9 @@ What changes for you:
   is refused.
 - **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
   refuses the other commands. A scoped `ask` is still not enforced.
-- **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
-  `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
+- **Allowlists bind file reads too.** Codex reads files through the shell, so when the hook refuses
+  unmatched commands (an explicit `bash: deny` or `ask`, or `'*': deny`, beside `bash(git *)`), the
+  agent can no longer `cat` a file. Scoped allows alone refuse nothing. Add the read commands the agent needs
   (`bash(rg *)`, `bash(cat *)`).
 - **Gaps that remain.** The hook is a guard against accidents such as a careless
   `git reset --hard`, not a sandbox, and an agent that tries can get past it. A rule matches
