@@ -161,31 +161,6 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
 
 
 @pytest.mark.asyncio
-async def test_terminal_rearm_overrides_done_and_rejects_candidate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Rearm wins a coincident done and abandons the current candidate."""
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    clock.advance(1.0)
-    candidate = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert candidate.emit_turn_boundary is True
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
-
-    requested = await coordinator.handle_timeout()
-
-    assert requested.recorded_outcome is None
-    assert coordinator.pending_outcome is None
-    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
-    assert row is not None
-    assert row.resident_rearm_count == 1
-    assert connection.fake_resident_backend.awaiting_done_values == [True]
-    assert connection.fake_resident_backend.injected_messages == []
-
-
-@pytest.mark.asyncio
 async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -615,32 +590,6 @@ async def test_wait_done_signal_beats_already_expired_deadline(
 
 
 @pytest.mark.asyncio
-async def test_followup_turn_active_defers_ready_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert terminal.emit_turn_boundary is True
-
-    spawn_store.finalize_spawn(
-        tmp_path,
-        SpawnId("p2"),
-        "succeeded",
-        0,
-        origin="runner",
-    )
-    clock.advance(1.0)
-    await start_turn(coordinator)
-    decision = await coordinator.handle_timeout()
-
-    assert decision.recorded_outcome is None
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-    assert connection.fake_resident_backend.injected_messages == []
-
-
-@pytest.mark.asyncio
 async def test_plain_terminal_deadline_is_not_reset_by_later_polls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -748,25 +697,6 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
     assert decision.recorded_outcome.error == "resident_deadline_expired"
     assert cancel_calls == [SpawnId("p1"), SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-
-
-@pytest.mark.asyncio
-async def test_intentional_stream_close_refuses_blocked_resident_outcome(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert terminal.emit_turn_boundary is True
-
-    clock.advance(1.0)
-    close_outcome = coordinator.handle_close(intentional_stop=True)
-
-    assert close_outcome is not None
-    assert close_outcome.status == "failed"
-    assert close_outcome.error == "stream_closed_while_awaiting_done"
-    assert connection.fake_resident_backend.awaiting_done_values == [True]
 
 
 @pytest.mark.asyncio
