@@ -7,9 +7,7 @@ model available in your installation via `CONTEXT_MODEL`. If native eligibility
 requires login, set `CODEX_AUTH_FILE` to your auth.json before setup to deliberately
 copy only that file into the disposable store; no agent/config tree is copied.
 
-Flag conflicts are covered by [argv normalization](../../unit/cli/test_argv_normalization.py);
-reference resolution is covered by [context-ref integration](../../integration/ops/test_context_ref.py).
-Keep the rendered report/transcript boundary here rather than a second policy matrix.
+Keep the rendered report/transcript boundary here rather than a policy matrix.
 
 ## Setup
 

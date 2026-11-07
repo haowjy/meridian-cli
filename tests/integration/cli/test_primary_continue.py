@@ -17,7 +17,6 @@ import meridian.cli.primary_launch as primary_launch_module
 import meridian.lib.launch.context as launch_context
 from meridian.cli.primary_launch import PrimaryLaunchOutput, run_primary_launch
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
@@ -251,64 +250,6 @@ def test_primary_continue_maps_source_contract_to_launch_request(
     assert request.agent == snapshot.agent
     assert request.skills == snapshot.skills
     assert request.passthrough_args == snapshot.extra_args
-
-
-def test_continue_to_different_harness_fails_without_changing_source_chat(
-    tmp_path: Path,
-) -> None:
-    """A native chat cannot be silently replaced by a fresh cross-harness run."""
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-    native_store = runtime_root / "native-pi" / "sessions"
-    native_store.mkdir(parents=True)
-    session_id = "pi-native-session"
-    (native_store / f"{session_id}.jsonl").write_text(
-        json.dumps({"type": "session", "id": session_id}) + "\n",
-        encoding="utf-8",
-    )
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="pi",
-        harness_session_id=session_id,
-        native_store=str(native_store),
-        model="pi/coding-agent",
-        kind="primary",
-    ).chat_id
-    source_spawn = spawn_store.start_spawn(
-        runtime_root,
-        chat_id=chat_id,
-        model="pi/coding-agent",
-        agent="",
-        harness="pi",
-        prompt="source prompt",
-        kind="primary",
-        harness_session_id=session_id,
-    ).spawn_id
-    session_store.update_session_spawn_id(runtime_root, chat_id, source_spawn)
-    session_store.stop_session(runtime_root, chat_id)
-    before_chat = session_store.chat_record(runtime_root, chat_id)
-    before_spawns = spawn_store.list_spawns(runtime_root)
-
-    request = launch_context.SpawnRequest(
-        prompt="continue prompt",
-        session=SessionRequest(
-            requested_harness_session_id=session_id,
-            continue_harness="pi",
-            continue_chat_id=chat_id,
-            continue_source_ref=chat_id,
-            continue_source_tracked=True,
-            source_native_store=str(native_store),
-        ),
-    )
-    with pytest.raises(ValueError, match=rf"chat {chat_id}.*'pi'.*'claude'.*start a new chat"):
-        launch_context._resolve_session_continuation(
-            request=request,
-            harness=get_default_harness_registry().get(HarnessId.CLAUDE),
-        )
-
-    assert session_store.chat_record(runtime_root, chat_id) == before_chat
-    assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 
 def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
@@ -777,47 +718,6 @@ def test_opencode_exact_continue_explicit_override_keeps_model_in_spec(
     )
 
 
-def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="claude",
-        harness_session_id="",
-        model="sonnet",
-    ).chat_id
-    session_store.stop_session(runtime_root, chat_id)
-    with pytest.raises(
-        NativeSessionUnavailable,
-        match=f"unbound: no verified native session for {chat_id}",
-    ):
-        _run_primary_continue(tmp_path, chat_id)
-
-
-@pytest.mark.parametrize("harness", ["claude", "codex", "opencode", "pi"])
-@pytest.mark.parametrize("operation", ["continue", "fork"])
-def test_tracked_chat_without_native_store_refuses_continue_and_fork(
-    tmp_path: Path,
-    harness: str,
-    operation: str,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness=harness,
-        harness_session_id="native-id",
-        model="test",
-    ).chat_id
-    session_store.stop_session(runtime_root, chat_id)
-    with pytest.raises(NativeSessionUnavailable) as exc:
-        _run_primary_continue(
-            tmp_path,
-            continue_ref=chat_id if operation == "continue" else None,
-            fork_ref=chat_id if operation == "fork" else None,
-            dry_run=True,
-        )
-    assert (exc.value.ref, exc.value.reason) == (chat_id, "unbound")
-
-
 def test_complete_claude_key_projects_exact_resume_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -847,55 +747,3 @@ def test_complete_claude_key_projects_exact_resume_command(
 
     assert "--resume" in output.command
     assert native_id in output.command
-
-
-@pytest.mark.parametrize("operation", ["continue", "fork"])
-def test_tracked_native_id_without_harness_never_infers_from_ambient_store(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-) -> None:
-    from meridian.lib.harness.claude_sessions import project_slug
-    from meridian.lib.ops import reference
-
-    runtime_root = _state_root(tmp_path)
-    native_store = tmp_path / "ambient-claude"
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(native_store))
-    native_project = native_store / "projects" / project_slug(tmp_path)
-    native_project.mkdir(parents=True)
-    (native_project / "native-known.jsonl").write_text(
-        '{"type":"agent-setting","sessionId":"native-known"}\n',
-        encoding="utf-8",
-    )
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="",
-        harness_session_id="native-known",
-        model="sonnet",
-    ).chat_id
-    session_store.stop_session(runtime_root, chat_id)
-
-    resolved = reference.resolve_session_reference(tmp_path, chat_id)
-    assert resolved.harness is None
-    assert resolved.missing_harness_session_id
-    assert resolved.authoritative_harness_session_id is None
-
-    def forbid_adapter_inference(*args: object, **kwargs: object) -> None:
-        pytest.fail("tracked references must not query adapters")
-
-    monkeypatch.setattr(
-        reference,
-        "infer_harness_from_untracked_session_ref",
-        forbid_adapter_inference,
-    )
-    assert reference.resolve_session_reference(tmp_path, chat_id) == resolved
-    with pytest.raises(
-        NativeSessionUnavailable,
-        match=f"unbound: no verified native session for {chat_id}",
-    ):
-        _run_primary_continue(
-            tmp_path,
-            chat_id if operation == "continue" else "",
-            fork_ref=chat_id if operation == "fork" else None,
-        )

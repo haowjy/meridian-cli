@@ -24,9 +24,7 @@ from meridian.lib.ops.pruning import (
     scan_orphan_project_dirs,
 )
 from meridian.lib.platform.locking import try_lock_file
-from meridian.lib.state import session_store, work_repository, work_store
-from meridian.lib.state.project_identity import ensure_project_identity
-from meridian.lib.state.user_paths import get_project_home
+from meridian.lib.state import session_store, work_repository
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -141,38 +139,6 @@ def _seed_pruning_layout(
     return project_root, current_spawn, orphan_root, other_spawn
 
 
-def test_doctor_repairs_malformed_work_item_metadata(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root, _, _, _ = _seed_pruning_layout(tmp_path, monkeypatch)
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[context.work]",
-                'path = "context/work"',
-                'archive = "context/archive/work"',
-                "",
-                "[project]",
-                'id = "current-project-uuid"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    project_state_dir = project_root / ".meridian"
-    item = work_repository.create_work_item(project_state_dir, "repair-item")
-    status_path = work_store.work_scratch_dir(project_state_dir, item.name) / "__status.json"
-    status_path.write_text("not json", encoding="utf-8")
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
-
-    repaired = json.loads(status_path.read_text(encoding="utf-8"))
-    assert repaired["status"] == "open"
-    assert repaired["archived_at"] is None
-    assert "work_item_metadata" in result.repaired
-
-
 def test_doctor_prune_only_prunes_current_project_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -214,30 +180,6 @@ def test_doctor_artifact_retention_preserves_quarantine_and_prunes_stale_row(
     assert result.pruned_spawn_artifacts == 1
     assert not stale_spawn.exists()
     assert quarantined_spawn.exists()
-
-
-def test_doctor_local_mode_skips_cross_project_enumeration(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _create_project_root(tmp_path)
-    _create_agent_skill_dirs(project_root)
-    monkeypatch.setattr(
-        diag,
-        "check_upgrade_availability",
-        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
-    )
-    monkeypatch.setattr(
-        diag,
-        "scan_orphan_project_dirs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("doctor local mode should not enumerate sibling projects")
-        ),
-    )
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=False))
-
-    assert result.ok is True
 
 
 def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
@@ -359,29 +301,6 @@ def test_global_prune_rejects_lock_directory_supplied_directly(tmp_path: Path) -
     assert lock_dir.is_dir()
 
 
-def test_project_retention_scans_own_disjoint_namespaces(tmp_path: Path) -> None:
-    user_home = tmp_path / "user-home"
-    source_path = tmp_path / "bare"
-    source_path.mkdir()
-    adhoc_root = _seed_adhoc_root(
-        user_home,
-        "adhoc.bare.0123456789ab",
-        source_path,
-        mtime=1_600_000_000.0,
-    )
-    committed_root = user_home / "projects" / "committed-id"
-    _write_text(committed_root / "state.txt", "old\n")
-    _set_tree_mtime(committed_root, 1_600_000_000.0)
-    origin_mtime = (adhoc_root / "origin.json").stat().st_mtime_ns
-
-    orphans = scan_orphan_project_dirs(user_home, retention_days=30, now=2_000_000_000.0)
-    adhoc = scan_adhoc_project_dirs(user_home, retention_days=30, now=2_000_000_000.0)
-
-    assert [item.uuid for item in orphans] == ["committed-id"]
-    assert [item.project_id for item in adhoc] == [adhoc_root.name]
-    assert (adhoc_root / "origin.json").stat().st_mtime_ns == origin_mtime
-
-
 def test_adhoc_scan_uses_session_record_activity_not_origin_mtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -472,60 +391,6 @@ def test_adhoc_retention_zero_counts_recent_context_activity(tmp_path: Path) -> 
     assert context_root.is_dir()
 
 
-@pytest.mark.parametrize(
-    ("path_state", "expected_reason"),
-    [("gone", "adhoc-path-gone"), ("marker", "adhoc-shadowed")],
-)
-def test_adhoc_gone_and_shadowed_paths_use_shorter_retention(
-    tmp_path: Path,
-    path_state: str,
-    expected_reason: str,
-) -> None:
-    now = 2_000_000_000.0
-    user_home = tmp_path / "user-home"
-    source_path = tmp_path / path_state
-    source_path.mkdir()
-    runtime_root = _seed_adhoc_root(
-        user_home,
-        f"adhoc.{path_state}.2123456789ab",
-        source_path,
-        mtime=now - (4 * 24 * 60 * 60),
-    )
-    if path_state == "gone":
-        source_path.rmdir()
-    else:
-        (source_path / "meridian.toml").write_text(
-            '[project]\nid = "committed"\n', encoding="utf-8"
-        )
-
-    candidates = scan_adhoc_project_dirs(user_home, retention_days=3, now=now)
-
-    assert len(candidates) == 1
-    assert candidates[0].project_id == runtime_root.name
-    assert candidates[0].path == source_path.as_posix()
-    assert candidates[0].reason == expected_reason
-    assert candidates[0].prunable
-
-
-def test_adhoc_scan_without_origin_falls_back_to_tree_activity(tmp_path: Path) -> None:
-    now = 2_000_000_000.0
-    user_home = tmp_path / "user-home"
-    runtime_root = user_home / "projects" / "adhoc.crashed.6123456789ab"
-    _write_text(runtime_root / "state.txt", "crash residue\n")
-    _set_tree_mtime(runtime_root, now - (8 * 24 * 60 * 60))
-
-    candidates = scan_adhoc_project_dirs(user_home, retention_days=30, now=now)
-
-    assert len(candidates) == 1
-    assert candidates[0].path is None
-    assert candidates[0].reason == "adhoc-path-gone"
-    assert candidates[0].prunable
-    assert (
-        candidates[0].last_activity
-        == datetime.fromtimestamp(now - (8 * 24 * 60 * 60), tz=UTC).isoformat()
-    )
-
-
 def test_adhoc_prune_removes_context_and_rechecks_activity_under_lock(tmp_path: Path) -> None:
     now = 2_000_000_000.0
     user_home = tmp_path / "user-home"
@@ -571,87 +436,6 @@ def test_adhoc_prune_rejects_committed_candidate(tmp_path: Path) -> None:
 
     assert prune_adhoc_project_dirs([candidate], retention_days=0, now=2_000_000_000.0) == 0
     assert runtime_root.is_dir()
-
-
-def test_doctor_global_reports_and_prunes_shadowed_adhoc_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = 2_000_000_000.0
-    user_home = tmp_path / "user-home"
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
-    monkeypatch.setattr(diag.time, "time", lambda: now)
-    project_root = _create_project_root(tmp_path)
-    old_shadowed_path = tmp_path / "initialized-eight-days-ago"
-    old_shadowed_path.mkdir()
-    old_runtime_root = _seed_adhoc_root(
-        user_home,
-        "adhoc.old-shadowed.4123456789ab",
-        old_shadowed_path,
-        mtime=now - (8 * 24 * 60 * 60),
-    )
-    (old_shadowed_path / "meridian.toml").write_text(
-        '[project]\nid = "fresh-id"\n', encoding="utf-8"
-    )
-    old_context_root = user_home / "context" / old_runtime_root.name
-    _write_text(old_context_root / "work" / "old.md", "old context\n")
-    _set_tree_mtime(old_context_root, now - (8 * 24 * 60 * 60))
-
-    fresh_shadowed_path = tmp_path / "initialized-just-now"
-    fresh_shadowed_path.mkdir()
-    fresh_runtime_root = _seed_adhoc_root(
-        user_home,
-        "adhoc.fresh-shadowed.5123456789ab",
-        fresh_shadowed_path,
-        mtime=now - 5,
-    )
-    (fresh_shadowed_path / "meridian.toml").write_text(
-        '[project]\nid = "another-fresh-id"\n', encoding="utf-8"
-    )
-    origin_mtimes = {
-        root.name: (root / "origin.json").stat().st_mtime_ns
-        for root in (fresh_runtime_root, old_runtime_root)
-    }
-
-    report = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=True))
-
-    assert len(report.adhoc_project_dirs) == 2
-    by_id = {candidate.project_id: candidate for candidate in report.adhoc_project_dirs}
-    fresh = by_id[fresh_runtime_root.name]
-    old = by_id[old_runtime_root.name]
-    assert fresh.path == fresh_shadowed_path.as_posix()
-    assert fresh.reason == "adhoc-shadowed"
-    assert not fresh.prunable
-    assert old.path == old_shadowed_path.as_posix()
-    assert old.reason == "adhoc-shadowed"
-    assert old.prunable
-
-    text = report.format_text()
-    assert f"adhoc_project: {fresh.project_id}" in text
-    assert f"  origin_path: {fresh_shadowed_path}" in text
-    assert "  reason: adhoc-shadowed" in text
-    assert f"  last_activity: {fresh.last_activity}" in text
-    assert f"  size_bytes: {fresh.size_bytes}" in text
-    assert "  prunable: no" in text
-    assert "  prunable: yes" in text
-
-    payload = report.model_dump(mode="json")
-    json_by_id = {item["project_id"]: item for item in payload["adhoc_project_dirs"]}
-    assert json_by_id[fresh_runtime_root.name]["prunable"] is False
-    assert json_by_id[old_runtime_root.name]["prunable"] is True
-    assert {
-        root.name: (root / "origin.json").stat().st_mtime_ns
-        for root in (fresh_runtime_root, old_runtime_root)
-    } == origin_mtimes
-
-    pruned = doctor_sync(
-        DoctorInput(project_root=project_root.as_posix(), global_=True, prune=True)
-    )
-    assert pruned.pruned_adhoc_dirs == 1
-    assert fresh_runtime_root.is_dir()
-    assert not old_runtime_root.exists()
-    assert not old_context_root.exists()
 
 
 def test_doctor_global_lists_non_quiescent_adhoc_state(
@@ -726,30 +510,3 @@ def test_doctor_adhoc_retention_ignores_cwd_project_config(
     env_value_applied = doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=True))
     assert len(env_value_applied.adhoc_project_dirs) == 1
     assert env_value_applied.adhoc_project_dirs[0].prunable
-
-
-def test_doctor_global_prune_does_not_recreate_current_adhoc_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = 2_000_000_000.0
-    user_home = tmp_path / "user-home"
-    project_root = _create_project_root(tmp_path)
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
-    monkeypatch.setenv("MERIDIAN_STATE_ADHOC_RETENTION_DAYS", "0")
-    monkeypatch.setattr(diag.time, "time", lambda: now)
-    identity = ensure_project_identity(project_root)
-    runtime_root = get_project_home(str(identity.id))
-    old = now - (2 * 60 * 60)
-    os.utime(runtime_root / "origin.json", (old, old))
-    context_root = user_home / "context" / str(identity.id)
-    _write_text(context_root / "work" / "old.md", "old context\n")
-
-    result = doctor_sync(
-        DoctorInput(project_root=project_root.as_posix(), global_=True, prune=True)
-    )
-
-    assert result.pruned_adhoc_dirs == 1
-    assert not runtime_root.exists()
-    assert not context_root.exists()

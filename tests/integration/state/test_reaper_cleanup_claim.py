@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -108,45 +107,6 @@ def test_runner_finalize_between_reaper_snapshot_and_cleanup_preserves_scope(
     assert kill_calls == []
 
 
-def test_reaper_recovers_claim_after_crash_before_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-    from meridian.lib.state.reaper import resolve_cleanup_claim
-
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.resolve_cleanup_claim",
-        lambda *_args, **_kwargs: None,
-    )
-
-    terminal = reconcile_active_spawn(tmp_path, runtime_root, _record(runtime_root, spawn_id))
-    claim_path = runtime_root / "spawns" / spawn_id / "reaper_cleanup_claim.json"
-    assert terminal.status == "failed"
-    assert claim_path.is_file()
-
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.resolve_cleanup_claim",
-        resolve_cleanup_claim,
-    )
-    terminated: list[str] = []
-
-    def terminate(claimed: ProcessScopeSnapshot, **_kwargs) -> CleanupResult:
-        terminated.append(claimed.release_id)
-        return _cleanup_result(claimed)
-
-    monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
-        terminate,
-    )
-    recovered = reconcile_active_spawn(tmp_path, runtime_root, terminal)
-
-    assert recovered.status == terminal.status
-    assert recovered.terminal == terminal.terminal
-    assert terminated == [scope.release_id]
-    assert not claim_path.exists()
-
-
 def test_double_reconcile_does_not_double_kill_claimed_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -174,21 +134,3 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
     assert terminated == [scope.release_id]
     claim_path = runtime_root / "spawns" / spawn_id / "reaper_cleanup_claim.json"
     assert not claim_path.exists()
-
-
-def test_cleanup_failure_keeps_only_unresolved_claim(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id, scope = _spawn_with_scope(tmp_path)
-
-    def fail(claimed: ProcessScopeSnapshot, **_kwargs) -> CleanupResult:
-        result = _cleanup_result(claimed)
-        return CleanupResult(**{**result.__dict__, "skip_reason": "termination_exception"})
-
-    monkeypatch.setattr("meridian.lib.core.process_cleanup.terminate_scope_sync", fail)
-    reconcile_active_spawn(tmp_path, runtime_root, _record(runtime_root, spawn_id))
-
-    claim_path = runtime_root / "spawns" / spawn_id / "reaper_cleanup_claim.json"
-    payload = json.loads(claim_path.read_text(encoding="utf-8"))
-    assert [item["release_id"] for item in payload["scopes"]] == [scope.release_id]

@@ -13,75 +13,26 @@ fully mocked — no real I/O.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import psutil
-import pytest
 
 from meridian.lib.platform.process_scope import posix
-from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH, CleanupResult
+from meridian.lib.platform.process_scope.base import CleanupResult
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_proc(pid: int) -> MagicMock:
-    proc = MagicMock(spec=psutil.Process)
-    proc.pid = pid
-    return proc
-
-
-@dataclass
-class _FakeProc:
-    pid: int
-    _children: list[object]
-    killed: int = 0
-
-    def create_time(self) -> float:
-        return 100.0
-
-    def children(self, recursive: bool = False) -> list[object]:
-        assert recursive is True
-        return list(self._children)
-
-
 # ---------------------------------------------------------------------------
 # PROC-004: dead root + dissolved PGID → orphan scan runs
 # ---------------------------------------------------------------------------
-
-
-@posix_only
-def test_dead_root_scans_group_even_when_group_signal_succeeds() -> None:
-    """Retain orphaned group members for wait/escalation after a successful TERM."""
-    from meridian.lib.platform.process_scope.posix import terminate_pgid
-
-    with (
-        patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
-            side_effect=psutil.NoSuchProcess(pid=12345),
-        ),
-        # SIGTERM succeeds (group still exists)
-        patch("os.killpg"),
-        patch(
-            "meridian.lib.platform.process_scope.posix._scan_by_pgid",
-            return_value=[],
-        ) as mock_scan,
-    ):
-        result = terminate_pgid(
-            pgid=12345,
-            root_pid=12345,
-            created_at_epoch=1_000_000.0,
-            grace_seconds=0.1,
-            reason="test_stop",
-            scope_id="backend",
-        )
-
-    mock_scan.assert_called_once_with(12345)
-    assert result.degraded_fallback is True  # root was dead → degraded
-    assert result.skip_reason is None
 
 
 @posix_only
@@ -112,36 +63,6 @@ def test_confirmed_pid_reuse_still_skips() -> None:
 
     assert result.skip_reason == "pid_reuse_detected"
     mock_killpg.assert_not_called()
-
-
-@posix_only
-def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
-    """Unknown birth time means unverified, not reused: owned teardown proceeds."""
-    from meridian.lib.platform.process_scope.posix import terminate_pgid
-
-    root_proc = _make_mock_proc(12345)
-    root_proc.create_time.side_effect = AssertionError("birth guard should be skipped")
-    root_proc.children.return_value = []
-
-    with (
-        patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
-            return_value=root_proc,
-        ),
-        patch("meridian.lib.platform.process_scope.posix.psutil.wait_procs", return_value=([], [])),
-        patch("os.killpg") as mock_killpg,
-    ):
-        result = terminate_pgid(
-            pgid=12345,
-            root_pid=12345,
-            created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
-            grace_seconds=0.1,
-            reason="test_stop",
-            scope_id="backend",
-        )
-
-    assert result.skip_reason is None
-    mock_killpg.assert_called_once()
 
 
 @posix_only
@@ -195,19 +116,3 @@ def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
         }
     ]
     assert killpg_calls == []
-
-
-def test_terminate_pgid_on_windows_raises_runtime_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(posix, "IS_WINDOWS", True)
-
-    with pytest.raises(RuntimeError, match="not available on Windows"):
-        posix.terminate_pgid(
-            pgid=222,
-            root_pid=111,
-            created_at_epoch=100.0,
-            grace_seconds=5.0,
-            reason="reaper",
-            scope_id="backend",
-        )

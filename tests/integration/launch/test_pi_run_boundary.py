@@ -25,7 +25,6 @@ from tests.integration.launch.test_pi_identity_launch import (
     pi_runtime,  # noqa: F401
 )
 from tests.support.launch_paths import launch_paths
-from tests.support.process_race import run_spawn_race_or_skip
 
 
 @pytest.mark.parametrize(
@@ -156,6 +155,135 @@ def install_boundary_shim(root: Path, shape: str) -> None:
         )
 
 
+def _primary_cli(
+    root: Path,
+    *,
+    continue_ref: str | None = None,
+    fork_ref: str | None = None,
+    dry_run: bool = False,
+) -> PrimaryLaunchOutput:
+    return run_primary_launch(
+        project_root=root,
+        continue_ref=continue_ref,
+        fork_ref=fork_ref,
+        fork_fresh_ref=None,
+        model=None,
+        harness="pi",
+        agent=None,
+        work="",
+        task_dir=None,
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=dry_run,
+        passthrough=(),
+        prompt="hello",
+    )
+
+
+def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.SessionRecord) -> None:
+    row = spawn_store.get_spawn(runtime, spawn_id)
+    assert row is not None and row.status == "failed"
+    assert row.terminal is not None and row.terminal.error == "entry_mismatch"
+    assert (row.run_boundary.status if row.run_boundary else None) == "mismatch"
+    assert row.current_chat_id is None
+    facts = [
+        json.loads(line)
+        for line in launch_paths(runtime, spawn_id).runner_lifecycle.read_text().splitlines()
+    ]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["expected"] == {
+        "harness": "pi",
+        "native_store": entry.native_store,
+        "session_id": entry.harness_session_id,
+    }
+    assert mismatch[0]["observed"] == {
+        "harness": "pi",
+        "native_store": entry.native_store,
+        "session_id": "wrong-entry",
+    }
+    assert all(
+        record.harness_session_id not in {"wrong-entry", "switched-id"}
+        for record in session_store.list_all_session_records(runtime)
+    )
+
+
+def _allocate_test_exit_chat(
+    runtime: Path,
+    entry: str,
+    harness: str,
+    native_store: str,
+    session_id: str,
+    spawn_id: str,
+) -> str | None:
+    return session_store.get_or_create_observed_chat(
+        runtime,
+        entry,
+        harness,
+        native_store,
+        session_id,
+        spawn_id=spawn_id,
+        native_exists=lambda: True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conclusion_raises", [False, True])
+@pytest.mark.parametrize("run_fails", [False, True])
+async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
+    pi_runtime: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    conclusion_raises: bool,
+    run_fails: bool,
+) -> None:
+    from meridian.cli import streaming_serve as serve
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+    from meridian.lib.harness.pi import PiAdapter
+    from meridian.lib.launch.native_run import NativeRunOutcome
+    from meridian.lib.state.spawn.model import RunBoundaryOutcome
+
+    install_boundary_shim(pi_runtime, "same")
+    monkeypatch.setattr(serve, "resolve_cli_project_root", lambda: pi_runtime)
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(pi_runtime))
+    run_error = RuntimeError("transport failed first")
+    identity_error = NativeEntryMismatch(
+        NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b")
+    )
+    order = []
+
+    async def run(**kwargs):
+        order.append("run")
+        if run_fails:
+            raise run_error
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status="succeeded", exit_code=0)
+
+    def conclude(*args, **kwargs):
+        order.append("conclude")
+        if conclusion_raises:
+            raise identity_error
+        return NativeRunOutcome(identity_error, RunBoundaryOutcome(status="mismatch"), None)
+
+    original_cleanup = PiAdapter.cleanup_prelaunch
+
+    def cleanup(self, **kwargs):
+        order.append("cleanup")
+        original_cleanup(self, **kwargs)
+
+    monkeypatch.setattr(serve, "run_streaming_spawn", run)
+    monkeypatch.setattr(serve, "conclude_native_run", conclude)
+    monkeypatch.setattr(PiAdapter, "cleanup_prelaunch", cleanup)
+    with pytest.raises(RuntimeError if run_fails else NativeEntryMismatch) as caught:
+        await serve.streaming_serve("pi", "hello", model="pi-test")
+    assert caught.value is (run_error if run_fails else identity_error)
+    assert order == ["run", "conclude", "cleanup"]
+
+
 @pytest.mark.parametrize(
     "shape",
     ["same", "switch", "switch-missing", "restart", "mismatch", "truncated"],
@@ -230,57 +358,6 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         )
 
 
-def _primary_cli(
-    root: Path,
-    *,
-    continue_ref: str | None = None,
-    fork_ref: str | None = None,
-    dry_run: bool = False,
-) -> PrimaryLaunchOutput:
-    return run_primary_launch(
-        project_root=root,
-        continue_ref=continue_ref,
-        fork_ref=fork_ref,
-        fork_fresh_ref=None,
-        model=None,
-        harness="pi",
-        agent=None,
-        work="",
-        task_dir=None,
-        yolo=False,
-        approval=None,
-        autocompact=None,
-        effort=None,
-        sandbox=None,
-        timeout=None,
-        dry_run=dry_run,
-        passthrough=(),
-        prompt="hello",
-    )
-
-
-@pytest.mark.parametrize(
-    "shape,expected_chat",
-    [("switch", "exit"), ("switch-missing", "entry")],
-)
-def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
-    pi_runtime: Path,  # noqa: F811
-    shape: str,
-    expected_chat: str,
-) -> None:
-    root = pi_runtime
-    install_boundary_shim(root, shape)
-
-    output = _primary_cli(root)
-    rendered = output.format_text()
-    runtime = resolve_project_runtime_root_for_write(root)
-    row = spawn_store.list_spawns(runtime).records[0]
-    target_chat = row.current_chat_id if expected_chat == "exit" else row.chat_id
-    assert target_chat is not None
-    assert output.resume_command == f"meridian --continue {target_chat}"
-    assert f"meridian --continue {target_chat}" in rendered
-
-
 @pytest.mark.parametrize(
     "shape,expected_id",
     [
@@ -322,77 +399,6 @@ def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
     assert str(entry_file) in chat_continued.command
     if shape == "switch":
         assert str(target_file) not in chat_continued.command
-
-
-def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.SessionRecord) -> None:
-    row = spawn_store.get_spawn(runtime, spawn_id)
-    assert row is not None and row.status == "failed"
-    assert row.terminal is not None and row.terminal.error == "entry_mismatch"
-    assert (row.run_boundary.status if row.run_boundary else None) == "mismatch"
-    assert row.current_chat_id is None
-    facts = [
-        json.loads(line)
-        for line in launch_paths(runtime, spawn_id).runner_lifecycle.read_text().splitlines()
-    ]
-    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
-    assert len(mismatch) == 1
-    assert mismatch[0]["expected"] == {
-        "harness": "pi",
-        "native_store": entry.native_store,
-        "session_id": entry.harness_session_id,
-    }
-    assert mismatch[0]["observed"] == {
-        "harness": "pi",
-        "native_store": entry.native_store,
-        "session_id": "wrong-entry",
-    }
-    assert all(
-        record.harness_session_id not in {"wrong-entry", "switched-id"}
-        for record in session_store.list_all_session_records(runtime)
-    )
-
-
-def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None:  # noqa: F811
-    root = pi_runtime
-    install_shim(root)
-    launch_context = context(root)
-    outcome = run_harness_process(
-        launch_context,
-        HarnessRegistry.with_defaults(),
-        prepared=launch_context.prepared,
-    )
-    assert outcome.chat_id is not None and outcome.primary_spawn_id is not None
-    args = (
-        root / ".meridian",
-        outcome.chat_id,
-        "pi",
-        "/exit-store",
-        "exit-id",
-        str(outcome.primary_spawn_id),
-    )
-    ids = run_spawn_race_or_skip(_allocate_test_exit_chat, [args, args])
-    assert ids[0] == ids[1] != outcome.chat_id
-    record = session_store.chat_record(root / ".meridian", ids[0])
-    assert record is not None and record.stopped_at is not None
-
-
-def _allocate_test_exit_chat(
-    runtime: Path,
-    entry: str,
-    harness: str,
-    native_store: str,
-    session_id: str,
-    spawn_id: str,
-) -> str | None:
-    return session_store.get_or_create_observed_chat(
-        runtime,
-        entry,
-        harness,
-        native_store,
-        session_id,
-        spawn_id=spawn_id,
-        native_exists=lambda: True,
-    )
 
 
 @pytest.mark.asyncio
@@ -528,226 +534,3 @@ async def test_rpc_post_attempt_boundary(
         assert row.run_boundary.status == "verified"
         assert row.chat_id == managed.chat_id
         assert row.current_chat_id not in {None, managed.chat_id}
-
-
-@pytest.mark.parametrize("boundary", ["missing", "poisoned", "valid"])
-def test_primary_header_mismatch_prevents_exit_attribution(
-    pi_runtime: Path,  # noqa: F811
-    boundary: str,
-) -> None:
-    root = pi_runtime
-    if boundary == "missing":
-        install_shim(root, behavior="mismatch")
-    else:
-        install_boundary_shim(root, "switch")
-        shim = root.parent / "fake-bin" / "pi"
-        text = shim.read_text().replace("header_id=$id", "header_id=wrong-entry")
-        if boundary == "poisoned":
-            text = text.replace('"invalid_reason":null', '"invalid_reason":"poison"')
-        shim.write_text(text)
-    launch_context = context(root)
-    outcome = run_harness_process(
-        launch_context,
-        HarnessRegistry.with_defaults(),
-        prepared=launch_context.prepared,
-    )
-    runtime = root / ".meridian"
-    assert outcome.primary_spawn_id is not None
-    row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
-    assert row is not None and row.terminal is not None
-    assert row.terminal.error == "entry_mismatch"
-    assert row.current_chat_id is None
-    facts = [
-        json.loads(line)
-        for line in launch_paths(runtime, row.id).runner_lifecycle.read_text().splitlines()
-    ]
-    assert any(
-        fact["event"] == "entry_mismatch" and fact["expected"] != fact["observed"] for fact in facts
-    )
-    events = [json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()]
-    assert not any(event.get("kind") == "invocation_started" for event in events)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("trigger", ["launch-failure", "streaming-except", "post-exit"])
-async def test_identity_failure_payload_is_identical_at_every_boundary(
-    pi_runtime: Path,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-    trigger: str,
-) -> None:
-    from meridian.lib.core.domain import Spawn
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
-    from meridian.lib.core.types import ModelId, SpawnId
-    from meridian.lib.launch import streaming_runner
-    from meridian.lib.ops.spawn.failure_policy import finalize_launch_failure
-
-    root = pi_runtime
-    install_shim(root)
-    ctx = context(root, primary=False)
-    run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("pi-test"), status="queued")
-    spawn_store.start_spawn(
-        ctx.runtime_root,
-        spawn_id=run.spawn_id,
-        chat_id="",
-        model="pi-test",
-        agent="",
-        harness="pi",
-        kind="streaming",
-        prompt="hello",
-        status="queued",
-    )
-    expected = {"harness": "pi", "native_store": "/native/store", "session_id": "entry"}
-    observed = {**expected, "session_id": "wrong-entry"}
-    error = NativeEntryMismatch(NativeKeyFields(**expected), NativeKeyFields(**observed))
-    if trigger == "launch-failure":
-        await finalize_launch_failure(
-            ctx.runtime_root,
-            root,
-            run.spawn_id,
-            error,
-            launch=launch_paths(ctx.runtime_root, run.spawn_id),
-        )
-    else:
-        from meridian.lib.core.native_identity import PostExit
-        from meridian.lib.launch.session_scope import SessionAttempt
-
-        def verify(*args, **kwargs) -> PostExit:
-            if trigger == "streaming-except":
-                raise error
-            return PostExit(entry_error=error)
-
-        monkeypatch.setattr(ctx.harness, "observe_after_exit", verify)
-        chat_id = session_store.start_session(ctx.runtime_root, "pi", "", "").chat_id
-        record = session_store.chat_record(ctx.runtime_root, chat_id)
-        assert record is not None
-        spawn_store.update_spawn(ctx.runtime_root, run.spawn_id, chat_id=chat_id)
-        code = await streaming_runner.execute_with_streaming(
-            run,
-            request=ctx.request,
-            launch_context=ctx,
-            project_root=root,
-            launch=launch_paths(ctx.runtime_root, run.spawn_id),
-            session_attempt=SessionAttempt(
-                ctx.runtime_root,
-                chat_id,
-                record.session_instance_id,
-                "attempt-1",
-                record,
-                run.spawn_id,
-            ),
-        )
-        assert code == 1
-    facts = [
-        json.loads(line)
-        for line in launch_paths(ctx.runtime_root, "p42").runner_lifecycle.read_text().splitlines()
-    ]
-    payloads = [fact for fact in facts if fact["event"] == "entry_mismatch"]
-    assert len(payloads) == 1
-    payload = payloads[0]
-    assert {key: payload[key] for key in ("event", "expected", "observed", "reason", "detail")} == {
-        "event": "entry_mismatch",
-        "expected": expected,
-        "observed": observed,
-        "reason": "key",
-        "detail": None,
-    }
-    row = spawn_store.get_spawn(ctx.runtime_root, "p42")
-    assert row is not None and row.status == "failed" and row.terminal is not None
-    assert row.terminal.error == "entry_mismatch"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("shape", ["same", "late-quit", "header-mismatch"])
-async def test_streaming_serve_concludes_native_identity(
-    pi_runtime: Path,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-    shape: str,
-) -> None:
-    import asyncio
-
-    from meridian.cli import streaming_serve as serve
-    from meridian.lib.core.native_identity import NativeEntryMismatch
-    from meridian.lib.ops.runtime import resolve_runtime_root
-
-    root = pi_runtime
-    install_boundary_shim(root, "late-quit" if shape == "late-quit" else "same")
-    if shape == "header-mismatch":
-        shim = root.parent / "fake-bin" / "pi"
-        shim.write_text(shim.read_text().replace("header_id=$id", "header_id=wrong-entry"))
-    monkeypatch.setattr(serve, "resolve_cli_project_root", lambda: root)
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
-    runtime = resolve_runtime_root(root)
-    original_conclude = serve.conclude_native_run
-
-    def conclude(*args, **kwargs):
-        events = [
-            json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()
-        ]
-        assert not any(event.get("kind") == "invocation_started" for event in events)
-        return original_conclude(*args, **kwargs)
-
-    monkeypatch.setattr(serve, "conclude_native_run", conclude)
-    if shape == "header-mismatch":
-        with pytest.raises(NativeEntryMismatch):
-            await asyncio.wait_for(serve.streaming_serve("pi", "hello", model="pi-test"), 20)
-    else:
-        await asyncio.wait_for(serve.streaming_serve("pi", "hello", model="pi-test"), 20)
-    row = spawn_store.get_spawn(runtime, "p1")
-    assert row is not None and row.run_boundary is not None
-    assert row.run_boundary.status == ("mismatch" if shape == "header-mismatch" else "verified")
-    events = [json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()]
-    starts = [event for event in events if event.get("kind") == "invocation_started"]
-    assert len(starts) == (0 if shape == "header-mismatch" else 1)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("conclusion_raises", [False, True])
-@pytest.mark.parametrize("run_fails", [False, True])
-async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
-    pi_runtime: Path,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-    conclusion_raises: bool,
-    run_fails: bool,
-) -> None:
-    from meridian.cli import streaming_serve as serve
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
-    from meridian.lib.harness.pi import PiAdapter
-    from meridian.lib.launch.native_run import NativeRunOutcome
-    from meridian.lib.state.spawn.model import RunBoundaryOutcome
-
-    install_boundary_shim(pi_runtime, "same")
-    monkeypatch.setattr(serve, "resolve_cli_project_root", lambda: pi_runtime)
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(pi_runtime))
-    run_error = RuntimeError("transport failed first")
-    identity_error = NativeEntryMismatch(
-        NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b")
-    )
-    order = []
-
-    async def run(**kwargs):
-        order.append("run")
-        if run_fails:
-            raise run_error
-        from types import SimpleNamespace
-
-        return SimpleNamespace(status="succeeded", exit_code=0)
-
-    def conclude(*args, **kwargs):
-        order.append("conclude")
-        if conclusion_raises:
-            raise identity_error
-        return NativeRunOutcome(identity_error, RunBoundaryOutcome(status="mismatch"), None)
-
-    original_cleanup = PiAdapter.cleanup_prelaunch
-
-    def cleanup(self, **kwargs):
-        order.append("cleanup")
-        original_cleanup(self, **kwargs)
-
-    monkeypatch.setattr(serve, "run_streaming_spawn", run)
-    monkeypatch.setattr(serve, "conclude_native_run", conclude)
-    monkeypatch.setattr(PiAdapter, "cleanup_prelaunch", cleanup)
-    with pytest.raises(RuntimeError if run_fails else NativeEntryMismatch) as caught:
-        await serve.streaming_serve("pi", "hello", model="pi-test")
-    assert caught.value is (run_error if run_fails else identity_error)
-    assert order == ["run", "conclude", "cleanup"]

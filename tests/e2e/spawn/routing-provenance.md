@@ -8,11 +8,6 @@ set `ROUTING_AUTH_FILE` to your Claude .credentials.json before setup to deliber
 copy only that file into the disposable store. API-key environment variables are
 also retained; do not copy an entire native config/agent tree.
 
-The [selection-report tests](../../integration/launch/test_selection_report.py)
-protect protocol validation using a fake Mars executable. This guide keeps the
-real integration check; the config/default precedence matrix belongs to
-[spawn preparation](../../integration/ops/test_spawn_prepare_fork.py).
-
 ## Setup
 
 Run from the checkout in a fresh shell.

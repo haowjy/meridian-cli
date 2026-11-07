@@ -4,8 +4,6 @@ Check CLI-visible prompt assembly without a model request. Dry-run can probe
 installed harnesses or refresh catalogs; it is not part of the cheap offline
 smoke script. Set `DRY_RUN_MODEL` to an available Codex model before starting.
 
-Routing/precedence matrices remain in [compiler](../unit/launch/test_compiler.py)
-and [task-dir](../integration/ops/test_task_dir_commands.py) regression tests.
 For actual Mars routing provenance, use the [packaged-workspace guide](../e2e/spawn/routing-provenance.md).
 
 ## Setup
