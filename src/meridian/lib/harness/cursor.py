@@ -106,6 +106,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_agents=False,
             supports_primary_launch=False,
             supports_native_file_injection=False,
+            accepts_messages=False,
             terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 

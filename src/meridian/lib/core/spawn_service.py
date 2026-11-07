@@ -240,9 +240,8 @@ class PreparedSpawn:
     Surfaces consume this — they never construct ConnectionConfig
     or call lifecycle_service.start() directly.
 
-    SEAM-1: Row is only created after resolution succeeds.
-    SEAM-2: resolved_model/agent/harness are never placeholders.
-    SEAM-3: connection_config is projected from launch_context.
+    The row is created only after resolution succeeds, with resolved metadata.
+    connection_config is projected from launch_context.
     """
 
     spawn_id: SpawnId
@@ -278,8 +277,7 @@ class KeyedLockRegistry:
     This registry is intentionally scoped to one ``SpawnApplicationService``
     instance. Multiple service instances in the same process do not share these
     locks; cross-instance and cross-process safety comes from the spawn store's
-    file-level locking. A process-wide shared service/registry may reduce local
-    races later, but Phase 0 treats this as a best-effort per-instance guard.
+    file-level locking. This registry is a best-effort per-instance guard.
     """
 
     def __init__(self) -> None:
@@ -361,17 +359,14 @@ class SpawnApplicationService:
         """Check if status is terminal."""
         return is_terminal_spawn_status(status)
 
-    # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
-
     async def prepare(
         self, payload: PrepareSpawnRequest, *, launch_lock: LaunchSlot
     ) -> PreparedSpawn:
         """Resolve launch context, create spawn row, and project ConnectionConfig.
 
-        SEAM-1: No spawn row is created until launch preparation succeeds.
-        SEAM-2: Row metadata always reflects resolved values (never "unknown").
-        SEAM-3: ConnectionConfig is projected from LaunchContext.
-        SEAM-ID.1: ID allocation happens atomically with row creation.
+        No spawn row is created until launch preparation succeeds. Its metadata
+        reflects resolved values, and ID allocation is atomic with row creation.
+        ConnectionConfig is projected from LaunchContext.
 
         Raises on resolution failure, with no spawn row. If writing the launch files
         (``system-prompt.md``) fails after the row is persisted, the row stays
@@ -436,7 +431,7 @@ class SpawnApplicationService:
             launch_policy_snapshot=resolved_request.launch_policy_snapshot,
         )
 
-        # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
+        # Persist the already-reserved ID via lifecycle service only
         # after launch context composition succeeds. Failed composition leaves no
         # spawn row and emits no spawn.created hook/telemetry.
         prepare_session_metadata = PrimarySessionMetadata(
@@ -483,7 +478,6 @@ class SpawnApplicationService:
             surface="spawn",
         )
 
-        # SEAM-3: Project ConnectionConfig from LaunchContext
         harness_id = HarnessId(resolved_harness)
         pi_session_role = (
             resolve_pi_session_role(interactive=launch_ctx.binding.run_params.interactive)

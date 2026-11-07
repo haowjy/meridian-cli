@@ -18,8 +18,8 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file, try_lock_file
-from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.posix import is_pgid_reachable
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.liveness import is_process_alive

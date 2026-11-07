@@ -46,7 +46,7 @@ async function submitFirstTurn($: EngineInterface): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     if (e.isInteractive === false || e.surface === null) return next(e)
-    // Not awaited: the submit lands after the session has started (probe p10381).
+    // Not awaited: the submit lands after the session has started.
     void submitFirstTurn($).catch(err => {
       $.ui.toast(`Meridian first-turn mod failed: ${String(err)}. See starting-prompt.md in the launch directory.`, { timeoutMs: 30000 })
     })

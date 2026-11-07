@@ -20,8 +20,8 @@ import psutil
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
-from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import birth_time_unverified
+from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import (
     Busy,

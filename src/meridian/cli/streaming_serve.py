@@ -1,4 +1,4 @@
-"""Headless runner for Phase-1 streaming spawn integration."""
+"""Headless runner for streaming spawns."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ async def streaming_serve(
     start_monotonic = time.monotonic()
     spawn_service = build_spawn_application_service(prepared)
 
-    # Build request and runtime BEFORE allocating spawn ID (SEAM-1)
+    # Build the request and runtime before allocating the spawn ID.
     spawn_req = SpawnRequest(
         prompt=normalized_prompt,
         model=normalized_model,
@@ -95,8 +95,7 @@ async def streaming_serve(
     )
 
     # Resolve-before-persist: prepare_spawn builds launch context first,
-    # then atomically creates the row with real metadata (SEAM-1, SEAM-2)
-    # ConnectionConfig projected from LaunchContext (DS-002)
+    # then atomically creates the row with resolved metadata.
     with LaunchSlot() as launch_lock:
         prepared = await spawn_service.prepare_spawn(
             request=spawn_req,

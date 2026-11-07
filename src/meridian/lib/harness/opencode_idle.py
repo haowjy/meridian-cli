@@ -46,7 +46,7 @@ BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tup
 _GET_TIMEOUT_SECONDS = 10.0
 _GET_ERRORS = (TimeoutError, OSError, RuntimeError, ValueError)
 
-# D5/D7: the backend TTL is unknown; mirror the Codex harness's estimate.
+# The backend TTL is unknown; mirror the Codex harness's estimate.
 _PROVIDER_TTLS = {"openai": CacheTtl(1800, estimated=True)}
 
 

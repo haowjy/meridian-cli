@@ -10,6 +10,7 @@ from pathlib import Path
 
 from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
+from meridian.lib.launch.cli_shim import pin_launching_build, write_pinned_shim
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
@@ -99,6 +100,9 @@ class ExternalHookRunner:
         env = {key: value for key, value in self._env.items() if key not in _HOOK_PAYLOAD_ENV_NAMES}
         env.update(context.to_env())
         env.pop("_MERIDIAN_RUNTIME_DIR", None)
+        # A hook runs in the launcher, not a harness sandbox, so no write roots apply.
+        pin_launching_build(env, write_roots=())
+        write_pinned_shim(env)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None
 

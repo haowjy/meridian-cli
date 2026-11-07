@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.streaming.drain_coordinator import AuxWakeCoordinator
@@ -135,6 +135,10 @@ class DrainInputWaiter:
             self._pending_disk_task,
             task_context=f"{self._task_context} auxiliary wake",
         )
+        # A generator left suspended at its yield never runs its cleanup.
+        events_iter: object = self._events_iter
+        if isinstance(events_iter, AsyncGenerator):
+            await cast("AsyncGenerator[RawHarnessEvent, None]", events_iter).aclose()
 
 
 async def _cancel_task(

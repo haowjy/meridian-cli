@@ -31,7 +31,7 @@ _Model = TypeVar("_Model", bound=BaseModel)
 # Entries are work IDs: ``"<spawn id>:<n>"`` for a launch, a bare ID for a Pi bash task.
 # The files older builds wrote (below) key spawns by bare ID and are read, never written.
 # A pre-launch ledger entry names launch 1 (older builds cannot read a v4 row), and the
-# Pi mirror of ``observed-spawns.json`` they also wrote is no longer read.
+# Pi mirror of ``observed-spawns.json`` is not read.
 DELIVERY_RECEIPTS_FILENAME = "launch-receipts.json"
 CLEARED_LAUNCHES_FILENAME = "cleared-launches.json"
 OBSERVED_LAUNCHES_FILENAME = "observed-launches.json"

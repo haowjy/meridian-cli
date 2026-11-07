@@ -31,8 +31,8 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock

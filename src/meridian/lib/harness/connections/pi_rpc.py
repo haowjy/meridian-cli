@@ -56,7 +56,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 _HARNESS_NAME: Final = HarnessId.PI.value

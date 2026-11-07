@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
-    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.streaming.completion_contracts import NativeTaskSource
 
 # Uniform transport message cap across harness adapters.

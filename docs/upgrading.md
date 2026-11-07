@@ -1,5 +1,12 @@
 # Upgrade notes
 
+## `spawn --continue` without a prompt gives a clearer error
+
+`meridian spawn --continue pN` always needed a prompt (`-p`, `--prompt-file`, or `--prompt-file -`
+for stdin). Without one it failed with `Spawn 'pN' has no stored prompt`; it now fails at once with
+`spawn --continue pN needs a prompt: pass -p/--prompt or --prompt-file ...`. Both exit `1` and
+launch nothing. Only the message changed; no script that worked is affected.
+
 ## `spawn rearm` wants a reason, and a child's close now cancels what it started
 
 `meridian spawn rearm` takes `--reason "..."` or `--reason-file PATH`, stored with the rearm and
