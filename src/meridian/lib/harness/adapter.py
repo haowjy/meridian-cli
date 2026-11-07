@@ -139,6 +139,8 @@ class SpawnUsageContractVariants(BaseModel):
     intro_line: str
     double_wrap_bullet: str
     timeout_bullet: str
+    # Only where the harness reports its own work: elsewhere a child is not woken.
+    waiting_line: str | None = None
 
 
 GENERIC_SPAWN_USAGE_VARIANTS = SpawnUsageContractVariants(
@@ -166,6 +168,13 @@ CLAUDE_SPAWN_USAGE_VARIANTS = SpawnUsageContractVariants(
     timeout_bullet=(
         "NEVER block-foreground a long spawn (omitting --bg). It will outlive your\n"
         "  Bash command timeout; you lose the thread while the spawn runs on."
+    ),
+    waiting_line=(
+        "To wait for something, start it in the background with a `timeout` that covers it, "
+        "and end your turn; you stay open and are woken when it finishes. A background "
+        "command is stopped at its `timeout`: 30 minutes by default, 2 hours at most. A job "
+        "that must run longer or outlive you has to run detached, with a background watcher "
+        "you restart. Stop anything you no longer need first."
     ),
 )
 

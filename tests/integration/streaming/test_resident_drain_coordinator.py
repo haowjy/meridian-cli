@@ -262,52 +262,25 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
 
     clock.advance(270.0)
     assert (await coordinator.handle_timeout()).recorded_outcome is None
-    assert connection.fake_resident_backend.injected_messages == []
-
-    await start_turn(coordinator)
-    next_candidate = await coordinator.handle_terminal_event(
-        resident_event(HarnessId.CODEX, "turn/completed", {}),
-        terminal,
-        DrainAction(terminate=True, emit_turn_boundary=False),
-    )
-    assert next_candidate.emit_turn_boundary is True
     assert len(connection.fake_resident_backend.injected_messages) == 1
     injected = connection.fake_resident_backend.injected_messages[0]
-    assert "previous reply is kept as this spawn's report" in injected
-    assert "meridian spawn done" in injected
-    assert "meridian spawn rearm" in injected
+    assert "your reply is this spawn's report" in injected
+    assert 'meridian spawn rearm --reason "..."' in injected
+    assert "meridian spawn wait" not in injected
 
     await start_turn(coordinator)
-    await coordinator.wait_for_aux_wake()
-    await coordinator.handle_aux_wake()
-
-    assert coordinator.next_timeout() == pytest.approx(5.0)
-    assert connection.fake_resident_backend.awaiting_done_values == [
-        True,
-        False,
-        True,
-        False,
-    ]
-
+    assert coordinator.next_timeout() is not None
     write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    requested = await coordinator.handle_timeout()
-    await coordinator.handle_terminal_event(
+    assert (await coordinator.handle_timeout()).recorded_outcome is None
+
+    reply = await coordinator.handle_terminal_event(
         resident_event(HarnessId.CODEX, "turn/completed", {}),
         terminal,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
-    decision = await _after_refresh(coordinator)
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == terminal
+    assert reply.recorded_outcome == terminal
     assert coordinator.next_timeout() is None
-    assert connection.fake_resident_backend.awaiting_done_values == [
-        True,
-        False,
-        True,
-        False,
-        True,
-        False,
-    ]
+    assert connection.fake_resident_backend.awaiting_done_values == [True, False, True, False]
 
 
 @pytest.mark.asyncio

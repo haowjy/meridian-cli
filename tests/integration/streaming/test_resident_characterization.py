@@ -578,8 +578,12 @@ async def test_rearm_without_visible_blockers_waits_the_nudge_interval(
         await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert len(backend.injected_messages) == 1
 
+    # Each turn end restarts the spacing, so the next ask comes 270 s after the last one.
     clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    assert len(backend.injected_messages) == 1
+    clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)
+    await coordinator.handle_timeout()
     assert len(backend.injected_messages) == 2
 
 
@@ -599,12 +603,14 @@ async def test_wait_done_signal_beats_already_expired_deadline(
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    requested = await coordinator.handle_timeout()
-    decision = await _after_refresh(coordinator)
+    decision = await coordinator.handle_timeout()
 
-    assert requested.recorded_outcome is None
+    # `done` closes over p2, and closing takes p2 with it.
     assert decision.recorded_outcome == _SUCCESS
-    assert cleanup_calls == []
+    exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
+    assert exit_decision.post_publication_cleanup is not None
+    await coordinator.execute_post_publication_cleanup(exit_decision.post_publication_cleanup)
+    assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
 

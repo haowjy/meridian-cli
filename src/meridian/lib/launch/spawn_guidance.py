@@ -19,6 +19,7 @@ from meridian.lib.launch.composition import (
     CompositionBlock,
     GuidancePhase,
 )
+from meridian.plugin_api.types import SpawnKind
 
 # Capabilities a bundled `*__meridian` skill covers are named only in the
 # `# Meridian skills` list, so each appears once. Lead-only skills (work items,
@@ -54,6 +55,26 @@ the open question. State what the spawn may edit.
 Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
+
+_PRIMARY_WAIT_BULLET = """\
+- Drain every --bg spawn with no-arg `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn. It finds
+  running and owed spawns by session; re-invoke to keep waiting. The wait
+  itself can run in your native background execution to keep working
+  while it blocks — it's the launch, not the wait, that must never be
+  background-wrapped. Do not pipe or truncate its output. Un-waited
+  background spawns are lost."""
+
+_CHILD_WAIT_BULLET = """\
+- To wait for --bg spawns, end your turn. You stay open while they run,
+  and when they have all finished Meridian wakes you with each spawn and
+  its report path. You can't act until then, so if you need a result in
+  this turn use no-arg `meridian spawn wait`; do not pipe or truncate
+  its output. Closing cancels spawns still running."""
+
+_CHILD_CLOSE_BULLET = """\
+- Before a child closes, Meridian may ask it to confirm completion; follow the
+  confirmation message's instructions."""
 
 
 def _build_meridian_skills_prompt(
@@ -291,9 +312,12 @@ def build_launch_facts_prompt(
     return "\n".join(("# Meridian spawn", "", *lines))
 
 
-def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
-    """Render the behavioral spawn contract filled with adapter-owned phrasing."""
+def build_spawn_usage_contract(variants: SpawnUsageContractVariants, *, kind: SpawnKind) -> str:
+    """Render the behavioral spawn contract for a parent of this kind."""
 
+    wait_rules = _PRIMARY_WAIT_BULLET
+    if kind != "primary":
+        wait_rules = f"{_CHILD_WAIT_BULLET}\n{_CHILD_CLOSE_BULLET}"
     return f"""\
 # Meridian spawn rules
 
@@ -301,15 +325,7 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
   except those it marks native: use your harness's own agent tool for them.
 - {variants.double_wrap_bullet}
 - {variants.timeout_bullet}
-- Drain every --bg spawn with no-arg `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn. It finds
-  running and owed spawns by session; re-invoke to keep waiting. The wait
-  itself can run in your native background execution to keep working
-  while it blocks — it's the launch, not the wait, that must never be
-  background-wrapped. Do not pipe or truncate its output. Un-waited
-  background spawns are lost.
-- Before a child closes, Meridian may ask it to confirm completion; follow the
-  confirmation message's instructions."""
+{wait_rules}"""
 
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
@@ -326,13 +342,15 @@ def build_guidance_blocks(
     loaded_skills: frozenset[str],
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
+    waiting_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
     """Build all system-prompt guidance blocks.
 
     Spawn-gated (only when has_spawn_capability): spawn capabilities,
     prompting judgment, and the spawn behavior contract. The profile-mode gate applies to
     bundled skill triggers. Context paths are always present. The empty capability block
-    is filled at bind, after its directory and spawn identity facts are known.
+    is filled at bind, after its directory and spawn identity facts are known. ``waiting_line``
+    goes to every child that can be woken, spawn-capable or not.
     """
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
@@ -368,6 +386,8 @@ def build_guidance_blocks(
                 spawn_usage_contract,
             )
         )
+    if waiting_line is not None:
+        blocks.append(CompositionBlock("waiting", GuidancePhase.GUIDANCE, 12, waiting_line))
     harness_hint = (harness_guidance or "").strip()
     if harness_hint:
         blocks.append(

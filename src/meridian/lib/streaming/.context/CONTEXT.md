@@ -182,9 +182,10 @@ with each later turn, a reply to a `spawn message` included. A wake turn saying 
 with no text moves nothing, because Claude's `final_text` holds the last turn that had one.
 Where the ask remains, a child's answer to it must not replace what it was asked about, so a
 "Done." stays out of the report and a later turn's text stays out too until a `rearm` drops
-the candidate. A `rearm` no longer clears the text on either hold: a child that rearms and
+the candidate. The expiry ask between turns and a wake are the exceptions, because they say
+the answer is the report (`reply_replaces`). A `rearm` no longer clears the text on either hold: a child that rearms and
 never ends another turn keeps its last report. Keep each nudge's wording matched to what its
-plan retains (`_HoldProfile._nudge_message`, `PI_COMPLETION_NUDGE_MESSAGE`), and keep report
+plan retains (`hold_state.nudge_text`, `PI_COMPLETION_NUDGE_MESSAGE`), and keep report
 rules out of `launch/spawn_guidance.py`, whose system-prompt text cannot know the plan.
 
 ### DrainOutcome Classification

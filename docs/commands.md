@@ -28,6 +28,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
+| `meridian spawn done [ID]` | Inside a child: close when its turn ends, cancelling any spawns still running and stopping its background tasks |
+| `meridian spawn rearm --reason "..." [ID]` | Inside a child: stay open. The reason is stored and shown in `spawn show`; `--reason-file PATH` reads it from a file (`-` reads stdin), and a bare `rearm` warns. The next check comes 270 s after the child goes idle, only when nothing visible is running; `--long` puts it at the idle limit, for a wait Meridian can't see such as remote CI. Running spawns and background tasks keep it quiet until they change or the idle limit, in both forms |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session); `-C` reaches a session in another project |
 | `meridian spawn stats` | Aggregate spawn statistics |

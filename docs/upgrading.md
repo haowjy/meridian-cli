@@ -1,5 +1,36 @@
 # Upgrade notes
 
+## `spawn rearm` wants a reason, and a child's close now cancels what it started
+
+`meridian spawn rearm` takes `--reason "..."` or `--reason-file PATH`, stored with the rearm and
+shown in `spawn show`. A bare `rearm` still works and warns; the next minor release requires a
+reason. `--long` puts the next check at the idle limit, for a wait Meridian can't see such as
+remote CI. Without it, the next check comes 270 s after the child goes idle, and only when
+nothing visible is running. The spawn id positional is unchanged.
+
+What changes for you:
+
+- **At the idle limit a reply closes the child.** A child asked at the idle limit, between turns,
+  either runs `rearm` to stay or replies, and the reply is its report and closes it. Before, a
+  child that only replied was asked again each window.
+- **A close cancels descendants.** A reply to that ask and `meridian spawn done` both cancel spawns
+  still running and stop background tasks. Before, `done` left descendants running. A job that must
+  outlive its child has to run detached.
+- **Spawned parents wait by ending their turn.** The guidance tells them to end their turn and
+  be woken with each finished child's report path, in place of "Drain every --bg spawn". They can
+  still run `spawn wait` when they need a result in the same turn. Primaries keep theirs, and lose
+  the "Before a child closes" bullet, which never applied to them.
+- **`rearm` no longer asks at the last ask's anchor.** The 270 s runs from the last turn end,
+  so another turn end restarts it. A rearm that a turn end consumes now gets its next check; it
+  used to wait for the idle limit.
+- **Claude children get a line on waiting:** start the job in the background with a `timeout`
+  that covers it, and end the turn.
+
+Nothing is required. A runner keeps the code it started with, and an older runner reads a new
+`rearm.signal` as presence only, so `--long` and the reason have no effect until it restarts.
+`spawn wait` checkpoints show what a held child waits on, from a new advisory `hold.json` in the
+spawn directory; `spawn show` reads a new `rearms.jsonl` beside it. An older build ignores both.
+
 ## Scoped shell rules on Codex need Codex 0.129.0 or newer
 
 A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`), a `*` rule beside scoped

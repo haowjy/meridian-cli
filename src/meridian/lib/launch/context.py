@@ -90,6 +90,7 @@ from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolRule
 from meridian.plugin_api.git import resolve_clone_path
+from meridian.plugin_api.types import SpawnKind
 
 from .cli_shim import pin_launching_build, write_pinned_shim
 from .command import (
@@ -989,10 +990,10 @@ def compile_prepared_policy_surface(
 def _build_shared_composition(
     *,
     policy: ResolvedLaunchPolicy,
+    kind: SpawnKind,
 ) -> tuple[CompositionBlock, ...]:
-    spawn_usage_contract = build_spawn_usage_contract(
-        policy.adapter.run_prompt_policy().spawn_usage_contract_variants
-    )
+    variants = policy.adapter.run_prompt_policy().spawn_usage_contract_variants
+    spawn_usage_contract = build_spawn_usage_contract(variants, kind=kind)
     network = policy.execution_policy.network
     assert network is not None
     return build_guidance_blocks(
@@ -1006,6 +1007,7 @@ def _build_shared_composition(
             network=network,
             native_config=policy.execution_policy.native_config,
         ),
+        waiting_line=variants.waiting_line if kind == "child" else None,
     )
 
 
@@ -1069,7 +1071,7 @@ def _resolve_spawn_prepare_projection(
         available_skills=policy.bundle_available_skills,
         agent_profile_body=agent_profile_body,
         report_instruction=build_report_instruction(),
-        guidance_blocks=_build_shared_composition(policy=policy),
+        guidance_blocks=_build_shared_composition(policy=policy, kind="child"),
         launch_preamble=build_spawn_preamble(),
         passthrough_system_fragments=(),
         user_task_prompt=join_content_blocks(task_contract, cleaned_user_prompt),
@@ -1105,7 +1107,7 @@ def _resolve_primary_projection(
     # turn: it would submit itself as the conversation's first message, fresh and on
     # every resume. So the primary's goal is a block of its system prompt.
     goal_block = _goal_block(request)
-    shared_blocks = _build_shared_composition(policy=policy)
+    shared_blocks = _build_shared_composition(policy=policy, kind="primary")
     guidance_blocks = (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
 
     seed = harness.seed_session(

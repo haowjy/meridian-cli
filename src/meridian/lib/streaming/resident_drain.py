@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -12,7 +13,14 @@ from meridian.lib.core.delivery import Deliver, DeliveryRefused, TransportDead
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.semantics import EventSemantics, TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.spawn_signals import SpawnSignalKind, consume_resident_signals
+from meridian.lib.state.spawn_signals import (
+    HoldStatus,
+    RearmRequest,
+    SpawnSignalKind,
+    consume_resident_signals,
+    record_rearm,
+    write_hold_status,
+)
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -43,10 +51,12 @@ from meridian.lib.streaming.hold_state import (
     after_event,
     after_send,
     after_signals,
+    blocker_labels,
     decide,
     defers_close,
     next_deadline,
     next_wake,
+    nudge_text,
     outcome_at_close,
 )
 from meridian.lib.streaming.rearm_window import RearmWindow
@@ -185,6 +195,9 @@ class _HoldProfile:
         self._state = HoldState()
         self._wake: tuple[FinishedChild, ...] = ()
         self._reply_replaces_report = False
+        self._rearm_request = RearmRequest()
+        self._last_work_at: str | None = None
+        self._hold_status: HoldStatus | None = None
 
     def allows_evaluation_without_candidate(self) -> bool:
         return self._state.rearmed
@@ -198,6 +211,8 @@ class _HoldProfile:
         if turn_started:
             self.set_awaiting_done(False)
         self._state = after_event(self._state, turn_started=turn_started, work_in_turn=work_in_turn)
+        if work_in_turn:
+            self._last_work_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return work_in_turn and state.deadline_at is not None
 
     def consume_directives(
@@ -214,7 +229,8 @@ class _HoldProfile:
             done=signals.done,
             rearm=signals.rearm and self._window.can_rearm(),
         )
-        return CompletionDirectives(rearm=rearm)
+        self._rearm_request = signals.rearm_request or RearmRequest()
+        return CompletionDirectives(rearm=rearm, rearm_long=self._rearm_request.long)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         end = None
@@ -234,6 +250,7 @@ class _HoldProfile:
                 candidate=context.candidate,
                 assessment=context.assessment,
                 rearm=context.directives.rearm,
+                rearm_long=context.directives.rearm_long,
                 dead=self._backend_dead(),
                 accepts_signals=bool(self._accepted_signals),
                 skips_ask=self.skips_ask,
@@ -249,10 +266,12 @@ class _HoldProfile:
         self._wake = step.wake
         if step.decision.action == "abandon_candidate":
             self._window.charge_rearm()
+            record_rearm(self._launch, self._rearm_request)
         if step.decision.action in {"clear", "fail", "cleanup"}:
             self.set_awaiting_done(False)
         elif not step.leave_awaiting:
             self.set_awaiting_done(True)
+        self._note_hold(context, step.decision)
         return step.decision
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
@@ -277,7 +296,7 @@ class _HoldProfile:
         return next_wake(
             self._state,
             self._confirmation_grace_seconds,
-            has_candidate=state.candidate is not None,
+            active_turn=state.active_turn,
         )
 
     async def send_nudge(self, state: CompletionState) -> None:
@@ -302,7 +321,9 @@ class _HoldProfile:
                     spawn_id=str(self._spawn_id),
                     exc_info=True,
                 )
-        self._state = after_send(self._state, result, now=self._clock())
+        self._state = after_send(
+            self._state, result, now=self._clock(), active_turn=state.active_turn
+        )
         if failure is not None:
             # The coordinator re-evaluates: a ready tree publishes, a dead one cleans up.
             raise failure
@@ -340,67 +361,28 @@ class _HoldProfile:
 
     def _nudge_message(self, state: CompletionState) -> str:
         assert state.assessment is not None
-        blockers = state.assessment.blockers
-        descendants = [
-            blocker.identity
-            for blocker in blockers
-            if blocker.source == "persisted_descendant" and blocker.identity is not None
-        ]
-        tasks = [
-            blocker.identity
-            for blocker in blockers
-            if blocker.source == "native_task"
-            and blocker.code == "running"
-            and blocker.identity is not None
-        ]
-        awaiting_result = any(
-            blocker.source == "native_task" and blocker.code == "awaiting_followup_result"
-            for blocker in blockers
+        return nudge_text(
+            self._state,
+            state.assessment.blockers,
+            self._wake,
+            has_candidate=state.candidate is not None,
+            skips_ask=self.skips_ask,
+            active_turn=state.active_turn,
         )
-        details: list[str] = []
-        if self._wake:
-            finished = "; ".join(
-                f"{child.spawn_id} ({child.status}), report at {child.report}"
-                for child in self._wake
-            )
-            details.append(
-                f"Spawns you started have finished and you have not read their results: "
-                f"{finished}. Read them and act on them before you finish."
-            )
-        if descendants:
-            ids = " ".join(descendants)
-            details.append(
-                f"Descendant spawns are still running: {', '.join(descendants)}. "
-                f"Run `meridian spawn wait {ids}` before finishing."
-            )
-        if tasks:
-            details.append(f"Background tasks are still running: {'; '.join(tasks)}.")
-        if awaiting_result:
-            details.append("Background tasks finished, but their follow-up result is pending.")
-        if details:
-            message = " ".join(details) + " "
-        else:
-            message = "Before this spawn closes, confirm whether you are actually finished. "
-        if state.candidate is not None and not self.skips_ask and not self._wake:
-            message += (
-                "Your previous reply is kept as this spawn's report. If it is the final report, "
-                "run `meridian spawn done` and end the turn. "
-            )
-        else:
-            # Codex and OpenCode take this nudge into the running turn, a harness that skips
-            # the ask reports every turn, and a wake's answer is new work, so the child's
-            # answer becomes the report: a "Done." here would replace it.
-            if state.candidate is None and not self.skips_ask:
-                message += "No report is kept for this spawn yet. "
-            message += (
-                "If you are finished, run `meridian spawn done`, then make your last message "
-                "the complete report. "
-            )
-        message += (
-            "If more work remains, including waiting on background tasks or spawns, run "
-            "`meridian spawn rearm` first, then finish with a complete report."
-        )
-        return message
+
+    def _note_hold(self, context: CompletionEvaluation, decision: ProfileDecision) -> None:
+        """Keep `hold.json` true for `spawn wait`, writing only when what it says changes."""
+        held = decision.action in {"wait", "stabilize", "abandon_candidate"}
+        status = None
+        if held and not context.state.active_turn:
+            status = HoldStatus(blocker_labels(context.assessment.blockers), self._last_work_at)
+        if status == self._hold_status:
+            return
+        self._hold_status = status
+        try:
+            write_hold_status(self._launch, status)
+        except OSError:
+            logger.warning("Could not write hold status.", spawn_id=str(self._spawn_id))
 
     def set_awaiting_done(self, awaiting_done: bool) -> None:
         if awaiting_done == self._awaiting_done:
@@ -428,7 +410,7 @@ class _ResidentCompletionCleanup:
             cancelled = await self._cancel_descendants(self._spawn_id)
         except Exception as exc:
             logger.exception(
-                "Failed to terminate resident descendant spawns after deadline expiry.",
+                "Failed to terminate resident descendant spawns.",
                 spawn_id=str(self._spawn_id),
             )
             return CleanupReport(
@@ -521,7 +503,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
     def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
         # A candidate may go at a rearm, but its report stays until a later turn replaces it.
         # Where the ask remains, a reply must not replace the report it was asked about,
-        # but a wake asks for new work, so its answer is the report.
+        # but a wake and an ask between turns both say the answer is the report.
         del published
         if turn_ended and (
             self._hold.skips_ask or not had_candidate or self._hold.reply_replaces_report

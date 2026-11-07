@@ -13,7 +13,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.report import extract_or_fallback_report
-from meridian.lib.ops.spawn.models import SpawnSignalInput
+from meridian.lib.ops.spawn.models import SpawnRearmInput
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
@@ -352,11 +352,13 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
         )
         await assert_still_pending(completion)
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
-        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
-        await next_turn_boundary(subscriber)
-        write_spawn_signal(launch_paths(tmp_path, spawn_id), "done")
+        # p2 was all the rearm held, and there is no candidate, so row C1c asks.
+        backend = connection.fake_resident_backend
+        await wait_until(
+            lambda: len(backend.injected_messages) == 1,
+            description="the ask once the rearm's blocker clears",
+        )
+        await assert_still_pending(completion)
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         outcome = await completion
         assert outcome is not None
@@ -439,7 +441,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         await determinism.sleep(0.18)
 
         result = spawn_api.spawn_rearm_sync(
-            SpawnSignalInput(spawn_id=str(spawn_id)),
+            SpawnRearmInput(spawn_id=str(spawn_id), reason="p2 is still running"),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
         )
