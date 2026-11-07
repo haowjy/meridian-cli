@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-07
+
+### Fixed
+- Closing a Claude session no longer warns `History maintenance: Native capture is known incomplete: unfinished Claude tail` when the session finished cleanly. Newer Claude Code transcripts contain `api-request-blob` records, and the check misread them as tool calls that never got a result.
+
 ## [0.20.1] - 2026-11-07
 
 ### Upgrade notes
