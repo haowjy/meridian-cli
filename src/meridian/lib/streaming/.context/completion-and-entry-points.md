@@ -110,7 +110,8 @@ the child twice.
 A dead transport reaches the hold as a close event, usually before B1 can see it. With no
 turn running and a ready tree, A2 publishes, even with an expiry ask out: a Codex child
 SIGKILLed while idle ends `succeeded`. With a turn running it ends `failed` with the close's
-message, as above. Blocked or unknown evidence waits in A4, and then `defers_close` and
+message, as above. OpenCode differs: a SIGKILLed server surfaces as a read error that fails
+the drain with no hold row involved, idle or not. Blocked or unknown evidence waits in A4, and then `defers_close` and
 `outcome_at_close` decide. B1 covers a backend found dead with no close event yet, so it fires
 at the next turn end or expiry. A turn-end ask has no window: a ready tree publishes, and
 otherwise the stream close or the next expiry ends it. Row A4 and `defers_close` hold for
