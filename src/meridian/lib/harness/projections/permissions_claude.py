@@ -345,22 +345,19 @@ def _compile_channels(
             else:
                 plain.append((entry, native))
 
-    # A plain deny or ask beside scoped allows of the same tool would shadow them. A platform
-    # deny is meant to: it holds whatever the profile says, so it is never gated.
+    # A plain deny or ask beside scoped allows of the same tool would shadow them. Platform
+    # denies are not gated: `_effective_rules` already turned their capability's profile rules
+    # into denies, so none of them is a profile scoped allow.
     gates: dict[tuple[str | None, str], _Gate] = {
         (entry.rule.capability, native): _Gate(entry.rule.capability, native, entry.action)
         for entry, native in plain
-        if native in profile_scoped and entry.rule.origin != PLATFORM_ORIGIN
+        if native in profile_scoped
     }
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
     # stays and shadows them, and the completion line says so.
-    required_mode = _gate_mode(policy, tuple(gates.values()))
-    completion_gates_free = (
-        policy.is_allowlist
-        or required_mode == "manual"
-        or (required_mode is None and policy.approval in ("default", "confirm"))
-    )
+    skip_prompts, profile_mode = _policy_mode(policy, tuple(gates.values()))
+    completion_gates_free = not skip_prompts and profile_mode in (None, "manual", "dontAsk")
     meridian_bases = {split_native(native)[0] for native in meridian_tools}
     disallowed: list[str] = []
     for entry, native in plain:
@@ -466,13 +463,13 @@ def _gate_mode(policy: PermissionPolicy, gates: tuple[_Gate, ...]) -> Permission
 
 
 def _policy_mode(
-    policy: PermissionPolicy, channels: _Channels
+    policy: PermissionPolicy, gates: tuple[_Gate, ...]
 ) -> tuple[bool, PermissionMode | None]:
     """The mode the profile needs: one that keeps its allowlists and gates authoritative."""
 
     if policy.is_allowlist:
         return False, "dontAsk"
-    mode = _gate_mode(policy, channels.gates)
+    mode = _gate_mode(policy, gates)
     if mode is None and policy.approval == "auto" and unscoped_action(policy.rules, "*") == "ask":
         # An unscoped ``*: ask`` decides every unmatched call; auto's classifier would.
         mode = "acceptEdits"
@@ -878,7 +875,7 @@ def compile_claude_permissions(
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, effective, passthrough)
     network = project_claude_network(policy, native_config=spec.native_config)
-    policy_mode = _policy_mode(policy, channels)
+    policy_mode = _policy_mode(policy, channels.gates)
     sandbox = _compile_sandbox(policy, channels, policy_mode[1], network.native)
     # A passthrough mode is the launcher's own choice; Claude takes the last one, so
     # Meridian omits its mode rather than silently overriding it.

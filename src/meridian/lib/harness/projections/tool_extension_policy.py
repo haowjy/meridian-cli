@@ -118,9 +118,16 @@ def bash_fails_closed(rules: tuple[ExtensionRule, ...]) -> bool:
 def needs_extension(
     rules: tuple[ExtensionRule, ...], *, meridian_commands: tuple[PlatformCommand, ...]
 ) -> bool:
-    # Meridian commands need the extension only when a rule could otherwise restrict the shell.
+    """Whether a policy needs an in-process shell enforcer.
+
+    Allows restrict nothing, so rules that are all allows need none. Meridian commands need
+    it only when a rule could otherwise restrict the shell.
+    """
+
+    if all(rule.action == "allow" for rule in rules):
+        return False
     return bool(
-        (meridian_commands and rules)
+        meridian_commands
         or any(
             rule.pattern is not None
             or rule.action == "ask"
