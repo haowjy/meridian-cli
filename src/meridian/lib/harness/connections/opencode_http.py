@@ -741,9 +741,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     async def send_cancel(self) -> None:
         if self._cancel_requested:
             return
-        if self._state in {"stopping", "stopped", "failed"}:
-            self._cancel_requested = True
-            return
+        # Past ``connected`` nobody is left to send it, which is not the same as
+        # a delivered cancel: only a landed POST sets the latch.
         self._require_connected()
         # ``stopping`` goes up before the POST: the first chunk after it ends
         # the SSE read, so a later terminal (V1 ``session.idle`` reads as
