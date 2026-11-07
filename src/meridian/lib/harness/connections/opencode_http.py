@@ -24,7 +24,12 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
+from meridian.lib.core.delivery import (
+    TUI_MOVED_MESSAGE,
+    DeliveryKind,
+    DeliveryRefused,
+    TransportDead,
+)
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -255,6 +260,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # failed cancel must leave ``stopping`` in place (see ``send_cancel``).
         self._events_exited = False
         self._primary_observer_mode = False
+        self._tui_left_session = False
+        # Sessions announced with a parent (subagents, nested): never a move.
+        self._child_session_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._stop_lock = asyncio.Lock()
@@ -396,6 +404,54 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             resolution={"decision": decision, **(payload or {})},
         )
 
+    def _created_session_ids(self, payload: dict[str, object]) -> tuple[str | None, str | None]:
+        """Return ``(session id, parent id)`` of a ``session.created`` payload.
+
+        V1 nests ``info`` under ``properties``.
+        """
+        props = payload.get("properties")
+        info = cast("dict[str, object]", props).get("info") if isinstance(props, dict) else None
+        if not isinstance(info, dict):
+            return None, None
+        source = cast("dict[str, object]", info)
+        session_id, parent_id = source.get("id"), source.get("parentID")
+        return (
+            session_id if isinstance(session_id, str) else None,
+            parent_id if isinstance(parent_id, str) and parent_id else None,
+        )
+
+    def _note_tui_session(self, event: RawHarnessEvent) -> None:
+        """Latch ``_tui_left_session`` when a new top-level session appears.
+
+        The event stream is global, and the TUI's ``ctrl+x n`` creates its session on
+        the first message, so ``session.created`` with no parent is the sign of a
+        move. A subagent's session has a parent and is recorded as a child. Switching
+        to an existing session sends nothing, so that move is invisible until V2
+        shows the human's input (see ``OpenCodeV2Connection``).
+        """
+        if (
+            not self._primary_observer_mode
+            or self._tui_left_session
+            or event.event_type != "session.created"
+        ):
+            return
+        created_id, parent_id = self._created_session_ids(event.payload)
+        if created_id is None or created_id == self._session_id:
+            return
+        if parent_id:
+            self._child_session_ids.add(created_id)
+            return
+        self._latch_tui_left(created_id, event.event_type)
+
+    def _latch_tui_left(self, session_id: str, signal: str) -> None:
+        self._tui_left_session = True
+        logger.warning(
+            "OpenCode TUI left session %s for %s (%s); messages are refused",
+            self._session_id,
+            session_id,
+            signal,
+        )
+
     async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
         """Route an inbound permission ask or reply to the request handler.
 
@@ -409,6 +465,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         read keeps flowing. A native reply is reconciled inline: its journal
         write is local, so it cannot stall the drain.
         """
+
+        self._note_tui_session(event)
 
         if event.event_type in self._PERMISSION_ASK_EVENT_TYPES:
             session_id, request_id = _extract_opencode_permission_context(event.payload)
@@ -675,6 +733,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
+        if self._tui_left_session:
+            raise DeliveryRefused(TUI_MOVED_MESSAGE)
         await self._post_session_message(text)
         return DeliveryKind.ACKNOWLEDGED
 

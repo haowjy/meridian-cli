@@ -177,6 +177,37 @@ cross-session peer lane, and forwards each message there. Claude decides deliver
 Meridian, and the command can only report that the message was posted. Address a primary by its chat ID or its spawn ID; both survive a
 `--continue`. `-C <root>` reaches a primary in another project.
 
+A Codex or OpenCode primary's launcher binds the same socket over the observer connection
+it already holds, once the TUI process is running, and unbinds when the TUI exits. A message
+starts a turn when the session is idle and joins the running turn otherwise; while the TUI is
+on that session it renders the message, and the sender is told it was delivered once the server
+acknowledged it. Meridian never answers an approval an injected turn raises: the TUI shows it
+for the person, as long as it is on that session.
+
+The route serves only the session the launcher started, and refuses once the TUI leaves it, so
+a message does not run where nobody sees it. On Codex the observer is subscribed to every
+thread's lifecycle events but not to their turns, so it sees a move only from those: a
+`thread/started` for a thread that is neither ephemeral nor parented (`/new`, `/fork`), or a
+status or goal event naming a thread that was not announced as a helper (`/resume`; title helpers were seen ephemeral and other helpers are judged by the same
+rule, subagents are parented, `thread/closed` and `notLoaded` are unloads). OpenCode's stream
+is global, so there a move is a `session.created` with no parent and another id, and on V2
+also a `session.forked` for another id (Fork session, at the moment of the fork) or a
+`session.inbox.enqueued` for an id that is neither the first session nor a session announced
+with a parent (the human typing in a session they switched to). A subagent's session is
+created with a parent and never forks. A child whose `session.created` fell in a stream
+reconnect gap reads as a move; the refusal stays honest. The refusal is sticky and
+changes nothing else: the socket stays bound, and `harness_session_id`, the idle sensor and
+`--continue` stay on the first session. Two gaps: OpenCode sends no event for the new-session
+(`ctrl+x n`) or switch-session (`ctrl+x l`) command itself, so a message sent before the
+human types anything there goes to the first session and reports delivered; and a TUI that
+returns to the first session stays refused until relaunch. Following the TUI instead needs a signal that Codex `/resume` of a
+loaded thread and OpenCode session switching do not give.
+ On OpenCode
+V2 a message carries text only, so the server runs it with the session's last model, which is
+the one the person picked in the TUI. V1 copies the agent and model of the session's last
+committed turn, so an agent switched in the TUI since then is not followed. If the OpenCode attach failed and the launch fell back to a
+black-box session, no socket is bound and the sender gets the no-route error.
+
 Claude's `crossSessionInbound` setting picks the policy:
 
 | Value | Behavior |
@@ -225,7 +256,7 @@ remain validated fail-closed.
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
 | Spawned | `pi --mode rpc`; native skills, context files, and prompt templates remain enabled; suppress ambient extensions unless `load_all_pi_extensions = true` |
 
-Both roles load the stable bundles listed below where enabled; `meridian-idle` loads only for interactive primaries:
+Both roles load the stable bundles listed below where enabled; `meridian-idle` and `meridian-message` load only for interactive primaries:
 
 - **managed-bash**, when `harness.pi.background_tasks.enabled` is true and
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
@@ -241,6 +272,21 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` l
 - **meridian-idle**, interactive primaries only: translates Pi idle/input events
   into core idle push and warning decisions. It never loads in spawned RPC
   sessions.
+- **meridian-message**, interactive primaries only, and loaded first: serves the primary's
+  control socket (`spawn message`) from inside Pi, at the path the launcher passes in
+  `_MERIDIAN_PI_CONTROL_SOCKET`, and only in TUI mode. It binds at `session_start`,
+  except at the first startup of a launch that passes a prompt
+  (`_MERIDIAN_PI_LAUNCH_PROMPT`): it binds at the first `agent_start`, so a message
+  cannot start a run before the launch prompt does. A message becomes a user turn
+  through `pi.sendUserMessage` with `deliverAs: "steer"`, which Pi reads only while a run
+  is streaming, so an idle message starts a turn. Pi's call returns nothing, so the reply
+  is `posted`, never `acknowledged`. During a manual `/compact` the extension refuses,
+  because Pi rejects the prompt and shows the rejection only as an extension error;
+  auto-compaction runs inside the active run and queues the steer. Load order matters:
+  Pi awaits `session_shutdown` handlers in load order, and loading first closes the
+  socket before `managed-bash` waits on its tasks. A listen failure shows as a
+  "Meridian messaging is off" notice. The launcher serves no socket for a Pi primary,
+  so `control_actions.jsonl` does not record its messages.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
 quiescence: parent idle, reconciled transitive descendants finished, private work

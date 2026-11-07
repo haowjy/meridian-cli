@@ -27,6 +27,7 @@ def configure_pi_extension_projection(
         "meridian-spawn-watch",
         "session-boundary",
         "meridian-idle",
+        "meridian-message",
         "meridian-permissions",
     ):
         entrypoint = source_root / extension_name / "index.js"

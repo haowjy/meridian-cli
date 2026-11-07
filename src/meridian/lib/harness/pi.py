@@ -111,10 +111,13 @@ from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_status import read_derived
+from meridian.lib.streaming.control_socket import control_socket_path
 
 logger = structlog.get_logger(__name__)
 
 PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
+PI_CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET"
+PI_LAUNCH_PROMPT_ENV = "_MERIDIAN_PI_LAUNCH_PROMPT"
 
 
 def _pi_owed_parent_ids(
@@ -412,6 +415,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
             if owed_parents:
                 env_overrides[PI_OWED_PARENT_IDS_ENV] = ",".join(owed_parents)
+            env_overrides[PI_CONTROL_SOCKET_ENV] = str(control_socket_path(runtime_root, spawn_id))
 
         _write_pi_runtime_metadata_sidecar(
             launch=launch,
@@ -527,12 +531,19 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         system_prompt_path: Path,
         env: Mapping[str, str],
     ) -> dict[str, str]:
-        """Pass the bound policy directly to Pi's launch-local extension."""
+        """Pass the bound permission policy and the launch-prompt flag to Pi's extensions."""
 
         _ = system_prompt_path, env
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
-        return {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        overrides = (
+            {PI_PERMISSION_POLICY_ENV: policy.model_dump_json()} if policy is not None else {}
+        )
+        if spec.interactive and spec.prompt:
+            # Same condition as the prompt argument in project_pi_native_tui: the
+            # meridian-message extension binds only after that prompt has started.
+            overrides[PI_LAUNCH_PROMPT_ENV] = "1"
+        return overrides
 
     def resolve_session_file(
         self,

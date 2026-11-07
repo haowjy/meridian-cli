@@ -11,7 +11,7 @@ import signal
 import socket
 import sys
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock, Thread
@@ -21,6 +21,7 @@ from typing import Any
 import psutil
 import structlog
 
+from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -52,6 +53,7 @@ from meridian.lib.state.process_scope_projection import record_scope
 
 from .native_launcher import native_sigint_shield
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
+from .primary_control_socket import serving_route
 from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
@@ -327,6 +329,7 @@ class PrimaryAttachLauncher:
         launch_task: asyncio.Future[LaunchedProcess] | None = None
         tui_lifecycle_finished = False
         telemetry = _StartupTelemetry()
+        route_stack = AsyncExitStack()
 
         try:
             telemetry.update(_startup_phase_message(self._connection))
@@ -400,6 +403,7 @@ class PrimaryAttachLauncher:
                         env=env,
                         launch_task=launch_task,
                     )
+                    await self._bind_route(route_stack)
                     # The TUI owns the primary. Observer silence is not a quit.
                     launched = await asyncio.shield(launch_task)
                     # A pane close can make the TUI return zero. Observation order,
@@ -416,17 +420,22 @@ class PrimaryAttachLauncher:
                         )
                     tui_lifecycle_finished = True
                 finally:
-                    if (
-                        running_process is not None
-                        and launch_task is not None
-                        and not tui_lifecycle_finished
-                    ):
-                        await self._stop_idle_task()
-                        await self._stop_tui_launch_task(
-                            running_process,
-                            launch_task,
-                            reason="primary_attach_shutdown",
-                        )
+                    try:
+                        if (
+                            running_process is not None
+                            and launch_task is not None
+                            and not tui_lifecycle_finished
+                        ):
+                            await self._stop_idle_task()
+                            await self._stop_tui_launch_task(
+                                running_process,
+                                launch_task,
+                                reason="primary_attach_shutdown",
+                            )
+                    finally:
+                        # Unbind once the TUI is gone: nothing renders a message after that.
+                        # Unbinding first would hold TUI termination behind a hung send.
+                        await route_stack.aclose()
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
@@ -480,6 +489,19 @@ class PrimaryAttachLauncher:
                     await self._connection.stop()
             finally:
                 signal_coordinator().unregister_receiver(cancel_receiver)
+
+    async def _bind_route(self, stack: AsyncExitStack) -> None:
+        """Serve the control socket over the observer connection. A failure costs only
+        the message route, never the launch."""
+
+        try:
+            await stack.enter_async_context(
+                serving_route(self._launch, MessageRoute(self._connection.send_user_message))
+            )
+        except Exception:
+            logger.warning(
+                "primary_attach.route_bind_failed", spawn_id=str(self._spawn_id), exc_info=True
+            )
 
     async def _start_primary_observer_connection_with_retry(
         self,
