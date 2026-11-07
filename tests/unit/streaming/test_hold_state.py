@@ -77,6 +77,8 @@ REFUSED = HoldState(ask=AskPhase.REFUSED, asked_at=90.0, answer=AnswerWindow(ret
 RESET = HoldState()
 WAIT = ProfileDecision(action="wait")
 WAIT_END = ProfileDecision(action="wait", emit_turn_boundary=True)
+SETTLE = ProfileDecision(action="stabilize")
+SETTLE_END = ProfileDecision(action="stabilize", emit_turn_boundary=True)
 ASK = ProfileDecision(action="wait", nudge=True)
 ASK_END = ProfileDecision(action="wait", emit_turn_boundary=True, nudge=True)
 EXPIRY_ASK = ProfileDecision(action="wait", nudge=True, reset_deadline=True)
@@ -99,6 +101,7 @@ def facts(**overrides: Any) -> HoldFacts:
         "accepts_signals": True,
         "skips_ask": False,
         "unread": (),
+        "wake_coming": False,
         "grace_seconds": 5.0,
         "timeout": TIMEOUT,
     }
@@ -324,6 +327,21 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         None,
     ),
     ("E5", HoldState(stays=True, ask=AskPhase.SETTLED), {"skips_ask": True}, PUBLISH, None),
+    # A hold just cleared: the harness's own wake gets its settle before anything closes.
+    ("E5a", RESET, {"skips_ask": True, "wake_coming": True}, SETTLE, None),
+    ("E5a", RESET, {"skips_ask": True, "end": GOOD_END, "wake_coming": True}, SETTLE_END, None),
+    ("E2", RESET, {"skips_ask": True, "wake_coming": True, "active_turn": True}, WAIT, None),
+    ("E6", RESET, {"skips_ask": True, "wake_coming": True, "assessment": BLOCKED}, WAIT, None),
+    ("D3", HoldState(closing=True), {"skips_ask": True, "wake_coming": True}, PUBLISH, None),
+    # The turn end that answers a wake uses the fact up, whatever it decides.
+    (
+        "E5",
+        HoldState(ask=AskPhase.SETTLED, reply_replaces=True),
+        {"end": GOOD_END},
+        PUBLISH,
+        HoldState(ask=AskPhase.SETTLED),
+    ),
+    ("E6", HoldState(ask=AskPhase.SENT, asked_at=99.0, reply_replaces=True), {}, WAIT, None),
     (
         "B2",
         HoldState(woken=frozenset({"p2:1"})),
@@ -352,29 +370,30 @@ def test_row(
 # state before, facts, children named, state after. Only a ready tree with no turn running
 # wakes, because anything else still has a turn to come.
 WOKEN_FIRST = HoldState(woken=frozenset({"p2:1"}))
+ANSWERING_FIRST = replace(WOKEN_FIRST, reply_replaces=True)
 WAKES_PARENT: list[tuple[HoldState, dict[str, Any], tuple[FinishedChild, ...], HoldState]] = [
-    (RESET, {"unread": (FIRST,)}, (FIRST,), WOKEN_FIRST),
+    (RESET, {"unread": (FIRST,)}, (FIRST,), ANSWERING_FIRST),
     # On both kinds of harness, and with no candidate after a rearm.
-    (RESET, {"unread": (FIRST,), "skips_ask": True}, (FIRST,), WOKEN_FIRST),
+    (RESET, {"unread": (FIRST,), "skips_ask": True}, (FIRST,), ANSWERING_FIRST),
     (
         HoldState(rearmed=True),
         {"unread": (FIRST,), "candidate": None},
         (FIRST,),
-        HoldState(rearmed=True, woken=frozenset({"p2:1"})),
+        HoldState(rearmed=True, woken=frozenset({"p2:1"}), reply_replaces=True),
     ),
     # A rearm's quiet covers a turn end, not what the child has not read.
     (
         HoldState(lease=SpacedLease(200.0)),
         {"unread": (FIRST,)},
         (FIRST,),
-        HoldState(lease=SpacedLease(200.0), woken=frozenset({"p2:1"})),
+        HoldState(lease=SpacedLease(200.0), woken=frozenset({"p2:1"}), reply_replaces=True),
     ),
     # Once each: a second child gets its own wake, naming only it.
     (
         WOKEN_FIRST,
         {"unread": (FIRST, SECOND)},
         (SECOND,),
-        HoldState(woken=frozenset({"p2:1", "p3:1"})),
+        HoldState(woken=frozenset({"p2:1", "p3:1"}), reply_replaces=True),
     ),
 ]
 
@@ -559,6 +578,7 @@ def test_wake(state: HoldState, has_candidate: bool, wake: float | None) -> None
 # state, action, deadline: 300 s after now while `answer` is open, otherwise the window
 DEADLINES: list[tuple[HoldState, ProfileAction, float | None]] = [
     (RESET, "wait", 900.0),
+    (RESET, "stabilize", 900.0),
     (RESET, "complete", 900.0),
     (RESET, "abandon_candidate", 900.0),
     (HoldState(answer=OPEN), "wait", 400.0),

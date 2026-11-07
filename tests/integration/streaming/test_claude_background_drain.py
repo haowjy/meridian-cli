@@ -23,7 +23,10 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
-from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
+from meridian.lib.streaming.hold_state import (
+    IDLE_NUDGE_ANSWER_SECONDS,
+    NATIVE_WAKE_SETTLE_SECONDS,
+)
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
@@ -152,6 +155,14 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             yield frame("system", subtype="background_tasks_changed", tasks=[])
             assert not outcomes
             yield frame("result", subtype="success", result="Marker read: done")
+            # The hold cleared in that turn: no wake came, so the settle runs out and it closes.
+            assert not outcomes
+            coordinator = cast("resident_drain.ResidentDrainCoordinator", plan.coordinator)
+            while coordinator.state.phase != "stabilizing":
+                await asyncio.sleep(0.001)
+            clock.advance(NATIVE_WAKE_SETTLE_SECONDS)
+            while not outcomes:
+                await asyncio.sleep(0.001)
 
     receiver = cast("HarnessConnection[Any]", Receiver())
     plan = build_drain_plan(

@@ -35,6 +35,7 @@ from meridian.lib.streaming.descendant_evidence import (
 from meridian.lib.streaming.drain_coordinator import ReportStep
 from meridian.lib.streaming.hold_state import (
     BACKEND_DEAD_OUTCOME,
+    NATIVE_WAKE_SETTLE_SECONDS,
     HoldFacts,
     HoldState,
     SendResult,
@@ -105,7 +106,8 @@ class HoldEvidence:
         descendants = self._descendants.assessment
         generation += descendants.generation
         if descendants.disposition == "unknown":
-            return replace(descendants, generation=generation)
+            # A rearm read now leases what it sees, so the stream's facts stay visible.
+            return replace(descendants, blockers=native_blockers, generation=generation)
         descendant_blockers = descendants.blockers
         blockers = descendant_blockers + native_blockers
         return WorkAssessment(
@@ -116,6 +118,9 @@ class HoldEvidence:
 
     def unread(self) -> tuple[FinishedChild, ...]:
         return self._descendants.unread
+
+    def native_cleared(self) -> bool:
+        return self._native is not None and self._native.cleared_in_turn
 
     def next_due_at(self) -> float | None:
         return self._descendants.next_due_at
@@ -148,6 +153,7 @@ class _HoldProfile:
         backend_dead: Callable[[], bool],
         send_nudge: Deliver,
         unread: Callable[[], tuple[FinishedChild, ...]],
+        native_cleared: Callable[[], bool],
         skips_ask: bool,
         deadline_seconds: float,
         poll_seconds: float,
@@ -168,6 +174,7 @@ class _HoldProfile:
         self._backend_dead = backend_dead
         self._send_nudge = send_nudge
         self._unread = unread
+        self._native_cleared = native_cleared
         self.skips_ask = skips_ask
         self._accepted_signals: frozenset[SpawnSignalKind] = (
             frozenset({"done", "rearm"}) if completion_signals_available else frozenset()
@@ -177,6 +184,7 @@ class _HoldProfile:
         self._awaiting_done = False
         self._state = HoldState()
         self._wake: tuple[FinishedChild, ...] = ()
+        self._reply_replaces_report = False
 
     def allows_evaluation_without_candidate(self) -> bool:
         return self._state.rearmed
@@ -213,6 +221,8 @@ class _HoldProfile:
         if context.terminal_action is not None and context.terminal_outcome is not None:
             end = TurnEnd(context.terminal_outcome, context.terminal_action)
         deadline_at = context.state.deadline_at
+        # Read before `decide`: a publish resets the state, and the report follows the decision.
+        self._reply_replaces_report = end is not None and self._state.reply_replaces
         step = decide(
             self._state,
             HoldFacts(
@@ -228,6 +238,9 @@ class _HoldProfile:
                 accepts_signals=bool(self._accepted_signals),
                 skips_ask=self.skips_ask,
                 unread=self._unread(),
+                wake_coming=self._native_cleared()
+                and not context.stabilization_elapsed
+                and context.state.phase != "validating",
                 grace_seconds=self._confirmation_grace_seconds,
                 timeout=self._window.timeout_decision(),
             ),
@@ -248,7 +261,7 @@ class _HoldProfile:
         )
 
     def stabilization_seconds(self) -> float:
-        return 0.0
+        return NATIVE_WAKE_SETTLE_SECONDS
 
     def close_outcome(
         self, state: CompletionState, intentional_stop: bool
@@ -320,6 +333,11 @@ class _HoldProfile:
     def accepted_signals(self) -> frozenset[SpawnSignalKind]:
         return self._accepted_signals
 
+    @property
+    def reply_replaces_report(self) -> bool:
+        """The turn that just ended answered a wake."""
+        return self._reply_replaces_report
+
     def _nudge_message(self, state: CompletionState) -> str:
         assert state.assessment is not None
         blockers = state.assessment.blockers
@@ -363,16 +381,16 @@ class _HoldProfile:
             message = " ".join(details) + " "
         else:
             message = "Before this spawn closes, confirm whether you are actually finished. "
-        if state.candidate is not None and not self.skips_ask:
+        if state.candidate is not None and not self.skips_ask and not self._wake:
             message += (
                 "Your previous reply is kept as this spawn's report. If it is the final report, "
                 "run `meridian spawn done` and end the turn. "
             )
         else:
-            # Codex and OpenCode take this nudge into the running turn, and a harness that
-            # skips the ask reports every turn, so the child's answer becomes the report:
-            # a "Done." here would replace it.
-            if not self.skips_ask:
+            # Codex and OpenCode take this nudge into the running turn, a harness that skips
+            # the ask reports every turn, and a wake's answer is new work, so the child's
+            # answer becomes the report: a "Done." here would replace it.
+            if state.candidate is None and not self.skips_ask:
                 message += "No report is kept for this spawn yet. "
             message += (
                 "If you are finished, run `meridian spawn done`, then make your last message "
@@ -478,6 +496,7 @@ class ResidentDrainCoordinator(CompletionCoordinator):
             backend_dead=backend_dead,
             send_nudge=send_nudge,
             unread=evidence.unread,
+            native_cleared=evidence.native_cleared,
             skips_ask=native is not None,
             completion_signals_available=completion_signals_available,
             deadline_seconds=deadline_seconds,
@@ -501,9 +520,12 @@ class ResidentDrainCoordinator(CompletionCoordinator):
 
     def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
         # A candidate may go at a rearm, but its report stays until a later turn replaces it.
-        # Where the ask remains, a reply must not replace the report it was asked about.
+        # Where the ask remains, a reply must not replace the report it was asked about,
+        # but a wake asks for new work, so its answer is the report.
         del published
-        if turn_ended and (self._hold.skips_ask or not had_candidate):
+        if turn_ended and (
+            self._hold.skips_ask or not had_candidate or self._hold.reply_replaces_report
+        ):
             return "capture"
         return "keep"
 

@@ -27,6 +27,7 @@ _UNREADABLE = TerminalEventOutcome(
     status=SpawnStatus.FAILED, exit_code=1, error="resident_evidence_unreadable"
 )
 IDLE_NUDGE_ANSWER_SECONDS = 300.0  # how long a child gets to work after an expiry ask
+NATIVE_WAKE_SETTLE_SECONDS = 1.0  # how long a queued native wake gets to start its turn
 _TURN_CUT_OFF = "transport_closed_during_turn"
 _STREAM_CLOSED = TerminalEventOutcome(
     status=SpawnStatus.FAILED, exit_code=1, error="stream_closed_while_awaiting_done"
@@ -86,6 +87,7 @@ class HoldState:
     closing: bool = False  # `done` latched
     stays: bool = False  # a rearm stands: only an ask can end it, even where turn ends skip one
     woken: frozenset[str] = frozenset()  # owed launches a wake has named
+    reply_replaces: bool = False  # a wake went out: the turn answering it is the report
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ class HoldFacts:
     accepts_signals: bool
     skips_ask: bool  # the harness reports its own work, so a turn end needs no confirmation
     unread: tuple[FinishedChild, ...]  # finished children the parent has not consumed
+    wake_coming: bool  # a hold cleared at this turn end and the settle has not run out
     grace_seconds: float
     timeout: ProfileDecision  # RearmWindow.timeout_decision(), so the budget error stays there
 
@@ -128,6 +131,8 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         state = replace(state, lease=None)
     end = facts.end
     disposition = facts.assessment.disposition
+    if end is not None:
+        state = replace(state, reply_replaces=False)
 
     # A1
     if end is not None and not end.action.terminate:
@@ -193,8 +198,11 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         and not _lease_quiet(state.lease, facts.assessment)
     ):
         return _wait(replace(state, lease=None), facts, nudge=True)
-    if disposition == "ready" and _settled(state, facts):  # E5
-        return _publish(state, facts)
+    if disposition == "ready" and _settled(state, facts):
+        if facts.wake_coming:  # E5a
+            decision = ProfileDecision(action="stabilize", emit_turn_boundary=end is not None)
+            return HoldStep(state, decision)
+        return _publish(state, facts)  # E5
     return _wait(state, facts)  # E6
 
 
@@ -227,7 +235,7 @@ def next_deadline(
     state: HoldState, action: ProfileAction, *, now: float, window_ends: float
 ) -> float | None:
     """The idle deadline a decision sets; an open `answer` gets its own, shorter one."""
-    if action not in {"wait", "complete", "abandon_candidate"}:
+    if action not in {"wait", "stabilize", "complete", "abandon_candidate"}:
         return None
     return window_ends if state.answer is None else now + IDLE_NUDGE_ANSWER_SECONDS
 
@@ -326,7 +334,7 @@ def _wake(state: HoldState, facts: HoldFacts) -> HoldStep | None:
         return None
     # Marked here, whatever the send does: a failed send re-evaluates at once.
     woken = state.woken | {child.key for child in wake}
-    step = _wait(replace(state, woken=woken), facts, nudge=True)
+    step = _wait(replace(state, woken=woken, reply_replaces=True), facts, nudge=True)
     return replace(step, wake=wake)
 
 
@@ -373,6 +381,7 @@ def _descendant_blocked(assessment: WorkAssessment) -> bool:
 __all__ = [
     "BACKEND_DEAD_OUTCOME",
     "IDLE_NUDGE_ANSWER_SECONDS",
+    "NATIVE_WAKE_SETTLE_SECONDS",
     "AnswerWindow",
     "AskPhase",
     "HeldLease",

@@ -78,7 +78,8 @@ class WorkAssessment:
         elif self.disposition == "blocked":
             valid = bool(self.blockers) and self.failure is None
         else:
-            valid = not self.blockers and self.failure is not None
+            # One source can be unreadable while another still reports what it sees.
+            valid = self.failure is not None
         if not valid:
             raise ValueError(f"invalid {self.disposition!r} work assessment")
 
@@ -244,6 +245,11 @@ class NativeTaskSource(Protocol):
 
     @property
     def blockers(self) -> tuple[DiagnosticBlocker, ...]: ...
+
+    @property
+    def cleared_in_turn(self) -> bool:
+        """The last turn end released a hold, so the harness may start a turn on its own."""
+        ...
 
     @property
     def generation(self) -> int:
