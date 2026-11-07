@@ -6,6 +6,23 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-11-07
+
+### Upgrade notes
+- A scoped allow such as `'bash(rg *)': allow` no longer restricts the rest of its tool. A profile whose rules for a tool are all scoped allows now lets unmatched calls through, and `edit: allow` beside `'write(src/*)': allow` no longer confines writes to `src/`. To keep a restriction, write the deny: `bash: deny` (or `write: deny`) beside the scoped allows. See [A scoped allow no longer restricts the rest of its tool](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#a-scoped-allow-no-longer-restricts-the-rest-of-its-tool).
+
+### Added
+- `meridian spawn show` and `meridian spawn status` print `Agent:` (the spawn's agent profile) and `Work:` (the work item its chat is attached to now), each omitted when empty. The JSON gains `agent`.
+
+### Changed
+- A scoped tool allow only pre-approves the calls it matches. With `approval: never`, a Claude spawn whose shell rules are all scoped allows launches with `--dangerously-skip-permissions` instead of `--permission-mode manual`, so it no longer prompts for every unlisted command. Codex compiles no shell hook, and Pi loads no extension, for scoped allows alone.
+- In `spawn show` and `spawn status` JSON, `work_id` names the work item the chat is attached to now, not the one it launched with.
+- The `messaging__meridian` skill tells agents to address a session by its chat ID and to run `meridian spawn show <chat>` to see which agent it is and what it is working on.
+- Meridian bundles mars 0.27.4, which no longer reports scoped allows as lost restrictions.
+
+### Fixed
+- Codex: `bash: ask` is now enforced (as a deny) by the shell hook, where every command used to run. `bash: deny` now goes through the hook too, instead of turning the shell off, so the spawn's own `meridian spawn done` and `rearm` can run. Scoped allows alone, `bash: allow`, and a `'*': deny` allowlist alone launch as before. See [Scoped shell rules on Codex](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#scoped-shell-rules-on-codex-need-codex-01290-or-newer).
+
 ## [0.20.2] - 2026-11-07
 
 ### Fixed
