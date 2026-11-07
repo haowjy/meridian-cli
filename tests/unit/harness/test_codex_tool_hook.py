@@ -251,7 +251,10 @@ _ALLOWED_BY_ALLOWLIST = [
         *((_ALLOWLIST, command, False) for command in _ALLOWED_BY_ALLOWLIST),
         *((_WRAPPERS_ALLOWED, command, False) for command in ("sudo rg x", "sudo env rg x")),
         *((_WRAPPERS_ALLOWED, command, True) for command in ("timeout 5 rg x", "sudo cat x")),
-        *((_STAR_DENY, command, True) for command in ("touch x", "git status; touch x", "sudo git status")),
+        *(
+            (_STAR_DENY, command, True)
+            for command in ("touch x", "git status; touch x", "sudo git status")
+        ),
         *((_STAR_DENY, command, False) for command in ("git status", "git log | git show")),
         *((_BASH_OVER_STAR, command, True) for command in ("rm -rf x", "sudo rm x")),
         *((_BASH_OVER_STAR, command, False) for command in ("touch x", "git status")),
