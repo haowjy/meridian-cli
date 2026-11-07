@@ -1,14 +1,15 @@
-- `main.py` (`_main_impl`): two `== "idle"` literals switch the JSON error
+- `main.py` (`_main_impl`): the `== "idle"` check switches the JSON error
   envelope on for one command group. Key it on catalog metadata instead (the
   startup catalog already marks every idle command `default_output_mode="json"`;
   or add an `error_envelope="json"` flag) so the next adapter-facing group gets
-  the envelope without touching the dispatcher (thermo F7).
+  the envelope without touching the dispatcher.
 - Session browse: a cross-project "All" scope. The session list reads one project's runtime root, so
   the Status/Sort header has no project control yet.
 - Session browse: `l` is also a filter character, so lineage needs Ctrl-L once a filter exists. A
   dedicated command prefix or a modal filter would remove the special case.
 - Session browse: start-from (`n`) always inherits the source's agent, last-used model and work
-  item. An agent/model selector on the prompt line is a maybe-later idea; not built.
+  item. An agent/model selector on the prompt line is a maybe-later idea.
 - Session browse: `DetailState` holds a row snapshot plus `model`; looking the row up in `browser.list`
   by chat_id would delete `DetailState.model` (not done: detail can open from lineage for a chat
   outside the listing).
+- Untangle in the rewrite (#942): src/meridian/cli/spawn_message.py:194-229 treats socket-file existence as readiness and fails immediately on connection refusal, while src/meridian/lib/streaming/control_socket.py:34 and 103-105 note that a socket path can exist before the server is listening. A full-suite Claude inbox test hit ConnectionRefusedError and passed on isolated retry. Publish readiness only after listening, or retry connections before any write within the existing deadline; never replay after bytes may have been sent.

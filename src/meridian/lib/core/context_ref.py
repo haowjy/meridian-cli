@@ -53,7 +53,6 @@ type ContextRef = SpawnContextRef | SessionContextRef
 
 
 def resolved_context_ref_value(ref: ContextRef) -> str:
-    """Return the external resolved reference value for operation output."""
 
     if ref.ref_kind == "session":
         return ref.chat_id
@@ -124,7 +123,6 @@ def _render_context_ref(ref: ContextRef) -> str:
 
 
 def render_context_refs(refs: Sequence[ContextRef]) -> str:
-    """Render resolved --from references as prior-context prompt blocks."""
 
     if not refs:
         return ""
@@ -132,7 +130,6 @@ def render_context_refs(refs: Sequence[ContextRef]) -> str:
 
 
 def context_ref_values(refs: Sequence[ContextRef]) -> tuple[str, ...]:
-    """External resolved reference values, as recorded and reported."""
 
     return tuple(resolved_context_ref_value(ref) for ref in refs)
 

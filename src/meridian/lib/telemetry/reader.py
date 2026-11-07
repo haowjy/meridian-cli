@@ -1,5 +1,3 @@
-"""Local JSONL telemetry segment reader."""
-
 from __future__ import annotations
 
 import logging
@@ -59,7 +57,6 @@ def _envelope(payload: dict[str, object]) -> dict[str, object]:
 
 
 def discover_segments(telemetry_dir: Path) -> list[Path]:
-    """Return all JSONL segments sorted by mtime ascending."""
     if not telemetry_dir.is_dir():
         return []
     entries: list[tuple[Path, float]] = []
@@ -127,7 +124,6 @@ def read_events(
 
 
 def _snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int]:
-    """Return byte offsets for all known segments (tail start position)."""
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files: dict[Path, int] = {}
     for directory in dirs:

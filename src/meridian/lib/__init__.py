@@ -1,5 +1,3 @@
-"""Core meridian library exports."""
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

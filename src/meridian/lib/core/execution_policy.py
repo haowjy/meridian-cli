@@ -1,5 +1,3 @@
-"""Execution policy carrier — the opaque bundle of post-routing launch controls."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -62,7 +60,6 @@ def _thaw_json(value: object) -> JsonValue:
 
 
 def validate_native_config(value: object) -> dict[str, JsonValue]:
-    """Validate the bundle's optional JSON object before freezing it."""
 
     if value is None:
         return {}
@@ -74,13 +71,11 @@ def validate_native_config(value: object) -> dict[str, JsonValue]:
 
 
 def freeze_native_config(value: Mapping[str, object]) -> NativeConfig:
-    """Recursively freeze a validated native config tree."""
 
     return cast("NativeConfig", _freeze_json(value))
 
 
 def native_config_to_json(value: NativeConfig) -> dict[str, JsonValue]:
-    """Return an ordinary JSON tree for persistence or wire serialization."""
 
     return cast("dict[str, JsonValue]", _thaw_json(value))
 

@@ -58,12 +58,10 @@ class NativeRun:
 
     @property
     def observation_error(self) -> NativeIdentityError | None:
-        """Identity failure from the joined observer, if any."""
         return self._observation_error
 
     @property
     def current_key(self) -> NativeKey | None:
-        """Last session published from boundary observations (``/clear``, ``/resume``)."""
         return self._current_key
 
     def observe(self, session_id: str) -> None:
@@ -224,7 +222,6 @@ class _ObservationPump:
         self._thread.start()
 
     def _drain(self) -> bool:
-        """Drain one replayable batch. Return whether the cursor advanced."""
         cursor = self._cursor
         batch = self._reader(cursor)
         for observation in batch.observations:
@@ -260,7 +257,6 @@ class _ObservationPump:
             logger.warning("Final native observation publication failed", exc_info=True)
 
     def close(self) -> NativeIdentityError | None:
-        """Stop, final-drain and join; no state writes occur after return."""
         self._stop.set()
         self._thread.join()
         return self._error

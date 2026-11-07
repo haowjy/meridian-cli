@@ -313,7 +313,6 @@ class PrimaryAttachLauncher:
         env: dict[str, str],
         on_running: Callable[[ProcessIdentity], None] | None = None,
     ) -> PrimaryAttachOutcome:
-        """Execute the full primary attach lifecycle."""
 
         if not self._durable:
             self._launch.dir.mkdir(parents=True, exist_ok=True)
@@ -533,14 +532,12 @@ class PrimaryAttachLauncher:
         await self._connection.start_observer(config, spec)
 
     def _write_metadata(self) -> None:
-        """Atomic write primary_meta.json to spawn_dir."""
 
         with self._metadata_lock:
             metadata = self._metadata.to_primary_metadata()
         write_primary_metadata(self._launch, metadata, guarded=self._durable)
 
     async def _consume_live_events(self) -> None:
-        """Update activity and run inline hooks (fold, sinks) for each live event."""
 
         async for event in self._connection.events():
             self._update_activity_from_event(event)
@@ -555,7 +552,6 @@ class PrimaryAttachLauncher:
         )
 
     def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
-        """Update activity state based on connection events."""
 
         normalized = normalize_event(
             event,

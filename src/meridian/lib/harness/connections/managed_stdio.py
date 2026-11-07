@@ -1,5 +1,3 @@
-"""Managed stdio child process launch and cleanup."""
-
 from __future__ import annotations
 
 import asyncio
@@ -172,7 +170,6 @@ async def launch_managed_stdio(
     kill_grace_seconds: float,
     terminate_reason: str,
 ) -> ManagedStdioProcess:
-    """Launch and register a spawn-lifetime stdio child process."""
 
     stderr_log_path = config.launch.stderr_log
     stderr_handle = stderr_log_path.open("ab")

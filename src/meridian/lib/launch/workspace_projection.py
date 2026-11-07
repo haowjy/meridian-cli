@@ -1,5 +1,3 @@
-"""Workspace-root projection contract shared by harness adapters."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,7 +47,6 @@ def project_workspace_roots(
     harness_id: HarnessId,
     roots: tuple[Path, ...],
 ) -> ProjectionResult:
-    """Project workspace roots for one harness launch/inspection pass."""
 
     if not roots:
         return ProjectionResult(applicability="ignored:no_roots")

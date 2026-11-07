@@ -1,5 +1,3 @@
-"""Process liveness probes."""
-
 import os
 from contextlib import suppress
 
@@ -12,7 +10,6 @@ _BIRTH_TOLERANCE_SECS = 1.0
 
 
 def _is_running_non_zombie(proc: psutil.Process) -> bool:
-    """Return process liveness suitable for cancellation convergence."""
 
     return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
 
@@ -61,11 +58,6 @@ def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
 def signal_with_birth(
     pid: int | None, birth_epoch: float | None, sig: int, *, tree: bool = False
 ) -> bool:
-    """Signal a process only when its exact birth matches; with ``tree``, its descendants too.
-
-    A PID whose birth is unknown or differs is never signalled. Returns whether a signal
-    was sent.
-    """
     if pid is None or pid == os.getpid() or not is_process_alive_with_birth(pid, birth_epoch):
         return False
     try:

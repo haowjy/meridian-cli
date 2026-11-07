@@ -1,5 +1,3 @@
-"""CLI grammar shared with code that reads Meridian command lines."""
-
 from __future__ import annotations
 
 # Keep in sync with `@app.default root(...)` in `cli/main.py` plus startup-only

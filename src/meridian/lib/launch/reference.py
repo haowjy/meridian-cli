@@ -1,5 +1,3 @@
-"""Reference-file loading and template substitution helpers."""
-
 from __future__ import annotations
 
 import re
@@ -16,11 +14,6 @@ class TemplateVariableError(ValueError):
     """Template substitution failed due to undefined or malformed variables."""
 
 
-# -----------------------------------------------------------------------------
-# Constants for directory tree rendering
-# -----------------------------------------------------------------------------
-
-#: Directories to skip completely during tree traversal.
 BLOCKED_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -60,25 +53,15 @@ BLOCKED_DIRS: frozenset[str] = frozenset(
     }
 )
 
-#: Suffixes to skip in both tree rendering and file listing.
 BLOCKED_SUFFIXES: tuple[str, ...] = (".egg-info", ".pyc", ".pyo")
 
-#: Default maximum tree depth (3 levels from root).
 DEFAULT_MAX_TREE_DEPTH: int = 3
 
-#: Default maximum entries before truncation.
 DEFAULT_MAX_TREE_ENTRIES: int = 500
 
-#: Maximum file size for inline content (100KB).
 MAX_FILE_SIZE_BYTES: int = 100 * 1024
 
-#: Sample size for binary detection.
 BINARY_DETECTION_SAMPLE_SIZE: int = 8192
-
-
-# -----------------------------------------------------------------------------
-# Data Models
-# -----------------------------------------------------------------------------
 
 
 class ReferenceItem(BaseModel):
@@ -96,13 +79,7 @@ class ReferenceItem(BaseModel):
     warning: str | None = None
 
 
-# -----------------------------------------------------------------------------
-# Binary Detection
-# -----------------------------------------------------------------------------
-
-
 def is_binary_file(path: Path, *, sample_size: int = BINARY_DETECTION_SAMPLE_SIZE) -> bool:
-    """Check if file appears to be binary by sampling for null bytes."""
     try:
         with path.open("rb") as f:
             sample = f.read(sample_size)
@@ -111,13 +88,7 @@ def is_binary_file(path: Path, *, sample_size: int = BINARY_DETECTION_SAMPLE_SIZ
         return False
 
 
-# -----------------------------------------------------------------------------
-# Directory Tree Rendering
-# -----------------------------------------------------------------------------
-
-
 def _is_blocked_dir(name: str) -> bool:
-    """Check if directory name should be blocked from tree traversal."""
     lower = name.lower()
     if lower in BLOCKED_DIRS:
         return True
@@ -125,7 +96,6 @@ def _is_blocked_dir(name: str) -> bool:
 
 
 def _is_blocked_file(name: str) -> bool:
-    """Check if file should be excluded from tree output."""
     lower = name.lower()
     return any(lower.endswith(suffix) for suffix in BLOCKED_SUFFIXES)
 
@@ -136,18 +106,6 @@ def generate_directory_tree(
     max_depth: int = DEFAULT_MAX_TREE_DEPTH,
     max_entries: int = DEFAULT_MAX_TREE_ENTRIES,
 ) -> tuple[str, str | None]:
-    """Generate tree representation of directory structure.
-
-    Returns:
-        Tuple of (tree_string, warning_or_none).
-        Tree uses box-drawing characters and depth-limited expansion.
-        Directories at the depth limit appear as `name/` with no children.
-
-    Args:
-        root: Directory path to render.
-        max_depth: Maximum depth to expand (default 3).
-        max_entries: Maximum total entries before truncation.
-    """
     if not root.is_dir():
         raise ValueError(f"Not a directory: {root}")
 
@@ -168,22 +126,18 @@ def generate_directory_tree(
             )
         except PermissionError:
             if depth == 1:
-                # Top-level reference directory must fail loud.
                 raise
             return
 
-        # Filter blocked entries
         filtered: list[Path] = []
         for entry in entries:
             name = entry.name
             if entry.is_dir():
                 if _is_blocked_dir(name):
-                    # Show blocked dirs with annotation
                     entry_count += 1
                     if entry_count > max_entries:
                         truncated = True
                         return
-                    # We'll add this as a blocked marker below
                     filtered.append(entry)
                 else:
                     filtered.append(entry)
@@ -206,13 +160,12 @@ def generate_directory_tree(
             name = entry.name
 
             if entry.is_symlink() and entry.is_dir():
-                # Symlink to directory - don't follow
+                # Directory symlinks can loop or escape the reference root.
                 lines.append(f"{prefix}{connector}{name}/ -> [symlink]")
             elif entry.is_dir():
                 if _is_blocked_dir(name):
                     lines.append(f"{prefix}{connector}{name}/  (blocked)")
                 elif depth >= max_depth:
-                    # At depth limit - show as unexpanded
                     lines.append(f"{prefix}{connector}{name}/")
                 else:
                     lines.append(f"{prefix}{connector}{name}/")
@@ -220,7 +173,6 @@ def generate_directory_tree(
             else:
                 lines.append(f"{prefix}{connector}{name}")
 
-    # Start with root directory name
     root_name = root.name or root.as_posix()
     lines.append(f"{root_name}/")
     walk(root, "", 1)
@@ -234,13 +186,7 @@ def generate_directory_tree(
     return tree_text, warning
 
 
-# -----------------------------------------------------------------------------
-# Template Variables
-# -----------------------------------------------------------------------------
-
-
 def parse_template_assignments(assignments: Sequence[str]) -> dict[str, str]:
-    """Parse CLI template vars passed as `KEY=VALUE`."""
 
     parsed: dict[str, str] = {}
     for assignment in assignments:
@@ -259,7 +205,6 @@ def resolve_template_variables(
     *,
     base_dir: Path | None = None,
 ) -> dict[str, str]:
-    """Resolve template variable values (`@path`/Path -> file contents, else literal)."""
 
     root = (base_dir or Path.cwd()).resolve()
     resolved: dict[str, str] = {}
@@ -299,11 +244,6 @@ def substitute_template_variables(
     *,
     strict: bool = True,
 ) -> str:
-    """Substitute `{{KEY}}` placeholders.
-
-    In strict mode, undefined variables raise `TemplateVariableError`.
-    In non-strict mode, undefined placeholders are preserved as-is.
-    """
 
     if strict:
         missing = sorted(
@@ -323,13 +263,7 @@ def substitute_template_variables(
     )
 
 
-# -----------------------------------------------------------------------------
-# Reference Loading
-# -----------------------------------------------------------------------------
-
-
 def _format_size(size_bytes: int) -> str:
-    """Format byte size for human display."""
     if size_bytes < 1024:
         return f"{size_bytes}B"
     elif size_bytes < 1024 * 1024:
@@ -339,7 +273,6 @@ def _format_size(size_bytes: int) -> str:
 
 
 def _load_file_reference(path: Path) -> ReferenceItem:
-    """Load a single file reference with content checks."""
     try:
         stat = path.stat()
         size = stat.st_size
@@ -351,7 +284,6 @@ def _load_file_reference(path: Path) -> ReferenceItem:
             warning=f"Cannot read file: {e}",
         )
 
-    # Check size limit
     if size > MAX_FILE_SIZE_BYTES:
         return ReferenceItem(
             kind="file",
@@ -363,7 +295,6 @@ def _load_file_reference(path: Path) -> ReferenceItem:
             ),
         )
 
-    # Check if binary
     if is_binary_file(path):
         return ReferenceItem(
             kind="file",
@@ -372,7 +303,6 @@ def _load_file_reference(path: Path) -> ReferenceItem:
             warning=f"Binary file: {_format_size(size)}",
         )
 
-    # Read content
     try:
         content = path.read_text(encoding="utf-8")
         return ReferenceItem(kind="file", path=path, body=content)
@@ -393,7 +323,6 @@ def _load_file_reference(path: Path) -> ReferenceItem:
 
 
 def _load_directory_reference(path: Path) -> ReferenceItem:
-    """Load a directory reference as tree representation."""
     try:
         tree, warning = generate_directory_tree(path)
         return ReferenceItem(
@@ -472,19 +401,6 @@ def load_reference_items(
     reference_anchor: Path,
     kb_dir: Path | None,
 ) -> tuple[ReferenceItem, ...]:
-    """Load reference items (files or directories) in input order.
-
-    Args:
-        paths: Sequence of file or directory paths.
-        reference_anchor: Base directory for relative path resolution.
-        kb_dir: KB root directory for ``kb:`` prefixed references.
-
-    Returns:
-        Tuple of ReferenceItem objects with content or tree representations.
-
-    Raises:
-        FileNotFoundError: If a path doesn't exist.
-    """
     anchor = reference_anchor.expanduser().resolve()
     resolved_kb_dir = kb_dir.expanduser().resolve() if kb_dir is not None else None
     loaded: list[ReferenceItem] = []
@@ -501,7 +417,6 @@ def load_reference_items(
             reference_anchor=anchor,
         )
 
-        # Load based on type
         if resolved.is_dir():
             loaded.append(_load_directory_reference(resolved))
         else:
@@ -516,19 +431,6 @@ def validate_reference_paths(
     reference_anchor: Path,
     kb_dir: Path | None,
 ) -> tuple[Path, ...]:
-    """Validate reference paths exist without reading content.
-
-    Args:
-        paths: Sequence of file or directory paths.
-        reference_anchor: Base directory for relative path resolution.
-        kb_dir: KB root directory for ``kb:`` prefixed references.
-
-    Returns:
-        Tuple of resolved absolute paths.
-
-    Raises:
-        FileNotFoundError: If a path doesn't exist.
-    """
     anchor = reference_anchor.expanduser().resolve()
     resolved_kb_dir = kb_dir.expanduser().resolve() if kb_dir is not None else None
     validated: list[Path] = []
@@ -549,48 +451,26 @@ def validate_reference_paths(
     return tuple(validated)
 
 
-# -----------------------------------------------------------------------------
-# Rendering
-# -----------------------------------------------------------------------------
-
-
 def measure_rendered_reference_block_bytes(
     reference: ReferenceItem, *, include_warning_only: bool = True
 ) -> int:
-    """Measure UTF-8 bytes of a reference's rendered block for content accounting.
-
-    Accounts for headers and formatting exactly as it appears in the final prompt.
-
-    Args:
-        reference: The reference item to measure.
-        include_warning_only: If False, warning-only refs (no body content) return 0.
-            Used for context-drain warnings: warning-only refs are metadata, not content.
-
-    Returns:
-        UTF-8 byte count of the rendered block (content contribution), or 0 if no
-        content is rendered or include_warning_only=False and ref is warning-only.
-    """
     body = reference.body.strip()
 
-    # Build path display - add trailing slash for directories
     path_str = reference.path.as_posix()
     if reference.kind == "directory" and not path_str.endswith("/"):
         path_str = f"{path_str}/"
 
-    # Handle warning case
     if reference.warning:
         if body:
-            # Warning + content: count the actual content block
             block = f"# Reference: {path_str}\n\n[{reference.warning}]\n\n{body}"
             return len(block.encode("utf-8"))
         else:
-            # Warning-only: exclude from context-drain accounting if not included
+            # Warning-only text is metadata, not content for context-drain warnings.
             if not include_warning_only:
                 return 0
             block = f"# Reference: {path_str}\n\n[{reference.warning}]"
             return len(block.encode("utf-8"))
 
-    # Normal content - no block if no body
     if not body:
         return 0
     block = f"# Reference: {path_str}\n\n{body}"
@@ -598,21 +478,14 @@ def measure_rendered_reference_block_bytes(
 
 
 def render_reference_blocks(references: Sequence[ReferenceItem]) -> tuple[str, ...]:
-    """Render loaded references as isolated prompt sections.
-
-    For files: renders content with `# Reference: <path>` header.
-    For directories: renders tree with `# Reference: <path>/` header.
-    """
     blocks: list[str] = []
     for reference in references:
         body = reference.body.strip()
 
-        # Build path display - add trailing slash for directories
         path_str = reference.path.as_posix()
         if reference.kind == "directory" and not path_str.endswith("/"):
             path_str = f"{path_str}/"
 
-        # Handle warning case
         if reference.warning:
             if body:
                 block = f"# Reference: {path_str}\n\n[{reference.warning}]\n\n{body}"
@@ -621,7 +494,6 @@ def render_reference_blocks(references: Sequence[ReferenceItem]) -> tuple[str, .
             blocks.append(block)
             continue
 
-        # Normal content
         if not body:
             continue
         blocks.append(f"# Reference: {path_str}\n\n{body}")

@@ -18,7 +18,6 @@ export type SelectablePanelColumn<Row> = {
   render: (row: Row, theme?: Theme, selected?: boolean) => string;
 };
 
-/** State of the selected row's lazily loaded detail, as seen by `renderPreview`. */
 export type PanelDetail<Detail> =
   | { status: "loading" }
   | { status: "ready"; value: Detail }

@@ -1,5 +1,3 @@
-"""Tool rule types shared by the launch bundle, persisted snapshots and the harness compiles."""
-
 from __future__ import annotations
 
 from collections.abc import Iterable

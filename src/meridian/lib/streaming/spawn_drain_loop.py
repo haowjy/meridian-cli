@@ -1,5 +1,3 @@
-"""Live event drain loop for one streaming spawn."""
-
 from __future__ import annotations
 
 import asyncio

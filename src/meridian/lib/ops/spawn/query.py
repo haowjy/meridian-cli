@@ -1,5 +1,3 @@
-"""Spawn state query and shaping helpers backed by per-spawn `state.json`."""
-
 import json
 import re
 from pathlib import Path
@@ -60,7 +58,6 @@ def read_stored_spawn_row(
 
 
 def read_report(launch: LaunchPaths | None) -> str | None:
-    """Return a report's stripped body; ``None`` launch means no runtime root."""
 
     if launch is None or not launch.report.is_file():
         return None
@@ -68,7 +65,6 @@ def read_report(launch: LaunchPaths | None) -> str | None:
 
 
 def read_report_summary(launch: LaunchPaths | None) -> str | None:
-    """Read at most the byte window needed for a 500-character report prefix."""
     if launch is None or not launch.report.is_file():
         return None
     # A UTF-8 code point uses at most four bytes. Ignoring an incomplete trailing
@@ -195,7 +191,6 @@ def _pi_cleanup_telemetry(launch: LaunchPaths | None) -> _PiCleanupTelemetry:
 
 
 def denied_requests(launch: LaunchPaths) -> tuple[DeniedRequestOutput, ...]:
-    """The calls the spawn's model made that were refused, from its permission journal."""
 
     journal = PermissionJournal(launch)
     return tuple(
@@ -215,7 +210,6 @@ def spawn_session_log_available(
     *,
     harness_session_id: str | None = None,
 ) -> bool:
-    """Return whether ``meridian session log`` can resolve content for one spawn."""
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None or row.continue_chat_id is None:
         return False

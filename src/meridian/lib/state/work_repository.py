@@ -1,10 +1,3 @@
-"""Serialized mutation repository for directory-authoritative work items.
-
-All status read-modify-write operations and directory namespace changes pass
-through this module.  Read projections remain in :mod:`work_store` and never
-acquire the mutation lock or persist normalization.
-"""
-
 from __future__ import annotations
 
 import os
@@ -53,9 +46,7 @@ _StateWrite = tuple[Path, WorkItem]
 class _MutationResult(Generic[T]):
     value: T
     state_write: _StateWrite | None = None
-    # Link directory -> the item whose targets it takes, republished after the
-    # mutation. Default: the mutated item's own links. A rename also forwards the old
-    # name's links to the new item, so executions still attached to it keep resolving.
+    # Rename forwards old links so attached executions keep resolving.
     links: Mapping[str, str] | None = None
 
 
@@ -78,7 +69,6 @@ def _has_artifacts(work_dir: Path) -> bool:
 
 
 def validate_work_slug(raw_name: str) -> str:
-    """Return *raw_name* if it is a work-item slug as written; raise otherwise."""
 
     normalized = slugify(raw_name)
     if not normalized or normalized != raw_name:
@@ -103,7 +93,6 @@ def _normalize_task_dir_path(path: str) -> str:
 
 
 def _work_runtime_root(project_state_dir: Path) -> Path:
-    """Return the user runtime root that holds this work store's project spawns."""
 
     if project_state_dir.name == ".meridian":
         return resolve_project_runtime_root_for_write(project_state_dir.parent)
@@ -111,13 +100,6 @@ def _work_runtime_root(project_state_dir: Path) -> Path:
 
 
 def move_work_dir(source: Path, destination: Path) -> None:
-    """Move one work directory between the active and archived locations.
-
-    A directory in both places means a copy is half-removed, half-written, or left
-    by a build that has since been replaced; silently picking one loses whatever the
-    other holds. Refuse with both paths named.
-    """
-
     if destination.exists() or destination.is_symlink():
         raise ValueError(
             f"Both {source.as_posix()} and {destination.as_posix()} exist. Nothing was "
@@ -134,15 +116,7 @@ def _publish_item_links(
     link_id: str,
     item_id: str,
 ) -> None:
-    """Point ``work-items/<link_id>/{work,task}`` at item ``item_id``'s targets.
-
-    The item's directory is wherever it is now (``work/`` or the archive), and a done
-    item keeps its checkout (:func:`work_store.item_checkout`). An item that no longer
-    exists leaves no links. The links directory is derived from the name, and a name can
-    come from a session row an older build or a hand edit wrote: only a slug can name an
-    item, and nothing else is joined onto a path here.
-    """
-
+    # Names can come from old or hand-edited session rows; validate before joining paths.
     if slugify(link_id) != link_id or slugify(item_id) != item_id:
         return
     active_dir, archived_dir = locate_work_dirs(paths, item_id)
@@ -156,24 +130,13 @@ def _publish_item_links(
 
 
 def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
-    """Run one work mutation and its optional atomic state write under one lock.
-
-    The seam deliberately disables reentrancy: a nested mutation could write an
-    inner result and then let the outer mutation overwrite it from a stale
-    snapshot.  Failing loudly is safer than permitting that composition.
-
-    The item's ``work-items/<id>/{work,task}`` links are republished here, before
-    the mutation (repairing whatever a crash or an older build left) and after it
-    (naming where the item ended up). Every session reaches an item through these
-    links, so a move needs no session write.
-    """
-
     paths = project_paths_for_work_store(runtime_root, create_project_uuid=True)
     lock_root = _work_runtime_root(runtime_root)
     links_dir = RuntimePaths.from_root_dir(lock_root).work_items_dir
     project_root = project_root_for_work_store(runtime_root)
     with (
         warning_cache_scope(),
+        # A nested mutation could overwrite its own newer state from a stale snapshot.
         lock_file(lock_root / "work-store.flock", reentrant=False),
     ):
         active_dir, archived_dir = locate_work_dirs(paths, work_id)
@@ -202,12 +165,6 @@ def _republish_only(
 
 
 def ensure_item_links(runtime_root: Path, work_id: str) -> None:
-    """Publish an item's links now; drop them if the item no longer exists.
-
-    Run before a chat links to the item, so no chat link names one that was never
-    created, and after a rename to drop the old name's forwarded links.
-    """
-
     write_state_locked(runtime_root, work_id, _republish_only)
 
 
@@ -216,8 +173,6 @@ def _item_links_dir(runtime_root: Path) -> Path:
 
 
 def _link_targets(link_dir: Path) -> list[str | None]:
-    """Where one ``work-items/<id>`` directory's two links point now."""
-
     return [
         os.readlink(link) if link.is_symlink() else None
         for link in (link_dir / "work", link_dir / "task")
@@ -225,17 +180,8 @@ def _link_targets(link_dir: Path) -> list[str | None]:
 
 
 def sweep_item_links(runtime_root: Path, work_ids: Collection[str]) -> int:
-    """Republish the links of every item in *work_ids* and drop the rest.
-
-    The one repair `meridian doctor` needs: any write of an item repairs its own
-    links, so only an item nothing wrote since an older build moved it, and the
-    links of items that are gone, wait for this. A name that is no item keeps its
-    links while its ``work`` link still resolves: a rename that stopped after its
-    directory moved forwards the old name to the new item, and its re-run needs that
-    link. Returns how many items' links changed.
-    """
-
     links_dir = _item_links_dir(runtime_root)
+    # Keep forwarded links after an interrupted rename so its retry can find the item.
     stale = (
         sorted(
             child.name
@@ -254,14 +200,7 @@ def sweep_item_links(runtime_root: Path, work_ids: Collection[str]) -> int:
 
 
 def rename_stopped_after_move(runtime_root: Path, old_name: str, new_name: str) -> bool:
-    """Return whether renaming *old_name* to *new_name* moved the directory and stopped.
-
-    From the move until the rename's last step, the old name is no item and its
-    ``work`` link is forwarded to the new item. That link is the only trace a stopped
-    rename leaves: a name that was never renamed to *new_name* has none, so a repeated
-    rename of it is a mistake, not a rename to finish. *old_name* is a validated slug.
-    """
-
+    # A forwarded link is the only trace of a rename interrupted after its move.
     paths = project_paths_for_work_store(runtime_root)
     if paths.work_dir is None or work_store.work_item_exists(runtime_root, old_name):
         return False
@@ -447,7 +386,6 @@ def update_work_item_task_dir(
 
 
 def work_item_paths(item: WorkItem) -> tuple[str, ...]:
-    """The filesystem paths an item records: its task dir and its worktree's two paths."""
     return tuple(
         path
         for path in (item.task_dir, item.worktree.path, item.worktree.repo_path)
@@ -503,13 +441,6 @@ def archive_work_item(
     *,
     description: str | None = None,
 ) -> WorkItem:
-    """Mark an item done and move its directory to the archive.
-
-    One move, never deferred: a running spawn writes through its per-chat link, so
-    the directory moving under it is transparent, and a link is what lets the move
-    happen without stranding a worker on a path that no longer exists.
-    """
-
     def archive(
         paths: ProjectPaths,
         active_dir: Path | None,
@@ -540,15 +471,6 @@ def archive_work_item(
 
 
 def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") -> WorkItem:
-    """Move a done item's directory back to work/ and reopen it.
-
-    The one implementation behind ``work reopen``, ``work start`` on a done item and
-    ``work switch`` to one. The move refuses when both locations exist, naming both,
-    so neither copy is ever deleted to make room. A done status inside ``work/`` —
-    nothing moved, only the status disagrees — is repaired in place, so the state
-    converges instead of refusing as already active forever.
-    """
-
     status = _validate_active_status(status)
 
     def reopened_item(current: WorkItem) -> WorkItem:

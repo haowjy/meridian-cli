@@ -1,5 +1,3 @@
-"""Operations for detached static artifact serves."""
-
 from __future__ import annotations
 
 import json
@@ -44,7 +42,6 @@ class PortInUseError(ArtifactError):
 
 
 def parse_ttl(value: str) -> int:
-    """Parse a positive duration with an s, m, h, or d suffix."""
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     if len(value) < 2 or value[-1].lower() not in units:
         raise ValueError("TTL must be a positive duration such as 30m, 2h, 90s, or 1d")
@@ -66,7 +63,6 @@ def _parse_created(value: str) -> datetime | None:
 
 
 def is_expired(serve: Serve, now: datetime) -> bool:
-    """Return whether a non-persistent serve is strictly past its expiry."""
     if serve.ttl_seconds is None:
         return False
     created = _parse_created(serve.created)
@@ -74,7 +70,6 @@ def is_expired(serve: Serve, now: datetime) -> bool:
 
 
 def local_port_available(port: int) -> bool:
-    """Probe whether localhost can bind a TCP port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         try:
             probe.bind(("127.0.0.1", port))
@@ -90,7 +85,6 @@ def pick_port(
     attempts: int = 20,
     choose: Callable[[int, int], int] = random.randint,
 ) -> int:
-    """Pick an unused random high port."""
     for _ in range(attempts):
         port = choose(PORT_MIN, PORT_MAX)
         if port not in occupied and bind_probe(port):
@@ -103,7 +97,6 @@ def _tailscale(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def tailscale_dns_name() -> str:
-    """Return this node's MagicDNS name."""
     result = _tailscale(["status", "--json"])
     if result.returncode != 0:
         raise ArtifactError(result.stderr.strip() or "tailscale status failed")
@@ -123,7 +116,6 @@ def tailscale_dns_name() -> str:
 
 
 def tailscale_serve_ports() -> set[int]:
-    """Return configured Tailscale TCP listener ports, or empty on failure."""
     try:
         result = _tailscale(["serve", "status", "--json"])
     except OSError:
@@ -153,7 +145,6 @@ def tailscale_serve_ports() -> set[int]:
 
 
 def launch_http_server(directory: Path, port: int, slug: str) -> subprocess.Popen[Any]:
-    """Launch a fully detached localhost static server."""
     if not is_valid_slug(slug):
         raise ArtifactError("refusing to launch a server with an invalid artifact slug")
     kwargs: dict[str, Any] = {
@@ -173,12 +164,10 @@ def launch_http_server(directory: Path, port: int, slug: str) -> subprocess.Pope
 
 
 def process_created_epoch(pid: int) -> float:
-    """Read a process birth time immediately after launch."""
     return psutil.Process(pid).create_time()
 
 
 def terminate_pid(pid: int, process_created_at: float | None = None) -> None:
-    """Terminate a detached server process tree."""
     terminate_tree_sync(
         pid,
         created_at_epoch=process_created_at or 0.0,
@@ -188,7 +177,6 @@ def terminate_pid(pid: int, process_created_at: float | None = None) -> None:
 
 
 def pid_alive(pid: int, process_created_at: float | None = None) -> bool:
-    """Return whether PID still identifies the process that was launched."""
     try:
         process = psutil.Process(pid)
         return process_created_at is None or abs(process.create_time() - process_created_at) <= 1.0
@@ -202,7 +190,6 @@ def derive_slug(
     occupied: Collection[str],
     local_port: int,
 ) -> str:
-    """Derive a safe, unique URL path component."""
     source = override if override is not None else directory.name
     base = re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "-", source.lower())).strip("-")
     base = base[:64].rstrip("-")
@@ -243,7 +230,6 @@ def _tailscale_register(local_port: int, slug: str, *, funnel: bool) -> None:
 
 
 def tailnet_port(local_port: int, *, funnel: bool) -> int:
-    """Return the externally exposed HTTPS port for a serve."""
     return FUNNEL_PORT if funnel else local_port
 
 
@@ -301,7 +287,6 @@ def _active_work_id() -> str | None:
 
 
 def wait_for_http_server(proc: subprocess.Popen[Any], port: int, *, timeout: float = 2.0) -> bool:
-    """Poll until the child accepts localhost TCP connections or fails."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -339,7 +324,6 @@ def _sweep_expired_locked(now: datetime) -> tuple[list[Serve], list[str]]:
 
 
 def sweep_expired(*, now: datetime | None = None) -> tuple[list[Serve], list[str]]:
-    """Stop expired serves and persist the surviving entries once."""
     with lock_file(serves_lock_path()):
         return _sweep_expired_locked(now or _now_utc())
 
@@ -352,7 +336,6 @@ def start_serve(
     slug: str | None = None,
     port: int | None = None,
 ) -> tuple[Serve, str]:
-    """Launch, expose, and record a detached artifact server."""
     with lock_file(serves_lock_path()):
         _sweep_expired_locked(_now_utc())
         serves = load_serves()
@@ -422,7 +405,6 @@ def start_serve(
 
 
 def stop_serve(ref: str) -> bool:
-    """Stop and forget one serve. Return False when it is unknown."""
     with lock_file(serves_lock_path()):
         serves = load_serves()
         serve = next(

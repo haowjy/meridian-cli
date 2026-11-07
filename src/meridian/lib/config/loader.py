@@ -1,5 +1,3 @@
-"""TOML and environment loading for Meridian configuration."""
-
 import logging
 import os
 from dataclasses import dataclass
@@ -103,7 +101,6 @@ def _map_catalog_table(
     table_path: tuple[str, ...],
     target: dict[str, object],
 ) -> None:
-    """Map file aliases to model fields without validating their values."""
 
     for key, value in raw_value.items():
         option = OPTION_CATALOG.find_file_alias(table_path=table_path, key=key)
@@ -362,7 +359,6 @@ def load_config(
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
 ) -> MeridianConfig:
-    """Load config with precedence: defaults < user < project < local < environment."""
 
     return load_config_with_sources(
         project_root,
@@ -372,7 +368,6 @@ def load_config(
 
 
 def load_user_config(*, user_config: Path | None = None) -> MeridianConfig:
-    """Load defaults, user config, and environment without cwd project layers."""
 
     values: dict[str, object] = {}
     resolved_user_config = resolve_user_config_path(user_config)
@@ -398,7 +393,6 @@ def _truthy_env_value(raw_value: str) -> bool:
 
 
 def load_launch_config(project_root: str | Path | None = None) -> MeridianConfig:
-    """Load config for a launch's control root, else for the ambient project."""
 
     root = str(project_root or "").strip()
     if not root:
@@ -411,7 +405,6 @@ def resolve_pi_harness_profile(
     base_profile: PiHarnessProfileConfig | None = None,
     project_root: str | Path | None = None,
 ) -> PiHarnessProfileConfig:
-    """Resolve ``[harness.pi]`` with optional launch snapshot and env overrides."""
 
     profile = (
         base_profile if base_profile is not None else load_launch_config(project_root).harness.pi
@@ -439,7 +432,6 @@ def resolve_pi_harness_profile_for_launch(
     config_snapshot: dict[str, object] | None,
     project_root: Path,
 ) -> PiHarnessProfileConfig:
-    """Resolve ``[harness.pi]`` from a launch config snapshot (not ambient CWD)."""
 
     base_profile: PiHarnessProfileConfig | None = None
     if config_snapshot:
@@ -459,7 +451,6 @@ def resolve_allow_builtin_agents_for_launch(
     config_snapshot: dict[str, object] | None,
     project_root: Path,
 ) -> bool:
-    """Resolve ``[harness.<id>].allow_builtin_agents`` from a launch config snapshot."""
 
     def _from(config: MeridianConfig) -> bool:
         profile = getattr(config.harness, harness_id, None)
@@ -478,7 +469,6 @@ def resolve_opencode_version_for_launch(
     config_snapshot: dict[str, object] | None,
     project_root: Path,
 ) -> str:
-    """Resolve ``[harness.opencode].version`` from a launch config snapshot."""
 
     if config_snapshot:
         try:

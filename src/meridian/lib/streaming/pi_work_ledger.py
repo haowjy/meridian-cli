@@ -1,5 +1,3 @@
-"""One categorized snapshot of Pi private work and causal delivery obligations."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

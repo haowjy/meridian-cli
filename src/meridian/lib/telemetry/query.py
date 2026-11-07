@@ -1,5 +1,3 @@
-"""Telemetry query helpers for the CLI reader surface."""
-
 from __future__ import annotations
 
 import re
@@ -18,7 +16,6 @@ _UNIT_MAP = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
 def parse_since(since: str) -> str:
-    """Parse a duration string like ``1h`` into an ISO-8601 UTC timestamp."""
     match = _DURATION_RE.match(since.strip().lower())
     if not match:
         raise ValueError(f"Invalid duration format: {since!r}. Expected NNs, NNm, NNh, or NNd.")

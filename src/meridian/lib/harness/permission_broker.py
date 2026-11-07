@@ -1,5 +1,3 @@
-"""Durable broker for runtime approval and user-input requests."""
-
 from __future__ import annotations
 
 import asyncio

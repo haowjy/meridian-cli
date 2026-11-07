@@ -1,5 +1,3 @@
-"""Capability guidance and harness-templated spawn behavior contracts."""
-
 from __future__ import annotations
 
 import shlex
@@ -96,7 +94,6 @@ def _build_meridian_skills_prompt(
 
 
 def _work_link_line(work_link: Path) -> str:
-    """The one work-link wording, for a primary's prompt and a spawn's `# Meridian spawn` block."""
 
     return (
         f"- `{work_link.as_posix()}` — work directory "
@@ -107,12 +104,6 @@ def _work_link_line(work_link: Path) -> str:
 
 
 def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str:
-    """The one task-link wording; a surface adds only what it alone knows.
-
-    *detail* follows the environment variable and *note* the command it names, so
-    both surfaces carry the literal-path rule verbatim.
-    """
-
     return (
         f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`){detail}; "
         "write this literal path, never the directory it resolves to: the link "
@@ -133,23 +124,7 @@ def build_capabilities_prompt(
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
 ) -> str:
-    """Render the stable capability and directory guidance block.
-
-    Only values shared by every launch of this conversation belong here: an exact
-    continue recomposes the block from the launch snapshot, and a fresh launch of
-    the same agent in the same work context must share the cached prefix. Per-launch
-    identity (the spawn ID, the conversation that launched the spawn, and a spawn's
-    per-chat links) goes in the first user turn through
-    :func:`build_launch_facts_prompt`; a primary's own chat ID and its per-chat
-    links stay here because they outlive the launch.
-
-    The work directory has one line, and a surface either places it here or in the
-    user turn: an item's ID and its scratch path are per-conversation state that a
-    ``work switch`` or ``work done`` invalidates, so the link is the only path named.
-    ``paths_in_user_turn`` says the user turn names them instead, which a spawn does
-    because its link paths belong to its own chat; a primary cannot, because a
-    ``--continue`` replays no user turn.
-    """
+    # Per-launch facts belong in the user turn so sibling prompts share a cache prefix.
 
     if resolved_context is None:
         if context_config is None:
@@ -281,15 +256,6 @@ def build_launch_facts_prompt(
     work_link: Path | None = None,
     task_link: Path | None = None,
 ) -> str:
-    """Render per-launch identity for the first user turn.
-
-    Only values that change between launches of the same conversation belong here:
-    the spawn ID, the conversation that launched this spawn, and a spawn's per-chat
-    links, whose paths name the chat it runs in. Keeping them out of the system
-    prompt lets sibling spawns send byte-identical system bytes, so the harness
-    prompt cache is shared.
-    """
-
     lines: list[str] = []
     own_spawn_id = (spawn_id or "").strip()
     if own_spawn_id:
@@ -313,7 +279,6 @@ def build_launch_facts_prompt(
 
 
 def build_spawn_usage_contract(variants: SpawnUsageContractVariants, *, kind: SpawnKind) -> str:
-    """Render the behavioral spawn contract for a parent of this kind."""
 
     wait_rules = _PRIMARY_WAIT_BULLET
     if kind != "primary":
@@ -344,14 +309,6 @@ def build_guidance_blocks(
     harness_guidance: str | None = None,
     waiting_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
-    """Build all system-prompt guidance blocks.
-
-    Spawn-gated (only when has_spawn_capability): spawn capabilities,
-    prompting judgment, and the spawn behavior contract. The profile-mode gate applies to
-    bundled skill triggers. Context paths are always present. The empty capability block
-    is filled at bind, after its directory and spawn identity facts are known. ``waiting_line``
-    goes to every child that can be woken, spawn-capable or not.
-    """
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
     profile_mode: AgentMode = profile.mode if profile is not None else "subagent"

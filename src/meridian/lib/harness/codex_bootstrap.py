@@ -1,5 +1,3 @@
-"""Shared identity for Codex's Meridian-authored bootstrap turn."""
-
 from __future__ import annotations
 
 from typing import Final
@@ -8,7 +6,6 @@ BOOTSTRAP_TURN_PROMPT: Final[str] = "Meridian started"
 
 
 def bootstrap_turn_prompt(agent_name: str | None) -> str:
-    """Render the synthetic prompt used to materialize a fresh Codex rollout."""
 
     normalized_agent = (agent_name or "").strip()
     if normalized_agent:
@@ -17,7 +14,6 @@ def bootstrap_turn_prompt(agent_name: str | None) -> str:
 
 
 def is_bootstrap_turn_prompt(value: object) -> bool:
-    """Return whether a notify input is Meridian's synthetic bootstrap prompt."""
 
     if value == BOOTSTRAP_TURN_PROMPT:
         return True

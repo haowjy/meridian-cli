@@ -1,5 +1,3 @@
-"""Gated TUI launching on the shell's foreground terminal and process group."""
-
 from __future__ import annotations
 
 import signal

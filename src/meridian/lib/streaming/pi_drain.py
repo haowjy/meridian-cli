@@ -1,5 +1,3 @@
-"""Pi completion collaborators and their drain construction wrapper."""
-
 from __future__ import annotations
 
 import asyncio

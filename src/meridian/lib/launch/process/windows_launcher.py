@@ -1,5 +1,3 @@
-"""Windows-specific process launching fallbacks."""
-
 from __future__ import annotations
 
 import logging
@@ -14,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def can_use_windows_console_launcher() -> bool:
-    """Return whether Windows console-inheritance fallback should be used."""
 
     return IS_WINDOWS
 

@@ -1,5 +1,3 @@
-"""Shared session-detection helpers that stay harness-agnostic."""
-
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +12,6 @@ def infer_harness_from_untracked_session_ref(
     *,
     registry: HarnessRegistry | None = None,
 ) -> HarnessId | None:
-    """Detect which harness owns *session_ref* by querying registered adapters."""
 
     normalized = session_ref.strip()
     if not normalized:

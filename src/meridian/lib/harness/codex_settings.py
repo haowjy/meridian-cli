@@ -1,5 +1,3 @@
-"""Detect Codex config that can widen projected network policy."""
-
 from __future__ import annotations
 
 import tomllib
@@ -88,7 +86,6 @@ def codex_network_config_warnings(
     child_cwd: Path,
     env: Mapping[str, str],
 ) -> tuple[CompositionWarning, ...]:
-    """Warn about widening in child-selected user and ancestor Codex configs."""
 
     codex_home = resolve_codex_home(env)
     if not codex_home.is_absolute():

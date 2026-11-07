@@ -1,5 +1,3 @@
-"""Operation runtime helpers for state/store resolution."""
-
 import asyncio
 import functools
 from collections.abc import Callable, Coroutine
@@ -123,7 +121,6 @@ def resolve_project_authority(
     *,
     execution_cwd: Path | None = None,
 ) -> RuntimeAuthoritySnapshot:
-    """Resolve the authoritative project-root snapshot for one invocation."""
 
     explicit_root: Path | None
     if isinstance(project_root, Path):
@@ -243,7 +240,6 @@ def resolve_runtime_authority_for_write(
     *,
     execution_cwd: Path | None = None,
 ) -> RuntimeAuthoritySnapshot:
-    """Resolve project/runtime authority for mutating callers."""
 
     authority = plan_runtime_authority_for_write(
         project_root,
@@ -283,7 +279,6 @@ def resolve_runtime_root_and_config(
     *,
     sink: OutputSink | None = None,
 ) -> tuple[Path, MeridianConfig]:
-    """Resolve repository root and load operational config."""
 
     _ = sink
     authority = resolve_runtime_authority_for_write(project_root)
@@ -312,7 +307,6 @@ def build_runtime_from_root_and_config(
     authority: RuntimeAuthoritySnapshot | None = None,
     sink: OutputSink | None = None,
 ) -> OperationRuntime:
-    """Build a runtime bundle from one pre-resolved root and config."""
 
     from meridian.lib.harness.registry import get_default_harness_registry
 
@@ -333,7 +327,6 @@ def build_runtime(
     *,
     sink: OutputSink | None = None,
 ) -> OperationRuntime:
-    """Build a runtime bundle rooted at one repository path."""
 
     authority = resolve_runtime_authority_for_write(project_root)
     from meridian.lib.ops.config import ensure_runtime_state_bootstrap_sync
@@ -349,7 +342,6 @@ def build_runtime(
 
 
 def resolve_runtime_root(project_root: Path) -> Path:
-    """Resolve runtime state root for write paths."""
 
     authority = resolve_runtime_authority_for_write(project_root)
     if authority.runtime_root is None:
@@ -358,7 +350,6 @@ def resolve_runtime_root(project_root: Path) -> Path:
 
 
 def resolve_runtime_root_for_read(project_root: Path) -> Path | None:
-    """Resolve runtime state root for reads, or ``None`` without identity."""
 
     return resolve_runtime_authority_for_read(project_root).runtime_root
 

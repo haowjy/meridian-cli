@@ -1,5 +1,3 @@
-"""Codex subprocess command projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import json
@@ -67,7 +65,6 @@ def project_codex_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
 
     command: list[str] = list(base_command)
     prompt_parts = (

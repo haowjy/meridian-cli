@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-# Remove this module once pre-v3 spawn rows no longer exist in the wild.
-
-# Fields from pre-main schema generations that carry no v3 meaning and are
-# deliberately discarded during upgrade. This is a curated exception list;
-# fields absent from it still fail the unknown-fields rule.
+# Discard only listed legacy fields; unknown fields must fail closed.
 RETIRED_LEGACY_FIELDS: frozenset[str] = frozenset({"revision"})
 
 _RUNNER_EXIT_FIELDS = {
@@ -34,9 +30,7 @@ _TERMINAL_FIELDS = {
 }
 _TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 
-# Field inventory from origin/main's StoredSpawnState writer, excluding the
-# flat projections handled above. This explicit allowlist makes unknown legacy
-# data fail closed instead of disappearing during reshaping.
+# The allowlist prevents unknown legacy fields from disappearing during reshaping.
 _COMMON_FIELDS = {
     "v",
     "id",
@@ -125,9 +119,8 @@ def _upgrade_flat_runner_exit(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _upgrade_flat_terminal(raw: dict[str, Any]) -> dict[str, Any] | None:
-    # Historical backfill: rows written before published_at existed define
-    # publication time as finish time. Meaning-carrying terminal facts remain
-    # required and are never inferred.
+    # Legacy rows use finish time when publication time is absent; never infer
+    # meaning-carrying terminal facts.
     _require_fields(raw, set(_TERMINAL_FIELDS) - {"published_at"}, "terminal")
     status = raw.get("status")
     values = {target: raw.get(source) for source, target in _TERMINAL_FIELDS.items()}

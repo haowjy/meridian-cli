@@ -1,5 +1,3 @@
-"""Shared diagnostics for model-backed configuration."""
-
 from __future__ import annotations
 
 import logging
@@ -18,7 +16,6 @@ ValidationPathFormatter = Callable[[ValidationPath], str]
 
 
 def validation_error_path(location: ValidationPath) -> str:
-    """Render a Pydantic error location as a user-facing config key."""
 
     parts: list[str] = []
     for item in location:
@@ -38,7 +35,6 @@ def config_validation_error(
     source: str | None = None,
     path_formatter: ValidationPathFormatter = validation_error_path,
 ) -> ValueError:
-    """Translate one Pydantic failure into a concise config-key error."""
 
     detail = error.errors(include_url=False)[0]
     path = path_formatter(detail["loc"])

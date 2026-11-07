@@ -1,5 +1,3 @@
-"""Serve a primary's control socket for the life of its harness process."""
-
 from __future__ import annotations
 
 import asyncio
@@ -65,13 +63,6 @@ def _serve_when_routable(
 def primary_control_socket(
     launch: LaunchPaths, factory: PrimaryMessageRoute | None
 ) -> Generator[Callable[[int], None], None, None]:
-    """Own the primary's control socket lexically; yield ``serve(pid)`` for on-running.
-
-    The socket is bound only once *factory* returns a route, so a socket file always
-    means a message can be delivered. Leaving the block unbinds it and joins the thread.
-    ``serve`` never raises: a failure in on-running would kill the child. With no
-    *factory* (harness without a primary route) ``serve`` does nothing.
-    """
 
     stop = threading.Event()
     thread: threading.Thread | None = None
@@ -80,6 +71,7 @@ def primary_control_socket(
         nonlocal thread
         if factory is None:
             return
+        # A launch callback failure would kill the child.
         try:
             thread = threading.Thread(
                 target=_serve_when_routable,

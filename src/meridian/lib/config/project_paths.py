@@ -1,5 +1,3 @@
-"""Project-root Meridian path helpers."""
-
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,7 +30,6 @@ class ProjectConfigPaths(BaseModel):
 def resolve_project_config_paths(
     project_root: Path, execution_cwd: Path | None = None
 ) -> ProjectConfigPaths:
-    """Build project paths from repository root and optional execution cwd."""
 
     resolved_project_root = project_root.resolve()
     resolved_execution_cwd = (execution_cwd or project_root).resolve()

@@ -1,5 +1,3 @@
-"""Crash-only signal files for resident spawn coordination."""
-
 from __future__ import annotations
 
 import json
@@ -29,8 +27,6 @@ class RearmRequest:
 
 @dataclass(frozen=True)
 class RearmRecord:
-    """One granted rearm, as `spawn show` reads it."""
-
     at: str
     long: bool
     reason: str | None
@@ -46,15 +42,12 @@ class HoldStatus:
 
 @dataclass(frozen=True)
 class ResidentSignals:
-    """Resident coordination signals consumed in one crash-tolerant read."""
-
     done: bool = False
     rearm: bool = False
     rearm_request: RearmRequest | None = None
 
 
 def spawn_signal_path(launch: LaunchPaths, kind: SpawnSignalKind) -> Path:
-    """Return the authoritative path for a resident spawn signal file."""
 
     return launch.done_signal if kind == "done" else launch.rearm_signal
 
@@ -63,12 +56,7 @@ def write_accepted_signals(
     launch: LaunchPaths,
     kinds: Iterable[SpawnSignalKind],
 ) -> None:
-    """Declare the signals this spawn's drain plan consumes.
-
-    A spawn-dir file rather than a row field: spawn rows forbid unknown keys, so
-    older builds would quarantine every row carrying one.
-    """
-
+    # Older builds quarantine spawn rows with unknown fields.
     payload = json.dumps(sorted(kinds))
     mutate_published_spawn_artifact(
         launch.runtime_root,
@@ -78,12 +66,6 @@ def write_accepted_signals(
 
 
 def read_accepted_signals(launch: LaunchPaths) -> frozenset[SpawnSignalKind] | None:
-    """Return the declared signals, or ``None`` when the runner hasn't declared any.
-
-    ``None`` covers a plan not chosen yet, a runner that predates the file, and an
-    unreadable file.
-    """
-
     try:
         raw: object = json.loads(launch.accepted_signals.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -103,12 +85,7 @@ def write_spawn_signal(
     can_write: Callable[[SpawnRecord], bool] | None = None,
     rearm: RearmRequest | None = None,
 ) -> bool:
-    """Write an idempotent signal while its published spawn still exists.
-
-    ``can_write`` sees the published row under the same lock as the write. ``rearm`` is the
-    payload; the file's presence stays the signal, so an older runner still reads it.
-    """
-
+    # Older runners recognize the file's presence, irrespective of its payload.
     body = _timestamp()
     if rearm is not None:
         body = json.dumps({"at": body, "long": rearm.long, "reason": rearm.reason})
@@ -148,7 +125,6 @@ def _read_rearm_request(launch: LaunchPaths) -> RearmRequest:
 
 
 def consume_spawn_signal(launch: LaunchPaths, kind: SpawnSignalKind) -> bool:
-    """Delete a signal file if present, tolerating races and crash leftovers."""
 
     path = spawn_signal_path(launch, kind)
     if not path.exists():
@@ -166,12 +142,7 @@ def _written_at(launch: LaunchPaths, kind: SpawnSignalKind) -> int:
 
 
 def consume_resident_signals(launch: LaunchPaths) -> ResidentSignals:
-    """Consume resident done/rearm signal files in a single coordination call.
-
-    Of two read together the later stands: a first turn's signals wait for its end, so a
-    `rearm` then a `done` can share a read. A tie stays a rearm.
-    """
-
+    # First-turn signals wait for its end, so done and rearm can arrive together.
     done_at = _written_at(launch, "done")
     rearm_at = _written_at(launch, "rearm")
     done = consume_spawn_signal(launch, "done")
@@ -183,8 +154,6 @@ def consume_resident_signals(launch: LaunchPaths) -> ResidentSignals:
 
 
 def record_rearm(launch: LaunchPaths, request: RearmRequest) -> None:
-    """Append one granted rearm; a spawn outlives its signal file, and a reason should too."""
-
     line = json.dumps({"at": _timestamp(), "long": request.long, "reason": request.reason})
 
     def append() -> None:
@@ -195,7 +164,6 @@ def record_rearm(launch: LaunchPaths, request: RearmRequest) -> None:
 
 
 def read_rearms(launch: LaunchPaths) -> tuple[RearmRecord, ...]:
-    """Read the granted rearms, skipping any line a crash cut short."""
 
     try:
         lines = launch.rearm_log.read_text(encoding="utf-8").splitlines()
@@ -220,7 +188,6 @@ def read_rearms(launch: LaunchPaths) -> tuple[RearmRecord, ...]:
 
 
 def write_hold_status(launch: LaunchPaths, status: HoldStatus | None) -> None:
-    """Replace ``hold.json``, or remove it when the child is no longer held."""
 
     def replace_status() -> None:
         if status is None:
@@ -233,7 +200,6 @@ def write_hold_status(launch: LaunchPaths, status: HoldStatus | None) -> None:
 
 
 def read_hold_status(launch: LaunchPaths) -> HoldStatus | None:
-    """Return what a held child waits on, or ``None`` when that can't be read."""
 
     try:
         payload = _json_object(launch.hold_status.read_text(encoding="utf-8"))

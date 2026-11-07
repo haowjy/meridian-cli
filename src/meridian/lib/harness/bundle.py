@@ -1,5 +1,3 @@
-"""Typed harness bundle registry for dispatch and extraction."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -135,7 +133,6 @@ _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
 
 
 def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
-    """Register one harness bundle and enforce bootstrap invariants."""
     # Adapter modules call this at import time. Keep this explicit side effect
     # listed in HARNESS_EXTENSION_TOUCHPOINTS for new harness onboarding.
 
@@ -248,7 +245,6 @@ def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
 
 
 def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
-    """Look up one registered harness bundle."""
 
     from meridian.lib.harness import ensure_bootstrap
 
@@ -266,7 +262,6 @@ def registered_bundles() -> Mapping[HarnessId, HarnessBundle[Any]]:
 
 
 def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
-    """Return the active harness bundle registry mapping."""
 
     from meridian.lib.harness import ensure_bootstrap
 
@@ -278,7 +273,6 @@ def get_connection_cls(
     harness_id: HarnessId,
     transport_id: TransportId,
 ) -> type[HarnessConnection[Any]]:
-    """Return the connection class for one harness+transport pair."""
 
     bundle = get_harness_bundle(harness_id)
     try:
@@ -315,7 +309,6 @@ def bind_launch_spec(
     env: Mapping[str, str],
     child_cwd: Path,
 ) -> SpecT:
-    """Resolve the spec's launch-context-dependent facts through ``bind_spec``."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     if bundle.projections.bind_spec is None:
@@ -344,7 +337,6 @@ def materialize_launch_spec(
     env: Mapping[str, str],
     child_cwd: Path,
 ) -> SpecT:
-    """Perform a harness's real-launch-only spec materialization."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     if bundle.projections.materialize_spec is None:
@@ -358,7 +350,6 @@ def project_subprocess_spec(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one resolved spec to subprocess argv through the bundle registry."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     return bundle.projections.subprocess_cli_args(
@@ -374,7 +365,6 @@ def project_managed_primary_backend_command(
     host: str,
     port: int,
 ) -> list[str]:
-    """Project one managed-primary backend command through the bundle registry."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     managed_primary = bundle.projections.managed_primary
@@ -389,7 +379,6 @@ def project_managed_primary_bootstrap(
     *,
     project_root: Path,
 ) -> object:
-    """Project one managed-primary bootstrap payload through the bundle registry."""
 
     bundle = _require_bundle_spec(harness_id, spec)
     managed_primary = bundle.projections.managed_primary

@@ -1,5 +1,3 @@
-"""Shared config/workspace inspection surface for config and doctor ops."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -118,7 +116,6 @@ class ConfigSurface(BaseModel):
 
 
 def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> ConfigSurface:
-    """Build shared config inspection state for one resolved repository root."""
 
     authority = (
         project_root

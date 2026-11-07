@@ -1,9 +1,3 @@
-"""Cross-platform psutil tree fallback terminator.
-
-Absorbs terminate_tree() logic from platform/terminate.py, extended to return
-CleanupResult.  Works on both POSIX and Windows via psutil.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -22,14 +16,11 @@ _UNSET_EPOCH = PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 def _validate_pid_birth(root_pid: int, created_at_epoch: float) -> str | None:
-    """Return a skip_reason string if the PID has been reused, else None.
-
-    Skips the check when created_at_epoch is 0.0 (sentinel for 'unknown').
-    """
 
     if birth_time_unverified(created_at_epoch):
         return None
 
+    # An unavailable birth time does not establish process identity.
     with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         actual = psutil.Process(root_pid).create_time()
         if abs(actual - created_at_epoch) > 1.0:
@@ -39,7 +30,6 @@ def _validate_pid_birth(root_pid: int, created_at_epoch: float) -> str | None:
 
 
 def _snapshot_tree(pid: int) -> tuple[psutil.Process | None, list[psutil.Process]]:
-    """Return a stable snapshot of root process and descendants."""
 
     try:
         root = psutil.Process(pid)
@@ -61,11 +51,6 @@ async def terminate_tree(
     root_created_at_epoch: float = _UNSET_EPOCH,
     degraded_fallback: bool = False,
 ) -> CleanupResult:
-    """Terminate a subprocess tree, escalating to SIGKILL after grace_secs.
-
-    Validates PID birth time before sending signals (PROC-006).
-    Extended from the original platform/terminate.py to return CleanupResult.
-    """
 
     pid = process.pid
 
@@ -143,10 +128,6 @@ def terminate_tree_sync(
     scope_id: str = "",
     degraded_fallback: bool = False,
 ) -> CleanupResult:
-    """Synchronous variant for hook contexts (no event loop required).
-
-    Uses psutil.wait_procs() directly.
-    """
 
     skip_reason = _validate_pid_birth(pid, created_at_epoch)
     if skip_reason is not None:

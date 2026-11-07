@@ -1,5 +1,3 @@
-"""Creation-time spawn metadata shared across lifecycle/store start seams."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,8 +12,6 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SpawnStartMetadata:
-    """Metadata captured when a spawn row is first created."""
-
     forked_from_history_id: UUID | None = None
     desc: str | None = None
     work_id: str | None = None
@@ -27,7 +23,6 @@ class SpawnStartMetadata:
 
 
 def compact_prompt_summary(prompt: str) -> str | None:
-    """Return a single-line prompt summary capped at 50 characters."""
 
     normalized_prompt = prompt.strip()
     if not normalized_prompt:
@@ -44,7 +39,6 @@ def derive_display_label(
     desc: str | None,
     prompt: str,
 ) -> str | None:
-    """Persist a prompt summary only when goal and desc are both absent."""
 
     if (goal or desc or "").strip():
         return None
@@ -56,7 +50,6 @@ def resolve_spawn_display_label(
     desc: str | None,
     display_label: str | None,
 ) -> str | None:
-    """Resolve list/display text from persisted metadata only."""
 
     label = (goal or desc or display_label or "").strip()
     return label or None

@@ -153,7 +153,6 @@ def _as_str_tuple(raw: object) -> tuple[str, ...]:
 
 
 def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
-    """Parse skills.loaded — list of {name, skill_type, body} objects."""
     if not isinstance(raw, list):
         return ()
     entries: list[LoadedSkillEntry] = []
@@ -177,7 +176,6 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
 
 
 def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
-    """Parse skill names, types, descriptions, and paths from ``skills.available``."""
     if not isinstance(raw, list):
         return ()
     entries: list[AvailableSkillEntry] = []
@@ -301,7 +299,6 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
 
 
 def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
-    """Read native names for Meridian's semantic agent/task platform denies."""
 
     raw_capabilities = tools.get("capability_natives")
     if raw_capabilities is None:
@@ -659,7 +656,6 @@ def request_and_resolve(
     *,
     harness_registry: HarnessRegistry,
 ) -> BundleResult:
-    """Resolve launch routing and execution policy through Mars launch-bundle."""
 
     roots = resolve_mars_roots(request.project_root)
     command = _build_bundle_command(request, roots=roots)
@@ -766,7 +762,6 @@ def bundle_to_resolved_policy(
     skill_delivery: SkillDeliveryMode,
     provenance_overrides: dict[str, str] | None = None,
 ) -> ResolvedLaunchPolicy:
-    """Map bundle facts + local composition context to ResolvedLaunchPolicy."""
 
     harness_id = resolved_harness
     try:

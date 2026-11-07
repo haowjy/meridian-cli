@@ -1,5 +1,3 @@
-"""Raw Mars model catalog listing operation."""
-
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, model_serializer
@@ -34,7 +32,6 @@ class CatalogModel(BaseModel):
     description: str | None = None
 
     def to_wire(self) -> dict[str, object]:
-        """Compact JSON projection for model listings."""
         wire: dict[str, object] = {"model_id": str(self.model_id)}
         if self.provider and self.provider.strip():
             wire["provider"] = self.provider
@@ -91,7 +88,6 @@ class ModelsListOutput(BaseModel):
         return {"models": [model.to_wire() for model in self.models]}
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        """Columnar model table for text output mode."""
         if not self.models:
             return "(no models)"
         from meridian.lib.core.formatting import tabular
@@ -117,19 +113,15 @@ class ModelsListOutput(BaseModel):
         filtered_rows = [[row[index] for index in keep_indices] for row in rows]
         table = tabular([filtered_header, *filtered_rows])
 
-        # Add description sub-lines
         table_lines = table.split("\n")
         result_lines: list[str] = []
-        # First line is header
         if table_lines:
             result_lines.append(table_lines[0])
-        # Remaining lines correspond to models
         for i, model in enumerate(self.models):
             line_index = i + 1
             if line_index < len(table_lines):
                 result_lines.append(table_lines[line_index])
             if model.description:
-                # Indent description under the model line
                 result_lines.append(f"  {model.description}")
         return "\n".join(result_lines)
 
@@ -217,7 +209,6 @@ def _mars_catalog_entry_to_model(entry: dict[str, object]) -> CatalogModel | Non
 
 
 def _cost_tier(cost_input: float | None) -> str | None:
-    """Map input cost ($/M tokens) to a human-readable tier."""
     if cost_input is None:
         return None
     if cost_input < 1.0:

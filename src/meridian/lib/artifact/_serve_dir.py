@@ -1,5 +1,3 @@
-"""Prefix-aware static server used by detached artifact serves."""
-
 from __future__ import annotations
 
 import sys

@@ -1,5 +1,3 @@
-"""Canonical pre-initialization failure boundary for spawn.create."""
-
 from __future__ import annotations
 
 from collections.abc import Callable

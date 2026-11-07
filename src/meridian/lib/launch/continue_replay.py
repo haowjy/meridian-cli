@@ -1,5 +1,3 @@
-"""Canonical exact-continue replay contract for primary and spawn paths."""
-
 from __future__ import annotations
 
 import contextlib
@@ -124,7 +122,6 @@ def continue_replay_source_from_reference(
     *,
     harness_session_id: str | None,
 ) -> ContinueReplaySource:
-    """Build continue replay source inputs from a resolved session reference."""
 
     return ContinueReplaySource(
         source_ref=source_ref,
@@ -200,12 +197,6 @@ def _reject_exact_continue_agent_override(
 
 
 def reject_continue_policy_overrides(given: Mapping[str, bool]) -> None:
-    """Refuse the options an exact continue cannot take, as each path defines them.
-
-    ``given`` maps each flag the calling path refuses to whether the caller passed it. The
-    sets differ by path (a primary accepts approval, sandbox, effort and the like and applies
-    them; a child refuses them), so each caller lists only its own.
-    """
     rejected = [flag for flag, present in given.items() if present]
     if not rejected:
         return
@@ -263,13 +254,6 @@ def _row_names(row: dict[str, object]) -> set[str]:
 
 
 def launch_model_on_harness(token: str, rows: list[dict[str, object]]) -> str | None:
-    """Return the launch id for ``token`` on an already chosen harness's model list.
-
-    The harness is fixed before this runs. A token that also exists on another
-    harness is irrelevant here. Several rows on this harness matching a bare id
-    is a miss: continue must not guess a provider.
-    """
-
     normalized = token.strip()
     if not normalized:
         return None
@@ -309,14 +293,6 @@ def _observed_last_executed_model(
     replay_harness: str,
     runtime_root: Path,
 ) -> str | None:
-    """Resolve the last-executed model as a launch model on ``replay_harness``.
-
-    The native history is read (and recorded) through ``observe_session_model``; the
-    stored observation is the fallback. Either raw token is mapped here, never stored
-    mapped. A failed observation must never break continue, so it falls back.
-    Unroutable tokens return ``None`` so the caller uses the recorded selection.
-    """
-
     harness_session_id = source.harness_session_id
     if harness_session_id is None:
         return None
@@ -411,7 +387,6 @@ def build_continue_replay_contract(
     requested_model_override: str | None = None,
     runtime_root: Path | None = None,
 ) -> ContinueReplayContract:
-    """Build the normalized exact-continue contract from a resolved source."""
 
     _reject_exact_continue_agent_override(
         requested_agent=requested_agent,

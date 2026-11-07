@@ -1,5 +1,3 @@
-"""Pure idle-stage timeline calculation."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

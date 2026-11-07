@@ -1,5 +1,3 @@
-"""Shared completion state machine behind the streaming drain protocol."""
-
 from __future__ import annotations
 
 import logging

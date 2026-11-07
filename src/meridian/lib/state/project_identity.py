@@ -74,7 +74,6 @@ class _CommittedConfig(BaseModel):
 
 
 def state_id(identity: ProjectIdentity) -> str | None:
-    """Return the persisted state ID visible through an identity."""
 
     if isinstance(identity, AdHoc) and not identity.materialized:
         return None
@@ -85,7 +84,6 @@ def project_identity_was_created(
     before: ProjectIdentity,
     after: ProjectIdentity,
 ) -> bool:
-    """Return whether an ensure operation first persisted an identity."""
 
     return (
         isinstance(before, Committed)
@@ -101,7 +99,6 @@ def project_identity_was_created(
 
 
 def get_committed_project_id(project_root: Path) -> str | None:
-    """Read and validate the committed ID from ``meridian.toml``."""
 
     config_path = project_root / "meridian.toml"
     if not config_path.is_file():
@@ -168,14 +165,12 @@ def is_same_project(first: Path, second: Path) -> bool:
 
 
 def nearest_ancestor_project_marker(project_root: Path) -> Path | None:
-    """Return the nearest marked ancestor without changing identity resolution."""
 
     root = project_root.expanduser().resolve()
     return next((ancestor for ancestor in root.parents if has_project_marker(ancestor)), None)
 
 
 def generate_committed_project_id(user_home: Path) -> str:
-    """Generate an unused committed identity under one Meridian user home."""
 
     for _ in range(10):
         candidate = generate_project_id()
@@ -191,7 +186,6 @@ def mint_committed_identity(
     project_root: Path,
     scaffold: str,
 ) -> Committed:
-    """Atomically scaffold a project config with its committed identity."""
 
     project_root = project_root.expanduser().resolve()
     user_home = get_user_home()

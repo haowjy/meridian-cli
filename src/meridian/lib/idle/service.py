@@ -1,5 +1,3 @@
-"""Harness-agnostic idle state machine and notification policy."""
-
 from __future__ import annotations
 
 import logging
@@ -61,7 +59,6 @@ def _recorded_native_store(
     env: Mapping[str, str],
     harness: str,
 ) -> Path | None:
-    """Read the launch-recorded native store for this managed chat."""
 
     chat_id = env.get("MERIDIAN_CHAT_ID", "").strip()
     if not chat_id:
@@ -189,7 +186,6 @@ def effective(
     config: MeridianConfig,
     env: Mapping[str, str] | None = None,
 ) -> object:
-    """Resolve level-first, then most-specific idle precedence."""
 
     policy_option = _IDLE_POLICY_OPTIONS.get(field)
     if policy_option is None:
@@ -227,7 +223,6 @@ def resolve_policy(
     config: MeridianConfig,
     env: Mapping[str, str] | None = None,
 ) -> IdlePolicyConfig:
-    """Resolve all policy fields once for an operation."""
 
     values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
     return IdlePolicyConfig.model_validate(values)
@@ -543,7 +538,6 @@ class IdleService:
         harness: str,
         message: str,
     ) -> None:
-        """Forward one harness permission signal without touching idle state."""
 
         if not self.config_for(harness).enabled:
             return

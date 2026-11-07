@@ -61,17 +61,6 @@ def terminate_pgid(
     reason: str,
     scope_id: str,
 ) -> CleanupResult:
-    """Send SIGTERM to the POSIX process group, escalating to SIGKILL if needed.
-
-    Validates the root PID birth time before sending signals (PROC-006).
-
-    When the root process is already dead (``NoSuchProcess`` during birth-time
-    check), the function still attempts PGID termination in degraded mode
-    (PROC-004). A full-table scan retains group members for wait and escalation,
-    including descendants that ignore SIGTERM after their leader exits.
-
-    Returns a CleanupResult — never raises.
-    """
 
     if IS_WINDOWS:
         raise RuntimeError("terminate_pgid() is not available on Windows.")
@@ -90,9 +79,7 @@ def terminate_pgid(
 
     import signal
 
-    # --- PID reuse guard (PROC-006) --- fail-closed for confirmed reuse only.
-    # Distinguishes "PID reused by another process" (hard skip) from "root is
-    # already dead" (degraded mode — PGID kill may still reach live members).
+    # A reused PID forbids signalling; a dead root can still have live group members.
     pid_reuse_detected = False
     root_is_dead = False
     if not birth_time_unverified(created_at_epoch):
@@ -115,7 +102,6 @@ def terminate_pgid(
             skip_reason="pid_reuse_detected",
         )
 
-    # --- Snapshot tree before signalling for wait + descendant count ---
     root_proc: psutil.Process | None = None
     children: list[psutil.Process] = []
     try:
@@ -128,12 +114,10 @@ def terminate_pgid(
         with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             children = root_proc.children(recursive=True)
 
-    # A dead leader can leave live group members, including ones that ignore
-    # SIGTERM. Retain those members for the same wait/escalation as a live tree.
+    # A missing or unverifiable leader may leave live group members that ignore
+    # SIGTERM; retain them for wait and escalation.
     orphans = _scan_by_pgid(pgid) if root_is_dead else []
 
-    # --- SIGTERM to the process group ---
-    # Even when root_is_dead the group may still have live members — attempt it.
     try:
         os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
@@ -149,15 +133,13 @@ def terminate_pgid(
             if os.getpgid(child.pid) != pgid:
                 child.terminate()
 
-    # --- Build the process tree to wait on ---
     tree: list[psutil.Process] = (
         orphans if root_is_dead else ([root_proc] if root_proc is not None else []) + children
     )
 
-    # Determine descendant count for the result record.
     descendant_count = len(tree) if root_is_dead else len(children)
 
-    # degraded when root was already dead before we started
+    # The root disappeared or its identity could not be checked.
     degraded_fallback = root_is_dead
 
     kill_escalated = False

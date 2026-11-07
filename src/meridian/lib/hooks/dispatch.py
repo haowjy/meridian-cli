@@ -1,5 +1,3 @@
-"""Hook dispatch coordination for lifecycle and work events."""
-
 from __future__ import annotations
 
 import os

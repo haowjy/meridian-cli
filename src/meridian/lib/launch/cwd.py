@@ -1,5 +1,3 @@
-"""Shared task-directory resolution policy for spawn launches."""
-
 from __future__ import annotations
 
 import os
@@ -120,15 +118,7 @@ def _validated_scope_task_dir(task_dir: Path) -> Path:
 
 
 def inheritable_task_dir(project_root: Path, spawn_id: str | None) -> Path | None:
-    """Return the checkout a launch inherits from the execution launching it.
-
-    Only a checkout the launcher pinned (its spawn scope) is inherited: a launcher
-    that follows its item or the project root passes nothing on, so its child
-    follows ``work task-dir`` and ``work switch`` too. ``MERIDIAN_TASK_DIR`` inside
-    a managed run is the launcher's own link — a projection of that rule — and is
-    never read back. Outside one, a value the user exported is an explicit choice.
-    """
-
+    # In managed runs the environment value is a link, not an explicit pin to inherit.
     normalized_spawn_id = (spawn_id or "").strip()
     if normalized_spawn_id:
         return read_spawn_scope(project_root.expanduser().resolve(), normalized_spawn_id).task_dir
@@ -144,13 +134,6 @@ def resolve_effective_task_dir(
     inherited_task_dir: Path | None = None,
     work_id: str | None = None,
 ) -> EffectiveTaskDir:
-    """Resolve where the current process edits source code.
-
-    The execution's pin, else its item's checkout, else the project root.
-    *inherited_task_dir* is for a process outside a managed run, where an exported
-    ``MERIDIAN_TASK_DIR`` is all there is.
-    """
-
     resolved_project_root = project_root.expanduser().resolve()
     normalized_spawn_id = (spawn_id or "").strip() or None
     normalized_work_id = (work_id or "").strip() or None
@@ -235,17 +218,6 @@ def resolve_task_cwd(
     ambient_work_id: str | None = None,
     caller_cwd: str | Path | None = None,
 ) -> TaskCwdResolution:
-    """Resolve task directory used for references and task instructions.
-
-    Resolution priority:
-      1. explicit task-dir override
-      2. explicit work item task_dir
-      3. inherited task-dir from parent
-      4. ambient work item task_dir
-      5. caller cwd when outside the project tree
-      6. authority root default
-    """
-
     resolved_authority_root = authority_root.resolve()
     explicit_override = str(explicit_task_dir).strip() if explicit_task_dir is not None else ""
     if explicit_override:

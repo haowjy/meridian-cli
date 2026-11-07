@@ -1,5 +1,3 @@
-"""Filesystem path helpers for file-authoritative Meridian state."""
-
 import os
 import tomllib
 from collections.abc import Sequence
@@ -27,7 +25,6 @@ if TYPE_CHECKING:
 
 
 def normalize_path_for_write(path: str | None) -> str | None:
-    """Return a stable absolute form for a path persisted in state."""
 
     if not path:
         return path
@@ -40,20 +37,11 @@ def _is_under(path: str, root: str) -> bool:
 
 
 def rebase_path(path: str, olds: Sequence[str], new: str) -> str | None:
-    """``path`` with its leading ``old`` directory replaced by ``new``, or None when
-    there is nothing to change.
-
-    ``olds`` are the spellings of one old directory (as typed, resolved); the first that
-    holds ``path`` wins. Components match whole: ``/a/b`` covers ``/a/b/c``, never
-    ``/a/b-old``. A path already under ``new`` (in any spelling of ``old`` that holds
-    ``new``) is left alone, so a rerun (or a path recorded after the move) is not
-    rebased twice.
-    """
-
     new = new.rstrip("/") or "/"
     for old in olds:
         if not _is_under(path, old):
             continue
+        # A retry or a path recorded after the move must not rebase twice.
         if any(_is_under(path, spelling) for spelling in _new_spellings(new, olds)):
             return None
         rest = path[len(old.rstrip("/")) :].lstrip("/")
@@ -104,13 +92,11 @@ class RuntimePaths(BaseModel):
 
     @property
     def work_items_dir(self) -> Path:
-        """Return the per-item link directory the work store publishes into."""
 
         return self.root_dir / "work-items"
 
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:
-        """Build state-root-relative paths from an absolute state directory."""
 
         return cls(
             root_dir=root_dir,
@@ -142,7 +128,6 @@ class ProjectPaths(BaseModel):
 
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:
-        """Build project-state-relative paths from one state directory."""
 
         return cls(
             root_dir=root_dir,
@@ -216,12 +201,7 @@ def resolve_project_paths(project_root: Path) -> ProjectPaths:
 
 
 def resolve_project_paths_for_write(project_root: Path) -> ProjectPaths:
-    """Resolve project-owned state paths for write flows.
-
-    If context paths contain ``{project}``, this ensures project identity before
-    path substitution so write callers never materialize literal placeholders.
-    """
-
+    # Resolve identity first so writes never materialize a literal {project} placeholder.
     return resolve_project_paths_from_context(project_root, create_project_uuid=True)
 
 
@@ -233,7 +213,6 @@ def _try_load_context_config(
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> ContextConfig | None:
-    """Try loading merged context config from user/project/local Meridian config files."""
 
     merged_context: dict[str, object] = {}
     found_context = False
@@ -269,7 +248,6 @@ def load_context_config(
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> ContextConfig | None:
-    """Load merged context config for one repo, or ``None`` when no [context] exists."""
 
     return _try_load_context_config(
         project_root,
@@ -288,11 +266,6 @@ def resolve_project_paths_from_context(
     create_project_uuid: bool = False,
     identity: ProjectIdentity | None = None,
 ) -> ProjectPaths:
-    """Resolve project paths with optional context config, falling back to defaults.
-
-    When no explicit config is provided and no file-level config exists, the
-    ``ContextConfig()`` defaults (user-level placeholder paths) are used.
-    """
 
     if context_config is None:
         context_config = _try_load_context_config(
@@ -300,7 +273,6 @@ def resolve_project_paths_from_context(
             project_config_paths=project_config_paths,
         )
 
-    # Default to ContextConfig() which has user-level placeholder defaults
     effective_config = context_config or ContextConfig()
 
     from meridian.lib.context.resolver import (
@@ -338,18 +310,12 @@ def resolve_project_paths_from_context(
 
 
 def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
-    """Resolve state paths for a mutating caller, creating identity if needed."""
 
     root_dir = resolve_project_runtime_root_for_write(project_root)
     return ProjectPaths.from_root_dir(root_dir)
 
 
 def resolve_project_runtime_root(project_root: Path) -> Path:
-    """Resolve runtime state root for read paths.
-
-    This helper is read-only: it never creates project identity.
-    Raises when no identity exists; zero-state command paths use the optional resolver.
-    """
 
     runtime_root = resolve_project_runtime_root_or_none(project_root)
     if runtime_root is not None:
@@ -358,17 +324,12 @@ def resolve_project_runtime_root(project_root: Path) -> Path:
 
 
 def resolve_project_runtime_root_or_none(project_root: Path) -> Path | None:
-    """Resolve runtime state root without mutation.
-
-    Returns None when no project UUID has been initialized yet.
-    """
     from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 
     return resolve_runtime_authority_for_read(project_root).runtime_root
 
 
 def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
-    """Resolve runtime state root for write paths, creating project UUID if needed."""
     from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
 
     authority = resolve_runtime_authority_for_write(project_root)
@@ -378,7 +339,6 @@ def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
 
 
 def resolve_kb_dir(project_root: Path) -> Path | None:
-    """Return the configured KB directory, or ``None`` without identity."""
 
     return resolve_project_paths(project_root).kb_dir
 
@@ -389,7 +349,6 @@ def resolve_work_scratch_dir_for_project(
     *,
     project_paths: ProjectPaths | None = None,
 ) -> Path:
-    """Return the authority-resolved work directory for a work item."""
 
     resolved_project_paths = project_paths or resolve_project_paths(project_root)
     if resolved_project_paths.work_dir is None:
@@ -398,9 +357,6 @@ def resolve_work_scratch_dir_for_project(
 
 
 def resolve_spawn_dir(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the spawn directory. Spawn-level files (``state.json``, ``launch.lock``,
-    ``scope.json``, ``observed-launches.json``, the reaper claim, the ambient ``work/``
-    directory) live here for every launch; per-launch files go through ``LaunchPaths``."""
 
     return runtime_root / "spawns" / str(spawn_id)
 
@@ -418,7 +374,7 @@ _PI_RUNTIME_META_FILENAME = "pi_runtime_meta.json"
 _BACKGROUND_STDOUT_FILENAME = "background-launcher.stdout.log"
 _BACKGROUND_STDERR_FILENAME = "background-launcher.stderr.log"
 _BG_WORKER_REQUEST_FILENAME = "bg-worker-request.json"
-REAPER_CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"  # spawn-level
+REAPER_CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 
 
 @dataclass(frozen=True)
@@ -455,19 +411,13 @@ def launch_subdir(n: int | None) -> Path:
 
 
 def spawn_report_files(runtime_root: Path, spawn_id: SpawnId | str) -> tuple[Path, ...]:
-    """Every launch's report that exists, newest first.
-
-    ``launches/<n>/report.md`` by descending ``n``, then the spawn directory's own report:
-    a v3 row's launch 1, which a continue leaves in place.
-    """
-
     spawn_dir = resolve_spawn_dir(runtime_root, spawn_id)
     numbers = sorted(
         (int(entry.name) for entry in (spawn_dir / "launches").glob("*") if entry.name.isdigit()),
         reverse=True,
     )
     candidates = [spawn_dir / launch_subdir(n) / _REPORT_FILENAME for n in numbers]
-    candidates.append(spawn_dir / _REPORT_FILENAME)
+    candidates.append(spawn_dir / _REPORT_FILENAME)  # A v3 launch 1 stays at the top level.
     return tuple(path for path in candidates if path.is_file())
 
 
@@ -478,55 +428,25 @@ def row_launch_subdir(launch: "LaunchRef | None") -> Path:
 
 
 def launch_archive(runtime_root: Path, spawn_id: SpawnId | str, n: int) -> Path:
-    """Launch ``n``'s finished row, copied by the holder that starts launch ``n+1``.
-
-    Spawn-level because it sits under ``launches/<n>/`` whatever version the row was
-    when launch ``n`` ran (a v3 row's launch 1 keeps its own files at the top level).
-    """
-
     return resolve_spawn_dir(runtime_root, spawn_id) / launch_subdir(n) / "launch.json"
 
 
 @dataclass(frozen=True)
 class LaunchPaths:
-    """One launch's identity (``runtime_root``, ``spawn_id``, ``n``) and every file it owns.
-
-    This module is the only place that constructs it (``for_row``); the code that
-    publishes a row returns the launch it wrote, and everyone else is handed that one.
-    A launch's directory is ``spawns/<id>/launches/<n>/``; ``n`` is ``None`` only for a
-    v3 row (``launch`` absent), whose launch 1 stays in the spawn directory, and for the
-    dry-run preview. Spawn-level files stay on ``resolve_spawn_dir``.
-    """
-
     runtime_root: Path
     spawn_id: SpawnId
     n: int | None
 
     @classmethod
     def for_row(cls, runtime_root: Path, row: "SpawnRecord | StoredSpawnState") -> Self:
-        """The launch a published row names. The only way to reach an existing launch."""
-
         return cls(runtime_root, SpawnId(row.id), row.launch.n if row.launch else None)
 
     @classmethod
     def reserved(cls, runtime_root: Path, spawn_id: SpawnId, n: int) -> Self:
-        """The launch ``spawn_store`` is about to publish as launch ``n`` of ``spawn_id``.
-
-        Only ``spawn_store`` calls this (the gate enforces it): the code that assigns
-        ``n`` names the launch before its row exists, so the bind phase can reference
-        its files. Everyone else is handed the launch.
-        """
-
         return cls(runtime_root, spawn_id, n)
 
     @classmethod
     def preview(cls, runtime_root: Path) -> Self:
-        """A placeholder launch for a dry-run bind. It is never published or written.
-
-        The fixed ID keeps it from naming a real spawn; the gate limits callers to the two
-        dry-run entry points.
-        """
-
         return cls(runtime_root, SpawnId("dry-run"), None)
 
     @property
@@ -668,8 +588,6 @@ class LaunchPaths:
 
 
 def staged_starting_prompt(stage_dir: Path, n: int) -> Path:
-    """Where ``start_spawn`` writes launch ``n``'s prompt inside its staging directory,
-    before the directory is renamed into place as the spawn directory."""
 
     return stage_dir / launch_subdir(n) / _STARTING_PROMPT_FILENAME
 

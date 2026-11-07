@@ -1,5 +1,3 @@
-"""Launcher-recorded CLI-escalation guardrail for child spawn creation."""
-
 from __future__ import annotations
 
 import json

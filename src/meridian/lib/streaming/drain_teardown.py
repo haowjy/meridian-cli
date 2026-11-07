@@ -1,5 +1,3 @@
-"""Harness-neutral connection teardown contract for completed drain sessions."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,5 +1,3 @@
-"""Codex rollout file discovery helpers."""
-
 from __future__ import annotations
 
 import json
@@ -237,7 +235,6 @@ def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
 
 
 def find_rollout(sessions_root: Path, session_id: str) -> Path | None:
-    """Find and validate the unique rollout for an exact Codex session ID."""
 
     matches = [
         candidate

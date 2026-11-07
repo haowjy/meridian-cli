@@ -1,5 +1,3 @@
-"""Cursor subprocess command projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import logging
@@ -69,7 +67,6 @@ def project_cursor_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
 
     _assert_supported_for_mvp(spec)
     if spec.projected_roots:

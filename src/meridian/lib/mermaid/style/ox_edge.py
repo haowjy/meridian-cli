@@ -1,5 +1,3 @@
-"""Suspicious Mermaid flowchart circle/cross edge token check."""
-
 from __future__ import annotations
 
 import re

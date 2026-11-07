@@ -1,5 +1,3 @@
-"""Spawn session scope helpers: session continuation and session context manager."""
-
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager

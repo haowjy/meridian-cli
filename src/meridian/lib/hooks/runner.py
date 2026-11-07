@@ -1,5 +1,3 @@
-"""External hook execution primitives."""
-
 from __future__ import annotations
 
 import os
@@ -20,7 +18,6 @@ _HOOK_PAYLOAD_ENV_NAMES = frozenset(HOOK_PAYLOAD_ENV_KEYS.values())
 
 
 def hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether hook dispatch should run globally."""
 
     scope = os.environ if env is None else env
     value = scope.get(_HOOKS_ENABLED_ENV)
@@ -73,7 +70,6 @@ class ExternalHookRunner:
         self._env = os.environ if env is None else env
 
     def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
-        """Execute one hook command and return structured result."""
 
         if not hooks_dispatch_enabled(self._env):
             return HookResult(

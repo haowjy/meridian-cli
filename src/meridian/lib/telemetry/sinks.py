@@ -1,5 +1,3 @@
-"""Telemetry sink protocol and simple sink implementations."""
-
 from __future__ import annotations
 
 import json

@@ -39,14 +39,12 @@ def _status_glyph(row: SessionListRow) -> tuple[str, str]:
 
 
 def _enter_hint(row: SessionListRow | None) -> str:
-    """What Enter does to ``row``: a running session forks, a blocked one offers nothing."""
     if row is None or row.reentry.kind == "blocked":
         return ""
     return f"enter {row.reentry.kind}  "
 
 
 def _start_hint(row: SessionListRow | None, key: str) -> str:
-    """The start-from key, offered only while it can succeed."""
     if row is None or row.start_from.kind == "blocked":
         return ""
     return f"{key} start from  "
@@ -89,9 +87,6 @@ def _choice(options: tuple[str, ...], current: str, focused: bool) -> StyleAndTe
     return out
 
 
-# --- list ---------------------------------------------------------------------------------
-
-
 class _Layout(NamedTuple):
     tmux: int
     agent: int  # 0 when the AGENT column is dropped
@@ -126,7 +121,6 @@ def _fit(rows: tuple[SessionListRow, ...], budget: int) -> _Layout:
 
 
 def _cells(row: SessionListRow, layout: _Layout) -> str:
-    """TMUX, AGENT, IDLE and WORK cells of one row."""
 
     parts = [cell(row.tmux_target or "", layout.tmux)]
     if layout.agent:
@@ -219,9 +213,6 @@ def list_footer(state: ListState, width: int) -> StyleAndTextTuples:
     return [("class:hint", clip(hint, width))]
 
 
-# --- detail -------------------------------------------------------------------------------
-
-
 def _stamp(iso: str) -> str:
     try:
         local = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
@@ -287,14 +278,10 @@ def detail_footer(state: DetailState, width: int) -> StyleAndTextTuples:
     return [("class:hint", clip(hint, width))]
 
 
-# --- lineage ------------------------------------------------------------------------------
-
-
 _EDGE_WIDTH = 4
 
 
 def _lineage_layout(nodes: tuple[LineageNode, ...], width: int) -> tuple[int, _Layout]:
-    """Width of the CHAT tree cell and the shared TMUX/AGENT/IDLE/WORK layout."""
 
     rows = tuple(n.row for n in nodes if n.row is not None)
     tree = max([len("CHAT"), *(len(n.prefix) + len(n.chat_id) for n in nodes)])

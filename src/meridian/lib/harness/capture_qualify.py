@@ -1,5 +1,3 @@
-"""Per-harness observers that qualify native capture tails."""
-
 from __future__ import annotations
 
 from typing import Protocol

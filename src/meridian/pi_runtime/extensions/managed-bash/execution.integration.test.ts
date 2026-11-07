@@ -105,7 +105,6 @@ describe("managed Bash execution ownership", () => {
       await until(() => runtime.list(true).length === 1);
       controller.abort();
       expect(await result).toMatchObject({ exit_code: -1 });
-      // The abort returns at the physical stop; the record publishes on its own.
       await until(() => runtime.list(true)[0]?.status === "killed");
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
@@ -204,7 +203,6 @@ describe("managed Bash execution ownership", () => {
       expect(await first.manage({ action: "kill", bash_id: row.bash_id })).toMatchObject({ killed: false });
       expect(await first.manage({ action: "wait", bash_id: row.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
 
-      // Repeated cold recoveries do not stack the annotation.
       const owners = (globalThis as Record<symbol, Map<string, BashRuntime>>)[Symbol.for("meridian.pi.managed-bash.owners.v2")]!;
       owners.clear();
       await new BashRuntime().manage({ action: "list", include_completed: true });

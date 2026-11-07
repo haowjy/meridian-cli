@@ -1,5 +1,3 @@
-"""Pure native-key binding decisions and write-boundary conflict reporting."""
-
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -29,7 +27,6 @@ type BindOutcome = Bound | Same | Conflict
 
 
 def bind(prior: NativeKeyFields, attempted: NativeKeyFields) -> BindOutcome:
-    """Fill absent fields; never replace a nonempty field. No I/O."""
     if prior.session_id and attempted.session_id and prior.session_id != attempted.session_id:
         return Conflict(prior, attempted, "session_id")
     if (
@@ -49,11 +46,6 @@ def bind(prior: NativeKeyFields, attempted: NativeKeyFields) -> BindOutcome:
 
 
 def relocate_key(prior: NativeKeyFields, *, store_old: str, store_new: str) -> NativeKeyFields:
-    """Replace the native store when it is ``store_old``; every other field is kept.
-
-    The one place a bound store changes: ``bind`` stays fill-only. A relocate row
-    names the store it replaces, so replaying it twice changes nothing the second time.
-    """
     if prior.native_store != store_old:
         return prior
     return replace(prior, native_store=store_new)

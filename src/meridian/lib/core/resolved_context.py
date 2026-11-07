@@ -27,13 +27,9 @@ from meridian.lib.state.work_state import warn_missing_work_item
 class ContextBackend(Protocol):
     """Backend interface for the authoritative context resolution workflow."""
 
-    def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
-        """Look up the active work ID for a session."""
-        ...
+    def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None: ...
 
-    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
-        """The conversation an execution acts on, from its own spawn row."""
-        ...
+    def get_execution_chat(self, runtime_root: Path, spawn_id: SpawnId) -> str | None: ...
 
 
 class LocalFilesystemBackend:
@@ -264,7 +260,6 @@ class ResolvedContext:
     def child_env_overrides(
         self, *, increment_depth: bool = True, child_spawn_id: str | None = None
     ) -> dict[str, str]:
-        """Produce `MERIDIAN_*` env overrides for child processes."""
 
         next_depth = child_meridian_depth(self.depth, increment_depth=increment_depth)
         overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(next_depth)}

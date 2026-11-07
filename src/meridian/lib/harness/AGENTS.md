@@ -4,11 +4,6 @@ Translates harness-agnostic `SpawnParams` into a runnable process and extracts r
 back into Meridian's domain types. `ops/` and `launch/` work with domain types; harness
 specifics stay here.
 
-```
-SpawnParams → adapter.resolve_launch_spec() → HarnessLaunchSpec
-  → project_<harness>_spec_to_cli_args() → argv + env → subprocess / connection.start()
-```
-
 OpenCode 1.x is legacy and frozen; new OpenCode work targets V2. Transcript and storage
 reads pick their dialect by DB schema, never by the installed binary or an env var.
 

@@ -89,7 +89,6 @@ def _close_process_lock_handle(handle: IO[bytes], *, unlock: bool = False) -> No
 
 
 def _held_locks() -> dict[Path, _HeldLock]:
-    """Return the thread-local map of reentrant locks."""
     held = cast("dict[Path, _HeldLock] | None", getattr(_THREAD_LOCAL, "held", None))
     if held is None:
         held = {}
@@ -158,7 +157,6 @@ def try_lock_file(
     reentrant: bool = True,
     read_only_existing: bool = False,
 ) -> Generator[IO[bytes] | None, None, None]:
-    """Attempt a file lock without blocking; yield ``None`` on contention."""
     stack = ExitStack()
     try:
         handle = stack.enter_context(
@@ -184,7 +182,6 @@ def acquire_file_lock(
     mode: LockMode = "exclusive",
     read_only_existing: bool = False,
 ) -> IO[bytes]:
-    """Acquire and return a lock handle, retrying if the path inode changed."""
     if timeout is not None and timeout < 0:
         raise ValueError("timeout must be non-negative or None")
 
@@ -233,7 +230,6 @@ def acquire_file_lock(
 
 
 def release_file_lock(handle: IO[bytes]) -> None:
-    """Release and close a handle returned by :func:`acquire_file_lock`."""
     _close_process_lock_handle(handle, unlock=True)
 
 

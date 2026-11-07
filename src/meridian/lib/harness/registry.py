@@ -1,5 +1,3 @@
-"""Harness registry for built-in and custom adapters."""
-
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
@@ -70,7 +68,6 @@ _default_registry: HarnessRegistry | None = None
 
 
 def get_default_harness_registry() -> HarnessRegistry:
-    """Return built-in registry, created on first access."""
 
     global _default_registry
     if _default_registry is None:

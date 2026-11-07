@@ -1,5 +1,3 @@
-"""Core extension system types and handler protocol contracts."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -34,7 +32,6 @@ class ExtensionSurface(StrEnum):
 
 
 def _coerce_to_json_result(result: Any) -> ExtensionJSONResult:
-    """Convert op-style result to ExtensionJSONResult."""
     if hasattr(result, "to_wire"):
         return ExtensionJSONResult(payload=result.to_wire())
     if isinstance(result, BaseModel):
@@ -151,7 +148,6 @@ class ExtensionCommandSpec(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cli_metadata(self) -> Self:
-        """Ensure cli_group and cli_name are both set or both None."""
         has_group = self.cli_group is not None
         has_name = self.cli_name is not None
         if has_group != has_name:
@@ -162,7 +158,6 @@ class ExtensionCommandSpec(BaseModel):
 
     @property
     def fqid(self) -> str:
-        """Fully qualified command ID: extension_id.command_id."""
 
         return f"{self.extension_id}.{self.command_id}"
 

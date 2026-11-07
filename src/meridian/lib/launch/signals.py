@@ -1,11 +1,3 @@
-"""Signal forwarding utilities for run execution.
-
-`SignalCoordinator` is the process-global seam that installs handlers for the
-union of its registered receivers' target signals and dispatches each delivered
-signal to the receivers that target it. `SignalCallbackReceiver` invokes
-a callback (e.g. the managed-primary launcher cancelling its TUI relay).
-"""
-
 import os
 import signal
 import time
@@ -14,10 +6,6 @@ from contextlib import contextmanager
 from threading import Lock, RLock, current_thread, main_thread
 from types import FrameType
 from typing import Final, Protocol, cast, overload
-
-# ---------------------------------------------------------------------------
-# Signal forwarding
-# ---------------------------------------------------------------------------
 
 # Deferred for the length of a ``mask_termination`` section, then re-delivered. A closing
 # terminal sends SIGHUP, which would otherwise kill a runner halfway through its terminal write.
@@ -42,13 +30,6 @@ def signal_to_exit_code(received_signal: signal.Signals | None) -> int | None:
 
 
 class SignalReceiver(Protocol):
-    """A sink registered with :class:`SignalCoordinator`.
-
-    Receivers declare the signals they care about; the coordinator installs
-    handlers for the union of all active receivers' targets and dispatches each
-    delivered signal to the receivers that target it.
-    """
-
     @property
     def target_signals(self) -> tuple[signal.Signals, ...]: ...
 
@@ -56,17 +37,6 @@ class SignalReceiver(Protocol):
 
 
 class SignalCallbackReceiver:
-    """Receiver that invokes a callback for a set of signals.
-
-    With ``escalate_on_repeat`` the first signal invokes the callback and a
-    later repeat of the same number restores the default disposition and
-    re-raises, so a process stuck after the callback returns is force-quit
-    instead of remaining trapped. A repeat only escalates when it arrives at
-    least ``escalate_repeat_grace_secs`` after the first signal of the same
-    number; a rapid burst (e.g. terminal close) is routed to the callback
-    instead.
-    """
-
     def __init__(
         self,
         *,
@@ -91,6 +61,7 @@ class SignalCallbackReceiver:
             first_seen = self._first_seen_seconds.get(signum)
             if first_seen is None:
                 self._first_seen_seconds[signum] = now
+            # A delayed repeat is a force-quit; terminal close can send a rapid burst.
             elif now - first_seen >= self._escalate_repeat_grace_secs:
                 signal.signal(signum, signal.SIG_DFL)
                 os.kill(os.getpid(), signum)
@@ -122,17 +93,7 @@ class SignalCoordinator:
 
     @contextmanager
     def mask_termination(self) -> Generator[None, None, None]:
-        """Defer SIGINT, SIGTERM and SIGHUP while executing a critical section.
-
-        A signal that arrives inside is re-delivered once on exit, so it is delayed, not lost.
-        The mask is not a trap: a repeat of a deferred signal at least ``MASK_ESCAPE_GRACE_SECS``
-        after the first goes to the handler that was in place before the mask, so a stuck
-        section can still be force-quit (Ctrl-C twice). Only a caller's own bound (the
-        ``spawn cancel`` SIGKILL deadline) limits the wait for anything else.
-        Handlers can only be changed from the main thread, so elsewhere this does nothing
-        and cannot swallow a signal meant for the main thread.
-        """
-
+        # Only the main thread can change handlers; otherwise a mask could swallow its signal.
         if current_thread() is not main_thread():
             yield
             return
@@ -154,12 +115,6 @@ class SignalCoordinator:
                 os.kill(os.getpid(), signum)
 
     def deferred_signal(self) -> signal.Signals | None:
-        """The first signal the current mask has deferred, if any.
-
-        A section that records an outcome reads this just before the write, so a signal that
-        arrived inside the mask is part of what it records.
-        """
-
         with self._lock:
             return next(iter(self._deferred_termination), None)
 
@@ -172,7 +127,6 @@ class SignalCoordinator:
         return desired
 
     def _reconcile_handlers_locked(self) -> None:
-        """Install handlers for active receivers; restore the rest."""
 
         desired = self._desired_signals_locked()
         if desired == self._installed_signals:
@@ -242,7 +196,6 @@ _coordinator: SignalCoordinator | None = None
 
 
 def signal_coordinator() -> SignalCoordinator:
-    """Return the process-global signal coordinator singleton."""
 
     global _coordinator
     if _coordinator is None:

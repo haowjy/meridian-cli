@@ -23,7 +23,6 @@ _MERIDIAN_PI_EXTENSION_ROOT_ENV = "MERIDIAN_PI_EXTENSION_INSTALL_ROOT"
 
 
 def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
-    """Return Pi agent dir (auth, settings) — default ``~/.pi/agent``."""
 
     override = (os.environ if env is None else env).get(_PI_AGENT_DIR_ENV, "").strip()
     if override:
@@ -32,13 +31,11 @@ def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
 
 
 def resolve_pi_default_user_extension_dir(*, env: Mapping[str, str] | None = None) -> Path:
-    """Return Pi's default user extension discovery root."""
 
     return resolve_pi_agent_dir(env=env) / "extensions"
 
 
 def resolve_meridian_pi_extension_root() -> Path:
-    """Return Meridian-shipped Pi extension bundles (stable ``-e`` targets)."""
 
     override = _env_strip(_MERIDIAN_PI_EXTENSION_ROOT_ENV)
     if override:
@@ -47,7 +44,6 @@ def resolve_meridian_pi_extension_root() -> Path:
 
 
 def resolve_pi_spawn_session_root(*, env: Mapping[str, str] | None = None) -> Path:
-    """Return unscoped spawn session root (per-spawn subdirs applied later)."""
 
     override = (os.environ if env is None else env).get(_PI_SESSION_DIR_ENV, "").strip()
     if override:
@@ -56,7 +52,6 @@ def resolve_pi_spawn_session_root(*, env: Mapping[str, str] | None = None) -> Pa
 
 
 def resolve_meridian_pi_state_dir(*, env: Mapping[str, str] | None = None) -> Path:
-    """Return Meridian Pi extension runtime state root."""
 
     if env is not None:
         explicit = env.get(_PI_STATE_DIR_ENV, "").strip()
@@ -84,7 +79,6 @@ def pi_meridian_state_dir_env_override(
     env: Mapping[str, str] | None = None,
     runtime_root: Path | None = None,
 ) -> dict[str, str]:
-    """Env override for extension runtime state (tasks, spawn-watch tree)."""
 
     if runtime_root is not None:
         return {_PI_STATE_DIR_ENV: str(runtime_root)}

@@ -1,5 +1,3 @@
-"""Stable domain identifier types."""
-
 from enum import StrEnum
 from typing import Annotated, NewType
 
@@ -42,7 +40,6 @@ SchemaVersion = NewType("SchemaVersion", int)
 
 
 def normalize_optional_identity(value: object) -> str | None:
-    """Canonicalize an identity read from persisted state."""
 
     if value is None:
         return None

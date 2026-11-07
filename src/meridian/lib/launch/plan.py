@@ -1,5 +1,3 @@
-"""Primary-launch input builders."""
-
 from pathlib import Path
 
 from meridian.lib.config.loader import load_config
@@ -65,7 +63,6 @@ def build_primary_spawn_request(
     request: LaunchRequest,
     prompt: str | None = None,
 ) -> SpawnRequest:
-    """Translate primary launch inputs into the factory request shape."""
 
     normalized_session = _normalize_primary_session(request)
     if prompt is not None:
@@ -113,7 +110,6 @@ def build_primary_launch_runtime(
     config: MeridianConfig | None = None,
     dry_run: bool = False,
 ) -> LaunchRuntime:
-    """Build primary-launch runtime inputs for the shared launch factory."""
 
     resolved_root = resolve_project_root_resolution(project_root).project_root
     resolved_cwd = (execution_cwd or project_root).resolve()
@@ -155,7 +151,6 @@ def build_spawn_mars_runtime(
     argv_intent: LaunchArgvIntent,
     debug: bool = False,
 ) -> LaunchRuntime:
-    """Launch runtime for spawn paths that need Mars harness_model routing."""
 
     control_root_str = control_root.as_posix()
     return LaunchRuntime(

@@ -1,10 +1,3 @@
-"""Disposable, native-keyed FTS projection for transcript search.
-
-This module stores parsed display entries only. It neither resolves native
-sources nor owns chat bindings; callers must validate source freshness before
-using results and re-check matches against the stored display text.
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,7 +25,6 @@ def native_search_index_path(runtime_root: Path) -> Path:
 
 
 def discard_native_search_index(runtime_root: Path) -> None:
-    """Delete only the disposable projection and its SQLite sidecars."""
     path = native_search_index_path(runtime_root)
     for suffix in ("", "-wal", "-shm"):
         Path(str(path) + suffix).unlink(missing_ok=True)
@@ -88,7 +80,6 @@ def normalize_index_text(content: str) -> str:
 
 
 def search_text(content: str) -> str:
-    """The user-visible substring predicate shared with native search."""
     return " ".join(content.split()).lower()
 
 
@@ -155,11 +146,7 @@ class NativeSearchIndex:
 
     @contextmanager
     def write_batch(self) -> Generator[None]:
-        """Keep WAL attached across per-source commits, without holding a read transaction.
-
-        Closing the final connection checkpoints the WAL. Doing that per source
-        repeatedly rewrites the growing FTS index; one refresh needs one lifetime.
-        """
+        # Closing the last connection checkpoints and rewrites the growing FTS index.
         with closing(self._connect()):
             yield
 
@@ -269,7 +256,6 @@ class NativeSearchIndex:
             db.commit()
 
     def remove_source(self, key: NativeKey) -> None:
-        """Drop all projection rows for a no-longer-bound or missing key."""
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -367,7 +353,6 @@ class NativeSearchIndex:
             )
 
     def rebuild(self) -> None:
-        """Discard the file, including free pages, and create an empty projection."""
         for suffix in ("", "-wal", "-shm"):
             Path(str(self.path) + suffix).unlink(missing_ok=True)
         self._initialize()

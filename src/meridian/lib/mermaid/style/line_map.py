@@ -1,5 +1,3 @@
-"""Line mapping helpers for Mermaid style checks."""
-
 from __future__ import annotations
 
 from meridian.lib.mermaid.scanner import DiagramTarget

@@ -1,5 +1,3 @@
-"""Validation and deduplication for produced Pi lifecycle events."""
-
 from __future__ import annotations
 
 import logging

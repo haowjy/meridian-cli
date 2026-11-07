@@ -1,5 +1,3 @@
-"""Pi failure extraction and output normalization."""
-
 import logging
 from typing import cast
 
@@ -7,7 +5,6 @@ from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE
 
 
 def _pi_failure_output_verbose() -> bool:
-    """Whether Pi failure text should include JS stack traces (e.g. extension errors)."""
     return logging.getLogger().isEnabledFor(logging.INFO)
 
 
@@ -23,7 +20,6 @@ def _is_js_stack_trace_line(line: str) -> bool:
 
 
 def compact_pi_failure_output(message: str, *, verbose: bool | None = None) -> str:
-    """Collapse Pi extension/JS stack noise for user-facing spawn failure output."""
     text = message.strip()
     if not text:
         return text

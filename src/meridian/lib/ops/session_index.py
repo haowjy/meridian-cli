@@ -1,5 +1,3 @@
-"""Explicit finite history index inspection and rebuild operations."""
-
 from __future__ import annotations
 
 import time

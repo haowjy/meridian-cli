@@ -1,5 +1,3 @@
-"""Shared spawn application service for all surfaces."""
-
 from __future__ import annotations
 
 import asyncio
@@ -105,14 +103,7 @@ def _fold_cancel_intent_into_facts(
     facts: ExecutionTerminalFacts,
     intent: CancelIntent | None,
 ) -> ExecutionTerminalFacts:
-    """Treat a durable cancel request as observed cancellation evidence.
-
-    The runner may not have observed the signal that ``spawn cancel`` delivered,
-    so the intent itself is cancellation evidence. Folding it into the execution
-    facts lets the single lifecycle precedence resolver decide, instead of a
-    second rule overriding its result.
-    """
-
+    # The runner may not observe the signal; durable intent is cancellation evidence.
     if intent is None:
         return facts
     return replace(
@@ -234,16 +225,6 @@ class CompleteExecutionOutcome:
 
 @dataclass(frozen=True)
 class PreparedSpawn:
-    """Result of successful spawn preparation.
-
-    Contains everything a surface needs to start execution.
-    Surfaces consume this — they never construct ConnectionConfig
-    or call lifecycle_service.start() directly.
-
-    The row is created only after resolution succeeds, with resolved metadata.
-    connection_config is projected from launch_context.
-    """
-
     spawn_id: SpawnId
     launch: LaunchPaths
     launch_context: LaunchContext
@@ -285,7 +266,6 @@ class KeyedLockRegistry:
         self._registry_lock = asyncio.Lock()
 
     async def acquire(self, key: str) -> asyncio.Lock:
-        """Get or create a lock for the given key."""
         async with self._registry_lock:
             if key not in self._locks:
                 self._locks[key] = asyncio.Lock()
@@ -303,13 +283,6 @@ class KeyedLockRegistry:
 
 
 class SpawnApplicationService:
-    """Shared spawn application logic for all surfaces.
-
-    Owns: validation, creation prep, cancel orchestration, finalize orchestration,
-          archive, query, lifecycle broadcasting.
-    Does NOT own: execution backend selection, surface-specific formatting.
-    """
-
     def __init__(
         self,
         runtime_root: Path,
@@ -321,12 +294,10 @@ class SpawnApplicationService:
 
     @property
     def runtime_root(self) -> Path:
-        """Return the runtime root directory."""
         return self._runtime_root
 
     @property
     def lifecycle(self) -> SpawnLifecycleService:
-        """Return the lifecycle authority backing this application service."""
         return self._lifecycle
 
     def register_observer(
@@ -342,21 +313,16 @@ class SpawnApplicationService:
         """
         register_observer(observer, tier)
 
-    # ---- Query Helpers ----
-
     def get_spawn(self, spawn_id: SpawnId | str) -> SpawnRecord | None:
-        """Get spawn record by ID."""
         return spawn_store.get_spawn(self._runtime_root, spawn_id)
 
     def require_spawn(self, spawn_id: SpawnId | str) -> SpawnRecord:
-        """Get spawn or raise ValueError."""
         record = self.get_spawn(spawn_id)
         if record is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
         return record
 
     def is_terminal(self, status: str) -> bool:
-        """Check if status is terminal."""
         return is_terminal_spawn_status(status)
 
     async def prepare(
@@ -578,8 +544,6 @@ class SpawnApplicationService:
             launch_lock=launch_lock,
         )
 
-    # ---- Spawn Operations ----
-
     async def cancel(
         self,
         spawn_id: SpawnId,
@@ -701,11 +665,6 @@ class SpawnApplicationService:
         primary_metadata: PrimaryMetadata | None,
         deadline: float,
     ) -> SpawnRecord | None:
-        """Claim a launch without a runner, tear down what it left and write its outcome.
-
-        Returns the launch's terminal row, or ``None`` while a runner (or a brief holder)
-        still holds the launch lock. ``deadline`` (monotonic) bounds the teardown.
-        """
         spawn_id = SpawnId(row.id)
 
         def sweep(stored: SpawnRecord) -> None:
@@ -874,11 +833,6 @@ class SpawnApplicationService:
         error: str | None = None,
         managed_scopes_pending: bool = False,
     ) -> CompleteSpawnOutcome:
-        """Finalize a spawn through the shared idempotent terminal seam.
-
-        Returns a rich outcome distinguishing accepted writes, first
-        transitions, pre-existing terminal rows, and post-write snapshots.
-        """
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
             return await self._complete_spawn_unlocked(
@@ -901,7 +855,6 @@ class SpawnApplicationService:
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
     ) -> CompleteExecutionOutcome:
-        """Resolve execution facts, then finalize through the lifecycle authority."""
 
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:

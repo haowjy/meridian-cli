@@ -1,5 +1,3 @@
-"""Work attachment helpers shared by launch, spawn, and work flows."""
-
 from __future__ import annotations
 
 import os
@@ -33,7 +31,6 @@ def publish_work_event(
     telemetry_ids: Mapping[str, str] | None = None,
     data: dict[str, object] | None = None,
 ) -> None:
-    """Publish one work event to hooks and its paired telemetry projection."""
 
     try:
         dispatcher = get_hook_dispatcher(project_root, runtime_root)
@@ -165,7 +162,6 @@ def activate_work(
 
 
 def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:
-    """Create-or-attach an explicitly named work item and return its slug."""
 
     return work_repository.ensure_work_item_metadata(runtime_root, work_id).name
 
@@ -294,7 +290,6 @@ def preview_launch_work_id(
     explicit_work_id: str | None,
     context_work_id: str | None,
 ) -> str | None:
-    """Normalize explicit or inherited work for dry-run without creating it."""
 
     candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
     if candidate is None:

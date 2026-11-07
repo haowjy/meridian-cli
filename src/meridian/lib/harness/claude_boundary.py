@@ -1,5 +1,3 @@
-"""Decode bounded, launch-correlated Claude SessionStart journal records."""
-
 from __future__ import annotations
 
 import json
@@ -51,7 +49,6 @@ class _Record(BaseModel):
 
 
 def claude_boundary_journal_path(launch: LaunchPaths) -> Path:
-    """Return the launch-owned Claude SessionStart journal path."""
 
     return launch.claude_boundary.resolve()
 
@@ -68,7 +65,6 @@ def _iter_complete_records(
     *,
     cursor: int = 0,
 ) -> Iterator[tuple[int, _Record | None]]:
-    """Yield the ending cursor and decoded value for each complete journal line."""
 
     final_newline = raw.rfind(b"\n")
     if final_newline < 0:
@@ -125,7 +121,6 @@ def read_observations(
 
 
 def latest_messaging_socket(path: Path, *, pid: int) -> Path | None:
-    """Return the last usable inbox socket published by one Claude process."""
 
     try:
         with path.open("rb") as handle:

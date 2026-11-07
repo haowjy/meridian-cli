@@ -1,5 +1,3 @@
-"""Spawn aggregate mutations that coordinate published-row lifetime."""
-
 from __future__ import annotations
 
 import os

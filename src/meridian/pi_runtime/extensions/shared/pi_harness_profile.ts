@@ -25,7 +25,7 @@ function envFlag(name: string): boolean | null {
   return truthyEnv(raw);
 }
 
-/** Resolve bundle toggles from env (matches `resolve_pi_harness_profile()` overrides). */
+// Keep env overrides aligned with Python's resolve_pi_harness_profile().
 export function resolvePiHarnessProfile(): {
   background_tasks_enabled: boolean;
   spawn_watch_enabled: boolean;

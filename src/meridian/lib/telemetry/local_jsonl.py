@@ -1,5 +1,3 @@
-"""Local JSONL telemetry sink with compound owner/PID rotating segments."""
-
 from __future__ import annotations
 
 import json
@@ -34,7 +32,6 @@ class LocalJSONLSink:
 
     @property
     def active_path(self) -> Path:
-        """Return the current active segment path."""
         return self.telemetry_dir / (f"{self._logical_owner}.{self._pid}-{self._seq:04d}.jsonl")
 
     def write_batch(self, events: Sequence[TelemetryEnvelope]) -> None:

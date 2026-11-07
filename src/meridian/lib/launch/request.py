@@ -1,5 +1,3 @@
-"""Raw launch request DTOs persisted across prepare/execute boundaries."""
-
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -28,7 +26,6 @@ def _empty_agent_metadata() -> dict[str, str]:
 def cross_harness_continue_error(
     chat_ref: str | None, source_harness: str, requested_harness: str
 ) -> str:
-    """Build the refusal shared by primary and spawned continuation surfaces."""
     reference = chat_ref or "the source chat"
     return (
         f"Cannot continue chat {reference} from harness '{source_harness}' "
@@ -78,7 +75,6 @@ class SessionRequest(BaseModel):
 
 
 def is_exact_continue_session(session: SessionRequest) -> bool:
-    """True when a session request represents exact continuation, not fork/fresh."""
 
     primary_mode = ((session.primary_session_mode or "").strip().lower()) or None
     return not session.continue_fork and (
@@ -105,7 +101,6 @@ class SpawnRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # Prompt / agent / skills
     # The caller's task prompt. Never the composed launch text: every prepare
     # renders ``context_refs`` and ``reference_files`` around it, so feeding the
     # composed text back in would render them twice.
@@ -118,7 +113,6 @@ class SpawnRequest(BaseModel):
     skills: tuple[str, ...] = ()
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
 
-    # Harness shape
     extra_args: tuple[str, ...] = ()
     tool_rules: tuple[ToolRule, ...] = ()
     # Mars-named agent/task deny candidates; bind selects them after profile opt-outs.
@@ -130,16 +124,13 @@ class SpawnRequest(BaseModel):
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
 
-    # Session intent (nested)
     session: SessionRequest = Field(default_factory=SessionRequest)
 
-    # Context plumbing
     # ``--from`` refs, resolved once at the request boundary (cli or spawn prepare).
     context_refs: tuple[ContextRef, ...] = ()
     reference_files: tuple[str, ...] = ()
     template_vars: dict[str, str] = Field(default_factory=_empty_template_vars)
 
-    # Routing & metadata
     work_id_hint: str | None = None
     inherited_context_work_id: str | None = None
     goal: str | None = None

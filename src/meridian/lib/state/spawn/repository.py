@@ -34,7 +34,6 @@ from meridian.lib.state.spawn.legacy import (
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 from meridian.lib.utils.json_shapes import json_object
 
-# The newest ``state.json`` version this build reads; P0's newer-format check compares against it.
 MAX_STATE_VERSION = 4
 V4_ONLY_FIELDS = ("launch", "prior_usage", "owed_launches")
 
@@ -71,7 +70,7 @@ class StoredSpawnState(SpawnStateFields):
         return data
 
 
-# Flat run-boundary fields of the PR-1 dogfood build; retire with dogfood_migration.
+# Flat boundary fields identify rows that need migration.
 DOGFOOD_BOUNDARY_FIELDS = (
     "entry_chat_id",
     "exit_chat_id",

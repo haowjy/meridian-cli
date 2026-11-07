@@ -1,5 +1,3 @@
-"""Extension system contracts and implementations."""
-
 from meridian.lib.extensions.context import (
     ExtensionCapabilities,
     ExtensionCapability,

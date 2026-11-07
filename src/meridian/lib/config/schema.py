@@ -1,5 +1,3 @@
-"""Config schema metadata and scalar codecs."""
-
 from __future__ import annotations
 
 import tomllib

@@ -1,5 +1,3 @@
-"""Static artifact serving over Tailscale."""
-
 from meridian.lib.artifact.store import (
     Serve,
     is_valid_slug,

@@ -1,5 +1,3 @@
-"""Crash-safe authoritative idle stretch state."""
-
 from __future__ import annotations
 
 import logging
@@ -220,7 +218,6 @@ class IdleStore:
         return result
 
     def write(self, state: IdleState) -> IdleState:
-        """Replace one state under its file lock and return the stamped value."""
 
         def replace(_current: IdleState | None) -> tuple[IdleState, None]:
             return state, None

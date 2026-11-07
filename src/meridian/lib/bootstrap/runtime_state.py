@@ -1,5 +1,3 @@
-"""Runtime-root bootstrap services for Meridian state."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,7 +15,6 @@ def resolve_runtime_root_for_read(
     *,
     authority: RuntimeAuthoritySnapshot | None = None,
 ) -> Path | None:
-    """Resolve runtime root for read paths without creating a project UUID."""
 
     resolved_authority = authority or resolve_runtime_authority_for_read(project_root)
     return resolved_authority.runtime_root
@@ -28,7 +25,6 @@ def ensure_runtime_root(
     *,
     authority: RuntimeAuthoritySnapshot | None = None,
 ) -> Path:
-    """Ensure and return the write runtime root, creating project UUID if needed."""
 
     resolved_authority = authority or resolve_runtime_authority_for_write(project_root)
     if resolved_authority.runtime_root is None:
@@ -37,7 +33,6 @@ def ensure_runtime_root(
 
 
 def ensure_runtime_dirs(runtime_root: Path) -> None:
-    """Create runtime directories required by spawn/session/telemetry writers."""
 
     runtime_paths = RuntimePaths.from_root_dir(runtime_root)
     for dir_path in (

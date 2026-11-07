@@ -32,7 +32,6 @@ class OpDeclaration:
 
     @cached_property
     def resolved(self) -> ExtensionCommandSpec:
-        """Import the implementation and build the full spec (once)."""
         return ExtensionCommandSpec.from_op(
             extension_id=self.extension_id,
             command_id=self.command_id,

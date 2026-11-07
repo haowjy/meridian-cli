@@ -1,5 +1,3 @@
-"""Observe validated Pi private files and causal result receipts."""
-
 from __future__ import annotations
 
 import asyncio

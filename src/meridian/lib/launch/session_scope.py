@@ -1,5 +1,3 @@
-"""Session lifecycle context manager helpers."""
-
 from __future__ import annotations
 
 import importlib

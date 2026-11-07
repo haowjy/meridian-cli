@@ -1,5 +1,3 @@
-"""Minimal typed service/context carriers for application entrypoints."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,5 +1,3 @@
-"""Interval parsing and last-success persistence for hook throttling."""
-
 from __future__ import annotations
 
 import hashlib
@@ -31,7 +29,6 @@ _ResultT = TypeVar("_ResultT", bound=_HookRunResult)
 
 
 def parse_interval(interval: str) -> timedelta:
-    """Parse an interval string like ``10m`` or ``1h``."""
 
     match = _INTERVAL_PATTERN.fullmatch(interval)
     if match is None:

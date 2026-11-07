@@ -1,5 +1,3 @@
-"""Document extraction types for markdown parsing."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

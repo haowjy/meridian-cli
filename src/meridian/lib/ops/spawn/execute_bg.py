@@ -1,5 +1,3 @@
-"""Background spawn worker: persist/load request, launch detached worker, worker main."""
-
 import argparse
 import asyncio
 import os
@@ -60,20 +58,17 @@ def _resolve_background_execution_cwd(
 
 
 def _cleanup_background_runtime_artifacts(launch: LaunchPaths) -> None:
-    """Remove non-durable launcher artifacts after terminal completion."""
     for target in (launch.background_stdout, launch.background_stderr, launch.bg_worker_request):
         with suppress(FileNotFoundError):
             target.unlink()
 
 
 def _persist_bg_worker_request(launch: LaunchPaths, payload: BackgroundWorkerLaunchRequest) -> None:
-    """Write background worker launch request to the launch's files."""
 
     atomic_write_text(launch.bg_worker_request, payload.model_dump_json(indent=2) + "\n")
 
 
 def _load_bg_worker_request(launch: LaunchPaths) -> BackgroundWorkerLaunchRequest:
-    """Load background worker launch request from the launch's files."""
 
     return BackgroundWorkerLaunchRequest.model_validate_json(
         launch.bg_worker_request.read_text(encoding="utf-8")

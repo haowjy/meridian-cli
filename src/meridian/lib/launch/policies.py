@@ -1,5 +1,3 @@
-"""Policy-resolution stage ownership for launch composition."""
-
 from __future__ import annotations
 
 import logging
@@ -71,11 +69,6 @@ def _build_resolved_skills_from_bundle(
     missing: tuple[str, ...],
     project_root: Path,
 ) -> ResolvedSkills:
-    """Construct ResolvedSkills directly from bundle skill data.
-
-    Mars owns the .mars/ directory schema and skill loading. Meridian consumes
-    the structured bundle output without reaching into .mars/skills/ on disk.
-    """
     mars_root = resolve_mars_roots(project_root).primary
     loaded_skills: list[SkillContent] = []
     for entry in loaded_entries:
@@ -163,7 +156,6 @@ class ResolvedLaunchPolicy:
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
     resolved_tool_rules: tuple[ToolRule, ...] = ()
-    # Candidate platform denies named for the selected harness, not yet launch-filtered.
     platform_tool_rules: tuple[ToolRule, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
@@ -219,7 +211,6 @@ def _resolve_bundle_model_default_harness(
     selected_model_token: str,
     canonical_model_id: str,
 ) -> HarnessId | None:
-    """Resolve bundle model default harness from loaded alias catalog only."""
 
     normalized_token = selected_model_token.strip()
     normalized_model_id = canonical_model_id.strip()
@@ -250,14 +241,6 @@ def _resolve_bundle_model_default_harness(
 def resolve_policy_fields(
     *tiers: RuntimeOverrides | tuple[RuntimeOverrides, ...],
 ) -> RuntimeOverrides:
-    """Resolve policy-field precedence across an ordered tier ladder.
-
-    Tiers are supplied from highest to lowest precedence, either as positional
-    ``RuntimeOverrides`` arguments or as one tuple of ``RuntimeOverrides``.
-    Routing fields should be stripped by callers before resolution when the
-    policy scope excludes them.
-    """
-
     resolved_tiers: tuple[RuntimeOverrides, ...]
     if len(tiers) == 1 and isinstance(tiers[0], tuple):
         resolved_tiers = tiers[0]
@@ -313,11 +296,6 @@ def _resolve_bundle_routing(
     *,
     surface: SurfacePolicyInput,
 ) -> tuple[str | None, str | None, str | None, dict[str, str]]:
-    """Resolve routing overrides + local routing provenance for the bundle path.
-
-    Only explicit user overrides are forwarded to the bundle request.
-    """
-
     model_candidate = _first_routing_candidate(
         (
             ("cli", surface.cli_overrides.model),
@@ -362,13 +340,6 @@ def _resolve_bundle_execution_policy(
     bundle_execution_policy: RuntimeOverrides,
     profile_overrides: RuntimeOverrides,
 ) -> tuple[RuntimeOverrides, dict[str, str]]:
-    """Resolve execution policy for the unified bundle path.
-
-    Config defaults (config.primary.* for PRIMARY; empty for SPAWN_PREPARE)
-    enter as the lowest-precedence layer so they fill gaps left by higher
-    sources without overriding them.
-    """
-
     config_policy = surface.config_overrides.execution_policy_scope(
         surface.supported_execution_policy_fields
     )
@@ -402,15 +373,6 @@ def _resolve_bundle_execution_policy(
 
 
 def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
-    """Resolve launch policy for PRIMARY and SPAWN_PREPARE via mars launch-bundle.
-
-    Both surfaces share this single code path. The only differences are:
-    - PRIMARY carries config.primary.* execution defaults in config_overrides;
-      SPAWN_PREPARE passes empty config defaults.
-    - Validation of primary-launch harness compatibility happens downstream in
-      the composition layer (_prepare_primary_surface), not here.
-    """
-
     project_root = surface.catalog.project_root
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
     explicit_user_overrides = resolve(*surface.layers)
@@ -609,7 +571,6 @@ def _resolve_policy_from_snapshot(
     surface: SurfacePolicyInput,
     snapshot: LaunchPolicySnapshot,
 ) -> ResolvedLaunchPolicy:
-    """Resolve launch policy from a persisted launch-policy snapshot."""
 
     replayed = replay_launch_policy_snapshot(
         snapshot=snapshot,
@@ -701,12 +662,6 @@ def _excluded_harnesses_for_surface(surface: SurfacePolicyInput) -> tuple[Harnes
 
 
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
-    """Resolve the shared launch policy boundary for one launch-like surface.
-
-    PRIMARY and SPAWN_PREPARE both use the mars launch-bundle path.  DIRECT is
-    handled separately (no policy resolution needed — already-resolved inputs).
-    """
-
     if surface.continuation is not None:
         session = surface.continuation
         intent = session.conversation_intent

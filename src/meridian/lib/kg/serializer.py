@@ -72,7 +72,6 @@ def serialize_check(result: AnalysisResult, path: Path) -> dict[str, Any]:
 
 
 def serialize_check_findings(result: CheckResult, path: Path) -> dict[str, Any]:
-    """Serialize a multi-category kg check result."""
     root = path if path.is_dir() else path.parent
     category_counts = {
         "broken_links": sum(1 for f in result.findings if f.category == "broken_link"),
@@ -105,7 +104,6 @@ def serialize_check_findings(result: CheckResult, path: Path) -> dict[str, Any]:
 
 
 def _rel(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:

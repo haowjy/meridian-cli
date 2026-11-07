@@ -1,5 +1,3 @@
-"""Mermaid fill-without-color style check."""
-
 from __future__ import annotations
 
 import re

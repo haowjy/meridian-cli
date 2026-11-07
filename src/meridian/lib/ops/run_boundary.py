@@ -1,5 +1,3 @@
-"""Presentation for a spawn's native-session run boundary."""
-
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.state.spawn.model import SpawnRecord
 

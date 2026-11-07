@@ -1,5 +1,3 @@
-"""Serialized, TOML-preserving project config edits."""
-
 from __future__ import annotations
 
 import hashlib

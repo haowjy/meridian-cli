@@ -1,11 +1,3 @@
-"""Alias parsing and merge helpers for the model catalog.
-
-Model aliases are resolved exclusively via mars packages.
-Meridian has ZERO builtin alias definitions — all aliases come from
-mars dependency packages (via .mars/models-merged.json) and consumer
-config (via mars.toml [models]).
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -166,16 +158,11 @@ def parse_runnable_paths(raw_paths: object) -> tuple[RunnablePath, ...]:
 
 
 def _normalize_project_root_key(project_root: Path | None) -> str:
-    """Normalize a project root path into a stable cache key string.
-
-    Returns empty string for None, otherwise the resolved posix path.
-    """
     root = resolve_project_root_resolution(project_root).project_root
     return resolve_mars_roots(root).primary.as_posix()
 
 
 def _resolve_cache_key(name: str, project_root: Path | None) -> tuple[str, str]:
-    """Build a cache key for mars models resolve queries."""
     return (name.strip(), _normalize_project_root_key(project_root))
 
 
@@ -209,7 +196,6 @@ class MarsResultCache:
         name: str,
         project_root: Path | None,
     ) -> dict[str, object] | None | object:
-        """Return cached resolve result, or _SENTINEL if not cached."""
         key = _resolve_cache_key(name, project_root)
         return self._resolve.get(key, _SENTINEL)
 
@@ -225,7 +211,6 @@ class MarsResultCache:
     def get_aliases(
         self, project_root: Path | None, *, no_refresh_models: bool = False
     ) -> list[dict[str, object]] | None | object:
-        """Return cached aliases result, or _SENTINEL if not cached."""
         key = (_normalize_project_root_key(project_root), no_refresh_models)
         return self._aliases.get(key, _SENTINEL)
 
@@ -240,7 +225,6 @@ class MarsResultCache:
         self._aliases[key] = result
 
     def get_catalog(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
-        """Return cached catalog result, or _SENTINEL if not cached."""
         key = _normalize_project_root_key(project_root)
         return self._catalog.get(key, _SENTINEL)
 
@@ -251,11 +235,6 @@ class MarsResultCache:
     ) -> None:
         key = _normalize_project_root_key(project_root)
         self._catalog[key] = result
-
-
-# ---------------------------------------------------------------------------
-# Mars integration
-# ---------------------------------------------------------------------------
 
 
 def _resolve_mars_binary() -> str | None:
@@ -326,14 +305,12 @@ def run_mars_models_aliases(
 
 
 def run_mars_models_catalog(project_root: Path | None = None) -> list[dict[str, object]] | None:
-    """Read the raw catalog, returning None on command or format failure."""
     return _run_mars_model_inventory(
         ["catalog", "--json"], result_key="catalog", project_root=project_root
     )
 
 
 def _extract_mars_error_message(raw_output: str) -> str | None:
-    """Extract a readable error message from mars stdout/stderr text."""
     output = raw_output.strip()
     if not output:
         return None
@@ -462,7 +439,6 @@ def cached_mars_models_resolve(
     *,
     cache: MarsResultCache | None = None,
 ) -> dict[str, object] | None:
-    """Resolve a model through mars, using cache if provided."""
     if cache is not None:
         cached = cache.get_resolve(name, project_root)
         if cached is not _SENTINEL:
@@ -479,7 +455,6 @@ def cached_mars_models_aliases(
     cache: MarsResultCache | None = None,
     no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
-    """Load aliases through mars, using cache if provided."""
     if cache is not None:
         cached = cache.get_aliases(project_root, no_refresh_models=no_refresh_models)
         if cached is not _SENTINEL:
@@ -495,7 +470,6 @@ def cached_mars_models_catalog(
     *,
     cache: MarsResultCache | None = None,
 ) -> list[dict[str, object]] | None:
-    """Load the raw catalog through mars, using cache if provided."""
     if cache is not None:
         cached = cache.get_catalog(project_root)
         if cached is not _SENTINEL:
@@ -507,10 +481,6 @@ def cached_mars_models_catalog(
 
 
 def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object]:
-    """Read ``.mars/models-merged.json`` directly (dep-only aliases).
-
-    Falls back to empty dict if the file doesn't exist or is invalid.
-    """
     project = resolve_project_root_resolution(project_root).project_root
     roots = resolve_mars_roots(project)
     merged_path = roots.primary / ".mars" / "models-merged.json"
@@ -525,7 +495,6 @@ def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object
 
 
 def _mars_aliases_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEntry]:
-    """Convert mars ``models aliases --json`` entries to :class:`AliasEntry` objects."""
     entries: list[AliasEntry] = []
     for item in aliases_list:
         name = item.get("name")
@@ -632,13 +601,8 @@ def load_mars_aliases(
 
 
 def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
-    """Load model descriptions from mars aliases.
-
-    Returns a dict keyed by model_id with description values.
-    """
     descriptions: dict[str, str] = {}
 
-    # Try mars CLI first
     mars_aliases = run_mars_models_aliases(project_root)
     if mars_aliases is not None:
         for item in mars_aliases:

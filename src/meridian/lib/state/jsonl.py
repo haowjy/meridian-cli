@@ -40,7 +40,6 @@ def iter_jsonl(
     on_malformed: MalformedPolicy = "skip",
     raw_filter: Callable[[bytes], bool] | None = None,
 ) -> Generator[tuple[T | None, int], None, None]:
-    """Yield newline-committed JSON object rows and their ending byte offsets."""
 
     if not path.exists():
         return
@@ -65,7 +64,6 @@ def iter_jsonl_file(
     on_malformed: MalformedPolicy = "skip",
     raw_filter: Callable[[bytes], bool] | None = None,
 ) -> Generator[tuple[T | None, int], None, None]:
-    """Yield committed rows from one open inode, optionally bounded to an extent."""
 
     handle.seek(offset)
     while extent is None or handle.tell() < extent:
@@ -101,7 +99,6 @@ def iter_jsonl_file(
 
 
 def _jsonl_tail_needs_repair(path: Path) -> bool:
-    """Return True when an existing JSONL file lacks a trailing newline."""
 
     try:
         with path.open("rb") as handle:
@@ -116,7 +113,6 @@ def _jsonl_tail_needs_repair(path: Path) -> bool:
 
 
 def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
-    """Return repaired JSONL bytes, or None when no repair is needed."""
 
     if not content or content.endswith(b"\n"):
         return None
@@ -140,7 +136,6 @@ def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
 
 
 def repair_jsonl_tail(path: Path) -> None:
-    """Repair a torn or delimiter-less tail before acknowledging another append."""
 
     if not _jsonl_tail_needs_repair(path):
         return
@@ -155,7 +150,6 @@ def repair_jsonl_tail(path: Path) -> None:
 
 
 def append_durable_jsonl_lines(path: Path, lines: Iterable[str]) -> None:
-    """Repair a torn JSONL tail, then append rows with one write and fsync."""
 
     content = "".join(lines)
     if not content:
@@ -166,7 +160,6 @@ def append_durable_jsonl_lines(path: Path, lines: Iterable[str]) -> None:
 
 
 def append_durable_jsonl_line(path: Path, line: str) -> None:
-    """Terminate one newline-free row, repair the tail, and append durably."""
 
     row = line[:-1] if line.endswith("\n") else line
     if "\n" in row or "\r" in row:

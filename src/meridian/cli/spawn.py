@@ -237,7 +237,6 @@ def _resolve_spawn_prompt(
 
 
 def _edit_distance(left: str, right: str) -> int:
-    """Return the adjacent-transposition-aware edit distance for two CLI tokens."""
     distances = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
     for left_index in range(len(left) + 1):
         distances[left_index][0] = left_index
@@ -701,7 +700,6 @@ def _spawn_create(
     raw_fork_from = (fork_from or "").strip() or None
     raw_fork_fresh_from = (fork_fresh_from or "").strip() or None
 
-    # Resolve --yolo / --approval interaction.
     if yolo and approval is not None:
         raise ValueError(
             "Cannot use --yolo with --approval (--yolo is shorthand for --approval never)."

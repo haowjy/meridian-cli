@@ -314,7 +314,6 @@ function canonicalPath(path: string): string | undefined {
           continue;
         }
       } catch {
-        // Walk to the nearest existing ancestor below.
       }
       const parent = dirname(cursor);
       if (parent === cursor) return undefined;

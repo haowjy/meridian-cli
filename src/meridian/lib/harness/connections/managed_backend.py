@@ -1,5 +1,3 @@
-"""Managed harness backend process launch helper."""
-
 from __future__ import annotations
 
 import asyncio
@@ -54,7 +52,6 @@ async def register_spawn_owned_process(
     identity: ProcessIdentity,
     gate: LaunchGate,
 ) -> ScopedProcessHandle:
-    """Persist crash-recovery ownership for an already launched child process."""
 
     scope_handle = ScopedProcessHandle(
         process=process,

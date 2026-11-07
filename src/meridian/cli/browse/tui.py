@@ -132,8 +132,6 @@ class _Browser:
         # One parsed snapshot survives Esc and re-open; a new generation reloads it.
         self._snapshot: tuple[str, str, TranscriptWindow] | None = None
 
-    # --- plumbing ---------------------------------------------------------------------
-
     def _on_ui_loop(self, callback: Callable[[], None]) -> None:
         app = self.app
         if app is None or app.loop is None:
@@ -166,8 +164,6 @@ class _Browser:
     def exit(self, result: Launch | None) -> None:
         assert self.app is not None
         self.app.exit(result=result)
-
-    # --- list -------------------------------------------------------------------------
 
     def requery(self, *, debounce: float = 0.0) -> None:
         """Reload the listing for the current status, sort and typed filter.
@@ -246,8 +242,6 @@ class _Browser:
 
         self.lanes.run("search", work, done, fail)
 
-    # --- detail -----------------------------------------------------------------------
-
     def open_detail(self, chat_id: str, row: SessionListRow | None) -> None:
         detail = DetailState(chat_id, row, model=row.model if row else "")
         self.stack.append(detail)
@@ -298,8 +292,6 @@ class _Browser:
 
         self.lanes.run("model", work, apply, lambda _reason: None)
 
-    # --- lineage ----------------------------------------------------------------------
-
     def open_lineage(self, chat_id: str) -> None:
         state = LineageState(chat_id)
         self.stack.append(state)
@@ -332,8 +324,6 @@ class _Browser:
             state.error = f"lineage unavailable: {reason}"
 
         self.lanes.run("lineage", work, apply, fail)
-
-    # --- navigation -------------------------------------------------------------------
 
     def back(self) -> None:
         popped = self.stack.pop()
@@ -484,7 +474,6 @@ def _bindings(browser: _Browser) -> KeyBindings:
         assert browser.prompt is not None
         browser.prompt.paste(event.data)
 
-    # list
     for key, delta in (("up", -1), ("down", 1), ("home", -(10**9)), ("end", 10**9)):
 
         @bindings.add(key, filter=in_list)
@@ -543,7 +532,6 @@ def _bindings(browser: _Browser) -> KeyBindings:
             state.edit_filter(state.filter_text + value)
             browser.requery(debounce=_TYPING_DEBOUNCE)
 
-    # detail
     for key, sign in (("up", -1), ("down", 1)):
 
         @bindings.add(key, filter=in_detail)
@@ -570,7 +558,6 @@ def _bindings(browser: _Browser) -> KeyBindings:
     def _(_event: KeyPressEvent) -> None:
         browser.open_lineage_of_focus()
 
-    # lineage
     for key, delta in (("up", -1), ("down", 1)):
 
         @bindings.add(key, filter=in_lineage)

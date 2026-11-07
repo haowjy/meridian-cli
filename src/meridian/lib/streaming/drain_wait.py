@@ -1,5 +1,3 @@
-"""Async wait arbitration for streaming drain loops."""
-
 from __future__ import annotations
 
 import asyncio

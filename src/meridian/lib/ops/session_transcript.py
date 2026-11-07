@@ -1,5 +1,3 @@
-"""Canonical session transcript read + flatten boundary for session surfaces."""
-
 from __future__ import annotations
 
 import json

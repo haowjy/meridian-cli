@@ -1,5 +1,3 @@
-"""Process-local telemetry router with bounded non-blocking queue."""
-
 from __future__ import annotations
 
 import logging
@@ -80,7 +78,6 @@ class TelemetryRouter:
             logger.debug("Telemetry emit failed", exc_info=True)
 
     def enqueue(self, envelope: TelemetryEnvelope) -> None:
-        """Enqueue an already-constructed envelope without blocking."""
         with self._lock:
             if self._closed:
                 return
@@ -91,7 +88,6 @@ class TelemetryRouter:
         self._wake.set()
 
     def close(self) -> None:
-        """Flush pending events and close the sink."""
         with self._lock:
             self._closed = True
         self._wake.set()
@@ -160,7 +156,6 @@ _global_router: TelemetryRouter | None = None
 
 
 def set_global_router(router: TelemetryRouter) -> None:
-    """Replace the process-global router."""
     global _global_router
     with _global_router_lock:
         old = _global_router
@@ -170,7 +165,6 @@ def set_global_router(router: TelemetryRouter) -> None:
 
 
 def get_global_router() -> TelemetryRouter:
-    """Return the process-global router, creating a noop router lazily."""
     global _global_router
     with _global_router_lock:
         if _global_router is None:

@@ -1,5 +1,3 @@
-"""Typed and metadata-backed per-harness configuration models."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -70,7 +68,6 @@ def harness_idle_model(
     *,
     defaults: Mapping[str, object] | None = None,
 ) -> type[HarnessIdleConfig]:
-    """Build the metadata-backed idle settings model for one harness."""
 
     normalized = harness_id.strip().lower()
     if normalized not in _HARNESS_TABLE_KEYS:
@@ -184,7 +181,6 @@ def harness_profile_model(
     model_default: str = "",
     idle_defaults: Mapping[str, object] | None = None,
 ) -> type[HarnessProfileConfig]:
-    """Build one metadata-backed harness profile and its idle settings."""
 
     normalized = harness_id.strip().lower()
     if normalized not in _HARNESS_TABLE_KEYS:

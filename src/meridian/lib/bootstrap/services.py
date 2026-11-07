@@ -1,5 +1,3 @@
-"""Bootstrap facade combining project, runtime, and config services."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -74,7 +72,6 @@ def _materialization_notice(authority: RuntimeAuthoritySnapshot) -> str | None:
 def _application_context_from_runtime(
     prepared: RuntimeReadContext | RuntimeWriteContext,
 ) -> ApplicationContext:
-    """Project bootstrap state onto the shared application context carrier."""
 
     authority = getattr(prepared, "authority", None)
     return ApplicationContext(
@@ -86,7 +83,6 @@ def _application_context_from_runtime(
 
 
 def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
-    """Prepare read-only project context without filesystem mutation."""
 
     authority = resolve_project_authority(project_root)
     return ProjectReadContext(
@@ -101,7 +97,6 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
 def prepare_for_runtime_read(
     project_root: Path,
 ) -> RuntimeReadContext:
-    """Prepare read-only runtime context without creating state."""
 
     authority = resolve_runtime_authority_for_read(project_root)
     project_context = ProjectReadContext(
@@ -122,7 +117,6 @@ def prepare_for_runtime_read(
 
 
 def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
-    """Prepare project write context and ensure project directories exist."""
 
     authority = resolve_project_authority(project_root)
     prior = resolve_project_identity(authority.project_root)
@@ -146,7 +140,6 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
 def prepare_for_runtime_write(
     project_root: Path,
 ) -> RuntimeWriteContext:
-    """Prepare runtime write context, including UUID and runtime dirs."""
 
     authority = resolve_runtime_authority_for_write(project_root)
     project_state.ensure_project_dirs(authority.project_root)
@@ -170,7 +163,6 @@ def build_spawn_application_service(
     *,
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnApplicationService:
-    """Build a spawn application service directly from prepared runtime authority."""
 
     runtime_root = prepared.runtime_root
     if runtime_root is None:
@@ -188,7 +180,6 @@ def build_spawn_lifecycle_service_from_roots(
     *,
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnLifecycleService:
-    """Resolve lifecycle authority for explicit project/runtime roots."""
 
     from meridian.lib.core.lifecycle import create_lifecycle_service
 
@@ -201,7 +192,6 @@ def build_spawn_application_service_from_roots(
     *,
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnApplicationService:
-    """Build a spawn application service for explicit project/runtime roots."""
 
     from meridian.lib.core.spawn_service import SpawnApplicationService
 
@@ -218,7 +208,6 @@ def build_extension_entrypoint(
     *,
     lifecycle: SpawnLifecycleService | None = None,
 ) -> ExtensionEntryPoint:
-    """Build the minimal shared carrier for extension entrypoints."""
 
     return ExtensionEntryPoint(
         context=_application_context_from_runtime(prepared),

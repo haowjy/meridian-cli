@@ -1,5 +1,3 @@
-"""Project root resolution helpers."""
-
 import os
 from pathlib import Path
 from typing import Literal

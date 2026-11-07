@@ -19,13 +19,11 @@ from typing import Literal, cast
 
 from meridian.lib.mermaid.scanner import DiagramTarget, collect_targets
 
-# Bundle path relative to this module
 BUNDLE_PATH = Path(__file__).parent / "mermaid-validator.bundle.js"
 
 # Validation timeout per block (seconds)
 TIMEOUT_SECS = 10
 
-# Validation tier type
 ValidationTier = Literal["python", "js"]
 
 
@@ -97,18 +95,6 @@ def validate_path(
     *,
     opts: ScanOptions | None = None,
 ) -> MermaidValidationResult:
-    """Validate all mermaid blocks in a file or directory.
-
-    Args:
-        path: File or directory to validate.
-        opts: Scan options (exclude patterns, depth limit).
-
-    Returns:
-        MermaidValidationResult with per-block results.
-
-    Raises:
-        FileNotFoundError: If the path does not exist.
-    """
     path = path.resolve()
     if not path.exists():
         raise FileNotFoundError(f"Path not found: {path}")
@@ -181,7 +167,6 @@ BLOCK_OPENERS = frozenset({"loop", "alt", "opt", "par", "rect", "subgraph", "if"
 
 
 def _strip_frontmatter(content: str) -> str:
-    """Remove leading YAML frontmatter (Mermaid 10+)."""
     lines = content.split("\n")
     if lines and lines[0].strip() == "---":
         for index, line in enumerate(lines[1:], start=1):
@@ -209,17 +194,14 @@ def _detect_diagram_type(content: str) -> tuple[str | None, str | None]:
                 in_directive = False
             continue
 
-        # Start of directive
         if stripped.startswith("%%{"):
             if not stripped.endswith("}%%"):
                 in_directive = True
             continue
 
-        # Skip line comments
         if stripped.startswith("%%"):
             continue
 
-        # First content line determines type
         parts = stripped.split()
         if not parts:
             continue
@@ -233,7 +215,6 @@ def _detect_diagram_type(content: str) -> tuple[str | None, str | None]:
 
 
 def _validate_heuristic(content: str, _diagram_type: str | None) -> list[str]:
-    """Run heuristic structural checks and return error messages."""
     body = _strip_frontmatter(content)
     errors: list[str] = []
 
@@ -245,7 +226,6 @@ def _validate_heuristic(content: str, _diagram_type: str | None) -> list[str]:
         if not stripped:
             continue
 
-        # Track directive blocks
         if stripped.startswith("%%{"):
             if not stripped.endswith("}%%"):
                 open_directives += 1
@@ -254,7 +234,6 @@ def _validate_heuristic(content: str, _diagram_type: str | None) -> list[str]:
             open_directives -= 1
             continue
 
-        # Skip comments
         if stripped.startswith("%%"):
             continue
 
@@ -275,10 +254,8 @@ def _validate_heuristic(content: str, _diagram_type: str | None) -> list[str]:
 
 
 def _validate_block_python(target: DiagramTarget) -> BlockResult:
-    """Validate a block using Python heuristics."""
     canonical, raw_token = _detect_diagram_type(target.content)
 
-    # Check for unrecognized type
     if canonical is None:
         if raw_token is None:
             error = "no diagram type declaration found"
@@ -293,7 +270,6 @@ def _validate_block_python(target: DiagramTarget) -> BlockResult:
             tier="python",
         )
 
-    # Run heuristic checks
     errors = _validate_heuristic(target.content, canonical)
     if errors:
         return BlockResult(
@@ -321,7 +297,6 @@ def _validate_block_python(target: DiagramTarget) -> BlockResult:
 
 
 def _validate_block_js(target: DiagramTarget) -> BlockResult:
-    """Validate a block using the bundled JS validator."""
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".mmd",

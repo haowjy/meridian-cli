@@ -1,10 +1,3 @@
-"""Canonical accessors for session vs owner-chat identity.
-
-Two concepts:
-- **Exact session** — the chat id for this specific session (`chat_id` on rows).
-- **Owner session** — the primary/session-family chat id (`owner_chat_id` on spawns).
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -20,19 +13,16 @@ from meridian.lib.state.spawn_status import quarantine_may_observe
 
 
 def spawn_exact_chat_id(row: SpawnRecord) -> str | None:
-    """Return the exact session chat id recorded on a spawn row, or None if it has none."""
 
     return row.entry_chat_id
 
 
 def spawn_owner_chat_id(row: SpawnRecord) -> str | None:
-    """Return the owner/session-family chat id for a spawn row."""
 
     return row.owner_chat_id or row.chat_id
 
 
 def session_exact_chat_id(record: SessionRecord) -> str:
-    """Return the exact session chat id for a session record."""
 
     return record.chat_id
 
@@ -43,7 +33,6 @@ def session_owner_chat_id(
     *,
     spawn_row: SpawnRecord | None = None,
 ) -> str | None:
-    """Return the owner/session-family chat id for a session record."""
 
     if record.kind == "primary":
         return session_exact_chat_id(record)
@@ -66,14 +55,7 @@ def chat_owner_spawn(
     *,
     newest: SessionRecord | None = None,
 ) -> SpawnId | None:
-    """Return the spawn that owns ``chat_id``: the one that ran it, whether or not it still runs.
-
-    Every generation records the spawn that executed it at its start, so the answer is
-    the newest generation whose spawn row still exists; a link to a row that was never
-    written (a crash between reserving the ID and writing the row) is skipped. Pass the
-    chat's already-read ``newest`` record to answer a linked chat without reading the
-    rest. Which run is live in the chat right now is a different question, not asked here.
-    """
+    # A crash can leave a reserved spawn ID without a row.
     if (
         newest is not None
         and newest.spawn_id
@@ -89,14 +71,7 @@ def chat_owner_spawn(
 def session_records_for_spawns(
     root: Path, records: Iterable[SpawnRecord]
 ) -> dict[str, SessionRecord]:
-    """Return unmodified authoritative generations; ambiguous linkage is a conflict.
-
-    The one exception: a row with a ``chat_id`` and no ``session_instance_id`` (a reopened
-    spawn not yet bound) resolves to the newest generation linked to it in that chat.
-
-    Do not fill nullable identity fields here: capture fingerprints, historical
-    provenance and publication witnesses must detect changes to those fields too.
-    """
+    # Keep nullable identity fields unchanged for fingerprints and publication witnesses.
     # A row with no session of its own (chat-less by design, or a legacy placeholder
     # chat) has none to find; only older chat-less rows still need the full scan.
     records = tuple(row for row in records if not row.has_no_session_of_its_own)
@@ -129,9 +104,7 @@ def session_records_for_spawns(
         if len(candidates) > 1:
             if not record.chat_id or record.session_instance_id:
                 raise ValueError(f"Ambiguous session metadata for history: {record.id}")
-            # A continue between its commit and its bind: the row has its chat but no
-            # generation of its own yet, and every earlier launch linked one in that chat.
-            # The newest is the latest.
+            # Continue may have committed its chat before binding its generation.
             candidates = candidates[-1:]
         if candidates:
             session = candidates[0]
@@ -147,12 +120,7 @@ def session_records_for_spawns(
 def native_identity_candidates(
     runtime_root: Path, row: SpawnRecord, session: SessionRecord | None
 ) -> tuple[set[str], set[str]]:
-    """Normalize an aggregate's facts and its already-verified exact generation.
-
-    Selection requires one candidate per dimension. Ownership checks must not
-    ignore a possible matching owner merely because its recorded facts conflict.
-    Neither caller may discover identity from a newer chat or native file here.
-    """
+    # Keep conflicting candidates: ownership checks must not discard a possible owner.
     harnesses = {
         value.strip().lower()
         for value in (row.harness, session.harness if session else None)
@@ -179,7 +147,6 @@ def live_observer_for_chat(
     records: Iterable[SpawnRecord] | None = None,
     excluding_spawn_id: str | None = None,
 ) -> str | None:
-    """Find an execution using this conversation without inventing a chat lease."""
     from meridian.lib.state.process_scope_projection import read_scope_projection
     from meridian.lib.state.reaper import scope_liveness
 
@@ -285,13 +252,11 @@ def get_session_record_for_spawn(
 
 
 def spawn_matches_owner_chat(row: SpawnRecord, owner_chat_id: str) -> bool:
-    """Return whether a spawn belongs to the given owner/session-family chat id."""
 
     return spawn_owner_chat_id(row) == normalize_optional_identity(owner_chat_id)
 
 
 def spawn_matches_exact_session(row: SpawnRecord, session_chat_id: str) -> bool:
-    """Return whether a spawn belongs to the given exact session chat id."""
 
     return spawn_exact_chat_id(row) == normalize_optional_identity(session_chat_id)
 

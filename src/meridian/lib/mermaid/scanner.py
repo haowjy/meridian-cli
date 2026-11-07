@@ -1,5 +1,3 @@
-"""Mermaid diagram target collection - file walking and fenced block extraction."""
-
 from __future__ import annotations
 
 import os
@@ -27,7 +25,6 @@ _SKIP_DIRS = frozenset(
     }
 )
 
-# File extensions to scan
 _MERMAID_STANDALONE = frozenset({".mmd", ".mermaid"})
 _MARKDOWN_EXT = ".md"
 
@@ -50,17 +47,6 @@ def collect_targets(
     depth: int | None = None,
     exclude: list[str] | None = None,
 ) -> list[DiagramTarget]:
-    """Collect all mermaid diagram targets from a file or directory.
-
-    Args:
-        path: File or directory to scan
-        root: Root directory for relative path calculation
-        depth: Maximum directory depth (None = unlimited, 0 = root only)
-        exclude: Additional glob patterns to exclude
-
-    Returns:
-        List of DiagramTarget objects sorted by file path, then line number.
-    """
     path = path.resolve()
     root = root.resolve()
 
@@ -74,7 +60,6 @@ def collect_targets(
 
 
 def _collect_from_file(file_path: Path, root: Path) -> list[DiagramTarget]:
-    """Collect targets from a single file."""
     suffix = file_path.suffix.lower()
     rel = _rel_posix(file_path, root)
 
@@ -102,7 +87,6 @@ def _collect_from_file(file_path: Path, root: Path) -> list[DiagramTarget]:
 
 
 def _extract_mermaid_blocks(md_path: Path, root: Path) -> list[DiagramTarget]:
-    """Extract mermaid fenced blocks from a markdown file."""
     doc = extract_file(md_path)
     if doc.error:
         return []
@@ -140,7 +124,6 @@ def _collect_from_directory(
     depth: int | None,
     exclude: list[str] | None,
 ) -> list[DiagramTarget]:
-    """Walk a directory and collect all mermaid targets."""
     # Load .mermaidignore patterns
     mermaidignore_spec = load_ignore_patterns(dir_path, ".mermaidignore")
 
@@ -159,7 +142,6 @@ def _collect_from_directory(
         except ValueError:
             current_depth = 0
 
-        # Check depth limit
         if depth is not None and current_depth > depth:
             dirnames.clear()  # Don't descend further
             continue
@@ -175,21 +157,18 @@ def _collect_from_directory(
             if suffix != _MARKDOWN_EXT and suffix not in _MERMAID_STANDALONE:
                 continue
 
-            # Apply ignore patterns
             rel = _rel_posix(file_path, dir_path)
             if mermaidignore_spec and mermaidignore_spec.match_file(rel):
                 continue
             if exclude_spec and exclude_spec.match_file(rel):
                 continue
 
-            # Collect targets from this file
             targets.extend(_collect_from_file(file_path, root))
 
     return targets
 
 
 def _rel_posix(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:

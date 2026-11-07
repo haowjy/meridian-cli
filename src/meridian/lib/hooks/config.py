@@ -1,5 +1,3 @@
-"""Hook config loading and normalization."""
-
 from __future__ import annotations
 
 from collections import OrderedDict

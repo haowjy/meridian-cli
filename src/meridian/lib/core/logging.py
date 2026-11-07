@@ -1,5 +1,3 @@
-"""Structlog configuration helpers."""
-
 import logging as std_logging
 import sys
 from collections.abc import Callable, Generator, Hashable
@@ -16,7 +14,6 @@ _WARNING_KEYS: ContextVar[set[Hashable] | None] = ContextVar(
 
 @contextmanager
 def warning_cache_scope() -> Generator[None]:
-    """Deduplicate keyed warnings within one command or operation."""
 
     if _WARNING_KEYS.get() is not None:
         yield
@@ -33,7 +30,6 @@ _PROCESS_WARNING_KEYS: set[Hashable] = set()
 
 
 def warn_once(key: Hashable, emit: Callable[[], None]) -> None:
-    """Run ``emit`` once for *key* in the current warning scope."""
 
     seen = _WARNING_KEYS.get()
     if seen is None:
@@ -53,7 +49,6 @@ def _level_from_verbosity(verbosity: int) -> int:
 
 
 def configure_logging(json_mode: bool = False, verbosity: int = 0) -> None:
-    """Configure structlog for CLI or MCP server mode."""
 
     level = _level_from_verbosity(verbosity)
     # Route log output to stderr so it never pollutes JSON/structured stdout.

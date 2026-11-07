@@ -1,5 +1,3 @@
-"""Telemetry public API."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,7 +27,6 @@ from meridian.lib.telemetry.sinks import BufferingSink, NoopSink, StderrSink, Te
 
 
 def init_telemetry(*, sink: TelemetrySink | None = None, runtime_root: Path | None = None) -> None:
-    """Initialize the process-wide telemetry router."""
     if sink is None:
         sink = LocalJSONLSink(runtime_root) if runtime_root is not None else NoopSink()
     set_global_router(TelemetryRouter(sink))

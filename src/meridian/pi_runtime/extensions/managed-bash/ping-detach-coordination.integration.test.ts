@@ -149,7 +149,6 @@ describe("managed Bash ping lifetime", () => {
       vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const id = await h.start();
       await until(() => h.pings.length === 1);
-      // Still running, tracked, background: the notification capability fails and its claim must be released.
       const release = h.arm((file) => file.records[id]?.ping_sent_at_ms === null);
       h.pings[0]!.verdict.reject(new Error("stale notification capability"));
       await release.hit;
@@ -191,7 +190,6 @@ describe("managed Bash detach result", () => {
       const result = await detaching;
       await expect(starting).rejects.toThrow("EIO");
       expect(result).toMatchObject({ kind: "detach", bash_id: id, detached: false });
-      // The durable row is the failure repair, which was never released from tracking.
       await until(async () => (await h.disk(id)).status === "killed");
       expect(await h.disk(id)).toMatchObject({ is_tracked: true, execution_error: expect.stringContaining("EIO") });
       expect(wrote(id, { is_tracked: false })).toEqual([]);

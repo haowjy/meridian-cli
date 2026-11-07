@@ -1,5 +1,3 @@
-"""Pruning helpers for `meridian doctor` state retention."""
-
 from __future__ import annotations
 
 import os
@@ -273,7 +271,6 @@ def scan_orphan_project_dirs(
     retention_days: int,
     now: float,
 ) -> list[OrphanProjectDir]:
-    """Find stale project-state directories under ``~/.meridian/projects``."""
 
     if retention_days < 0:
         return []
@@ -312,7 +309,6 @@ def scan_adhoc_project_dirs(
     *,
     stale_retention_days: int = ADHOC_STALE_RETENTION_DAYS,
 ) -> list[AdHocProjectDir]:
-    """Inspect every ad-hoc root and report its reclamation eligibility."""
 
     projects_root = user_home / "projects"
     if not projects_root.is_dir():
@@ -337,7 +333,6 @@ def scan_stale_spawn_artifacts(
     active_spawn_ids: set[str],
     now: float,
 ) -> list[StaleSpawnArtifact]:
-    """Find stale per-spawn artifact directories for the current project only."""
 
     return _scan_stale_spawn_artifacts(
         runtime_root=runtime_root,
@@ -354,7 +349,6 @@ def _scan_stale_spawn_artifacts(
     active_spawn_ids: set[str],
     now: float,
 ) -> list[StaleSpawnArtifact]:
-    """Find stale per-spawn artifact directories under runtime_root/spawns."""
 
     if retention_days < 0:
         return []
@@ -426,7 +420,6 @@ def _not_running_legacy(record: SpawnRecord | None) -> bool:
 
 
 def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
-    """Delete stale project-state directories. Returns the number removed."""
 
     removed = 0
     for orphan in orphans:

@@ -1,0 +1,4 @@
+- Untangle in the rewrite: `cli_args.py` manually mirrors the root command's
+  value-taking flags for both startup classification and idle command parsing.
+  Define flag arity once in lightweight command metadata and share it across
+  parsing and classification so a new flag cannot drift between them.

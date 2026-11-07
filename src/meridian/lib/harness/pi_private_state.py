@@ -47,7 +47,6 @@ class PiConsumptionState:
 
 
 def pi_coordination_dir(runtime_root: Path, spawn_id: str) -> Path:
-    """Return one Pi parent's private coordination directory."""
 
     return runtime_root / "pi-bash" / spawn_id
 
@@ -96,7 +95,6 @@ def read_pi_private_doc(
     *,
     spawn_id: str,
 ) -> _Model | None:
-    """Read a private Pi document and validate that it belongs to its directory."""
 
     try:
         value = model.model_validate_json(file.read_text(encoding="utf-8"))

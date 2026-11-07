@@ -1,5 +1,3 @@
-"""Typed history retention and archive configuration."""
-
 from typing import Annotated
 
 from pydantic import ConfigDict, Field
@@ -10,8 +8,7 @@ from meridian.lib.config.schema import config_field
 
 
 class HistoryArchiveConfig(ConfigModel):
-    # This section predated the strict TOML normalizers and historically accepted
-    # Pydantic's scalar coercions. Keep that file behavior while still forbidding extras.
+    # Preserve scalar coercions accepted by existing config files.
     model_config = ConfigDict(frozen=True, extra="forbid")
     automatic: Annotated[
         bool,

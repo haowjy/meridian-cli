@@ -91,7 +91,6 @@ def _with_root_grants(
 
 
 def _project_v1_permissions(permissions: OpenCodePermissions) -> dict[str, object]:
-    """Encode ordered rules as V1's nested permission map."""
 
     grouped: dict[str, list[OpenCodePermissionRule]] = {}
     for rule in permissions:
@@ -106,7 +105,6 @@ def _project_v1_permissions(permissions: OpenCodePermissions) -> dict[str, objec
 
 
 def _project_v2_permissions(permissions: OpenCodePermissions) -> list[dict[str, str]]:
-    """Serialize the compile's already-canonical ordered V2 rules."""
 
     return [
         {"action": rule.action, "resource": rule.resource, "effect": rule.effect}

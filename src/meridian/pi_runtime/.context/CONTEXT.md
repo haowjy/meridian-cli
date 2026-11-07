@@ -74,58 +74,17 @@ and checks again at the next expiry (`meridian_hold.ts`), until it has been in t
 minutes. A backgrounded `meridian spawn wait` consumes the child's report, and the bash completion
 notice carries no output, so the model would get only a truncated tail, behind an extra call.
 
-Live `Execution` objects separately own handles, output queues, progress, creation
-proposals and first-fault evidence. A snapshot swap cannot replace them. Readers
-see published rows with live progress and negative fault evidence overlaid; those
-facts can also ride the next lifecycle snapshot. Positive terminal results,
-background/tracking changes, ping claims, consumption and removal still require
-publication. Launch returns the owned execution and its separately supervised
-creation observation: foreground abort attaches to the former immediately, while a
-positive start still awaits the latter. Cancellation noticed after preparation I/O
-but before spawn removes its empty logs and launches nothing. A missing, unreadable
-or non-regular log is unavailable evidence, not valid empty output. UI inspection
-stays non-consuming; `/ps` loads metadata only and owns one bounded selected-row
-preview read at a time.
+Live executions own process handles and fault evidence independently of the
+published record snapshot. Terminal success is staged only if no failure has
+claimed the record; a failure claimed later needs its own repair write, and a
+crash between writes can still recover the staged success. Do not wait for
+metadata publication before physically interrupting a process or draining output.
+Once the owned group is gone, never signal or probe it again: its identity may
+be reused.
 
-Terminal publication is such a transition. Until it lands the record stays
-`running` and owned, so list, wait, output, kill, and foreground results never
-present, wait on, or consume an unpublished clean exit; a wait interrupted before
-publication still reports running. Its linearization point is staging: success is staged only if no
-failure has claimed the record, so an earlier failure prevents a clean terminal
-snapshot; one claimed afterwards is ordered after it and repaired by the failure's
-own write (a crash inside that rename window can still recover the success).
-A task-fatal stage/write failure claims its record inside the failing publication
-slot, before any successor can stage. Caller promise depth cannot change that
-order. Claiming returns no completion promise: cleanup/repair run separately, so
-output drain and physical interruption cannot inherit a metadata wait. Detach,
-consumption and clear failures instead remain caller-recoverable errors. A failed terminal write
-fails the record (`killed` plus `execution_error`), returns a failed wait result,
-and leaves the notice owed. A consumption is staged in its own slot and is skipped if the record
-has failed meanwhile. `kill` reports the published outcome, so a task that exited by
-itself is not "killed". Group-signalling authority ends where physical ownership
-does: once `ShellTask` observes its group gone (including ESRCH from a signal and
-ps queries already in flight) it never signals or probes it again, however long
-publication takes. Interrupting
-a foreground command returns after the physical stop and flushed output, not after
-creation or terminal publication. A clean interruption publishes as `killed`; a
-fault overlay may show negative evidence before its repair write lands. Foreground
-hotkey/timeout handoff is positive only when its queued transition finds a published,
-still-running row; a creation failure or terminal publication ahead of it declines
-the handoff without resurrecting or backgrounding the row.
-Consumption is persisted before the terminal wait or output result returns. If it
-fails the marker was never applied and the wait returns an error, leaving the
-completion eligible for notification.
-Spawn-watch serializes publication through one launch-scoped owner. A successful
-tool-bearing boundary and the genuinely late idle fallback use that owner rather
-than separate delivery machinery. Automatic child notices read `report.md`
-directly instead of invoking the general `spawn wait` CLI. Candidate IDs reduce
-ordinary idle work but never become authority; canonical state and parent-local
-evidence remain authoritative at publication. Two nonrecursive watchers and the
-existing timers wake the owner; active runs do no polling I/O. Idle delivery is
-armed only by a main-loop `agent_end`, never by a session start: a resumed or
-reloaded lead's prompt cache is cold, so a turn nobody asked for re-bills the
-whole context for a status ping. Watchers and polling may start at `session_start`;
-they publish nothing until a turn ends.
+A result stays owed until consumption is persisted. Failed publication or an
+unavailable log must not turn it into a clean, consumed result. UI inspection
+is non-consuming.
 
 See the canonical [delivery contract](delivery-contract.md) for discovery and
 publication sequencing, fixed report/member/message bounds, subtract-only

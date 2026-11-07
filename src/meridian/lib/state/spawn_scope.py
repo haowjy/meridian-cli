@@ -1,5 +1,3 @@
-"""Per-spawn mutable scope state: the checkout a spawn pinned."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,7 +49,6 @@ def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
 
 
 def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
-    """Read scope.json for a spawn. Tolerates missing, empty, or corrupt files."""
 
     path = _scope_path_for_read(project_root, spawn_id)
     if path is None:
@@ -69,7 +66,6 @@ def write_spawn_scope_task_dir(
     spawn_id: str,
     task_dir: Path | None,
 ) -> bool:
-    """Pin task_dir in scope.json, or unpin it with ``None``. Atomic tmp+rename."""
 
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     path = resolve_spawn_dir(runtime_root, spawn_id) / _SCOPE_FILENAME

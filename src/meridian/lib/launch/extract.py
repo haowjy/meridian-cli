@@ -1,5 +1,3 @@
-"""Post-execution extraction pipeline used during run finalization."""
-
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
@@ -21,10 +19,6 @@ from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_repo
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
-
-# ---------------------------------------------------------------------------
-# Finalization pipeline
-# ---------------------------------------------------------------------------
 
 
 class FinalizeReportKind(StrEnum):
@@ -79,7 +73,6 @@ def _persist_report(
 
 
 def classify_finalize_report(extracted: ExtractedReport) -> FinalizeReportKind:
-    """Project extracted report source and text into finalization semantics."""
 
     if extracted.source == "failure_reason":
         return FinalizeReportKind.SYNTHETIC_FAILURE
@@ -107,7 +100,6 @@ def enrich_finalize(
     project_root: Path | None = None,
     failure_reason: str | None = None,
 ) -> FinalizeExtraction:
-    """Spawn all extraction steps and return one enriched finalization payload."""
 
     if facts.incomplete:
         structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(launch.spawn_id))

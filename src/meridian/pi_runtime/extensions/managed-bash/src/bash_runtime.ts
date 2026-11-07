@@ -151,7 +151,6 @@ export const MAX_TIMEOUT_MIN = 59;
 // Fills the `timeout_min` field of a user `!`/`$` record. User commands have no auto-background
 // timer; the field only needs a value the schema accepts.
 const USER_RECORD_TIMEOUT_MIN = 55;
-// How long `bash_manage wait` blocks.
 const WAIT_TIMEOUT_MIN = 55;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -829,10 +828,8 @@ export class BashRuntime {
     const observed = this.ready;
     try { await observed; }
     catch {
-      // An operator can repair unreadable cold-start evidence without needing to abandon the
-      // process. Never replace it with an empty map. Recovery publishes the whole recovered value,
-      // so exactly one may be in flight: only the first caller to see this failure restarts it and
-      // later callers join that attempt; a stale second recovery could overwrite a newer publication.
+      // Do not replace unreadable evidence with empty state. Only one recovery may
+      // publish, or a stale recovery could overwrite newer state.
       if (this.ready === observed) this.ready = this.recoverRecords();
       await this.ready;
     }

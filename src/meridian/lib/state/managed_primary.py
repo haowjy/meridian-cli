@@ -1,5 +1,3 @@
-"""Shared managed-primary process teardown helpers."""
-
 from __future__ import annotations
 
 import os
@@ -18,7 +16,6 @@ _RELEASE_GRACE_SECS = 5.0
 
 
 def _terminate_pid(pid: int) -> bool:
-    """Terminate a single process by PID using psutil."""
 
     if pid <= 0 or pid == os.getpid():
         return False

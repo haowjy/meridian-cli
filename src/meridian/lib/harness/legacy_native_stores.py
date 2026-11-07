@@ -133,7 +133,6 @@ class LegacyNativeStores:
         return matches, ambiguous
 
 
-# --- Evidence about one native session file -------------------------------
 #
 # Legacy recovery and `session repair` read what a native file says about
 # itself: its exact identity (validated by the adapter's own resolver) plus
@@ -163,7 +162,6 @@ class InvalidNativeSession(ValueError):
 
 
 def parse_instant(value: object) -> datetime | None:
-    """Aware UTC datetime from an ISO string or epoch milliseconds; else None."""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         with suppress(OverflowError, OSError, ValueError):
             return datetime.fromtimestamp(value / 1000, tz=UTC)
@@ -215,7 +213,6 @@ def pi_spawn_session_dir(spawn_id: str) -> Path:
 
 
 def pi_recorded_session_dir(runtime_meta: str | bytes | None) -> Path | None:
-    """`session_dir` from a retained `pi_runtime_meta.json`, if recorded."""
     if not runtime_meta:
         return None
     try:
@@ -281,7 +278,6 @@ def pi_session_evidence(path: Path, *, final_assistant: bool = False) -> NativeS
 def pi_sessions_in(
     directory: Path, *, final_assistant: bool = False
 ) -> list[NativeSessionEvidence]:
-    """Valid Pi sessions directly in ``directory``; invalid files are skipped."""
     try:
         paths = sorted(path for path in directory.iterdir() if path.name.endswith(".jsonl"))
     except OSError:
@@ -397,7 +393,6 @@ def opencode_session_evidence(path: Path, session_id: str | None) -> NativeSessi
 def native_session_evidence(
     harness: str, path: Path, *, recorded_session_id: str | None = None
 ) -> NativeSessionEvidence:
-    """Validate ``path`` as a native session for ``harness`` (manual repair)."""
     if not path.is_file():
         raise InvalidNativeSession(f"{path} is not a file")
     try:

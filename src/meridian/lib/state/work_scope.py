@@ -1,5 +1,3 @@
-"""Explicit work-scope model: named work items vs ambient spawn-local scratch."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,12 +31,10 @@ class WorkScope:
 
     @property
     def excluded_top_level_names(self) -> frozenset[str]:
-        """Top-level scope entries that never count as user artifacts."""
 
         return frozenset({_SCOPE_STATUS_FILENAME, SCOPE_PROMPTS_DIRNAME})
 
     def count_artifacts(self) -> int:
-        """Count keepable artifacts under this scope (pure read, no mkdir)."""
 
         root = self.root
         if not root.is_dir():

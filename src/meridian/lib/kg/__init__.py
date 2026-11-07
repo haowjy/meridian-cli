@@ -1,5 +1,3 @@
-"""Knowledge graph analysis: document graph and link health."""
-
 from meridian.lib.kg.graph import build_analysis, build_check
 from meridian.lib.kg.report import (
     format_check_findings,

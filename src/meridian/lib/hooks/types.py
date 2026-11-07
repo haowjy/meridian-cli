@@ -1,5 +1,3 @@
-"""Hook contracts shared across registration, dispatch, and execution."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

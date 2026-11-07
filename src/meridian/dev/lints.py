@@ -104,8 +104,6 @@ def read_sources(source_root: Path) -> Sources:
     return Sources(tuple(modules), tuple(scripts))
 
 
-# --- raw file writes -------------------------------------------------------
-
 # Each exception names the narrow function that owns the legitimate raw write.
 # Values are required documentation, rather than data used by the check.
 RAW_WRITE_ALLOWLIST: dict[tuple[str, str, str], str] = {
@@ -220,7 +218,6 @@ def stale_raw_write_allowlist(sources: Sources) -> list[Violation]:
     ]
 
 
-# --- environment variable registry -----------------------------------------
 _ENV_NAME = re.compile(r"_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 _SCRIPT_ENV_STRING = re.compile(r"""["'](_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)["']""")
 _SCRIPT_ENV_DOT_ACCESS = re.compile(
@@ -285,7 +282,6 @@ def unregistered_env_violations(sources: Sources) -> list[Violation]:
     ]
 
 
-# --- harness layering ------------------------------------------------------
 def _imports_idle_policy(node: ast.Import | ast.ImportFrom) -> bool:
     if isinstance(node, ast.Import):
         return any(
@@ -380,7 +376,6 @@ def import_time_bootstrap_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
-# --- per-launch paths ------------------------------------------------------
 # Per-launch files are named, and launches constructed, only in `paths.py`: the
 # spawn directory layout has one owner. A path built from a name held in a variable
 # (`d / name`) is invisible to a literal check; the construction rule is what keeps a
@@ -531,8 +526,6 @@ def launch_path_violations(sources: Sources) -> list[Violation]:
         )
     return found
 
-
-# --- interpreter re-launch argv ---------------------------------------------
 
 # Product code re-launches this package through `module_argv`, which adds `-P`.
 # `meridian.dev` builds its own argv and is exempt (lib/platform/AGENTS.md).

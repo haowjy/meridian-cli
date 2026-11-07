@@ -1,5 +1,3 @@
-"""Invocation context and service contracts for extension command execution."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -32,12 +30,10 @@ class ExtensionCapabilities:
 
     @classmethod
     def denied(cls) -> ExtensionCapabilities:
-        """No capabilities for CLI/MCP contexts."""
 
         return cls()
 
     def has(self, capability: str) -> bool:
-        """Check if a capability is granted."""
 
         return bool(getattr(self, capability, False))
 
@@ -94,7 +90,6 @@ class ExtensionInvocationContextBuilder:
         return self
 
     def build(self) -> ExtensionInvocationContext:
-        """Build context with surface-appropriate capability defaults."""
 
         caps = self._capabilities or ExtensionCapabilities.denied()
 
@@ -120,7 +115,6 @@ class ExtensionCommandServices:
     application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
 
     def resolved_project_root(self) -> Path | None:
-        """Project root of the shared application context, if known."""
 
         return self.application.context.project_root
 

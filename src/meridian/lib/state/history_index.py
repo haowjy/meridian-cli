@@ -1,9 +1,3 @@
-"""One disposable metadata projection, shared by history discovery surfaces.
-
-Writers only invalidate sources. This module alone projects authoritative files
-and acknowledges changes. Lifecycle decisions must still read the stores.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -235,12 +229,6 @@ def _metadata_match(
     session_json: ColumnElement[str],
     needle: str,
 ) -> ColumnElement[bool]:
-    """A browse row's displayed metadata contains ``needle`` (lowercase).
-
-    ``session_json`` is the session record that owns the tmux target and native identity:
-    the record itself for a session, the archive receipt's session for an archive (NULL
-    when the archive has no receipt).
-    """
 
     def field(json: ColumnElement[str], *paths: str) -> ColumnElement[str]:
         return func.coalesce(*(func.json_extract(json, path) for path in paths), "")
@@ -269,11 +257,6 @@ def _metadata_match(
 
 
 class BrowsePage(NamedTuple):
-    """One browse query: records in order, the matching total, and archive sessions.
-
-    ``archived`` maps an archive record's history id to the session its receipt retained.
-    """
-
     records: list[SessionRecord | SpawnRecord]
     total: int
     archived: dict[str, SessionRecord]
@@ -426,13 +409,6 @@ def _tail(handle: BinaryIO, extent: int, count: int = 256) -> str:
 
 @dataclass(frozen=True)
 class HistoryIndex:
-    """One format's projection. Every owned path names both input and index versions.
-
-    A schema bump starts a new file built fresh from authority. Older builds keep
-    their own file (0.6.7 and earlier: ``history.sqlite3``), which this build never
-    opens, so there is no in-place migration.
-    """
-
     root: Path
 
     @property
@@ -441,6 +417,7 @@ class HistoryIndex:
 
     @property
     def path(self) -> Path:
+        # Each schema gets a fresh index; older builds continue using their own file.
         return self.directory / f"{versioned('history')}.sqlite3"
 
     @property
@@ -635,7 +612,7 @@ class HistoryIndex:
                 and cursor["tail"] == _tail(handle, cursor["extent"])
             ):
                 if cursor["extent"] == snapshot_extent:
-                    return  # Nothing appended since the cursor.
+                    return
                 offset = cursor["extent"]
                 unsupported.versions.update(json.loads(cursor["unsupported"] or "[]"))
             else:
@@ -923,15 +900,7 @@ class HistoryIndex:
         return acknowledged, pending, active, busy
 
     def _reread_unmarked(self, db: Connection, target: tuple[DirtySource, ...]) -> list[str]:
-        """Re-read what an older build's writers change without marking this queue.
-
-        Each schema owns its marker queue. Runners and primaries of an older build
-        that outlive an upgrade still finish spawns and append session events.
-        Active loose spawns are provisional anyway, and the session log keeps a
-        cursor, so both are cheap. Sessions project without their writer lock;
-        busy spawn sources wait for the next catch-up. Spawns an older build creates
-        are found through the shared ID counter (``_discover_new_spawns``).
-        """
+        # Older runners can still write after upgrade without marking this schema's queue.
         marked = {marker.source.name for marker in target}
         sources = [
             HistorySource(kind="spawn", key=key)
@@ -948,7 +917,7 @@ class HistoryIndex:
             if source.name in marked:
                 continue
             if source.kind == "sessions":
-                self._sessions(db)  # Returns at once when nothing was appended.
+                self._sessions(db)
                 continue
             try:
                 with lock_file(source.lock_path(self.root), timeout=0):
@@ -960,12 +929,7 @@ class HistoryIndex:
         return active
 
     def _discover_new_spawns(self, db: Connection, marked: set[str]) -> list[str]:
-        """Project spawns whose IDs the shared counter passed since the last look.
-
-        An older build reserves IDs from the same counter but marks no queue of this
-        schema. The cost per catch-up is one small file read plus work for new IDs; IDs
-        reserved before their directory exists stay in the cursor's retry set.
-        """
+        # Older builds reserve from this counter without marking this schema's queue.
         row = db.exec_driver_sql("SELECT extent, tail FROM cursors WHERE source = 'spawns'").first()
         counter = read_spawn_counter(self.root)
         if row is None or (counter == row[0] and not row[1]):
@@ -1105,11 +1069,7 @@ class HistoryIndex:
         return ()
 
     def clear_authority_failure(self, *, timeout: float = 5.0) -> tuple[str, ...]:
-        """Clear an authority failure after its source was repaired.
-
-        Catch-up ownership orders this behind any initializer that may still
-        publish a failure based on the pre-repair authority.
-        """
+        # An initializer might still publish a failure based on pre-repair authority.
         with lock_file(self.catchup_lock, timeout=timeout):
             try:
                 failure = _InitializationFailure.model_validate_json(self.failure_path.read_bytes())
@@ -1205,7 +1165,6 @@ class HistoryIndex:
 
     @staticmethod
     def _quarantine_is_newer_format(reason: str) -> bool:
-        """Whether a latched ``Spawn state quarantined: <path>`` names a newer-format row."""
         prefix = "Spawn state quarantined: "
         if not reason.startswith(prefix):
             return False
@@ -1267,7 +1226,7 @@ class HistoryIndex:
             status = self.classify(deadline=deadline)
             if status.baseline == "current":
                 self._check_current(status)
-                return None  # A peer already published while we waited.
+                return None
             if status.baseline != "absent":
                 self._check_current(status)
             generation = changes.read_generation()
@@ -1508,11 +1467,6 @@ class HistoryIndex:
     def owed_launches(
         self, parent_ids: set[str], *, deadline: float | None = None
     ) -> tuple[tuple[str, int], ...]:
-        """Background launches that a continue moved past, still owed to these parents.
-
-        ``(spawn id, launch number)`` from the ``owed_launches`` side table; the launch's
-        row is its archive. Entries are never removed: consumption filters them at read time.
-        """
         stmt = (
             select(OWED_LAUNCHES.c.local_id, OWED_LAUNCHES.c.n)
             .where(OWED_LAUNCHES.c.parent.in_(sorted(parent_ids)))
@@ -1528,16 +1482,7 @@ class HistoryIndex:
         active_only: bool = False,
         deadline: float | None = None,
     ) -> tuple[tuple[str, str | None, bool], ...]:
-        """Return the indexed transitive subtrees of every root, retaining archived ancestry.
-
-        One recursive query anchors on all roots at once; the roots themselves are
-        never returned.
-
-        The query context performs one bounded catch-up before taking the shared
-        database lock.  Callers must authoritatively read every returned loose
-        row before using its lifecycle state. ``active_only`` filters after
-        traversal, preserving inactive ancestors needed to reach active descendants.
-        """
+        # Traverse inactive ancestors too; callers must re-read lifecycle state from authority.
         statement = text(
             """
             WITH RECURSIVE subtree(local_id, parent, archived, active, path) AS (
@@ -1592,14 +1537,6 @@ class HistoryIndex:
         exclude_chat_ids: set[str] | None = None,
         query: str = "",
     ) -> BrowsePage:
-        """Select picker records ordered by indexed activity or creation.
-
-        ``chat_ids`` addresses specific chats and overrides ``status``;
-        ``exclude_chat_ids`` drops chats the caller orders itself (running sessions, whose
-        indexed activity is their start time). ``query`` keeps rows whose displayed chat,
-        tmux target, agent, model (recorded or last executed), cwd or work (its name is its
-        id) contains it, case-insensitively; it applies before LIMIT and to the total.
-        """
         newer = SESSIONS.alias("newer")
         # The archive receipt's retained session, read once for ordering, matching and rows.
         archive_session = (

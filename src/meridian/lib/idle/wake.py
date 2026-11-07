@@ -50,7 +50,6 @@ NO_WAKE = ExpectedWake()
 
 
 def _lex_input(command: str) -> str | None:
-    """Mark command newlines, strip comments, and remove redirection fd numbers."""
 
     if _NEWLINE_BOUNDARY in command:
         return None

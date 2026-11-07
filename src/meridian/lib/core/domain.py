@@ -1,5 +1,3 @@
-"""Core frozen domain models."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -40,7 +38,6 @@ _StatusT = TypeVar("_StatusT", bound=StrEnum)
 def _derive_spawn_status_sets(
     classifications: dict[_StatusT, SpawnLifecycleClass],
 ) -> tuple[frozenset[_StatusT], frozenset[_StatusT], frozenset[_StatusT]]:
-    """Derive all/active/terminal sets solely from member classifications."""
 
     all_statuses = frozenset(classifications)
     active = frozenset(

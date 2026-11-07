@@ -1,10 +1,3 @@
-"""Streaming native snapshot codec; provider qualification is a separate contract.
-
-Writers supply raw, qualified records and observation facts only after exhausting
-that observation. This codec proves framing, binding and integrity, not native
-completion. The caller owns the atomic file publication and aggregate guard.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -243,13 +236,7 @@ def read_jsonl_frame(
 
 
 def is_snapshot_prefix(raw: bytes) -> bool:
-    """Recognize reserved top-level markers without trusting a malformed header.
-
-    Decode individual top-level pairs with the JSON decoder, not a last-key-wins
-    dictionary. A later duplicate, torn suffix or oversized value cannot undo an
-    already observed storage marker. Nested native text is not a discriminator.
-    Full strict decoding and byte limits remain the reader's responsibility.
-    """
+    # A duplicate or torn suffix must not hide an already observed storage marker.
     text = raw.decode("utf-8", errors="ignore").lstrip()
     if not text.startswith("{"):
         return False
@@ -327,12 +314,6 @@ def write_snapshot(
     records: Iterable[SnapshotRecord],
     finish: Callable[[], SnapshotObservation],
 ) -> SnapshotDescriptor:
-    """Write one document into the caller's atomic stage, sealing only after finish.
-
-    ``finish`` must qualify the exhausted provider observation, including source
-    consistency. Exceptions propagate so the atomic publisher cannot commit.
-    Raw JSON text is retained unchanged inside the storage envelope.
-    """
     line = _canonical(header.model_dump(mode="json"))
     if len(line) > HEADER_LIMIT:
         raise ValueError("Snapshot header exceeds its byte limit")
@@ -346,6 +327,7 @@ def write_snapshot(
             raise ValueError("Snapshot frame exceeds its byte limit")
         handle.write(line)
         checksum.update(line)
+    # Qualify the exhausted provider before sealing; failure aborts atomic publication.
     observation = finish()
     contents.verify(header, observation)
     metadata = {
@@ -371,11 +353,7 @@ def read_snapshot(
     current: Callable[[], bool] | None = None,
     check_header: Callable[[SnapshotHeader], None] | None = None,
 ) -> Iterator[dict[str, object]]:
-    """Validate incrementally; yielded prefixes are unverified until final EOF.
-
-    An early close or exhausted budget leaves ``partial``. Corruption and I/O
-    failures raise and record distinct outcomes; neither authorizes source fallback.
-    """
+    # Yielded prefixes remain unverified until the final seal and EOF.
     validation.state = "partial"
     validation.reason = "Snapshot validation has not reached its final seal"
     validation.header = None
@@ -433,13 +411,11 @@ def read_snapshot(
 
 
 def canonical_transcript_path(launch: LaunchPaths) -> Path | None:
-    """Return a sealed native snapshot if one exists for this spawn."""
     snapshot = launch.native_transcript
     return snapshot if snapshot.is_file() else None
 
 
 def canonical_transcript_member(names: Iterable[str]) -> str:
-    """Select the authoritative transcript member name from a member set."""
     name_set = set(names)
     if LAUNCH_FILE_NAMES.native_snapshot in name_set:
         return LAUNCH_FILE_NAMES.native_snapshot
@@ -454,7 +430,6 @@ def snapshot_binding(
     harness: str | None = None,
     native_session_id: str | None = None,
 ) -> Callable[[SnapshotHeader], None]:
-    """Return a header validator that rejects mismatched snapshot bindings."""
 
     def check_header(header: SnapshotHeader) -> None:
         if history_id is not None and str(header.transcript.history_id) != str(history_id):
@@ -506,7 +481,6 @@ def published_snapshot_state(
     harness: str | None = None,
     native_session_id: str | None = None,
 ) -> PublishedSnapshotState:
-    """Report publication state for idempotent capture: complete, corrupt, or missing."""
     if not path.is_file():
         return "missing"
     validation = complete_published_snapshot(

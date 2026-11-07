@@ -1,5 +1,3 @@
-"""Work item lifecycle and attachment mutations."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,7 +61,6 @@ def _resolve_work_item(
     *,
     command: str,
 ) -> WorkItem:
-    """Resolve a command's work argument, defaulting to the session's current item."""
 
     return _require_work_item(
         roots.project_state_dir,
@@ -90,7 +87,6 @@ def _merge_warnings(*warnings: str | None) -> str | None:
 
 
 def work_scope_label(scope: WorkScope) -> str:
-    """Human-readable label for a work scope in user-facing messages."""
 
     if scope.is_durable:
         return f"work item '{scope.identifier}'"
@@ -100,7 +96,6 @@ def work_scope_label(scope: WorkScope) -> str:
 
 
 def format_leave_scope_warning(scope: WorkScope, new_target: str) -> str | None:
-    """Return a leave-scope warning when artifacts would be left behind."""
 
     count = scope.count_artifacts()
     if count <= 0:

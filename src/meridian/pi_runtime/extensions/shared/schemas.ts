@@ -148,7 +148,6 @@ export const SpawnStateFileSchema = Type.Object({
 
 export type SpawnStateFile = Static<typeof SpawnStateFileSchema>;
 
-/** The spawn's duration across every launch (the current one counts once finished); null while nothing has reported. */
 export function totalDurationSecs(row: SpawnStateFile): number | null {
   const prior = row.prior_usage?.duration_secs ?? 0;
   const current = row.terminal?.duration_secs;

@@ -1,5 +1,3 @@
-"""OpenCode idle observations: turn ends, user returns, and busy state."""
-
 from __future__ import annotations
 
 import asyncio
@@ -57,7 +55,6 @@ def detect_ttl(
     provider: str | None,
     env: Mapping[str, str],
 ) -> CacheTtl | None:
-    """Resolve OpenCode cache retention from its current model provider."""
 
     _ = session_id, native_store, env
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
@@ -138,7 +135,6 @@ def _text_content(value: object) -> str | None:
 
 
 def message_excerpts(payload: object) -> tuple[str | None, str | None]:
-    """Extract the last user and assistant text parts from a messages response."""
 
     if not isinstance(payload, list):
         return None, None
@@ -509,7 +505,6 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             self._rearm()
 
     async def _fetch_running(self) -> bool | None:
-        """Whether the server is running the primary's turn; None when it cannot say."""
 
         try:
             return v2_session_running(
@@ -555,7 +550,6 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
 
 
 def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
-    """Create the sensor hosted by the managed-primary attach launcher."""
 
     resolved = getattr(ctx.connection, "resolved_version", None)
     version: OpenCodeVersion

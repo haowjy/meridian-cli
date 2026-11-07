@@ -1,22 +1,13 @@
 # state/ — must-do follow-ups
 
 - Versioned ZIP membership/digest recipe and immutable capture descriptor for
-  native-transcript.jsonl (native-transcript-capture.md stage 4). Inventory now
-  accepts a sealed snapshot as the transcript member; old publisher ZIPs keep
-  implicit history.jsonl. Do not invent descriptors for restored old records.
+  `native-transcript.jsonl`. Preserve old ZIP compatibility; do not invent
+  descriptors for restored records.
 
-- process_scope_projection.py callers in spawn_service.py and process_cleanup.py:
+- process_scope_projection.py callers in core/spawn_service.py and core/process_cleanup.py:
   move synchronous projection reads off the async event-loop thread with
   `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block
   the loop for up to that bound when a projection writer is wedged.
-- [#454] state↔ops import cycle for identity migration: user_paths.py
-  dynamically imports ops/migration.py, which imports back into state identity;
-  legacy-id reading is duplicated in both. #388's B2 already removed the
-  lock_held cross-cycle flag and the unlocked writer; the residual is
-  structural — move the identity-transition mechanism into a state-owned
-  project_identity module and leave ops with only active-spawn policy + CLI
-  rendering. (B3)
 - `ops/work_lifecycle.py` rename: child spawn rows are renamed through
-  `spawn_store.list_spawns(work_id=old)`, a full scan of every spawn file (about
-  789 ms on a 2,600-spawn project). Index spawns by work id, or read the attached
-  set from the rename's own owner lookup.
+  `spawn_store.list_spawns(work_id=old)`, scanning every spawn file. Index spawns
+  by work id or use the rename's owner lookup.

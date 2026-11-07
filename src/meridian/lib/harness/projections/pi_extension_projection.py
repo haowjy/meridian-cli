@@ -1,5 +1,3 @@
-"""Meridian-owned Pi extension projection helpers."""
-
 from __future__ import annotations
 
 import os
@@ -47,25 +45,21 @@ class PiExtensionLaunchProfile:
 
 
 def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
-    """Resolve the Meridian managed-bash Pi extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MANAGED_BASH_EXTENSION_RELATIVE_PATH),)
 
 
 def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
-    """Resolve the Meridian spawn-watch Pi extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH),)
 
 
 def resolve_pi_idle_entrypoint() -> tuple[str, ...]:
-    """Resolve the primary-only Meridian idle Pi extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH),)
 
 
 def resolve_pi_permissions_entrypoint() -> tuple[str, ...]:
-    """Resolve the launch-local Meridian permission extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MERIDIAN_PERMISSIONS_EXTENSION_RELATIVE_PATH),)
 
@@ -85,7 +79,6 @@ def resolve_pi_background_tasks_entrypoint() -> tuple[str, ...]:
 def resolve_pi_extension_entrypoints(
     profile: PiExtensionLaunchProfile,
 ) -> tuple[str, ...]:
-    """Resolve Meridian ``-e`` bundle paths for one launch."""
 
     entrypoints: list[str] = []
     if profile.interactive:
@@ -109,7 +102,6 @@ def resolve_pi_extension_entrypoints(
 
 
 def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
-    """Resolve the default Meridian Pi extension bundles."""
 
     return resolve_pi_extension_entrypoints(
         PiExtensionLaunchProfile(
@@ -121,7 +113,6 @@ def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
 
 
 def discover_pi_extension_entrypoints_under(root: Path) -> tuple[str, ...]:
-    """Discover Pi ``-e`` entrypoints (``<dir>/index.js``) under one directory."""
 
     if not root.is_dir():
         return ()
@@ -139,7 +130,6 @@ def discover_pi_extension_entrypoints_under(root: Path) -> tuple[str, ...]:
 def resolve_extra_pi_extension_entrypoints(
     extra_extension_paths: tuple[Path, ...],
 ) -> tuple[str, ...]:
-    """Scan configured extra extension roots when ``load_all_pi_extensions`` is true."""
 
     entrypoints: list[str] = []
     for root in extra_extension_paths:
@@ -175,7 +165,6 @@ def _resolve_extension_source_root() -> Path:
 
 
 def default_extra_extension_path() -> Path:
-    """Default user Pi extension dir (used only when ``load_all_pi_extensions``)."""
 
     return resolve_pi_default_user_extension_dir()
 

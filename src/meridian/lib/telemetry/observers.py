@@ -1,5 +1,3 @@
-"""Process-wide lifecycle observer registry."""
-
 from __future__ import annotations
 
 import json
@@ -41,7 +39,6 @@ class DebugTraceObserver:
     """Print lifecycle events as JSON to stderr when MERIDIAN_DEBUG=1."""
 
     def on_event(self, event: LifecycleEvent) -> None:
-        """Emit a JSON line for debug tracing when enabled."""
         if os.environ.get("MERIDIAN_DEBUG") != "1":
             return
         data = asdict(event)
@@ -58,13 +55,11 @@ def register_observer(
     observer: LifecycleObserver,
     tier: LifecycleObserverTier = LifecycleObserverTier.DIAGNOSTIC,
 ) -> None:
-    """Register a process-wide lifecycle observer."""
     with _GLOBAL_OBSERVERS_LOCK:
         _GLOBAL_OBSERVERS.append((observer, tier))
 
 
 def register_debug_trace_observer() -> None:
-    """Register the process-wide debug trace observer once."""
     global _debug_trace_registered
     with _GLOBAL_OBSERVERS_LOCK:
         if _debug_trace_registered:
@@ -74,7 +69,6 @@ def register_debug_trace_observer() -> None:
 
 
 def notify_observers(event: LifecycleEvent) -> None:
-    """Dispatch a lifecycle event to process-wide observers by tier."""
     with _GLOBAL_OBSERVERS_LOCK:
         observers = tuple(_GLOBAL_OBSERVERS)
     policy_observers = [

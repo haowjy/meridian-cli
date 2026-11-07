@@ -11,7 +11,6 @@ _ROOT_HELP_FLAGS = frozenset({"--help", "-h", "--version", "-v"})
 
 
 def _positional_tokens(argv: Sequence[str]) -> list[str]:
-    """Extract command-position tokens using bootstrap's startup flag tables."""
 
     return [token for _, token in iter_positional_tokens(argv)]
 

@@ -1,5 +1,3 @@
-"""Shared text helpers used by launch composition and projection code."""
-
 from __future__ import annotations
 
 import re
@@ -49,7 +47,6 @@ _ESCAPED_PRIOR_OUTPUT_CLOSE = "<\\/prior-run-output>"
 
 
 def strip_stale_report_paths(input_text: str) -> str:
-    """Strip stale report-path instructions from retry/continuation prompts."""
 
     stripped = _CANONICAL_REPORT_BLOCK_RE.sub("\n", input_text)
     kept_lines = [line for line in stripped.splitlines() if not _REPORT_LINE_RE.match(line)]
@@ -74,7 +71,6 @@ def sanitize_prior_output(output: str) -> str:
 
 
 def dedupe_nonempty(values: Iterable[str]) -> list[str]:
-    """Strip and dedupe values while preserving first-seen order."""
 
     seen: set[str] = set()
     deduped: list[str] = []
@@ -88,7 +84,6 @@ def dedupe_nonempty(values: Iterable[str]) -> list[str]:
 
 
 def split_csv_entries(value: str) -> list[str]:
-    """Split one comma-delimited string into non-empty, stripped entries."""
 
     return [entry.strip() for entry in value.split(",") if entry.strip()]
 

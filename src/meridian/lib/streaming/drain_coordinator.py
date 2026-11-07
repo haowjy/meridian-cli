@@ -1,5 +1,3 @@
-"""Shared coordinator seam for streaming drain completion policy."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

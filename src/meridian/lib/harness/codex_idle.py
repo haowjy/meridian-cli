@@ -1,5 +1,3 @@
-"""Codex idle observations: native notify parsing and pane-backed busy state."""
-
 from __future__ import annotations
 
 import asyncio
@@ -53,7 +51,6 @@ class _Tmux:
 
 
 def pane_busy(capture: str) -> bool:
-    """Whether one Codex pane capture shows a turn in progress."""
 
     return "Working (" in capture
 
@@ -99,7 +96,6 @@ def parse_idle_event(
     session_reader: Callable[[str], PinnedIdleSession | None],
     env: Mapping[str, str],
 ) -> IdleEvent | None:
-    """Parse one Codex ``notify`` argv payload pinned to an active primary."""
 
     try:
         parsed: object = json.loads(payload)
@@ -184,7 +180,6 @@ class CodexIdleSensor:
 
 
 def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
-    """Build the managed-primary Codex sensor."""
 
     return CodexIdleSensor(ctx)
 

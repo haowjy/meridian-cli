@@ -1,5 +1,3 @@
-"""Pure ordered guards for idle stages."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

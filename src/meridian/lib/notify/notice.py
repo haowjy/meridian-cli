@@ -1,5 +1,3 @@
-"""Session labels and the `meridian notify` message."""
-
 from __future__ import annotations
 
 import os
@@ -11,7 +9,6 @@ from meridian.plugin_api.types import Notification
 
 
 def actor_name(agent: str | None, harness: str | None) -> str:
-    """``agent (harness)``, or whichever is known."""
 
     if agent and harness:
         return f"{agent} ({harness})"
@@ -37,14 +34,12 @@ class SessionLabel:
 
     @property
     def sender(self) -> str:
-        """Name the terminal and actor: short enough for a notification title."""
 
         actor = actor_name(self.agent, self.harness)
         return f"{self.tmux_session}: {actor}" if self.tmux_session else actor
 
     @property
     def headline(self) -> str:
-        """The sender, its work item or project, and the child that sent it."""
 
         if self.work_id:
             line = f'{self.sender} on work: "{self.work_id}"'
