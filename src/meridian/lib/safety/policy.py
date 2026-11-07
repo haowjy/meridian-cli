@@ -113,11 +113,6 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
 _LOCAL_SERVICE_HOSTS = frozenset((Host("localhost"), Host("127.0.0.1")))
 
 
-# The origin of the unscoped deny ``build_permission_policy`` writes for a per-capability
-# allowlist; Mars never writes it.
-ALLOWLIST_ORIGIN = "allowlist"
-
-
 type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
 type CommandMatch = Literal["exact", "prefix"]
 type PlatformCommandRole = Literal["completion", "read", "launch"]
@@ -159,14 +154,9 @@ class PlatformRule(BaseModel):
 class PermissionPolicy(BaseModel):
     """Everything permission-shaped for one launch, before any harness reads it.
 
-    Two kinds of allowlist:
-
-    - ``*: deny`` (a map writes it): the policy is an
-      allowlist, and only the tools it allows exist. ``is_allowlist`` asks about it.
-    - A capability whose rules are scoped allows and nothing unscoped (``bash(rg *): allow``
-      and no ``bash`` rule): only those scopes may run, whatever ``approval`` says. The
-      builder writes it into ``rules`` as the unscoped deny it means (origin
-      ``ALLOWLIST_ORIGIN``), so a compile handles it as any plain deny beside scoped allows.
+    ``*: deny`` (a map writes it) makes the policy an allowlist: only the tools it allows
+    exist. ``is_allowlist`` asks about it. A scoped allow (``bash(rg *): allow``) only
+    pre-approves the calls it matches; it restricts nothing.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -280,8 +270,6 @@ def rule_element(rule: ToolRule) -> str:
 
     if rule.origin == PLATFORM_ORIGIN:
         return f"platform: tools {rule.capability} = {rule.action}"
-    if rule.origin == ALLOWLIST_ORIGIN:
-        return f"tools: {rule.capability} allowlist (only the scoped allows may run)"
     name = rule.capability if rule.capability is not None else ", ".join(rule.native)
     if rule.pattern is not None:
         name = f"{name}({rule.pattern})"
@@ -574,97 +562,6 @@ def network_allows_local_services(policy: NetworkPolicy) -> bool:
     return bool((policy.allow - policy.deny) & _LOCAL_SERVICE_HOSTS)
 
 
-def _allowlist_denies(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
-    """The unscoped deny each per-capability allowlist means, in policy order.
-
-    A capability with scoped allows and no unscoped rule refuses every call they don't
-    match. A ``*`` rule decides those calls itself, so it ends every such allowlist. The
-    deny names the tools the capability's scoped rules concern (their ``tools``): for an
-    unscoped rule the permission spelling and the tool are the same name. A capability Mars
-    could not name keeps its rules' status, so the report states the same gap.
-    """
-
-    if unscoped_action(rules, "*") is not None:
-        return ()
-    first_allow: dict[str, ToolRule] = {}
-    for rule in rules:
-        if rule.capability is not None and rule.pattern is not None and rule.action == "allow":
-            first_allow.setdefault(rule.capability, rule)
-    denies: list[ToolRule] = []
-    for capability, allow in first_allow.items():
-        if unscoped_action(rules, capability) is not None:
-            continue
-        natives = tuple(
-            dict.fromkeys(
-                tool
-                for rule in rules
-                if rule.capability == capability and rule.pattern is not None
-                for tool in rule.tools
-            )
-        )
-        denies.append(
-            ToolRule(
-                capability=capability,
-                action="deny",
-                native=natives,
-                native_tools=natives,
-                native_status="known" if natives else allow.native_status,
-                origin=ALLOWLIST_ORIGIN,
-            )
-        )
-    return tuple(denies)
-
-
-def _resolves_by_specificity(rule: ToolRule) -> bool:
-    return (
-        rule.capability not in {None, "*", "mcp"}
-        and rule.pattern is None
-        and rule.origin != PLATFORM_ORIGIN
-        and bool(rule.native)
-    )
-
-
-def _resolve_allowlist_overlap(
-    denies: tuple[ToolRule, ...], rules: tuple[ToolRule, ...]
-) -> tuple[tuple[ToolRule, ...], tuple[ToolRule, ...]]:
-    """Resolve each allowlist deny against the other unscoped rules, as Mars resolves its own.
-
-    For the natives two unscoped rules share, the narrower capability wins when their actions
-    differ; narrower means its natives are a strict subset of the other's. Mars did this for
-    every rule it wrote, but it never saw these denies: without it, ``edit: allow`` beside
-    ``write(src/*): allow`` keeps naming ``Write`` unscoped, and every write runs. Mars's own
-    rules are not re-resolved against each other. Equal sets stay in conflict, as in Mars.
-    Every participant is unscoped, so its natives are its tools and a narrowing drops both.
-    """
-
-    participants = [rule for rule in (*denies, *rules) if _resolves_by_specificity(rule)]
-    allowlist = [rule for rule in denies if _resolves_by_specificity(rule)]
-
-    def narrowed(rule: ToolRule, against: list[ToolRule]) -> ToolRule:
-        if not _resolves_by_specificity(rule):
-            return rule
-        broad = rule.native
-        kept = tuple(
-            native
-            for native in broad
-            if not any(
-                other.action != rule.action
-                and len(other.native) < len(broad)
-                and all(name in broad for name in other.native)
-                and native in other.native
-                for other in against
-            )
-        )
-        if kept == broad:
-            return rule
-        return rule.model_copy(update={"native": kept, "native_tools": kept})
-
-    return (
-        tuple(narrowed(deny, participants) for deny in denies),
-        tuple(narrowed(rule, allowlist) for rule in rules),
-    )
-
-
 def build_permission_policy(
     *,
     rules: tuple[ToolRule, ...] = (),
@@ -677,17 +574,11 @@ def build_permission_policy(
     """Build the policy from Mars's resolved tool rules and the execution policy.
 
     ``network`` and ``approval`` are already-resolved execution policy values; this never
-    re-resolves precedence. Each per-capability allowlist gains
-    the unscoped deny it means (see ``PermissionPolicy``), resolved against the other
-    unscoped rules by specificity, so every compile reads the same rules.
+    re-resolves precedence.
     """
 
-    denies, resolved = _resolve_allowlist_overlap(_allowlist_denies(rules), rules)
     return PermissionPolicy(
-        # First, as the broad rule its scoped allows are exceptions to: OpenCode orders equally
-        # specific rules by policy order, and this keeps its config what it was before the
-        # allowlist became a rule.
-        rules=(*denies, *resolved),
+        rules=rules,
         platform_rules=platform_rules,
         sandbox=_parse_sandbox_value(sandbox),
         network=network,
@@ -697,7 +588,6 @@ def build_permission_policy(
 
 
 __all__ = [
-    "ALLOWLIST_ORIGIN",
     "CONSTRAINED_SANDBOX_MODES",
     "SANDBOX_MODE_WEAKNESS",
     "UNENFORCED_NETWORK",

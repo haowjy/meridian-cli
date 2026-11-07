@@ -26,7 +26,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
-    ALLOWLIST_ORIGIN,
     CONSTRAINED_SANDBOX_MODES,
     Allow,
     ApprovalMode,
@@ -104,17 +103,9 @@ class CodexPermissions:
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
-    """Return the Codex switch an exact, unscoped tool rule controls.
+    """Return the Codex switch an exact, unscoped tool rule controls."""
 
-    An allowlist's deny has none: the switch would refuse the scoped allows too, and a shell
-    allowlist would leave Codex nothing to read files with.
-    """
-
-    if (
-        rule.pattern is not None
-        or rule.action == "ask"
-        or rule.origin in {ALLOWLIST_ORIGIN, PLATFORM_ORIGIN}
-    ):
+    if rule.pattern is not None or rule.action == "ask" or rule.origin == PLATFORM_ORIGIN:
         return None
     enabled = rule.action == "allow"
     if rule.capability == "bash":
@@ -205,7 +196,10 @@ def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
         if rule.capability == "bash":
             rule = rule.model_copy(update={"tool": "bash"})
         rules.append(rule)
-    if not any(rule.pattern is not None for rule in rules):
+    # Scoped allows alone pre-approve and restrict nothing, so they need no hook.
+    if not any(rule.pattern is not None for rule in rules) or all(
+        rule.action == "allow" for rule in rules
+    ):
         return None
     return ExtensionPolicy(
         rules=tuple(rules),
@@ -322,11 +316,7 @@ def _codex_report(
             permissions.tool_hook is not None
             and rule.capability in {"bash", "*"}
             and not (rule.action == "ask" and rule.pattern is not None)
-            and (
-                rule.pattern is not None
-                or rule.origin == ALLOWLIST_ORIGIN
-                or rule.action != "allow"
-            )
+            and (rule.pattern is not None or rule.action != "allow")
         ):
             lines.append(_hook_report_line(rule))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:

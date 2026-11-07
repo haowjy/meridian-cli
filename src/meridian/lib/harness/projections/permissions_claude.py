@@ -2,7 +2,7 @@
 
 Claude checks deny rules, then ask rules, then allow rules, whatever their specificity, so a
 broad deny or ask shadows every narrower allow. A plain deny or ask beside scoped allows of
-the same tool (a per-capability allowlist is one: the policy writes its deny) is therefore
+the same tool is therefore
 gated by the permission mode instead of emitted: a mode in which unmatched calls need
 approval, which a headless spawn cannot give. Every report line is read back from the emitted
 channels, so a rule that order shadows, or that the compile left out, says so.

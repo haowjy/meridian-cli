@@ -1,5 +1,19 @@
 # Upgrade notes
 
+## A scoped allow no longer restricts the rest of its tool
+
+A profile whose rules for a tool are all scoped allows, such as only `'bash(rg *)': allow`,
+used to deny every unmatched Bash call, whatever `approval` said. It no longer does. The
+scoped allows pre-approve the calls they match, and every other call follows the profile's
+other rules and `approval`, as if the scoped allows were absent. On Claude, `approval: never`
+now launches with `--dangerously-skip-permissions` instead of `--permission-mode manual`, with
+the allows still in `permissions.allow`.
+
+To keep the old restriction, write `bash: deny` beside the scoped allows. On Claude that deny
+is carried by the permission mode (`manual`) instead of `--disallowedTools Bash`, so Claude
+still runs Bash calls it classifies as read-only, and the spawn's own `meridian spawn done`
+grant stays usable. A whole-policy `'*': deny` allowlist is unchanged.
+
 ## `spawn --continue` without a prompt gives a clearer error
 
 `meridian spawn --continue pN` always needed a prompt (`-p`, `--prompt-file`, or `--prompt-file -`
@@ -964,12 +978,11 @@ package sources; it does not upgrade the Mars executable.
     grep: allow
   ```
 
-- A capability with only scoped allows is an allowlist for that capability. With only
-  `'bash(rg *)': allow`, unmatched Bash calls are denied, whatever `approval` says. Add
-  `bash: allow` if the unmatched calls should remain available.
+- A capability with only scoped allows was an allowlist for that capability; a later release
+  removed that rule ([a scoped allow no longer restricts the rest of its tool](#a-scoped-allow-no-longer-restricts-the-rest-of-its-tool)).
 - `approval: never` means "do not prompt"; it does not override an allowlist.
 
-Claude, OpenCode, and Pi enforce whole-policy and scoped-only allowlists, subject to the
+Claude, OpenCode, and Pi enforce whole-policy allowlists, subject to the
 gaps in the [permissions table](agent-profiles.md#permissions-by-harness). Codex and Cursor
 report these allowlists but do not enforce them.
 

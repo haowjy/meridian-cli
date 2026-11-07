@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
-from meridian.lib.safety.policy import ALLOWLIST_ORIGIN, PermissionPolicy, PlatformCommand
+from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand
 from meridian.lib.tools import ToolAction, ToolRule, split_native
 
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
@@ -74,12 +74,7 @@ def extension_rules(rules: tuple[ToolRule, ...]) -> tuple[ExtensionRule, ...]:
                     tool=tool,
                     pattern=pattern,
                     action=rule.action,
-                    # The model reads the label in the refusal; an allowlist's deny says why.
-                    label=(
-                        f"{tool} outside its scoped allows"
-                        if rule.origin == ALLOWLIST_ORIGIN
-                        else native
-                    ),
+                    label=native,
                 )
             )
     return tuple(projected)
