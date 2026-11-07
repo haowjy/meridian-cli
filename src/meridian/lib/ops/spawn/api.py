@@ -1030,8 +1030,14 @@ def spawn_show_sync(
         runtime_root=runtime_root,
     )
     surfaced_activity = _surface_primary_activity(row.status, activity)
+    # The chat's current item, which `work start`/`switch` may have changed since launch.
+    chat_id = row.entry_chat_id
+    current_work = (
+        session_store.get_session_active_work_id(runtime_root, chat_id) if chat_id else None
+    )
     result = detail.model_copy(
         update={
+            "work_id": current_work,
             "denied_requests": denied_requests(LaunchPaths.for_row(runtime_root, row)),
             "kind": kind,
             "activity": surfaced_activity,

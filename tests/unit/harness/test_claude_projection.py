@@ -265,6 +265,25 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
     assert _effective_network(spec) == "deny"
 
 
+def test_claude_scoped_only_allow_pre_approves_and_leaves_approval_never_alone() -> None:
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=build_permission_policy(
+            rules=(tool_rule("bash", "allow", "Bash(rg *)", pattern="rg *", tools=("Bash",)),),
+            sandbox=None,
+            network=Allow(),
+            approval="never",
+        ),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    assert "--dangerously-skip-permissions" in command
+    assert "--permission-mode" not in command
+    assert "Bash(rg *)" in _settings_permission_entries(command, "allow")
+
+
 def test_claude_typed_deny_policy_projects_network_settings() -> None:
     spec = _spec(
         harness=HarnessId.CLAUDE,

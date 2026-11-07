@@ -1,5 +1,26 @@
 # Upgrade notes
 
+## A scoped allow no longer restricts the rest of its tool
+
+A profile whose rules for a tool are all scoped allows, such as only `'bash(rg *)': allow`,
+used to deny every unmatched Bash call, whatever `approval` said. It no longer does. The
+scoped allows pre-approve the calls they match, and every other call follows the profile's
+other rules and `approval`, as if the scoped allows were absent. On Claude, `approval: never`
+now launches with `--dangerously-skip-permissions` instead of `--permission-mode manual`, with
+the allows still in `permissions.allow`.
+
+To keep the old restriction, write `bash: deny` beside the scoped allows. On Claude that deny
+is carried by the permission mode (`manual`) instead of `--disallowedTools Bash`, so Claude
+still runs Bash calls it classifies as read-only, and the spawn's own `meridian spawn done`
+grant stays usable. A whole-policy `'*': deny` allowlist is unchanged.
+
+The same holds across capabilities. `edit: allow` with `'write(src/*)': allow` used to confine
+writes to `src/`; now writes run anywhere. Add `write: deny` to keep the confinement.
+
+On Codex, `bash: deny` and `bash: ask` now go through the shell hook instead of turning the
+shell off or running every command
+([details](#scoped-shell-rules-on-codex-need-codex-01290-or-newer)).
+
 ## `spawn --continue` without a prompt gives a clearer error
 
 `meridian spawn --continue pN` always needed a prompt (`-p`, `--prompt-file`, or `--prompt-file -`
@@ -43,7 +64,9 @@ spawn directory; `spawn show` reads a new `rearms.jsonl` beside it. An older bui
 A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`), a `*` rule beside scoped
 `bash` allows, or a per-capability `bash` allowlist used to launch with those rules reported
 `unsupported` and not enforced. Meridian now enforces them with a `PreToolUse` hook it adds to the
-`codex app-server` command line, and the report marks them `partial` (the gaps below). Before the
+`codex app-server` command line, and the report marks them `partial` (the gaps below). An unscoped `bash: deny` or `bash: ask` is now enforced by the
+same hook: `ask` used to run every command and `deny` turned the shell off, which kept
+`meridian spawn done` from running. Before the
 first turn, Meridian asks Codex (`hooks/list`) whether the hook is loaded and trusted, and it
 refuses the launch if not.
 
@@ -51,7 +74,8 @@ What changes for you:
 
 - **Codex older than 0.129.0.** A launch whose profile has such a rule fails with "The shell-rule
   hook is not running" (or "this Codex does not answer hooks/list"). Upgrade Codex, or drop the
-  scoped rules from the profile. Profiles with no scoped `bash` rule launch as before.
+  scoped rules from the profile. Scoped allows alone, and a `'*': deny` allowlist alone, launch as
+  before.
 - **Anything that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a `hooks.state`
   override, a project `.codex/config.toml` with `hooks` off) stops those launches the same way.
 - **Rules are wildcard matches on each command segment.** The hook splits the command on `;`,
@@ -63,8 +87,9 @@ What changes for you:
   is refused.
 - **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
   refuses the other commands. A scoped `ask` is still not enforced.
-- **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
-  `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
+- **Allowlists bind file reads too.** Codex reads files through the shell, so when the hook refuses
+  unmatched commands (an explicit `bash: deny` or `ask`, or `'*': deny`, beside `bash(git *)`), the
+  agent can no longer `cat` a file. Scoped allows alone refuse nothing. Add the read commands the agent needs
   (`bash(rg *)`, `bash(cat *)`).
 - **Gaps that remain.** The hook is a guard against accidents such as a careless
   `git reset --hard`, not a sandbox, and an agent that tries can get past it. A rule matches
@@ -964,12 +989,11 @@ package sources; it does not upgrade the Mars executable.
     grep: allow
   ```
 
-- A capability with only scoped allows is an allowlist for that capability. With only
-  `'bash(rg *)': allow`, unmatched Bash calls are denied, whatever `approval` says. Add
-  `bash: allow` if the unmatched calls should remain available.
+- A capability with only scoped allows was an allowlist for that capability; a later release
+  removed that rule ([a scoped allow no longer restricts the rest of its tool](#a-scoped-allow-no-longer-restricts-the-rest-of-its-tool)).
 - `approval: never` means "do not prompt"; it does not override an allowlist.
 
-Claude, OpenCode, and Pi enforce whole-policy and scoped-only allowlists, subject to the
+Claude, OpenCode, and Pi enforce whole-policy allowlists, subject to the
 gaps in the [permissions table](agent-profiles.md#permissions-by-harness). Codex and Cursor
 report these allowlists but do not enforce them.
 

@@ -957,6 +957,7 @@ class SpawnDetailOutput(BaseModel):
     status: str
     model: str
     harness: str
+    agent: str | None = None
     kind: str | None = None
     activity: str | None = None
     managed_backend: bool = False
@@ -1076,6 +1077,8 @@ class SpawnDetailOutput(BaseModel):
         wire["run_boundary"] = (
             self.run_boundary.model_dump(mode="json") if self.run_boundary is not None else None
         )
+        if self.agent is not None:
+            wire["agent"] = self.agent
         if self.kind is not None:
             wire["kind"] = self.kind
         if self.activity is not None:
@@ -1206,6 +1209,9 @@ class SpawnDetailOutput(BaseModel):
         lines = [f"Spawn: {self.spawn_id}"]
         lines.append(f"Status: {status_str}")
         lines.append(f"Model: {self.model} ({self.harness})")
+        agent_value = (self.agent or "").strip()
+        if agent_value:
+            lines.append(f"Agent: {agent_value}")
         if self.duration_secs is not None:
             lines.append(f"Duration: {self.duration_secs:.1f}s")
         work_value = (self.work_id or "").strip()
@@ -1290,6 +1296,7 @@ class SpawnDetailOutput(BaseModel):
                 else str(self.last_attempt_exit_code),
             ),
             ("Model", f"{self.model} ({self.harness})"),
+            ("Agent", (self.agent or "").strip() or None),
             ("Duration", duration_value),
             ("Parent", parent_value),
             ("Work", work_value),

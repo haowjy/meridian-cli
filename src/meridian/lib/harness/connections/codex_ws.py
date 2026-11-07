@@ -429,7 +429,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
         except _CodexRpcError as exc:
             raise RuntimeError(
-                "This profile's scoped shell rules need Codex's hooks/list to confirm the "
+                "This profile's shell rules need Codex's hooks/list to confirm the "
                 f"enforcing hook, and this Codex does not answer it ({exc}). Upgrade Codex."
             ) from exc
         problem = check_hooks_list(listing)

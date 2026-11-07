@@ -80,19 +80,6 @@ describe("permission precedence", () => {
 
     expect(decision?.action).toBe("deny");
   });
-
-  it("blocks unmatched calls in a scoped-only allowlist", () => {
-    const decision = decideToolCall(
-      policy([
-        rule({ pattern: "rg *", action: "allow" }),
-        rule({ action: "deny", label: "bash outside its scoped allows" }),
-      ]),
-      "bash",
-      { command: "touch forbidden" },
-    );
-
-    expect(decision).toMatchObject({ action: "deny" });
-  });
 });
 
 describe("bash command evaluation", () => {
@@ -100,7 +87,7 @@ describe("bash command evaluation", () => {
     [
       rule({ pattern: "rg *", action: "allow", label: "bash(rg *)" }),
       rule({ pattern: "touch *", action: "deny", label: "bash(touch *)" }),
-      rule({ action: "deny", label: "bash outside its scoped allows" }),
+      rule({ action: "deny", label: "bash" }),
     ],
     { bash_fail_closed: true },
   );

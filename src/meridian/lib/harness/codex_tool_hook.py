@@ -1,4 +1,4 @@
-"""The ``PreToolUse`` hook Meridian puts on a Codex app-server to enforce scoped shell rules.
+"""The ``PreToolUse`` hook Meridian puts on a Codex app-server to enforce shell rules.
 
 The hook definition and its trust both ride the app-server's ``-c`` flags, so Meridian
 writes no ``config.toml`` and a shared ``CODEX_HOME`` stays untouched. A hook with no trust

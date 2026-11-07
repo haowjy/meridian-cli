@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
-from meridian.lib.safety.policy import ALLOWLIST_ORIGIN, PermissionPolicy, PlatformCommand
+from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand
 from meridian.lib.tools import ToolAction, ToolRule, split_native
 
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
@@ -74,12 +74,7 @@ def extension_rules(rules: tuple[ToolRule, ...]) -> tuple[ExtensionRule, ...]:
                     tool=tool,
                     pattern=pattern,
                     action=rule.action,
-                    # The model reads the label in the refusal; an allowlist's deny says why.
-                    label=(
-                        f"{tool} outside its scoped allows"
-                        if rule.origin == ALLOWLIST_ORIGIN
-                        else native
-                    ),
+                    label=native,
                 )
             )
     return tuple(projected)
@@ -123,9 +118,16 @@ def bash_fails_closed(rules: tuple[ExtensionRule, ...]) -> bool:
 def needs_extension(
     rules: tuple[ExtensionRule, ...], *, meridian_commands: tuple[PlatformCommand, ...]
 ) -> bool:
-    # Meridian commands need the extension only when a rule could otherwise restrict the shell.
+    """Whether a policy needs an in-process shell enforcer.
+
+    Allows restrict nothing, so rules that are all allows need none. Meridian commands need
+    it only when a rule could otherwise restrict the shell.
+    """
+
+    if all(rule.action == "allow" for rule in rules):
+        return False
     return bool(
-        (meridian_commands and rules)
+        meridian_commands
         or any(
             rule.pattern is not None
             or rule.action == "ask"
