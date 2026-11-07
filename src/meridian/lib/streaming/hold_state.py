@@ -16,6 +16,7 @@ from meridian.lib.streaming.completion_contracts import (
     COMPLETION_NUDGE_INTERVAL_SECONDS,
     CompletionState,
     DiagnosticBlocker,
+    FinishedChild,
     ProfileAction,
     ProfileDecision,
     WorkAssessment,
@@ -26,6 +27,7 @@ _UNREADABLE = TerminalEventOutcome(
     status=SpawnStatus.FAILED, exit_code=1, error="resident_evidence_unreadable"
 )
 IDLE_NUDGE_ANSWER_SECONDS = 300.0  # how long a child gets to work after an expiry ask
+NATIVE_WAKE_SETTLE_SECONDS = 1.0  # how long a queued native wake gets to start its turn
 _TURN_CUT_OFF = "transport_closed_during_turn"
 _STREAM_CLOSED = TerminalEventOutcome(
     status=SpawnStatus.FAILED, exit_code=1, error="stream_closed_while_awaiting_done"
@@ -83,6 +85,9 @@ class HoldState:
     lease: HeldLease | SpacedLease | None = None
     rearmed: bool = False  # the next good turn end is the next candidate
     closing: bool = False  # `done` latched
+    stays: bool = False  # a rearm stands: only an ask can end it, even where turn ends skip one
+    woken: frozenset[str] = frozenset()  # owed launches a wake has named
+    reply_replaces: bool = False  # a wake went out: the turn answering it is the report
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,9 @@ class HoldFacts:
     rearm: bool  # signalled and within budget; only row B2 charges it
     dead: bool  # connection health says BACKEND_DEAD
     accepts_signals: bool
+    skips_ask: bool  # the harness reports its own work, so a turn end needs no confirmation
+    unread: tuple[FinishedChild, ...]  # finished children the parent has not consumed
+    wake_coming: bool  # a hold cleared at this turn end and the settle has not run out
     grace_seconds: float
     timeout: ProfileDecision  # RearmWindow.timeout_decision(), so the budget error stays there
 
@@ -111,6 +119,7 @@ class HoldStep:
     state: HoldState
     decision: ProfileDecision
     leave_awaiting: bool = False  # D2, E2, E3 away from a turn end change nothing
+    wake: tuple[FinishedChild, ...] = ()  # set on a nudge: name these, a wake and not an ask
 
 
 def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
@@ -122,6 +131,8 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         state = replace(state, lease=None)
     end = facts.end
     disposition = facts.assessment.disposition
+    if end is not None:
+        state = replace(state, reply_replaces=False)
 
     # A1
     if end is not None and not end.action.terminate:
@@ -155,8 +166,10 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
             action="abandon_candidate", emit_turn_boundary=end is not None, reset_deadline=True
         )
         return HoldStep(_after_rearm(state, facts.assessment), decision)
-    if facts.candidate is None:  # C1, C2
-        return _expiry(state, facts) if facts.expired else _wait(state, facts)
+    if facts.candidate is None:
+        if facts.expired:  # C1
+            return _expiry(state, facts)
+        return _wake(state, facts) or _wait(state, facts)  # C1b, C2
     if state.closing:
         if disposition == "unknown":
             if facts.expired and end is None:  # D1
@@ -173,16 +186,23 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
         return _wait(state, facts, leave_awaiting=end is None)
     if disposition == "unknown":  # E3
         return _wait(state, facts, leave_awaiting=end is None)
+    wake = _wake(state, facts)  # E3b
+    if wake is not None:
+        return wake
     # E4
     if (
         facts.accepts_signals
+        and (state.stays or not facts.skips_ask)
         and not state.rearmed
         and (state.ask is AskPhase.UNASKED or (state.ask is AskPhase.REFUSED and end is not None))
         and not _lease_quiet(state.lease, facts.assessment)
     ):
         return _wait(replace(state, lease=None), facts, nudge=True)
-    if disposition == "ready" and _settled(state, facts):  # E5
-        return _publish(state, facts)
+    if disposition == "ready" and _settled(state, facts):
+        if facts.wake_coming:  # E5a
+            decision = ProfileDecision(action="stabilize", emit_turn_boundary=end is not None)
+            return HoldStep(state, decision)
+        return _publish(state, facts)  # E5
     return _wait(state, facts)  # E6
 
 
@@ -215,7 +235,7 @@ def next_deadline(
     state: HoldState, action: ProfileAction, *, now: float, window_ends: float
 ) -> float | None:
     """The idle deadline a decision sets; an open `answer` gets its own, shorter one."""
-    if action not in {"wait", "complete", "abandon_candidate"}:
+    if action not in {"wait", "stabilize", "complete", "abandon_candidate"}:
         return None
     return window_ends if state.answer is None else now + IDLE_NUDGE_ANSWER_SECONDS
 
@@ -230,16 +250,13 @@ def next_wake(state: HoldState, grace_seconds: float, *, has_candidate: bool) ->
     return min(due, default=None)
 
 
-def after_signals(
-    state: HoldState, *, done: bool, rearm: bool, has_candidate: bool
-) -> tuple[HoldState, bool]:
+def after_signals(state: HoldState, *, done: bool, rearm: bool) -> tuple[HoldState, bool]:
     """Fold one read of the signal files; return the state and whether a rearm stands.
 
-    `rearm` means signalled and within budget. With no candidate and no ask, the child is
-    in its first turn and there is nothing to answer, so a signal is dropped.
+    `rearm` means signalled and within budget. A signal needs no candidate: the files are
+    read at every turn end and evaluation, so what they hold was written since the last
+    read, in the turn the next candidate comes from.
     """
-    if not has_candidate and state.ask in _NOTHING_ASKED:
-        return replace(state, closing=False), False
     if rearm:
         return replace(state, closing=False), True
     return replace(state, closing=state.closing or done), False
@@ -303,9 +320,31 @@ def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
     return _timeout(facts)
 
 
+def _wake(state: HoldState, facts: HoldFacts) -> HoldStep | None:
+    """Name what the parent is owed, once each, when nothing runs and no turn will come."""
+    if (
+        not facts.accepts_signals
+        or facts.active_turn
+        or state.ask is AskPhase.SENT
+        or facts.assessment.disposition != "ready"
+    ):
+        return None
+    wake = tuple(child for child in facts.unread if child.key not in state.woken)
+    if not wake:
+        return None
+    # Marked here, whatever the send does: a failed send re-evaluates at once.
+    woken = state.woken | {child.key for child in wake}
+    step = _wait(replace(state, woken=woken, reply_replaces=True), facts, nudge=True)
+    return replace(step, wake=wake)
+
+
 def _settled(state: HoldState, facts: HoldFacts) -> bool:
     # A refused expiry ask: a ready tree may still publish.
-    return not facts.accepts_signals or state.ask in {AskPhase.SETTLED, AskPhase.REFUSED}
+    return (
+        not facts.accepts_signals
+        or (facts.skips_ask and not state.stays and state.ask is AskPhase.UNASKED)
+        or state.ask in {AskPhase.SETTLED, AskPhase.REFUSED}
+    )
 
 
 def _grace_ends(state: HoldState, grace_seconds: float) -> float:
@@ -328,7 +367,9 @@ def _after_rearm(state: HoldState, assessment: WorkAssessment) -> HoldState:
         lease = HeldLease(blockers)
     elif state.asked_at is not None:
         lease = SpacedLease(state.asked_at + COMPLETION_NUDGE_INTERVAL_SECONDS)
-    return HoldState(asked_at=state.asked_at, lease=lease, rearmed=True)
+    return HoldState(
+        asked_at=state.asked_at, lease=lease, rearmed=True, stays=True, woken=state.woken
+    )
 
 
 def _descendant_blocked(assessment: WorkAssessment) -> bool:
@@ -340,6 +381,7 @@ def _descendant_blocked(assessment: WorkAssessment) -> bool:
 __all__ = [
     "BACKEND_DEAD_OUTCOME",
     "IDLE_NUDGE_ANSWER_SECONDS",
+    "NATIVE_WAKE_SETTLE_SECONDS",
     "AnswerWindow",
     "AskPhase",
     "HeldLease",

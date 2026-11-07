@@ -23,7 +23,10 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import resident_drain
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
-from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
+from meridian.lib.streaming.hold_state import (
+    IDLE_NUDGE_ANSWER_SECONDS,
+    NATIVE_WAKE_SETTLE_SECONDS,
+)
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
@@ -101,10 +104,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                 assert close.error == "stream_closed_while_awaiting_done"
                 return
             if scenario == "rearm_quiet":
-                # #872: a rearm answers the nudge while the task still runs, so
-                # later turn ends are not nudged again (it was one per turn end).
-                while not messages:
-                    await asyncio.sleep(0.001)
+                # #872: a rearm while the task still runs keeps later turn ends quiet.
                 rearm = spawn_signal_path(launch_paths(tmp_path, spawn_id), "rearm")
                 rearm.parent.mkdir(parents=True, exist_ok=True)
                 rearm.touch()
@@ -114,7 +114,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
                         await asyncio.sleep(0.001)
                     yield frame("result", subtype="success", result="Still running")
                     await asyncio.sleep(0.05)
-                assert len(messages) == 1
+                assert not messages
                 assert not outcomes
                 return
             if scenario == "no_result":
@@ -155,6 +155,14 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
             yield frame("system", subtype="background_tasks_changed", tasks=[])
             assert not outcomes
             yield frame("result", subtype="success", result="Marker read: done")
+            # The hold cleared in that turn: no wake came, so the settle runs out and it closes.
+            assert not outcomes
+            coordinator = cast("resident_drain.ResidentDrainCoordinator", plan.coordinator)
+            while coordinator.state.phase != "stabilizing":
+                await asyncio.sleep(0.001)
+            clock.advance(NATIVE_WAKE_SETTLE_SECONDS)
+            while not outcomes:
+                await asyncio.sleep(0.001)
 
     receiver = cast("HarnessConnection[Any]", Receiver())
     plan = build_drain_plan(
@@ -216,12 +224,7 @@ async def test_claude_waits_for_background_snapshot_and_followup_result(
     assert delivered[-1].raw.payload["result"] == (
         "Final done report" if scenario.startswith("done") else "Marker read: done"
     )
-    if scenario == "natural":
-        assert len(messages) == 1
-        assert "meridian spawn done" in messages[0]
-        assert "meridian spawn rearm" in messages[0]
-    else:
-        assert not messages
+    assert not messages
     assert len(outcomes) == 1
     assert outcomes[0].status == "succeeded"
     assert outcomes[0].authoritative

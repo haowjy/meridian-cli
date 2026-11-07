@@ -36,8 +36,10 @@ activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
 Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. With a writable
-completion-signal channel, a successful candidate gets one best-effort confirmation
+with leftover native tasks; managed-scope teardown stops them. A harness with a native task
+source reports its own work, so a turn end needs no confirmation: nothing running closes on
+the first fresh assessment, and running work holds silently. Without one, a writable
+completion-signal channel gives a successful candidate one best-effort confirmation
 turn: `done` accepts, `rearm` opens another window and waits for a genuinely new
 successful/idle candidate, and silence accepts only after evidence is ready. A rearm that
 saw blockers snapshots them: later turn ends are not nudged while the outstanding blockers
@@ -83,6 +85,53 @@ good, so a close with a ready tree publishes it. A `spawn cancel` of an idle chi
 ends `cancelled` first, through the runner's SIGTERM path; `outcome_at_close` decides only
 when the drain reads the close first, and whether that should stay `succeeded` is an open
 owner call.
+
+**The ask is skipped on capability, never on a harness.** `skips_ask` comes from
+`native_task_source()`. At a first turn end the evidence is `unknown`, because refresh starts
+there, so E3 waits and the close comes from the first fresh assessment. E1 still asks at
+expiry on every harness: a child held past the window has to say why.
+
+**A hold that clears at a turn end settles before it closes.** The ask used to hide every "a
+turn is about to start" race, because it gave the child one more turn. Two things replace it.
+Claude's `system/init` is a `turn_active` event with no work, so a queued task notification
+marks the turn running a model call before its first `assistant` frame, without renewing the
+idle clock or closing `answer`. And `init` can still land after the evaluation, so row E5a
+holds a publish for `NATIVE_WAKE_SETTLE_SECONDS` when `cleared_in_turn` says the turn end
+released a hold. A turn starting cancels the settle through `note_activity_transition`.
+Publishing runs through the coordinator's existing `stabilizing` phase, and the
+`validating` pass after it must not settle again, which is why `wake_coming` reads the phase.
+
+**A rearm stands until an ask ends it.** `stays` is the one thing that overrides `skips_ask`:
+otherwise a child that rearmed to stay for something invisible would close at its next turn
+end. So a rearm is followed by an ask on every harness.
+
+**Signals need no candidate.** Round 3 of the child-completion review discarded them, because
+a signal file is a mailbox: a stale `done` could pre-accept the next candidate and a stale
+`rearm` could spend budget. That is now safe to drop. With no candidate and no rearm, nothing
+reads the files until the turn end that creates the candidate, so what a read finds was
+written in that turn; everywhere else the files are read at every evaluation. `done` waits
+out the turn it was written in. Of two signals in one read the later stands
+(`consume_resident_signals`), because a first turn's signals all wait for its end. With
+admission gone, nothing needs signal reads to be atomic with installing a candidate, so the
+`candidate_transition` lock went too.
+
+**A parent is woken for what it is owed, not for a blocker clearing.** A child that finished
+during the parent's turn never shows as a blocker. `unread` is `owed_launches` joined with
+what `spawn collect` consumed and live wait leases, read in the descendant refresh so the
+drain pays for it once per poll, and only with a completion channel. C1b and E3b send it
+through `HoldStep.wake` once per launch, only with a ready tree: a partial clear stays silent,
+and with blockers a later wake comes anyway. The read takes only the child's non-blocking
+shared lock, never the parent's spawn lock. `woken` is set in the row, not by the send,
+because a failed send re-evaluates at once and would otherwise repeat. The wake sits below
+`closing`: a `done` is the child's own word. It is an ask for the phases, so on Codex and
+OpenCode it replaces that turn end's confirmation rather than adding one. A wake asks for new
+work, so its answer can't be held to the ask's "your previous reply is kept": `reply_replaces`
+makes the next turn end capture the report, and the ordinary ask keeps the kept-reply rule.
+
+**`unknown` still names native blockers.** Native facts come from the stream and don't depend
+on the descendant read that failed or hasn't finished. A rearm read during that window leases
+what the assessment shows, so without them it takes no lease and the next ready evaluation
+asks over a task the rearm was meant to cover.
 
 **A rearm is charged only when `decide` takes it.** `after_signals` reads the budget and row
 B2 spends it, so a rearm dropped by a row above B2 costs nothing.

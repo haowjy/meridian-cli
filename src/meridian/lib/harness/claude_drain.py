@@ -24,6 +24,7 @@ class ClaudeNativeTaskSource:
 
     def __init__(self) -> None:
         self._hold = False
+        self._cleared_in_turn = False
         self._generation = 0
         self._task_blockers: tuple[DiagnosticBlocker, ...] = ()
 
@@ -61,6 +62,7 @@ class ClaudeNativeTaskSource:
             self._hold = self._hold or bool(self._task_blockers)
             self._generation += 1
         elif event.event_type == "result":
+            self._cleared_in_turn = self._hold and not self._task_blockers
             self._hold = bool(self._task_blockers)
             self._generation += 1
 
@@ -69,6 +71,10 @@ class ClaudeNativeTaskSource:
         if self._hold and not self._task_blockers:
             return _AWAITING_FOLLOWUP_RESULT
         return self._task_blockers
+
+    @property
+    def cleared_in_turn(self) -> bool:
+        return self._cleared_in_turn
 
     @property
     def generation(self) -> int:

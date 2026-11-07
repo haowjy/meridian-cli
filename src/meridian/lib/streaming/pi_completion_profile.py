@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -126,9 +125,6 @@ class PiCompletionProfile:
     def observe_event(self, state: CompletionState, semantics: EventSemantics) -> bool:
         del state, semantics
         return True
-
-    def candidate_transition(self) -> AbstractContextManager[None]:
-        return nullcontext()
 
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
         self._cleanup = cleanup

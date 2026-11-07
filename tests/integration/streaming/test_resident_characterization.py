@@ -774,7 +774,6 @@ async def test_one_confirmation_injection_per_candidate(
         deadline_seconds=20.0,
     )
     try:
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
         first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
         assert first.emit_turn_boundary
         await coordinator.wait_for_aux_wake()
@@ -790,13 +789,6 @@ async def test_one_confirmation_injection_per_candidate(
             clock.advance(2.0)
             assert (await coordinator.handle_timeout()).recorded_outcome is None
         assert len(connection.fake_resident_backend.injected_messages) == 1
-
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "rearm")
-        assert (await coordinator.handle_timeout()).recorded_outcome is None
-        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
-        assert row is not None
-        assert row.resident_rearm_count == 1
 
         # A rearm with no visible blockers holds the next nudge for the nudge interval.
         clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)

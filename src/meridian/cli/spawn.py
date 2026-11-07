@@ -1351,7 +1351,7 @@ def _spawn_done(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current completion candidate to accept: {_RUNNING_REF_FORMS}; "
+                f"Spawn to close when its turn ends: {_RUNNING_REF_FORMS}; "
                 f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
@@ -1375,7 +1375,7 @@ def _spawn_rearm(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current candidate to reject and rearm: {_RUNNING_REF_FORMS}; "
+                f"Spawn to keep open: {_RUNNING_REF_FORMS}; "
                 f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
@@ -1474,13 +1474,13 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         partial(_spawn_done, emit),
         name="done",
-        help="Accept a resident spawn's current completion candidate.",
+        help="Close a resident spawn when its turn ends, over anything still running.",
     )
     registered.add("spawn.done")
     app.command(
         partial(_spawn_rearm, emit),
         name="rearm",
-        help="Reject the current candidate and open another completion window.",
+        help="Keep a resident spawn open: open another completion window.",
     )
     registered.add("spawn.rearm")
     app.command(

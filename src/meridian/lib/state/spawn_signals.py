@@ -105,10 +105,23 @@ def consume_spawn_signal(launch: LaunchPaths, kind: SpawnSignalKind) -> bool:
     return False
 
 
-def consume_resident_signals(launch: LaunchPaths) -> ResidentSignals:
-    """Consume resident done/rearm signal files in a single coordination call."""
+def _written_at(launch: LaunchPaths, kind: SpawnSignalKind) -> int:
+    with suppress(OSError):
+        return spawn_signal_path(launch, kind).stat().st_mtime_ns
+    return 0
 
-    return ResidentSignals(
-        done=consume_spawn_signal(launch, "done"),
-        rearm=consume_spawn_signal(launch, "rearm"),
-    )
+
+def consume_resident_signals(launch: LaunchPaths) -> ResidentSignals:
+    """Consume resident done/rearm signal files in a single coordination call.
+
+    Of two read together the later stands: a first turn's signals wait for its end, so a
+    `rearm` then a `done` can share a read. A tie stays a rearm.
+    """
+
+    done_at = _written_at(launch, "done")
+    rearm_at = _written_at(launch, "rearm")
+    done = consume_spawn_signal(launch, "done")
+    rearm = consume_spawn_signal(launch, "rearm")
+    if done and rearm:
+        return ResidentSignals(done=done_at > rearm_at, rearm=rearm_at >= done_at)
+    return ResidentSignals(done=done, rearm=rearm)

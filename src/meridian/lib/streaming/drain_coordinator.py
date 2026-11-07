@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 from meridian.lib.streaming.drain_teardown import (
@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from meridian.lib.state.spawn_signals import SpawnSignalKind
     from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
     from meridian.lib.streaming.spawn_session import DrainOutcome
+
+
+# What a terminal event does to the retained report text.
+ReportStep = Literal["capture", "clear", "keep"]
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,10 @@ class DrainCoordinator(Protocol):
     def pending_outcome(self) -> TerminalEventOutcome | None: ...
 
     def should_defer_close(self) -> bool: ...
+
+    def report_step(
+        self, *, had_candidate: bool, turn_ended: bool, published: bool
+    ) -> ReportStep: ...
 
     def next_timeout(self) -> float | None: ...
 

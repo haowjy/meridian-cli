@@ -777,6 +777,10 @@ class _ClaudeSemantics(HarnessSemantics):
         # Background Agent frames share stdout, but cannot reset the parent's wait.
         if event.event_type == "assistant" and event.payload.get("parent_tool_use_id"):
             return EventSemantics()
+        # `init` opens every turn, a model call ahead of `assistant`; until then the hold
+        # would close a child that is starting one. It is not work, so it renews nothing.
+        if event.event_type == "system" and event.payload.get("subtype") == "init":
+            return EventSemantics(activity="turn_active")
         return super().normalize(event, primary_event_scope=primary_event_scope)
 
 

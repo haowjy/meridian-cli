@@ -35,6 +35,7 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
     DrainTerminalDecision,
+    ReportStep,
 )
 from meridian.lib.streaming.drain_policy import (
     DrainAction,
@@ -512,6 +513,11 @@ class PiDrainCoordinator:
             coordinator=coordinator,
             evidence=evidence,
             profile=profile,
+        )
+
+    def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
+        return self._coordinator.report_step(
+            had_candidate=had_candidate, turn_ended=turn_ended, published=published
         )
 
     async def start(self) -> None:

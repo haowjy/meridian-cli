@@ -188,27 +188,23 @@ class SpawnDrainLoop:
                     had_candidate = bool(
                         coordinator is not None and coordinator.pending_outcome is not None
                     )
-                    captured_candidate = (
-                        coordinator is not None
-                        and not had_candidate
-                        and action.terminate
-                        and event_outcome.status == "succeeded"
-                    )
-                    if captured_candidate:
-                        self._capture_report_candidate(spawn_id)
                     terminal_decision = await _handle_terminal_event(
                         coordinator,
                         event,
                         event_outcome,
                         action,
                     )
-                    if (
-                        coordinator is not None
-                        and terminal_decision.recorded_outcome is None
-                        and coordinator.pending_outcome is None
-                        and (had_candidate or captured_candidate)
-                    ):
-                        self._clear_report_candidate(spawn_id)
+                    if coordinator is not None:
+                        # After the decision: no event folds until this returns to the loop.
+                        step = coordinator.report_step(
+                            had_candidate=had_candidate,
+                            turn_ended=action.terminate and event_outcome.status == "succeeded",
+                            published=terminal_decision.recorded_outcome is not None,
+                        )
+                        if step == "capture":
+                            self._capture_report_candidate(spawn_id)
+                        elif step == "clear":
+                            self._clear_report_candidate(spawn_id)
                     if terminal_decision.recorded_outcome is not None:
                         recorded_terminal_outcome = terminal_decision.recorded_outcome
                         break

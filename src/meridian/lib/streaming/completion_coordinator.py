@@ -28,6 +28,7 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
     DrainTerminalDecision,
+    ReportStep,
 )
 
 if TYPE_CHECKING:
@@ -105,6 +106,12 @@ class CompletionCoordinator:
             or self._assessment is None
             or self._assessment.disposition == "unknown"
         )
+
+    def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
+        """The report is the candidate's: taken with it, dropped with it."""
+        if not published and self._candidate is None and (had_candidate or turn_ended):
+            return "clear"
+        return "capture" if turn_ended and not had_candidate else "keep"
 
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":
@@ -196,18 +203,9 @@ class CompletionCoordinator:
         if self._terminal_published:
             return DrainTerminalDecision()
         if outcome.status == "succeeded":
+            directives = self._profile.consume_directives(self.state, "terminal_candidate")
             if self._candidate is None:
-                with self._profile.candidate_transition():
-                    directives = self._profile.consume_directives(
-                        self.state,
-                        "terminal_candidate",
-                    )
-                    self._candidate = outcome
-            else:
-                directives = self._profile.consume_directives(
-                    self.state,
-                    "terminal_candidate",
-                )
+                self._candidate = outcome
             self._success_validation = None
             self._active_turn = False
             if action.terminate:

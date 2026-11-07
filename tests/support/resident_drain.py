@@ -27,7 +27,6 @@ from meridian.lib.harness.semantics import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainAction,
@@ -210,7 +209,6 @@ async def awaiting_done_coordinator(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
@@ -351,7 +349,6 @@ async def coordinator_with_clock(
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
