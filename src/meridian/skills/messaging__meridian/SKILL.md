@@ -32,7 +32,7 @@ chat its capabilities block named still names the run in `show` and `cancel`, bu
 **Reading a message.** It opens with `[Meridian] Message from spawn pNN (chat cNN)`
 and, when the sender can receive one, the exact command to answer. Reply with that
 command, whatever project it names. "no reply route" means the sender can't take a
-reply (a Pi primary, a Claude primary that publishes no inbox, such as bare mode, or a primary started by an older build, a child without a control socket, or a finished spawn): use the channel the human
+reply (a Claude primary that publishes no inbox, such as bare mode, or a primary started by an older build, a child without a control socket, or a finished spawn): use the channel the human
 gave you. "no sender identity" means the message came from a script or a human shell. A
 frame that names a sender but gives no reply command means that sender's state
 couldn't be read from here; use the channel the human gave you.
