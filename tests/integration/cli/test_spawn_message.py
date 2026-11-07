@@ -1,8 +1,7 @@
-"""CLI routing coverage for primary message injection."""
+"""CLI to a Claude primary: message, control socket, published inbox."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import socket
@@ -14,47 +13,15 @@ import pytest
 
 from meridian.cli import spawn_message
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
+from meridian.lib.harness.claude_inbox import claude_primary_message_route
+from meridian.lib.launch.process.primary_control_socket import primary_control_socket
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming.control_socket import control_socket_path, prepare_socket_directory
 from tests.support.launch_paths import launch_paths
 
 
 @pytest.mark.asyncio
-async def test_non_claude_primary_without_route_fails_immediately(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test-model",
-        agent="test-agent",
-        harness="codex",
-        kind="primary",
-        prompt="primary",
-        worker_pid=12345,
-    )
-    monkeypatch.setattr(
-        spawn_message,
-        "resolve_runtime_root_and_config",
-        lambda _root: (tmp_path, object()),
-    )
-    monkeypatch.setattr(spawn_message, "resolve_runtime_root", lambda _root: tmp_path)
-
-    with pytest.raises(SystemExit):
-        await asyncio.wait_for(
-            spawn_message.send_message("p1", "hello"),
-            timeout=1,
-        )
-
-    assert capsys.readouterr().err == (
-        "Error: codex primaries have no message route yet (see #498)\n"
-    )
-
-
-@pytest.mark.asyncio
-async def test_claude_primary_posts_to_published_inbox(
+async def test_claude_primary_message_reaches_published_inbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -122,13 +89,16 @@ async def test_claude_primary_posts_to_published_inbox(
     )
 
     # The child sender is reachable only while its control socket exists.
-    monkeypatch.setattr(
-        spawn_message, "control_socket_path", lambda _root, spawn_id: tmp_path / f"{spawn_id}.sock"
-    )
-    (tmp_path / "p2.sock").touch()
+    child_socket = control_socket_path(tmp_path, "p2")
+    prepare_socket_directory(child_socket.parent)
+    child_socket.touch()
 
     try:
-        await spawn_message.send_message("p1", "Reply exactly ACK", sender_spawn_id="p2")
+        with primary_control_socket(
+            launch_paths(tmp_path, "p1"), claude_primary_message_route
+        ) as serve:
+            serve(os.getpid())
+            await spawn_message.send_message("p1", "Reply exactly ACK", sender_spawn_id="p2")
     finally:
         server.close()
         receiver.join(timeout=2)
@@ -145,8 +115,9 @@ async def test_claude_primary_posts_to_published_inbox(
         ).encode()
         + b"\n"
     ]
+    assert not control_socket_path(tmp_path, "p1").exists()
     assert capsys.readouterr().out == (
-        "Message posted to primary p1's Claude inbox\n"
+        "Message posted to spawn p1 (no receipt)\n"
         "Claude may hold it for approval when that session bypasses permission prompts; "
         'set crossSessionInbound to "accept" in Claude settings to skip the prompt.\n'
     )

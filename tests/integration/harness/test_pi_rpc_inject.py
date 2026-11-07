@@ -14,7 +14,7 @@ import pytest
 
 from meridian.cli import spawn_message as spawn_message_module
 from meridian.lib.config.loader import load_config
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import DeliveryError, DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
@@ -316,10 +316,9 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
     )
 
     try:
-        inject_result = await manager.inject(spawn_id, "SECOND", source="test")
+        await manager.deliver(spawn_id, "SECOND", source="test")
         outcome = await manager.wait_for_completion(spawn_id)
 
-        assert inject_result.success is True
         assert outcome is not None
         assert outcome.status == "succeeded"
 
@@ -381,12 +380,11 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
     )
 
     try:
-        inject_result = await manager.inject(spawn_id, "SECOND", source="test")
+        with pytest.raises(DeliveryError) as rejected:
+            await manager.deliver(spawn_id, "SECOND", source="test")
         outcome = await manager.wait_for_completion(spawn_id)
 
-        assert inject_result.success is False
-        assert inject_result.error is not None
-        assert inject_result.error.startswith(rejection)
+        assert str(rejected.value).startswith(rejection)
         assert outcome is not None
         assert outcome.status == "succeeded"
 
@@ -396,7 +394,8 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             if line
         ]
         prompts = [command for command in commands if command["type"] == "prompt"]
-        assert [prompt["message"] for prompt in prompts] == ["FIRST", "SECOND"]
+        # A refusal is retried once, and Pi refuses again.
+        assert [prompt["message"] for prompt in prompts] == ["FIRST", "SECOND", "SECOND"]
         assert all(prompt["streamingBehavior"] == "followUp" for prompt in prompts)
     finally:
         await manager.shutdown()

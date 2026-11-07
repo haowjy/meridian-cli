@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.report import extract_or_fallback_report
-from meridian.lib.ops.spawn.models import SpawnSignalInput
+from meridian.lib.ops.spawn.models import SpawnRearmInput
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
@@ -351,11 +352,13 @@ async def test_rearm_at_terminal_event_rejects_done_and_first_candidate(
         )
         await assert_still_pending(completion)
         spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(completion), timeout=0.05)
-        connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
-        await next_turn_boundary(subscriber)
-        write_spawn_signal(launch_paths(tmp_path, spawn_id), "done")
+        # p2 was all the rearm held, and there is no candidate, so row C1c asks.
+        backend = connection.fake_resident_backend
+        await wait_until(
+            lambda: len(backend.injected_messages) == 1,
+            description="the ask once the rearm's blocker clears",
+        )
+        await assert_still_pending(completion)
         connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
         outcome = await completion
         assert outcome is not None
@@ -438,7 +441,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         await determinism.sleep(0.18)
 
         result = spawn_api.spawn_rearm_sync(
-            SpawnSignalInput(spawn_id=str(spawn_id)),
+            SpawnRearmInput(spawn_id=str(spawn_id), reason="p2 is still running"),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
         )
@@ -683,5 +686,43 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         report = extract_or_fallback_report(launch_paths(tmp_path, spawn_id), facts=facts)
         assert report.content == "Resident report."
         assert report.source == "assistant_message"
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+class _SignalingConnection(FakeResidentConnection):
+    @property
+    def completion_signals_available(self) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("harness_id", "event_type"),
+    (
+        pytest.param(HarnessId.CODEX, "turn/completed", id="codex"),
+        pytest.param(HarnessId.OPENCODE, "session.idle", id="opencode"),
+    ),
+)
+async def test_completion_nudge_is_journaled_as_a_control_action(
+    tmp_path: Path,
+    harness_id: HarnessId,
+    event_type: str,
+) -> None:
+    spawn_id = SpawnId("p1")
+    start_row(tmp_path, str(spawn_id), harness_id, None)
+    connection = _SignalingConnection(harness_id)
+    manager = await start_manager(
+        tmp_path, connection, spawn_id=spawn_id, resident_poll_seconds=5.0
+    )
+
+    connection.emit(resident_event(harness_id, event_type, {}))
+
+    try:
+        await wait_until(lambda: len(connection.fake_resident_backend.injected_messages) == 1)
+        journal = launch_paths(tmp_path, spawn_id).control_actions
+        rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        assert {row["source"] for row in rows} == {"completion_nudge"}
+        assert {row["action"] for row in rows} == {"inject"}
     finally:
         await manager.stop_spawn(spawn_id)

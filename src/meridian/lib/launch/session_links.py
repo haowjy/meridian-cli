@@ -16,7 +16,7 @@ The links belong to an execution's *entry* chat, the one its session scope locks
 so they survive ``--continue`` of that chat, and a command on any chat of the
 execution (Claude ``/clear`` or ``/resume`` rotates the conversation) finds that
 one chat. A spawn has its own chat and so its own links; they are named in its
-``# Meridian run`` user turn rather than the system prompt, so sibling spawns keep
+``# Meridian spawn`` user turn rather than the system prompt, so sibling spawns keep
 sharing the cached prompt prefix.
 
 Nothing removes a link: it is a rebuildable projection. A live execution's links
@@ -45,7 +45,7 @@ _TASK_LINK = "task"
 
 
 class Execution(NamedTuple):
-    """One execution: its run ID, the chat that owns its links, every chat whose row
+    """One execution: its spawn ID, the chat that owns its links, every chat whose row
     names its work attachment, and the item it is attached to when that is known."""
 
     spawn_id: str

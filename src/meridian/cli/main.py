@@ -512,17 +512,16 @@ def root(
                 launch_anyway=launch_anyway,
             )
 
-        emit(
-            launch_or_offer_relocate(
-                launch,
-                interactive=(
-                    not dry_run
-                    and not options.no_input
-                    and sys.stdin.isatty()
-                    and sys.stderr.isatty()
-                ),
-            )
+        output = launch_or_offer_relocate(
+            launch,
+            interactive=(
+                not dry_run and not options.no_input and sys.stdin.isatty() and sys.stderr.isatty()
+            ),
         )
+        emit(output)
+        if output.shell_status != 0:
+            # The invocation's ExitStack still flushes the sink on the way out.
+            raise SystemExit(output.shell_status)
 
 
 @app.command(name="serve")

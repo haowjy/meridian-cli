@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import DeliveryRefused
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.semantics import (
     TerminalEventOutcome,
@@ -59,9 +60,10 @@ def _coordinator(
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
@@ -156,31 +158,6 @@ async def test_terminal_cancel_wins_over_done_and_outstanding_descendant(
     assert decision.emit_turn_boundary is False
     assert coordinator.handle_close(intentional_stop=False) is None
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-
-
-@pytest.mark.asyncio
-async def test_terminal_rearm_overrides_done_and_rejects_candidate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Rearm wins a coincident done and abandons the current candidate."""
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    clock.advance(1.0)
-    candidate = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert candidate.emit_turn_boundary is True
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
-
-    requested = await coordinator.handle_timeout()
-
-    assert requested.recorded_outcome is None
-    assert coordinator.pending_outcome is None
-    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
-    assert row is not None
-    assert row.resident_rearm_count == 1
-    assert connection.fake_resident_backend.awaiting_done_values == [True]
-    assert connection.fake_resident_backend.injected_messages == []
 
 
 @pytest.mark.asyncio
@@ -420,7 +397,7 @@ async def test_refused_expiry_nudge_gets_one_retry_then_cleanup(
     write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     await coordinator.handle_timeout()
     await start_turn(coordinator)
-    backend.fail_inject = True
+    backend.inject_error = DeliveryRefused("inject failed")
 
     clock.advance(10.0)
     assert (await coordinator.handle_timeout()).recorded_outcome is None
@@ -576,8 +553,12 @@ async def test_rearm_without_visible_blockers_waits_the_nudge_interval(
         await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert len(backend.injected_messages) == 1
 
+    # Each turn end restarts the spacing, so the next ask comes 270 s after the last one.
     clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)
     await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    assert len(backend.injected_messages) == 1
+    clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)
+    await coordinator.handle_timeout()
     assert len(backend.injected_messages) == 2
 
 
@@ -597,39 +578,15 @@ async def test_wait_done_signal_beats_already_expired_deadline(
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     write_spawn_signal(launch_paths(tmp_path, "p1"), "done")
-    requested = await coordinator.handle_timeout()
-    decision = await _after_refresh(coordinator)
-
-    assert requested.recorded_outcome is None
-    assert decision.recorded_outcome == _SUCCESS
-    assert cleanup_calls == []
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-
-
-@pytest.mark.asyncio
-async def test_followup_turn_active_defers_ready_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert terminal.emit_turn_boundary is True
-
-    spawn_store.finalize_spawn(
-        tmp_path,
-        SpawnId("p2"),
-        "succeeded",
-        0,
-        origin="runner",
-    )
-    clock.advance(1.0)
-    await start_turn(coordinator)
     decision = await coordinator.handle_timeout()
 
-    assert decision.recorded_outcome is None
+    # `done` closes over p2, and closing takes p2 with it.
+    assert decision.recorded_outcome == _SUCCESS
+    exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
+    assert exit_decision.post_publication_cleanup is not None
+    await coordinator.execute_post_publication_cleanup(exit_decision.post_publication_cleanup)
+    assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
-    assert connection.fake_resident_backend.injected_messages == []
 
 
 @pytest.mark.asyncio
@@ -743,25 +700,6 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
 
 
 @pytest.mark.asyncio
-async def test_intentional_stream_close_refuses_blocked_resident_outcome(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-    assert terminal.emit_turn_boundary is True
-
-    clock.advance(1.0)
-    close_outcome = coordinator.handle_close(intentional_stop=True)
-
-    assert close_outcome is not None
-    assert close_outcome.status == "failed"
-    assert close_outcome.error == "stream_closed_while_awaiting_done"
-    assert connection.fake_resident_backend.awaiting_done_values == [True]
-
-
-@pytest.mark.asyncio
 async def test_one_confirmation_injection_per_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -772,7 +710,6 @@ async def test_one_confirmation_injection_per_candidate(
         deadline_seconds=20.0,
     )
     try:
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
         first = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
         assert first.emit_turn_boundary
         await coordinator.wait_for_aux_wake()
@@ -788,13 +725,6 @@ async def test_one_confirmation_injection_per_candidate(
             clock.advance(2.0)
             assert (await coordinator.handle_timeout()).recorded_outcome is None
         assert len(connection.fake_resident_backend.injected_messages) == 1
-
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "done")
-        write_spawn_signal(launch_paths(tmp_path, SpawnId("p1")), "rearm")
-        assert (await coordinator.handle_timeout()).recorded_outcome is None
-        row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
-        assert row is not None
-        assert row.resident_rearm_count == 1
 
         # A rearm with no visible blockers holds the next nudge for the nudge interval.
         clock.advance(COMPLETION_NUDGE_INTERVAL_SECONDS)

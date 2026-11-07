@@ -6,6 +6,9 @@
 - `pi_drain.py` and `pi_quiescence.py`: establish a paired native lifecycle
   signal before supporting arbitrary branch-summary work; queue updates and
   retry telemetry cannot establish busy or idle on their own.
-- `resident_drain.py`: if exhausted rearm budgets occur in practice, recapture
-  the report after the child's next successful turn; its later text currently
-  cannot replace the retained candidate without a rearm.
+- `resident_drain.py`: on a hold with no native task source, if exhausted rearm
+  budgets occur in practice, recapture the report after the child's next successful
+  turn; its later text cannot replace the retained candidate without a rearm.
+- `hold_state.py`: a `spawn done` from outside a child that rearmed at a turn end waits for
+  its next turn, because rows C1 to C2 run with no candidate to publish. A child's own `done`
+  always has a turn end. Decide what such a close publishes before adding a row.

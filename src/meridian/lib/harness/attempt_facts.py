@@ -30,6 +30,8 @@ class AttemptFacts:
     completion_text_capped: bool = False
     permission_denials: list[PermissionDenial] = field(default_factory=list[PermissionDenial])
     """Calls the harness refused under the profile's policy; finalization journals them."""
+    warnings: list[str] = field(default_factory=list[str])
+    """Where the harness ran differently from what the launch asked for; the report carries them."""
 
     def set_text(self, text: str) -> None:
         encoded = text.encode("utf-8")

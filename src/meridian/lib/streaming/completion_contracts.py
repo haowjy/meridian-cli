@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from meridian.lib.harness.semantics import TerminalEventOutcome
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import EventSemantics
     from meridian.lib.streaming.drain_policy import DrainAction
@@ -77,9 +78,20 @@ class WorkAssessment:
         elif self.disposition == "blocked":
             valid = bool(self.blockers) and self.failure is None
         else:
-            valid = not self.blockers and self.failure is not None
+            # One source can be unreadable while another still reports what it sees.
+            valid = self.failure is not None
         if not valid:
             raise ValueError(f"invalid {self.disposition!r} work assessment")
+
+
+@dataclass(frozen=True)
+class FinishedChild:
+    """One finished background launch whose result its parent has not consumed."""
+
+    key: str  # the launch's ledger key
+    spawn_id: str
+    status: str
+    report: Path
 
 
 @dataclass(frozen=True)
@@ -88,6 +100,7 @@ class CompletionDirectives:
 
     done: bool = False
     rearm: bool = False
+    rearm_long: bool = False
 
 
 @dataclass(frozen=True)
@@ -235,6 +248,11 @@ class NativeTaskSource(Protocol):
     def blockers(self) -> tuple[DiagnosticBlocker, ...]: ...
 
     @property
+    def cleared_in_turn(self) -> bool:
+        """The last turn end released a hold, so the harness may start a turn on its own."""
+        ...
+
+    @property
     def generation(self) -> int:
         """Monotonic count of observed snapshot changes."""
         ...
@@ -242,14 +260,12 @@ class NativeTaskSource(Protocol):
 
 class CompletionProfile(Protocol):
     def allows_evaluation_without_candidate(self) -> bool:
-        """Return policy that is pure and stable for the coordinator's lifetime."""
+        """Whether a wait may evaluate with no candidate. It can change between calls."""
         ...
 
-    def refresh_deadline_after_event(
-        self, state: CompletionState, semantics: EventSemantics
-    ) -> bool: ...
-
-    def candidate_transition(self) -> AbstractContextManager[None]: ...
+    def observe_event(self, state: CompletionState, semantics: EventSemantics) -> bool:
+        """Take one harness event; return whether it renews the deadline."""
+        ...
 
     def consume_directives(
         self,
@@ -302,6 +318,7 @@ __all__ = [
     "EvidenceActivity",
     "EvidenceEventDecision",
     "EvidenceFailure",
+    "FinishedChild",
     "NativeTaskSource",
     "ProfileAction",
     "ProfileDecision",

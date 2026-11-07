@@ -57,6 +57,9 @@ class AttemptFold:
     def bind_scope(self, session_id: str | None) -> None:
         self.scope_session_id = session_id
 
+    def bind_launch(self, spec: ResolvedLaunchSpec) -> None:
+        """Tell the fold what the launch asked for, for harnesses that can confirm it."""
+
     def accepts(self, kind: str, event: RawHarnessEvent) -> bool:
         return True
 

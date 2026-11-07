@@ -5,10 +5,11 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -52,7 +53,7 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
-from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
+from meridian.lib.ops.mars import mars_list_agents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.relocate_gate import copy_checkout_note, relocate_hint
 from meridian.lib.ops.runtime import (
@@ -77,8 +78,10 @@ from meridian.lib.state.spawn_observations import LaunchKey, WaitPin, live_wait_
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
 from meridian.lib.state.spawn_ownership import owned_parent_ids
 from meridian.lib.state.spawn_signals import (
+    RearmRequest,
     SpawnSignalKind,
     read_accepted_signals,
+    read_hold_status,
     write_spawn_signal,
 )
 from meridian.lib.state.spawn_status import (
@@ -101,6 +104,7 @@ from .execute import (
     execute_spawn_blocking,
 )
 from .models import (
+    CheckpointHold,
     ModelStats,
     SpawnActionOutput,
     SpawnCancelAllInput,
@@ -114,6 +118,7 @@ from .models import (
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
+    SpawnRearmInput,
     SpawnShowInput,
     SpawnSignalInput,
     SpawnStatsChild,
@@ -1108,36 +1113,37 @@ def spawn_subagents_sync(
         prepared=prepared,
     )
     spawn_id = str(runtime_context(ctx).spawn_id or "").strip() or None
-    agent: str | None = None
-    if spawn_id is not None and runtime_root is not None:
-        row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-        agent = (row.agent or "").strip() or None if row is not None else None
+    row = (
+        read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+        if spawn_id is not None and runtime_root is not None
+        else None
+    )
+    agent = ((row.agent or "").strip() or None) if row is not None else None
+    harness = (row.harness or "").strip() if row is not None else ""
 
-    if agent is not None:
-        # Resolved current agent → its declared subagents verbatim.
-        # An empty allow-list is a LEAF agent (spawns nothing), not "spawn anything".
-        # None means mars could not resolve the profile → treat as empty.
-        declared = mars_agent_subagents(project_root, agent)
-        names = declared if declared is not None else ()
-        inventory = (
-            {entry.name: entry for entry in mars_list_subagents(project_root)} if names else {}
+    catalog = mars_list_agents(project_root)
+    caller = next((entry for entry in catalog if entry.name == agent), None)
+    # The caller's `subagents:` list is advisory: the default view, with `--all` showing
+    # what lies outside it.
+    declared = frozenset(caller.subagents) if caller is not None else frozenset[str]()
+    agents = tuple(
+        SpawnSubagentEntry(
+            name=entry.name,
+            scope=entry.scope,
+            description=entry.description,
+            mode=entry.mode,
+            model_invocable=entry.model_invocable,
+            # A fanout agent is native too, but Meridian stays its route.
+            native=harness in entry.native_harnesses and not entry.fanout,
+            declared=agent is None or entry.name in declared,
         )
-        agents = tuple(
-            SpawnSubagentEntry(
-                name=name,
-                scope=inventory[name].scope if name in inventory else None,
-            )
-            for name in sorted(set(names))
-        )
-    else:
-        # No current agent (no spawn context / record has no agent) → orchestrator
-        # view: list all subagent-mode agents.
-        agents = tuple(
-            SpawnSubagentEntry(name=entry.name, scope=entry.scope)
-            for entry in mars_list_subagents(project_root)
-        )
-
-    return SpawnSubagentsOutput(agents=agents)
+        for entry in catalog
+        if payload.all or (entry.name in declared and entry.model_invocable)
+    )
+    empty: Literal["no_current_agent", "no_declared_agents"] | None = None
+    if not agents and not payload.all:
+        empty = "no_current_agent" if agent is None else "no_declared_agents"
+    return SpawnSubagentsOutput(agents=agents, empty=empty)
 
 
 async def spawn_subagents(
@@ -1262,6 +1268,12 @@ def _resolve_signal_spawn(
     return record
 
 
+_BARE_REARM_WARNING = (
+    '`meridian spawn rearm` without `--reason "..."` is deprecated; '
+    "the next minor release requires a reason."
+)
+
+
 def _signal_refusal(
     row: SpawnRecord,
     kind: SpawnSignalKind,
@@ -1304,6 +1316,7 @@ def _spawn_signal_sync(
     *,
     kind: SpawnSignalKind,
     command: str,
+    rearm: RearmRequest | None = None,
     ctx: RuntimeContext | None = None,
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
@@ -1343,6 +1356,7 @@ def _spawn_signal_sync(
             launch,
             kind,
             can_write=consumer_reads_signal,
+            rearm=rearm,
         ):
             raise ValueError(refusal or f"Spawn '{resolved_spawn_id}' not found")
     except ValueError as exc:
@@ -1365,6 +1379,7 @@ def _spawn_signal_sync(
         status="succeeded",
         spawn_id=resolved_spawn_id,
         message=message,
+        warning=_BARE_REARM_WARNING if rearm is not None and rearm.reason is None else None,
     )
 
 
@@ -1386,7 +1401,7 @@ def spawn_done_sync(
 
 
 def spawn_rearm_sync(
-    payload: SpawnSignalInput,
+    payload: SpawnRearmInput,
     ctx: RuntimeContext | None = None,
     *,
     sink: OutputSink | None = None,
@@ -1396,6 +1411,7 @@ def spawn_rearm_sync(
         payload,
         kind="rearm",
         command="spawn.rearm",
+        rearm=RearmRequest(long=payload.long, reason=payload.reason),
         ctx=ctx,
         sink=sink,
         prepared=prepared,
@@ -1831,6 +1847,20 @@ def _build_wait_multi_output(
     )
 
 
+def _checkpoint_hold(runtime_root: Path, row: SpawnRecord) -> CheckpointHold | None:
+    status = read_hold_status(LaunchPaths.for_row(runtime_root, row))
+    if status is None:
+        return None
+    idle_secs: float | None = None
+    if status.last_work_at is not None:
+        with suppress(ValueError):
+            last_work = datetime.fromisoformat(status.last_work_at)
+            idle_secs = max(0.0, (datetime.now(UTC) - last_work).total_seconds())
+    return CheckpointHold(
+        blockers=status.blockers, last_work_at=status.last_work_at, idle_secs=idle_secs
+    )
+
+
 def _build_wait_checkpoint_output(
     details: tuple[SpawnDetailOutput, ...],
     *,
@@ -1851,10 +1881,19 @@ def _build_wait_checkpoint_output(
         )
         for spawn_id in pending_ids
     }
+    rows_by_id = {row.id: row for row in tree_rows}
+    checkpoint_holds = {
+        spawn_id: _checkpoint_hold(runtime_root, rows_by_id[spawn_id])
+        for spawn_id in pending_ids
+        if spawn_id in rows_by_id
+    }
     return _build_wait_multi_output(details).model_copy(
         update={
             "checkpoint": True,
             "checkpoint_pending_ids": pending_ids,
+            "checkpoint_holds": {
+                spawn_id: hold for spawn_id, hold in checkpoint_holds.items() if hold is not None
+            },
             "checkpoint_descendants": {
                 spawn_id: descendants
                 for spawn_id, descendants in checkpoint_descendants.items()

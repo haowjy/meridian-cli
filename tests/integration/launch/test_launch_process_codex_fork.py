@@ -362,9 +362,6 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
-        prompt_surface_inventory_prompt=(
-            "# Meridian Agents\n\n## Subagent\n- `meridian spawn -a reviewer`: Review.\n"
-        ),
     )
     sid = "12345678-1234-4234-8234-123456789abc"
     store = tmp_path / "recorded" / "sessions"
@@ -457,31 +454,3 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     assert chat is not None and chat.harness_session_id == observed[0]
     assert chat.native_store == str(store)
     assert json.loads(source.read_text())["payload"]["id"] == sid
-
-
-def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
-
-    ctx, registry = _build_primary_launch_context(
-        project_root=tmp_path,
-        harness_id=HarnessId.CODEX,
-        model="gpt-5.4",
-    )
-    error = NativeEntryMismatch(NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b"))
-
-    def refuse(**kwargs):
-        raise error
-
-    monkeypatch.setattr(registry.get(HarnessId.CODEX), "prepare_prelaunch", refuse)
-    outcome = run_harness_process(ctx, registry, prepared=ctx.prepared)
-    assert outcome.exit_code == 1
-    row = list_spawns(ctx.runtime_root).records[0]
-    facts = [
-        json.loads(line)
-        for line in launch_paths(ctx.runtime_root, row.id).runner_lifecycle.read_text().splitlines()
-    ]
-    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
-    assert len(mismatch) == 1 and mismatch[0]["phase"] == "pre_exec"

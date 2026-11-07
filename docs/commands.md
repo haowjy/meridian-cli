@@ -17,6 +17,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn subagents` | List the agents in the calling agent's `subagents:` list, with descriptions and routing markers |
+| `meridian spawn subagents --all` | List every installed agent, including `model-invocable: false` ones and those outside the caller's list |
 | `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Show a spawn's report and status; inside a spawn, a terminal report body consumes its pending completion notice (`--no-observe` opts out) |
@@ -26,19 +28,34 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
+| `meridian spawn done [ID]` | Inside a child: close when its turn ends, cancelling any spawns still running and stopping its background tasks |
+| `meridian spawn rearm --reason "..." [ID]` | Inside a child: stay open. The reason is stored and shown in `spawn show`; `--reason-file PATH` reads it from a file (`-` reads stdin), and a bare `rearm` warns. The next check comes 270 s after the child goes idle, only when nothing visible is running; `--long` puts it at the idle limit, for a wait Meridian can't see such as remote CI. Running spawns and background tasks keep it quiet until they change or the idle limit, in both forms |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session); `-C` reaches a session in another project |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
+A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exits with the status Meridian recorded for the session, so a failed harness fails the shell command. That is the harness's exit code, or nonzero if Meridian could not record the session. A clean quit (`/exit`, Ctrl-D) is `0`. A harness killed by signal N exits `128+N`. A signal to Meridian that cancels the session exits with `128+N` and stores the same number: SIGTERM `143`, SIGHUP `129` (a closing terminal), SIGINT `130`. A terminal Ctrl-C normally goes to the harness, not Meridian, so the result is the harness's own. A harness that ends itself with SIGTERM also gives `143`, so tell the two apart by the spawn's `cancelled` status. A signal during shutdown waits for the final write, then exits with its own number; a second one at least a second later ends it at once, and the stored result may differ (for example `succeeded`). `--dry-run` is `0`.
+
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn message` uses the control endpoint for spawned sessions. It prints
+`spawn message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
-(Codex, OpenCode, Pi) and "Message posted … (no receipt)" when the write finished but
-the harness confirms nothing (Claude). For a live Claude
-primary, it posts to Claude Code's session inbox; the command confirms only that
-the message was posted, not delivered. Claude holds the message for human approval
+(Codex, OpenCode) and "Message posted … (no receipt)" when the write finished but
+the harness confirms nothing (Claude, and Pi, whose message API returns nothing). A Pi primary
+serves its socket from the `meridian-message` extension inside Pi: a message sent while a turn
+runs steers into that turn, and one sent during a manual `/compact` is refused. A Claude primary's launcher binds its socket once
+Claude has published its session inbox, so a primary that has not (`--bare`, `--safe-mode`,
+`--print`, Claude older than 2.1.224) has no socket; the command waits up to 30 seconds
+for one, then fails saying the session has no message route. A primary started by an older
+build never had a socket and needs a relaunch. A Codex or OpenCode primary's route serves the
+session its launcher started: once the TUI opens another (`/new`, `/fork`, `/resume` on Codex;
+Fork session, or the human's first input in a new or other session, on OpenCode), `spawn message` fails with "The TUI moved to
+another session" and sends nothing, until the primary is relaunched (`--continue` reopens the
+first session, not the one the TUI was on). Two cases the launcher cannot act on: on OpenCode,
+a message sent after the new-session or switch-session command (`ctrl+x n`, `ctrl+x l`) but
+before the human types anything there goes to the first session and reports delivered; and a
+TUI that returns to the first session stays refused until relaunch. Claude holds the message for human approval
 when that session bypasses permission prompts and `crossSessionInbound` is not
 `accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
 `~/.claude/settings.json`. This applies to every peer message, not only
@@ -47,16 +64,15 @@ covers the values and the trade-off. Chat and spawn IDs count per
 project, so a peer in another repo is addressed with `-C <repo>`. Each injected
 message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
 sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
-with `-C <sender project root>` when the sender is in another project. A primary whose
-harness has a message route states its own address in that form in its capabilities block.
+with `-C <sender project root>` when the sender is in another project. A primary states its own
+address in that form in its capabilities block, including a Claude primary that publishes no
+inbox (`--bare`, `--safe-mode`), where the address leads to the no-route error.
 Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
 that chat now, else the spawn that ran it; a chat ID never means a child it launched.
 After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
-`cancel` on a primary still needs `--force`. Other primary harnesses
-fail immediately because they do not yet expose a message route
-([#498](https://github.com/haowjy/meridian-cli/issues/498)).
+`cancel` on a primary still needs `--force`.
 
 Common `spawn` flags:
 
@@ -635,8 +651,9 @@ directory actually read, so a Mars-provided skill points at
 | `succeeded` | Completed successfully |
 | `failed` | Completed with an error |
 | `cancelled` | Cancelled before or during execution |
+| `timed_out` | Exceeded its runtime budget |
 
-`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are deprecated: spawns written by older builds can still show them, and `--status queued`, `--status finalizing` and `--view queued` still parse with a warning. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
+`running` is the one active (in-flight) status for new spawns. `queued` and `finalizing` are not listable filters: spawns written by older builds can still show them, but `--status queued`, `--status finalizing` and `--view queued` fail as unsupported. `spawn cancel` reports a cancellation that did not finish within about 6 seconds as still finalizing.
 
 ## Spawn References
 

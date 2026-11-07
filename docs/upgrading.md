@@ -1,5 +1,175 @@
 # Upgrade notes
 
+## `spawn rearm` wants a reason, and a child's close now cancels what it started
+
+`meridian spawn rearm` takes `--reason "..."` or `--reason-file PATH`, stored with the rearm and
+shown in `spawn show`. A bare `rearm` still works and warns; the next minor release requires a
+reason. `--long` puts the next check at the idle limit, for a wait Meridian can't see such as
+remote CI. Without it, the next check comes 270 s after the child goes idle, and only when
+nothing visible is running. The spawn id positional is unchanged.
+
+What changes for you:
+
+- **At the idle limit a reply closes the child.** A child asked at the idle limit, between turns,
+  either runs `rearm` to stay or replies, and the reply is its report and closes it. Before, a
+  child that only replied was asked again each window.
+- **A close cancels descendants.** A reply to that ask and `meridian spawn done` both cancel spawns
+  still running and stop background tasks. Before, `done` left descendants running. A job that must
+  outlive its child has to run detached.
+- **Spawned parents wait by ending their turn.** The guidance tells them to end their turn and
+  be woken with each finished child's report path, in place of "Drain every --bg spawn". They can
+  still run `spawn wait` when they need a result in the same turn. Primaries keep theirs, and lose
+  the "Before a child closes" bullet, which never applied to them.
+- **`rearm` no longer asks at the last ask's anchor.** The 270 s runs from the last turn end,
+  so another turn end restarts it. A rearm that a turn end consumes now gets its next check; it
+  used to wait for the idle limit.
+- **Claude children get a line on waiting:** start the job in the background with a `timeout`
+  that covers it, and end the turn.
+
+Nothing is required. A runner keeps the code it started with, and an older runner reads a new
+`rearm.signal` as presence only, so `--long` and the reason have no effect until it restarts.
+`spawn wait` checkpoints show what a held child waits on, from a new advisory `hold.json` in the
+spawn directory; `spawn show` reads a new `rearms.jsonl` beside it. An older build ignores both.
+
+## Scoped shell rules on Codex need Codex 0.129.0 or newer
+
+A Codex profile with a scoped `bash` deny (`bash(git reset --hard *)`), a `*` rule beside scoped
+`bash` allows, or a per-capability `bash` allowlist used to launch with those rules reported
+`unsupported` and not enforced. Meridian now enforces them with a `PreToolUse` hook it adds to the
+`codex app-server` command line, and the report marks them `partial` (the gaps below). Before the
+first turn, Meridian asks Codex (`hooks/list`) whether the hook is loaded and trusted, and it
+refuses the launch if not.
+
+What changes for you:
+
+- **Codex older than 0.129.0.** A launch whose profile has such a rule fails with "The shell-rule
+  hook is not running" (or "this Codex does not answer hooks/list"). Upgrade Codex, or drop the
+  scoped rules from the profile. Profiles with no scoped `bash` rule launch as before.
+- **Anything that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a `hooks.state`
+  override, a project `.codex/config.toml` with `hooks` off) stops those launches the same way.
+- **Rules are wildcard matches on each command segment.** The hook splits the command on `;`,
+  `&&`, `||`, `|`, `&` and newlines (outside quotes) and matches each segment against the rules
+  the way Pi does: deny wins, and a deny-list passes a segment no rule names. When a profile's
+  rules refuse every shell command that no scoped allow names (an allowlist, `"*": deny` beside
+  scoped allows, or `bash: deny` or `bash: ask` beside them), every segment must match an allow,
+  and a command with `$`, backticks, redirection, `( )`, `{ }`, `#` or a backslash outside quotes
+  is refused.
+- **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
+  refuses the other commands. A scoped `ask` is still not enforced.
+- **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
+  `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
+  (`bash(rg *)`, `bash(cat *)`).
+- **Gaps that remain.** The hook is a guard against accidents such as a careless
+  `git reset --hard`, not a sandbox, and an agent that tries can get past it. A rule matches
+  the command segment as written, so `sudo git reset --hard`, `bash -c '...'`, `$(...)`,
+  subshells, `sh script.sh`, interpreters, `find -exec`, a shell fed through `write_stdin`, and
+  `git -C <dir> reset --hard` are caught only if a rule matches them; an allowlist inherits
+  whatever its allowed commands can do (`bash(python *)` runs anything). `apply_patch` and MCP
+  calls never reach the hook, and an agent that can replace the Python interpreter or its
+  standard library turns the hook off.
+
+## Messages to a primary go through its launcher
+
+`meridian spawn message` reaches a primary through a control socket its launcher serves, as it
+does a spawned session. A primary started by an older build never served one: relaunch it (or
+`--continue` it) to receive messages. Until then the command waits 30 seconds, then fails saying
+the session has no message route. Claude primaries that publish no inbox (`--bare`, `--safe-mode`,
+`--print`) still have none. A Pi primary serves its socket from the `meridian-message` extension.
+
+## `approval: auto` uses each harness's own auto
+
+`approval: auto` (`--approval auto`) used to compile to the nearest prompt-free setting. It now
+asks for the harness's own auto mode on Claude and Codex:
+
+| Harness | Before | Now |
+|---|---|---|
+| Claude | `--permission-mode acceptEdits` | `--permission-mode auto` |
+| Codex | `approval_policy="on-request"`, plus whatever `~/.codex/config.toml` set | `approval_policy="on-request"` and `approvals_reviewer="auto_review"`, on `codex exec` and `codex app-server` |
+| Cursor, OpenCode, Pi | unchanged | unchanged |
+
+What changes for an agent with `approval: auto`:
+
+- **Claude.** Claude's classifier now approves or refuses the calls `acceptEdits` used to leave
+  unmatched. Most calls run: edits and Bash outside the working directories, commits, pushes,
+  `meridian spawn`. The classifier can refuse a call it judges risky, and a refused call is not
+  retried. `deny` and `ask` rules still hold; on a scratch project a `deny` on `git revert *` and an
+  `ask` on web tools both refused under `auto`. A profile that gates a tool through the mode (a
+  plain `deny` or `ask` beside scoped allows of the same tool, or an unscoped `*: ask`) keeps
+  `acceptEdits` or `manual`, and one with a whole-policy allowlist keeps `dontAsk`, because the
+  classifier would approve what those modes refuse. The permission report names the mode it chose.
+- **Claude may not offer `auto`.** Claude runs `manual` instead when the model does not support
+  `auto` (`claude-haiku-4-5` is one) or the account or settings turn it off. A spawn then refuses
+  every edit, command and tool the profile does not allow, and exits as succeeded. Meridian reads
+  `permissionMode` from Claude's init event and adds a warning to the spawn's report when it differs
+  from the launch. The launch-time permission report cannot know this, so its `approval: auto` line
+  says so.
+- **A confined profile gets two wider limits.** With `sandbox: workspace-write` or `read-only`,
+  the classifier, not `acceptEdits`, decides an Edit or Write outside the working directories, so it
+  can run. With `network: deny` or a host list, it decides WebFetch and WebSearch, which the
+  network setting never covered, so they can run. Both are in the permission report's sandbox and
+  network lines.
+- **Codex.** A reviewer model now answers sandbox escalations, so a request to write outside
+  `workspace-write` or reach the network can be approved. Before, the launch inherited the reviewer
+  from the user's `~/.codex/config.toml` or the forked thread, or had none and the spawn refused the
+  request. Meridian sets both values on every launch, so the result no longer depends on that file or
+  thread. The reviewer's tokens do not appear in `codex exec --json` usage or in Meridian's usage
+  totals. `approval: confirm` now sets `approvals_reviewer="user"`: a spawn refuses every approval
+  request, even from a Codex home that sets `auto_review` or a thread forked from an `auto` one.
+  Before, such a home or fork let the reviewer approve a `confirm` spawn's escalation.
+  `auto_review` needs Codex 0.125.0 or later: 0.120.0 fails at launch with an unknown-variant
+  config error, and 0.100.0 or older ignores the key, so no reviewer is applied.
+- **`--approve-for-me` is not used.** Codex's flag refuses `--sandbox`, forces `workspace-write` and does
+  not exist on `codex app-server`, so the profile's sandbox would be lost.
+
+To keep the old Claude behavior, pass `--permission-mode acceptEdits` as a passthrough argument.
+
+## A primary launch exits with the harness's status
+
+`meridian`, `meridian --continue`, `--fork`, `--from` and `meridian bootstrap` used to exit `0`
+whenever Meridian itself ran to the end, even if the harness failed. They now exit with the
+status Meridian recorded for the session:
+
+| Harness result | Shell status |
+|---|---|
+| clean quit (`/exit`, Ctrl-D) | `0` |
+| exits with code N | `N` |
+| killed by signal N | `128+N` |
+| cancelled by SIGTERM to Meridian | `143` |
+| cancelled by SIGHUP to Meridian (closing terminal) | `129` |
+| SIGINT reaching Meridian | `130` |
+| Meridian could not record the session | nonzero |
+| `--dry-run` | `0` |
+
+On a scratch runtime with a stand-in `claude` that exits `3`, the previous build left `$?` at `0`
+and this one leaves it at `3`; a stand-in that kills itself with `kill -9` gives `137`, and one that
+exits cleanly still gives `0`. The text output is unchanged: `Session failed.` and the
+`meridian --continue cN` hint print as before.
+
+Stored spawn status and finalization did not change; only the process status did. A script that
+runs a primary launch under `set -e`, `&&` or `||` now stops or branches on a failed harness. If it
+relied on the old `0`, add `|| true` after the launch, or read the status explicitly with `rc=$?`.
+`meridian session` browse re-runs `meridian --continue`, so it now returns the resumed harness's
+status too.
+
+A supervisor stop used to read as Ctrl-C: SIGTERM and SIGHUP to Meridian exited `130` and stored
+`130`. They now exit and store `143` and `129`. A wrapper that treated `130` as "the user cancelled"
+should also accept `143` and `129`; a spawn that Meridian cancelled has status `cancelled` whichever
+number it carries. Spawns recorded earlier with `130` stay valid and read as before. A harness that
+ends itself with SIGTERM also gives `143`; read the spawn's status to tell it from a cancel.
+
+`meridian spawn cancel` sends SIGTERM, so every cancel it records is now `143`, not `130`: a live
+spawn, `--force` on a live primary, and a spawn whose runner is already gone. A live spawn stored
+`130` before.
+
+A SIGINT that reaches a black-box primary (`kill -INT`, or a redirected stdin) now stores `130` and
+ends `cancelled`; before, it exited `130` but stored `2` and ended `failed`. A native primary's TUI
+shields SIGINT, so `kill -INT` during the TUI does nothing; outside the shield, in the seconds after
+the harness exits, it is a cancel. A terminal Ctrl-C normally goes to the harness, not Meridian, so
+the result is the harness's own. Once Meridian is writing the final result, a signal waits until the
+write and the `spawn.finished` hooks are done; a second one at least a second later ends it at once.
+
+This change writes no new on-disk state. Rollback has not been probed.
+
 ## A continue keeps the spawn ID
 
 `--continue pN`, `--continue cN` and the session browser now keep the spawn's ID: the
@@ -31,9 +201,11 @@ autocompact, `--env`, `--task-dir` and passthrough arguments; it no longer refus
   `meridian spawn report show pN` and `meridian spawn show pN` instead of building paths.
   The human output of `spawn show`, `spawn status`, `spawn report show`, `spawn report search`
   and `spawn wait` no longer prints a report path (the `spawn wait` table drops its `report`
-  column). `report_path` stays in the JSON of `spawn show`, `spawn status`,
+  column). `report_path` stayed in the JSON of `spawn show`, `spawn status`,
   `spawn report show` and `spawn report search` (the current run's report; a search hit's own
-  file) but is deprecated and goes in the next minor release. `log_path` was never in the JSON.
+  file) until v0.20.0 removed it (see
+  [JSON output no longer includes `report_path`](#json-output-no-longer-includes-report_path)).
+  `log_path` was never in the JSON.
   A run that wrote no report shows none; it never shows an earlier run's.
 - An earlier run's report is still reachable: `spawn report search` looks in every run's
   report and names the spawn by ID, and `meridian session log pN` reads the conversation.
@@ -68,12 +240,24 @@ the v0.18.0 index until you run `meridian session index rebuild`.
 **Pi.** Restart long-lived Pi sessions after upgrading. A Pi session started before the upgrade
 can hide an earlier run's result after a continue, and marks it delivered without showing it.
 
+## JSON output no longer includes `report_path`
+
+v0.18.0 and v0.19.x kept `report_path` in the JSON of `spawn show`, `spawn status`,
+`spawn report show` and `spawn report search` while the human output stopped printing it.
+v0.20.0 removes the field; the rest of each payload is unchanged. The value was the current
+run's report file, or for a search hit that hit's own file, under the internal
+`spawns/pN/launches/<n>/` layout.
+
+Read a report with `meridian spawn report show pN` and find one with
+`meridian spawn report search`; neither needs the path. Scripts that read the JSON should
+drop the key, not build the path.
+
 ## New spawns start running
 
 A new spawn is `running` from the moment it exists. It no longer shows `queued` before its
-runner starts or `finalizing` while it writes its outcome. `--status queued` and
-`--status finalizing` (and `--view queued`) still parse, with a deprecation warning, and are
-removed in the next minor release. Rows written by older builds keep those statuses.
+runner starts or `finalizing` while it writes its outcome. v0.20.0 removes the
+`--status queued`, `--status finalizing` and `--view queued` filters: they now fail as
+unsupported. Rows written by older builds keep those statuses.
 
 ## Removed hook names and keys
 
@@ -197,8 +381,20 @@ spawn ID and a raw harness session ID mean the same thing everywhere.
 running in that chat now; `-C` addresses a session in another project. Chat and spawn
 IDs count per project.
 
-`--spawn-id` on `spawn message` and `spawn inject` is deprecated: it warns on stderr
-and works until the next minor release. Pass the ref positionally instead.
+`--spawn-id` on `spawn message` was removed in v0.20.0; pass the ref positionally instead.
+
+## Mars 0.27.0
+
+Meridian pins `mars-agents==0.27.0`. Run `meridian mars sync` after upgrading, and
+`meridian mars --user sync` for a user root.
+
+The launch bundle no longer carries an agent list: `prompt_surface.inventory_prompt`
+and the `# Meridian Agents` block in `system_instruction` are gone. Agents run
+`meridian spawn subagents` instead, which reads `mars agents list --json`. Its rows now
+report `subagents`, `model-invocable`, `native-harnesses` and `fanout`; an agent without
+`mode` reports `subagent` instead of `""`; and the `mars agents` table gains an `M-INV`
+column before SCOPE, so a script that reads the table by column position must shift by
+one.
 
 ## Mars 0.26.2
 
@@ -1702,10 +1898,9 @@ is now removed (see [Spawn file listing removed](#spawn-file-listing-removed)).
 
 ## Spawn message rename
 
-`meridian spawn inject` is now `meridian spawn message`. Scripts using the old
-spelling keep working: it warns on stderr and runs the same command until the
-next minor release. Each message also opens with a `[Meridian]` line naming the
-sending spawn and chat and, when the sender can receive one, the
+`meridian spawn inject` is now `meridian spawn message`. v0.20.0 removed the old
+spelling; scripts must use `spawn message`. Each message also opens with a `[Meridian]`
+line naming the sending spawn and chat and, when the sender can receive one, the
 `meridian spawn message <sender chat ID>` command that answers it, with
 `-C <sender project root>` when the sender is in another project. Anything that parses the
 delivered text sees that line first; the text you sent follows a blank line.

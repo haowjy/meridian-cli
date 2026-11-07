@@ -5,7 +5,7 @@ import type {
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, parse, resolve, sep } from "node:path";
 
-const POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY";
+const POLICY_ENV = "_MERIDIAN_TOOL_POLICY";
 const DENIAL_PREFIX = "Blocked by Meridian policy: ";
 const SIMPLE_COMMAND_REASON = `${DENIAL_PREFIX}restricted bash accepts only simple commands; run simple commands without expansion, redirection, or backgrounding.`;
 const PATH_TOOLS = new Set(["read", "edit", "write", "grep", "find", "ls"]);
@@ -86,8 +86,11 @@ function isMeridianCommandGrant(
     && ["completion", "read", "launch"].includes(String(candidate.role));
 }
 
-function parsePolicy(raw: string | undefined): PermissionPolicy | undefined {
-  if (raw === undefined) return undefined;
+function parsePolicy(raw: string | undefined): PermissionPolicy {
+  // Meridian adds this extension to a launch only when it has a policy to hand it, so a
+  // missing variable means the bundle and the launcher disagree about its name. Loading
+  // without a policy would run Pi with no permission checks.
+  if (raw === undefined) throw new Error(`Pi permission policy is missing: ${POLICY_ENV} is not set`);
   if (!raw.trim()) throw new Error("Pi permission policy is empty");
   const value: unknown = JSON.parse(raw);
   if (typeof value !== "object" || value === null) throw new Error("Pi permission policy is not an object");
@@ -444,7 +447,6 @@ export function decideToolCall(
 
 export default function meridianPermissionsExtension(pi: ExtensionAPI): void {
   const policy = parsePolicy(process.env[POLICY_ENV]);
-  if (policy === undefined) return;
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     const input = event.input as unknown as Record<string, unknown>;

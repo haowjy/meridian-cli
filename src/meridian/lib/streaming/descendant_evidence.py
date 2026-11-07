@@ -9,8 +9,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.pi_private_state import read_pi_consumption_state
 from meridian.lib.state import spawn_store
 from meridian.lib.state.history_index import (
     INITIALIZATION_TIMEOUT,
@@ -18,13 +19,16 @@ from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexBusy,
 )
+from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_observations import LaunchKey
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
+from meridian.lib.state.spawn_observations import LaunchKey, leased_launches
 from meridian.lib.state.spawn_ownership import owed_launches
-from meridian.lib.state.spawn_status import overlay_derived
+from meridian.lib.state.spawn_status import overlay_derived, read_launch
 from meridian.lib.streaming.completion_contracts import (
     DiagnosticBlocker,
     EvidenceFailure,
+    FinishedChild,
     WorkAssessment,
 )
 
@@ -39,6 +43,8 @@ class DescendantProjection:
     records: tuple[SpawnRecord, ...] = ()
     # Launches owed to the root (``owed_launches``), read in the same pass as the records.
     owed: tuple[LaunchKey, ...] = ()
+    # The owed launches that finished and were not consumed; read only on request.
+    unread: tuple[FinishedChild, ...] = ()
 
 
 class ReconciledDescendantEvidence:
@@ -50,10 +56,12 @@ class ReconciledDescendantEvidence:
         runtime_root: Path,
         root_spawn_id: SpawnId,
         blocker_reader: Callable[[], tuple[DiagnosticBlocker, ...]] | None = None,
+        reads_unread: bool = False,
     ) -> None:
         self._runtime_root = runtime_root
         self._root_spawn_id = root_spawn_id
         self._blocker_reader = blocker_reader
+        self._reads_unread = reads_unread
 
     def assess(self) -> WorkAssessment:
         """Return a fresh blocker assessment, or typed unknown on a hard read failure."""
@@ -77,6 +85,7 @@ class ReconciledDescendantEvidence:
             else:
                 records, owed = (), ()
                 blockers = self._blocker_reader()
+            unread = self._read_unread(owed) if self._reads_unread else ()
         except Exception as exc:
             code = (
                 "descendant_evidence_unavailable"
@@ -102,11 +111,13 @@ class ReconciledDescendantEvidence:
                 ),
                 records,
                 owed,
+                unread,
             )
         return DescendantProjection(
             WorkAssessment(disposition="ready", blockers=(), generation=0),
             records,
             owed,
+            unread,
         )
 
     def _read_records(
@@ -133,6 +144,30 @@ class ReconciledDescendantEvidence:
         )
         return tuple(overlay_derived(self._runtime_root, stored_descendants)), owed
 
+    def _read_unread(self, owed: tuple[LaunchKey, ...]) -> tuple[FinishedChild, ...]:
+        """``owed`` joined with what ``spawn collect`` consumed, ``read_owed_snapshot``'s rule.
+
+        A launch held by a live wait is that wait's to deliver. A row that can't be read
+        is left out: one damaged child must not turn the whole hold ``unknown``.
+        """
+        if not owed:
+            return ()
+        parent = str(self._root_spawn_id)
+        taken = read_pi_consumption_state(self._runtime_root, parent).consumed_ids
+        taken |= leased_launches(self._runtime_root, (parent,))
+        unread: list[FinishedChild] = []
+        for key in owed:
+            if str(key) in taken:
+                continue
+            try:
+                row = read_launch(self._runtime_root, *key)
+            except (OSError, SpawnStateQuarantined):
+                continue
+            if row is not None and is_terminal_spawn_status(row.status):
+                report = LaunchPaths.for_row(self._runtime_root, row).report
+                unread.append(FinishedChild(str(key), key.spawn_id, str(row.status), report))
+        return tuple(unread)
+
 
 @dataclass(frozen=True)
 class RefreshSnapshot:
@@ -140,6 +175,7 @@ class RefreshSnapshot:
     completed_request: int
     records: tuple[SpawnRecord, ...] = ()
     owed: tuple[LaunchKey, ...] = ()
+    unread: tuple[FinishedChild, ...] = ()
 
 
 class DescendantRefreshOwner:
@@ -175,6 +211,10 @@ class DescendantRefreshOwner:
     @property
     def owed(self) -> tuple[LaunchKey, ...]:
         return self._snapshot.owed if self._snapshot is not None else ()
+
+    @property
+    def unread(self) -> tuple[FinishedChild, ...]:
+        return self._snapshot.unread if self._snapshot is not None else ()
 
     @property
     def assessment(self) -> WorkAssessment:
@@ -276,7 +316,11 @@ class DescendantRefreshOwner:
             failure=raw.failure,
         )
         self._snapshot = RefreshSnapshot(
-            assessment, self._task_request, projection.records, projection.owed
+            assessment,
+            self._task_request,
+            projection.records,
+            projection.owed,
+            projection.unread,
         )
         self._next_due = self._clock() + self._poll_seconds
         if self._on_commit is not None:

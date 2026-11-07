@@ -27,15 +27,12 @@ from meridian.lib.harness.semantics import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainAction,
     DrainPolicy,
 )
-from meridian.lib.streaming.resident_drain import (
-    _IDLE_NUDGE_ANSWER_SECONDS as IDLE_NUDGE_ANSWER_SECONDS,
-)
+from meridian.lib.streaming.hold_state import IDLE_NUDGE_ANSWER_SECONDS
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -48,17 +45,16 @@ class FakeResidentBackendControl:
         self.awaiting_done_values: list[bool] = []
         self.status: LivenessDecision = LivenessDecision.CONTINUE
         self.injected_messages: list[str] = []
-        self.fail_inject: bool = False
+        self.inject_error: Exception | None = None
+        self.inject_attempts = 0
 
-    def health_status(self) -> LivenessDecision:
-        return self.status
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        self.awaiting_done_values.append(awaiting_done)
 
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        self.awaiting_done_values.append(awaiting)
-
-    async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject:
-            raise RuntimeError("inject failed")
+    def record_send(self, message: str) -> None:
+        self.inject_attempts += 1
+        if self.inject_error is not None:
+            raise self.inject_error
         self.injected_messages.append(message)
 
 
@@ -134,8 +130,11 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         return self._state == "connected"
 
+    def backend_dead(self) -> bool:
+        return self._resident_backend.status is LivenessDecision.BACKEND_DEAD
+
     async def send_user_message(self, text: str) -> DeliveryKind:
-        _ = text
+        self._resident_backend.record_send(text)
         return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
@@ -200,16 +199,16 @@ async def awaiting_done_coordinator(
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=resident_backend,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=30.0,
         poll_seconds=0.01,
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
@@ -340,16 +339,16 @@ async def coordinator_with_clock(
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.build(
         launch=launch_paths(tmp_path, SpawnId("p1")),
-        send_nudge=connection.resident_backend.begin_followup_turn,
+        send_nudge=connection.send_user_message,
         completion_signals_available=True,
         backend=connection.resident_backend,
+        backend_dead=connection.backend_dead,
         native=None,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
         rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    write_spawn_signal(launch_paths(tmp_path, "p1"), "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
     await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(

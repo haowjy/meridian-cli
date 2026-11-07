@@ -552,7 +552,7 @@ async def run_streaming_spawn(
         if decision.stop_required:
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:
-                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+                stop_exit_code = signal_to_exit_code(received_signal[0])
             if stop_exit_code is None:
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
@@ -760,7 +760,7 @@ async def _run_streaming_attempt(
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:
                 cancelled_by_request = True
-                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+                stop_exit_code = signal_to_exit_code(received_signal[0])
             if stop_exit_code is None:
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
@@ -1078,6 +1078,7 @@ async def execute_with_streaming(
                 fold = harness_bundle.extractor.create_fold(
                     spawn_row.prior_usage.harness_cumulative
                 )
+                fold.bind_launch(spec)
                 facts = fold.facts
                 runner_phase[0] = "starting_attempt"
                 _record_lifecycle("attempt_started", attempt=1)
@@ -1210,9 +1211,7 @@ async def execute_with_streaming(
                         )
                     elif attempt_cancelled:
                         if attempt.received_signal is not None:
-                            conclusion.exit_code = (
-                                signal_to_exit_code(attempt.received_signal) or 130
-                            )
+                            conclusion.exit_code = signal_to_exit_code(attempt.received_signal)
                     elif attempt.budget_breach is not None:
                         conclusion.failure_reason = "budget_exceeded"
                         conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -1326,8 +1325,9 @@ async def execute_with_streaming(
             runtime_root,
             lifecycle=lifecycle_service,
         )
-        # Defer a SIGTERM racing the finish until runner_completed, the scope-release marks and
-        # the atexit unregister are done; it is re-delivered when the mask exits.
+        # Defer SIGINT, SIGTERM and SIGHUP racing the finish until runner_completed, the
+        # scope-release marks and the atexit unregister are done; each is re-delivered when the
+        # mask exits. A repeat 1s or more after the first force-quits (see mask_termination).
         with signal_coordinator().mask_termination():
             execution_outcome = await spawn_service.complete_execution(
                 run.spawn_id,

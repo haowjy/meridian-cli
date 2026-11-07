@@ -1,848 +1,145 @@
-# launch/ — Composition and Execution
-
-## Architecture
-
-### The Prepare/Bind Composition Seam 
-
-Runtime launch composition follows the prepare/bind pipeline in `context.py`.
-`prepare_launch_surface()` produces the mandatory `PreparedLaunchSurface`, then
-`bind_launch_context()` produces the complete argv, environment, cwd, and
-permissions consumed by the driving adapter and its connection. No adapter
-recomposes the child environment from `os.environ`.
-
-```
-SpawnRequest + LaunchRuntime
-        │
-        ▼
-compile_prepared_policy_surface()  ← model/harness/profile resolution (before prepare)
-        │
-        ▼
-prepare_launch_surface()           ← skill injection, prompt, content composition
-        │
-        │  PreparedLaunchSurface (frozen dataclass — public boundary)
-        │
-        ▼
-bind_launch_context()              ← env, cwd, spec, argv, permissions
-        │
-        ▼
-LaunchContext                      ← pure bound plan
-        │
-        ▼
-materialize_launch_context()       ← real-launch-only adapter writes
-```
-
-**Why the split?** The primary CLI path needs to call `bind_launch_context()` twice:
-once with `dry_run=True` for `--dry-run` display, then again with real spawn-ID and
-paths for actual execution. `prepare_launch_surface()` is expensive (mars calls, profile
-loading, prompt assembly) and safe to do once before the session is opened.
-`bind_launch_context()` is write-free and repeatable; ignoring an active direnv environment invokes
-a bounded subprocess on each bind, including previews.
-The process runner, CLI spawn runner, and streaming spawn service all send their real bound
-context through `materialize_launch_context()`; adapters therefore have one owner for launch-time
-writes, and dry-run binds never materialize them.
-
-### PreparedLaunchSurface
-
-The in-memory boundary between preparation and binding. Carries: resolved request,
-harness, composition warnings, loaded references, agent inventory prompt, capability
-guidance, alias catalog, model selection context. Deliberately excludes spawn IDs,
-report paths, env, argv, and permission outputs — everything that varies per bind.
-
-`launch_request` on `PreparedLaunchSurface` preserves the original pre-resolution
-request for `LaunchContext.request` compatibility. `request` carries the resolved
-version used by `bind_launch_context()`.
-
-Every bind replaces the inherited caller boundary with one record for the process it is
-about to start. It contains the launcher's PID namespace, resolved sandbox mode,
-the prepared profile's spawn capability, and the Meridian-projected typed network policy for every
-constrained sandbox. A missing network key means no network floor, preserving boundaries
-written by older builds. The projection is a pure function of Meridian's resolved sandbox,
-network, and native override. Harness-owned user-config detection runs after the final child
-environment and cwd are bound, but contributes only attributed warnings. The child
-guardrail and permission report ignore those settings and use the same pure projection.
-Projected roots are not part of this CLI-escalation guardrail.
-
-### RuntimeBindings
-
-Frozen dataclass for runtime-only values: `spawn_id`,
-`runtime_work_id`, `chat_id`, `forked_harness_session_id`, `plan_overrides`, `dry_run`.
-These are the only things that differ between the preview bind and the real bind.
-The report and `system-prompt.md` paths are derived in `bind_launch_context` from
-`spawn_id` (the spawn log dir), not carried here.
-
-### Native identity order
-
-All runners use `bind_entry` before exec and `NativeRun.observe` for owned
-signals. Only a first signal contradicting pre-exec assignment or reusing a fork
-source fails the attempt. Later signals and the connection's current ID are
-store-authoritative diagnostics. `conclude_native_run` runs after teardown joins:
-artifact first ID, connection current ID, `observe_after_exit`, entry verification,
-exit allocation, one boundary write, typed failure or invocation attribution.
-Repeated delivery of the same ID within an attempt binds/logs once.
-New exit chats are allocated only when the exact native resolver finds a valid
-session; an already-bound exact chat still wins, including the entry chat. A verified
-exit chat is the post-run target for spawn references and resume hints; chat references
-remain immutable, and unresolved or mismatched runs target their entry chat.
-Invocation attribution waits for validation. Startup refusals
-outside runner finalization flow through `ops/spawn/failure_policy`.
-
-Claude fullscreen correlation is diagnostic, not owned exit evidence. Only
-Pi's correlated final quit currently supplies a verified exit. A tracked read
-requires the complete recorded native key; no legacy hint repair is allowed.
-
-### Exact Continue Replay
-
-A continue keeps the spawn's ID. `continue_launch` (step 1, `resolve_continue_target`: pick the spawn that
-owns the chat, before the caller builds anything; steps 2-4, `begin_continue`: take its launch lock, end and sweep the last launch, pre-check the cycle and the
-chat) returns a `ContinueHold`; the caller prepares, then `lifecycle.reopen` commits the next
-launch and the same lock becomes the runner's. `launch/` imports nothing from `ops/` here: callers
-pass the resolved row and target chat in.
-
-Primary `meridian --continue` and subagent `spawn --continue` are exact
-continuations. `continue_replay.py` owns the launch-level seam:
-`ContinueReplaySource` normalizes the resolved reference shape, and
-`ContinueReplayContract` carries the launch-ready result consumed by primary and
-spawn continue. Callers pass the authoritative recovered harness session ID into
-the source; recovery policy stays in `ops/reference.py`, not in launch.
-
-The contract replays the source task directory, work attachment, session identity,
-and launch-policy snapshot rather than resolving from the caller's current
-CWD/config/env. The absence of source work is a preserved value: exact continue
-suppresses inherited `MERIDIAN_ACTIVE_WORK_*` and inherited task-dir state when the
-source had none, instead of attaching the caller's ambient work/task context.
-
-Continuation revalidates its model and pinned harness through Mars under current
-target/caller restrictions. Explicit model input resolves normally; otherwise the
-recorded selection wins. Recorded canonical IDs are literal pins, including deliberate
-harness-default mode. A new invocation snapshot updates routing fields without
-rewriting the source snapshot.
-
-Replay preserves non-routing policy: agent/profile, skills and loaded content, the
-available-skills listing (names, descriptions and paths, never bodies), execution
-policy, `tool_rules` and `platform_tool_rules`, terminal surface, inventory prompt, env
-and passthrough args. Legacy `mcp_tools` is accepted when reading a snapshot and ignored
-because it contains permission names, not MCP configuration. Exact continue permits an
-explicit model override with a cache/cost warning; it still rejects agent, skills,
-execution-policy, passthrough, env, work and task-dir mutations. Agent opt-out is also a
-mutation.
-
-The system prompt is not stored separately: an exact continue recomposes it from the
-snapshot through the same prepare pipeline. Because every per-launch value lives in the
-user turn, identical snapshot inputs produce identical bytes within one Meridian
-version (a package upgrade may change the rendered guidance), which is what keeps Pi's
-and OpenCode's prompt cache warm. A real identity change on continue — a new goal, a
-primary-vs-spawn surface change — correctly changes the prompt instead of being hidden
-by a replay. Foreground and background spawns share one preamble, so continuing in the
-other mode is not an identity change. A snapshot an older build wrote lacks the
-available-skills field and recomposes without that listing.
-
-Claude is the exception in mechanism, not outcome: its `--system-prompt-snapshot`
-default is `on`, so the CLI records the prompt on the conversation's first request and
-reuses that record on every later request and resume, even when a later launch passes
-different text, until the conversation is compacted. Meridian still writes and passes
-the recorded prompt file; Claude discards it. Editing an agent profile or launch config
-therefore does not reach a continued Claude conversation until it compacts.
-
-Primary and spawn accepted-running callbacks append selection intent through
-`SessionAttempt`. Its captured generation/startup attempt also binds native-ID
-observations. A recording failure is a coordination error, not a reason to replay
-the model turn. The record means accepted selection, not
-model execution. Legacy baseline lookup reads the original session generation;
-the session scope seeds that value under the existing store lock before startup.
-Previews do not seed. Missing snapshots retain partial historical values; a
-tracked conversation with neither accepted selection nor original legacy history
-requires an explicit model rather than adopting a failed attempt's snapshot.
-Streaming-serve recording remains unimplemented.
-
-Primary adapters declare named-model resume support. Unsupported named resumes fail
-before native startup; a named selection never falls back to an empty model.
-
-KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
-
-### Three Driving Adapters
-
-Three paths enter the launch composition seam:
-
-1. **Primary CLI** (`launch/__init__.py:launch_primary()`): `prepare_launch_surface()`
-   once, then `bind_launch_context()` twice — dry-run preview uses the first bind;
-   `run_harness_process()` uses the second with real paths.
-
-2. **Spawn subprocess** (`ops/spawn/execute.py`): `compose_spawn_launch_surface()`
-   once per operation, then `bind_spawn_launch_context()` for preview and execute.
-   Foreground calls `execute_spawn_blocking()` → `launch_prepared_spawn()` →
-   `execute_with_streaming()`; background persists `BackgroundWorkerLaunchRequest`
-   and detaches a worker subprocess which calls `_execute_existing_spawn()` →
-   `launch_prepared_spawn()`. Both foreground and background converge at
-   `launch_prepared_spawn()`, which owns pre-run failure finalization.
-
-3. **CLI streaming-serve** (`cli/streaming_serve.py`): `SpawnApplicationService.prepare_spawn()`
-   implements resolve-before-persist — launch composition runs before any spawn
-   row is created. Row is only created on success (SEAM-1), then `run_streaming_spawn()`
-   runs from `streaming_runner.py`.
-
-### Finalization Ownership Layers
-
-Three concentric layers inside the spawn path, each defined by function scope:
-
-1. **Runner** (`execute_with_streaming`): sentinel locals initialized to `None`;
-   `finally` block handles partial-setup failures.
-2. **Helper** (`launch_prepared_spawn`): `except` catches pre-run exceptions, writes
-   `launch_failure`; safe because runner's `complete_spawn()` is idempotent.
-3. **Surface backstop**: last-resort around the entire post-row section in the
-   calling surface function.
-
-## Contracts
-
-### DTO Discipline
-
-- `SpawnRequest` and `LaunchRuntime`: frozen Pydantic, JSON-safe field types only.
-  No `Path` on `SpawnRequest`. No `arbitrary_types_allowed`.
-- `LaunchContext`: frozen dataclass. No pre-composed intermediate DTOs.
-- `SpawnRequest` carries resolved display metadata set at prepare time (`skill_paths`, `model_selection_*`, `selection_report`, `cli_command`, `permission_report`); executors must not compose from it. `PreparedLaunchSurface` caches the expensive resolution; `materialize_launch_context()` returns a new `LaunchContext`.
-
-Adding mutable state or `Path` fields to `SpawnRequest` breaks the JSON-safe
-constraint required for the background worker's disk-persisted request.
-
-### Rules this directory holds
-
-- All runtime composition goes through `prepare_launch_surface()` then `bind_launch_context()`; driving adapters and connections consume bound argv, env and permissions without reconstruction.
-- `conclude_native_run()` runs once per turn after teardown joins: IDs → adapter → boundary → attribution ([process/.context/CONTEXT.md](../process/.context/CONTEXT.md)).
-- Fork materialization (`fork.py`) happens only after the spawn row exists.
-- `LaunchContext.warnings` is the sole channel for composition warnings.
-
-### Composition Surfaces
-
-`LaunchCompositionSurface` on `LaunchRuntime` controls which projection path runs
-inside `prepare_launch_surface()`:
-
-- `PRIMARY` — interactive session; uses `harness.seed_session()`, normalizes passthrough args
-- `SPAWN_PREPARE` — subagent spawn; full prompt composition + reference loading
-- `DIRECT` — already-resolved request; skips policy resolution entirely
-
-`SPAWN_PREPARE` uses `LaunchArgvIntent.SPEC_ONLY` for execution paths; `LaunchArgvIntent.REQUIRED`
-only for `ops/spawn/prepare.py` dry-run display (needs a real argv for `cli_command`).
-Do not set `REQUIRED` on execution paths.
-
-### Mars Launch-Bundle Policy Resolution (`policies.py`)
-
-`PRIMARY` and `SPAWN_PREPARE` share `_resolve_policy_from_bundle()`. Mars resolves
-the model and harness; Meridian requires bundle schema 4 with report schema 2 and
-applies the returned launch bundle rather than reconstructing policy or fallback
-ordering. `selection_report` preserves Mars's `routing.route_trace` in snapshots,
-previews, and failure outputs as diagnostic history, never an executable retry queue.
-The adapter checks report pointers and selected identity against executable routing.
-Structured Mars errors retain their code and available report across pre-init failure.
-A schema-4 bundle without `provenance.network_source` came from Mars < 0.18 and is a hard
-composition error that names the selected executable and tells the user to upgrade
-Meridian. At this boundary, current
-`execution_policy.network` must be the Mars object `{mode, allow, deny}`; it is parsed once
-into `Allow(deny)`, `Hosts(allow, deny)`, or a typed sandbox-derived value. A null mode is
-resolved only after Meridian applies final sandbox precedence (including
-`primary.sandbox`), retaining denies and warning when a constrained sandbox drops allow
-hosts. The separate durable-policy parser continues to accept old scalar snapshots. Raw
-launch `NetworkOverrides` ride `BundleRequest` to Mars so its normal profile/overlay/CLI
-merge remains the only precedence implementation.
-
-### _MERIDIAN_HARNESS Child Env
-
-`bind_launch_context()` writes `_MERIDIAN_HARNESS = harness.id.value` into the child env.
-It is registered in `ALLOWED_CHILD_ENV_KEYS`; each bind overwrites any inherited
-value with the selected child harness before the complete environment crosses the
-connection boundary.
-
-The orchestrator reads `os.getenv("_MERIDIAN_HARNESS")` at wait time to determine
-its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
-not the spawns it is waiting on.
-
-### Direnv Inheritance
-
-`environment.ignore_direnv` is resolved from the config snapshot unless the launch
-request explicitly overrides it. Bind reverses direnv's recorded diff before
-deriving environment overlays (including OpenCode workspace JSON). Adapter defaults
-and executable probes consume the effective environment, never ambient `os.environ`.
-Bind emits the resolved `MERIDIAN_IGNORE_DIRENV` into the
-child environment. Descendants retain the decision even if direnv supplied its
-original env input. `env.py:undo_direnv` uses direnv's own reversal, with a bounded
-subprocess only when `DIRENV_DIFF` exists; captured environment and stderr must
-never appear in errors or artifacts. This does not prevent tools reloading `.env`.
-
-### The Launching Build on the Child PATH
-
-Two halves in `cli_shim.py`, one per side of the bind/materialize seam. It lives beside the
-launch code rather than in `env.py`: it needs `get_user_home` and `atomic_replace`, and
-`env.py` stays a pure env-plan module (it only owns `path_within`).
-
-- **Decide, in `bind_launch_context`, every mode including previews:**
-  `pin_launching_build` runs on the final env, after `build_env_plan`. In order: if
-  `meridian` on the child PATH is this build's own console script, return. If the shim
-  directory is inside `child_cwd`, a projected root or `/tmp`, return a warning and leave
-  PATH alone. If the shim is already the `meridian` found, return. Otherwise PATH becomes
-  the shim directory plus the old PATH (a plain prepend). A relative `meridian` found on
-  PATH counts as skew. It writes nothing, so previews and `--dry-run` are free, and a
-  primary launch (which shows only the preview bind's warnings) reports the refusal,
-  except where `config.env` changes PATH, which the preview ignores (`.context/FUTURE`).
-- **Write, in `materialize_launch_context`, real launches only:** `write_pinned_shim`
-  writes `$MERIDIAN_HOME/bin/<sha of shim text>/meridian` (`exec` of `module_argv("meridian")`
-  plus `"$@"`, mode 755) when it is first on PATH and missing. A failed write logs
-  `cli_shim_write_failed`; PATH then names a missing directory, which resolves like no pin.
-  The directory is named by the shim's text, so a format change gets a new directory and
-  no read-back is needed.
-
-Hooks, Pi extensions and the model's shell reach `meridian` by name, so no caller changes.
-The directory sits under the user home on purpose: a sandboxed agent cannot rewrite a file
-that `meridian spawn` runs unsandboxed. `child_cwd` is part of the write set but is not in
-`projected_roots`; `/tmp` is named explicitly because `TMPDIR` elsewhere drops it from
-the projected roots. `-P` stops a project's own `meridian/` directory from shadowing the
-package. A dead interpreter fails loud (exit 127); never fall back to the next `meridian`,
-which reintroduces the skew. A launch whose `meridian` is not first-resolved to this
-build's console script (pip `--user`, pyenv, wrappers) also gets a shim; it runs the same
-build. A refusal warning shows on primary and foreground-spawn launches; `--bg` spawns
-print nothing.
-
-### Harness Profile Env Projection at Bind
-
-Config-resolved harness profile values that the child must observe are baked into
-`child_context_env` during `bind_launch_context()`, not inherited from the
-ambient environment. For OpenCode, the resolved
-`[harness.opencode].version` preference (from the launch config snapshot, with a
-project-config fallback) is written to `MERIDIAN_HARNESS_OPENCODE_VERSION`.
-`resolve_opencode_version_for_launch()` owns the snapshot/env precedence; the key
-is registered child-injectable in `env_registry.py`. Right after `build_env_plan()`,
-bind calls `bind_launch_spec()` (the harness's `bind_spec` port), which resolves the
-version against that env once and stores it on the spec; the report, the env and argv
-projections, the preview and the connection all read the spec, so preview and
-execution select the same backend. Capture agrees through schema detection, not the
-env var.
-
-The same step lets the harness project config into the child env: after
-`build_env_plan()`, bind calls `harness.project_launch_env()` with the spec, the
-`system-prompt.md` path and the bound env, and merges the returned overrides into
-the final env. Adapters use this for forced launch policy: Claude's autocompact
-and spawned-cache overrides, Pi's runtime policy, and OpenCode's prompt, model
-and workspace grants (see the
-harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)).
-
-### Agent Inventory Prompt
-
-Agent inventory is bundle-only. Mars renders harness-aware inventory in the
-launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
-native-agent sections, model metadata). Meridian passes that content through verbatim;
-producer guidance belongs to Mars rather than string-matched patches in the consumer.
-There is no Python fallback inventory renderer.
-
-`model_invocable` filtering happens in mars at inventory render time. Catalog
-scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
-listing and explicit `-a <name>` resolution are unaffected.
-
-Resume and snapshot replay carry `bundle_inventory_prompt` on
-`LaunchPolicySnapshot` so inventory survives without re-calling mars. The same
-snapshot carries `available_skills` (names, descriptions, paths) so the
-`# Available Skills` listing recomposes instead of disappearing on continue.
-
-### Spawn CWD and Directory Contracts
-
-`cwd.py` owns the three-directory model that governs where spawned agents work,
-where references resolve, and where the child process actually runs:
-
-```
-authority_root          ← profiles, skills, config, KB authority
-logical_task_cwd        ← where the spawned agent works; relative -f resolves here
-actual_process_cwd      ← where the child process starts (may differ)
-```
-
-**`authority_root`** is the project/config root — profiles, skills, config, and
-KB references all resolve relative to this. It never changes based on work item
-selection.
-
-**`logical_task_cwd`** (also called `reference_anchor`) is where the spawned agent
-is expected to work. When a work item has a configured task directory, this is the
-task directory. Relative `-f` paths resolve from here. Set by `resolve_task_cwd()`
-from explicit task-dir/work-item intent, ambient work attachment, or the caller cwd
-when a nested spawn is launched from outside the project tree.
-
-**`actual_process_cwd`** is where the child process actually starts. It defaults
-to `authority_root` (the project/control root). Harness subprocess cwd always
-stays at control root; distinct task directories are exposed via `MERIDIAN_TASK_DIR`,
-bind-time env, and capability guidance — not by starting the process in the
-task directory.
-
-**Directory capability guidance.** Every primary and spawn prompt has one
-`# Meridian capabilities` section. Preparation leaves one typed placeholder;
-`bind_launch_context()` renders the whole block once, after the profile's spawn
-capability and declared mode and the final control root, logical task cwd, work
-item, chat and KB are known. Every execution has its own chat and therefore its own
-two links: the work directory (`work_link`, a literal path with no item ID, because
-the ID goes stale after `work switch`, and no scratch path, because `work done` moves
-it) and the source checkout (`task_link`, which replaces the concrete directory line
-and says to write the literal path, because `task-dir`, `work task-dir`, and a switch
-repoint it). Both are projections, not authority: each is a symlink to a link the
-work store keeps for the item (`work-items/<id>/work` and `task`), so a move of the
-item (`work done`, `reopen`, `task-dir`) never touches a chat link. `launch/
-session_links.py` computes the targets from the chat row and the spawn scope alone
-(`chat_link_targets()`, pure — it never asks the work store where an item lives) and
-swaps one symlink per link under the session write epoch; the launch env names the same
-paths (`MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_TASK_DIR`).
-
-**A checkout is pinned only when no store can recompute it.** The task link is the
-execution's pin, else its item's checkout, else the project root. Before publishing the
-links, `bind_launch_context()` pins the directory in the execution's spawn scope
-(`write_spawn_scope_task_dir()`) for the three launch facts nothing else records: an
-explicit `--task-dir`, a launch from a directory outside the project (an implicit
-`--task-dir`), and the pin its launcher passed on (`inheritable_task_dir()` reads the
-launcher's spawn scope, never `MERIDIAN_TASK_DIR`, which inside a managed run is the
-launcher's own link). A checkout that came from a work item or the project root needs no
-pin: the item's link recomputes it, so a child of an execution that merely follows its
-item follows `work task-dir` and `work switch` too. `meridian task-dir clear` removes the
-pin. The capability block carries a
-primary's own chat ID and its two links, because a primary's `--continue` replays no
-user turn; per-launch values are rendered into the first user turn
-(`build_launch_facts_prompt()`), because one changed byte in the system prompt
-invalidates the harness prompt cache for the whole conversation. That covers the run
-ID, a spawn's launching chat, and a spawn's two links — their paths name the spawn's
-own chat — plus a spawn's goal contract. Sibling spawns therefore send identical
-system bytes.
-A primary's `--goal` is a guidance block instead: it holds for the whole conversation,
-and goal text must never create a user turn. A primary that launches bare would
-otherwise submit the goal as its first message, fresh and on every resume, and a Codex
-primary would lose it entirely because its user turn is synthetic. A continued
-conversation inherits the goal from its row (`SpawnRecord.goal`) unless `--goal`
-overrides it. The work item's own goal is neither text nor user turn: the block
-carries a pointer, "run `meridian work show`", and that command resolves the session's
-current work item itself, so the prompt holds no goal that could be edited
-mid-conversation and no ID that could go stale. The block names
-`$MERIDIAN_ACTIVE_WORK_DIR` and `$MERIDIAN_TASK_DIR` for the links it names. Its run-ID row
-names `$MERIDIAN_SPAWN_ID` and points at `meridian task-dir --json`, which prints it as
-`spawn_id`: a restricted shell cannot expand the variable, and `meridian spawn list` lists runs
-without saying which one is the caller's. The notification
-row is present only for a `mode: primary` profile; delegation rows remain gated by
-spawn capability. The source line names the actual control root as shell cwd and gives
-the absolute task directory; when they match it collapses to one shorter line, and a
-primary's checkout is always the second form because its link never equals the
-control root.
-Restricted shells need the resolved paths because they refuse variable expansion and
-compound `cd` calls. Do not compose or append a second directory instruction before
-or after projection.
-
-Every prompt also has a short `# Meridian skills` block generated from the
-descriptions under `meridian.skills`. It is a trigger index, not loaded skill
-content: the agent reads a matching entry through `meridian skills`. A skill Mars
-loaded with non-blank content into the prompt is omitted from the index. An empty
-loaded entry has no prompt document, so its trigger remains. Bundled names use the
-`name__meridian` collision spelling. The
-`handoff__meridian`, `notify__meridian`, `messaging__meridian`, `work__meridian`,
-`escalation__meridian`, and `prompt-authoring__meridian` triggers carry
-`metadata.mode: primary`; `sessions__meridian` and `md-validation__meridian` remain
-visible to every profile. The gate follows the profile's
-declared mode even when a primary-mode profile is launched as a spawn, and comes from
-skill frontmatter rather than a hardcoded name set. Package skills remain on the Mars/harness path below.
-
-Spawn-capable prompts also receive `# Prompting subagents`: durable briefing
-judgment that must remain in the prompt even though flag mechanics live in the
-capability row and `meridian spawn -h`.
-
-Resolution priority in `resolve_task_cwd()`:
-1. explicit task-dir override
-2. explicit work item task_dir
-3. inherited task-dir (`MERIDIAN_TASK_DIR`)
-4. ambient work item task_dir
-5. caller cwd when outside the project tree (`source="ambient-cwd"`)
-6. authority root default
-
-**Stale task_dir fallback.** When a work item's configured `task_dir` no longer
-exists on disk (the common case after a worktree is removed post-merge),
-resolution skips the stale tier with a warning and falls through to the next
-valid tier. The fallback is read-time only — work state is never mutated on a
-read path. `WorkTaskDirMissing` is raised only when even the fallback
-`authority_root` does not exist; it is mapped to error name
-`work_task_dir_missing` at the pre-init boundary in `ops/spawn/pre_init.py`.
-Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this. Both read
-an item's `task_dir` through `work_store.item_task_dir()`, which finds the item active
-or done: a done item keeps its checkout, as its `task` link does.
-
-**Warning threading.** `TaskCwdResolution.warning` carries the stale-path
-warning from `resolve_task_cwd()`. Callers must explicitly merge it into
-`SpawnRequest.warning` because `launch_resolution.request_updates` does not
-include it. Both `launch_primary()` in `__init__.py` and `build_create_payload()`
-in `ops/spawn/prepare.py` perform this merge. Omitting the merge silently drops
-the warning — a trap for any new caller of `resolve_launch_inputs()`.
-
-### Reference Loading and Anchor Semantics
-
-`reference.py` owns `-f` reference file loading and template substitution.
-
-**Reference anchor** is `logical_task_cwd` — relative `-f` paths resolve from the
-task working directory, not from `authority_root`. This means reference paths are
-relative to where the agent works, not where config lives.
-
-**`kb:` prefix** resolves from the authority KB directory (`authority_root/.meridian/.../kb/`
-or configured KB root). The path after `kb:` must be relative and must not escape
-the KB root. Example: `kb:architecture/launch-system.md`.
-
-**`@` prefix is unsupported** — attempting to use it raises a `ValueError` directing
-the user to use `kb:` instead.
-
-Directory references (`-f <dir>`) render as a tree structure with blocked directories
-(`.git`, `node_modules`, `.meridian`, etc.) and blocked suffixes (`.pyc`, `.egg-info`)
-excluded. File references include content inline if under 100KB; larger or binary
-files produce a warning instead.
-
-### Work Item Task Directories
-
-Launch uses a work item's `task_dir` as its logical task cwd. Persisted
-`WorktreeMetadata` is state/display metadata only; launch does not provision or
-manage git worktrees.
-
-**Premature-derivation trap in `ops/spawn/prepare.py`.** `build_create_payload()`
-derives the parent's inheritable task dir via `inheritable_task_dir()` (its spawn-scope
-pin) before calling `resolve_launch_inputs()`. When an explicit `--task-dir` flag is
-present, `build_create_payload()` skips the derivation entirely
-(sets `inherited_for_child = None`), so CLI flags keep their documented precedence
-over anything inherited.
-
-### Workspace Projection
-
-`workspace_projection.py` owns `project_workspace_roots()`, the per-harness
-applicability that the config surface reports and bind's `task_cwd_not_projected`
-check reads. Claude and Codex project roots as `--add-dir` args; OpenCode reports
-`active` but projects nothing here: `OpenCodeAdapter.project_launch_env()` turns
-`spec.projected_roots` into `external_directory` grants in the one config it builds.
-
-Two steps inside `bind_launch_context()`:
-
-1. **Gate**: `resolve_workspace_snapshot_for_launch()` raises on `"invalid"` workspace.
-   `"none"` and `"present"` pass through.
-2. **Projection**: `project_workspace_roots()` reports per-harness applicability for
-   the roots (see above).
-
-Roots include workspace roots, git context clone roots, context projection roots
-(work, kb, extras), task cwd when task cwd is external, runtime root, and system
-temp dir. Bind pre-creates the exact project lifetime lock; POSIX lock acquisition opens
-an existing lock file read-only, so the shared sibling `.locks` directory is not projected.
-POSIX launches also
-project the private socket directory `/tmp/meridian-<uid>` so a sandboxed runner can bind
-its control endpoint. Roots are deduplicated in order. Extra args remain user-owned
-passthrough; they are not a workspace projection channel.
-
-**Task CWD projection gap.** When `task_cwd` is outside both `control_root` and
-all projected workspace roots, launch composition projects the exact task cwd
-for active projection harnesses. If workspace projection is not active, a
-`task_cwd_not_projected` warning is emitted. The launch continues but the agent
-doesn't automatically get access to the task directory — harness-specific
-configuration would be needed.
-
-### Logging Convention
-
-`launch/` uses `structlog.get_logger()`. Do not use stdlib `logging` here —
-the split matters because `capture_library_diagnostics()` wraps spawn preparation
-and captures stdlib warnings; structlog bypasses it and would leak to stderr.
-
-### `session_scope()` Teardown Contract
-
-A run holds its entry chat's lifetime lock (`sessions/<chat>.lock`) until it exits, even after
-`/clear` moves it to another chat. `start_session` waits at most two seconds for that lock (long enough for `doctor`'s brief hold or an owner mid-exit) and then raises
-`ValueError("Chat cN is held ...")`, so `--continue cN` never hangs on a live owner. The continue
-refuses such an owner earlier (`continue_launch.begin_continue`: the spawn's launch lock is held),
-and says so when the owner has moved to another chat.
-
-`session_scope()` in `session_scope.py` is the context manager for session lifetime.
-Its `finally` block has a two-phase teardown — both phases always run:
-
-```
-finally:
-  try:
-    stop_session(runtime_root, resolved_chat_id)      ← marks session record stopped
-  finally:
-    reclaim_session_owned_scopes_for_chat(...)         ← terminates session_owned process scopes
-```
-
-The inner try/finally ensures scope reclamation runs even if `stop_session` raises.
-After reclamation, a primary session makes one best-effort model observation
-(`observe_session_model(..., best_effort=True)`): try-locks only, history tail only, exceptions
-suppressed. It never delays reclamation, and a contended lock just skips the observation.
-`reclaim_session_owned_scopes_for_chat` terminates any process scopes the session owns
-(e.g., managed primary backends) that were not released during normal teardown.
-
-**Callers must not add manual scope cleanup after `session_scope`** — reclamation is
-guaranteed by the context manager. Adding cleanup outside it creates a race between the
-`finally` block and the caller's explicit cleanup.
-
-Reclamation takes each candidate spawn's launch lock exclusively and without waiting (busy:
-skipped, a live runner owns its scopes), then re-reads the row and re-checks its chat. The
-runner's own spawn is the one it holds, so every `session_scope` caller that is also the
-runner passes `launch_slot` and the exit reclaim uses that handle (a second `acquire` in the
-same process would find its own lock Busy and skip its own scopes).
-
-The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str, LaunchHandle | None],
-object]` for test injection; in production it always points to
-`reclaim_session_owned_scopes_for_chat`.
-
-### User-Turn Context Threading
-
-`--from` is resolved once, at the request boundary, into `ContextRef`s:
-`cli/primary_launch.py` for primary launches and `ops/spawn/prepare.py` for
-spawns (both through `ops/spawn/context_ref.resolve_context_ref`). The request
-carries only `context_refs`. Launch never resolves a ref; it renders them with
-`core/context_ref.render_context_refs`.
-
-`resolve_task_context_inputs()` in `context.py` is the single seam that turns
-`context_refs` and `-f` reference files into user-turn context blocks:
-
-The full four-mode session-initiation model and its rationale live at
-`$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md` (see `meridian context kb`).
-This code-local note records only the launch seam and the fields it threads.
-
-```python
-@dataclass(frozen=True)
-class TaskContextInputs:
-    reference_items: tuple[ReferenceItem, ...]
-    prior_output: str
-
-def resolve_task_context_inputs(
-    *,
-    context_refs: tuple[ContextRef, ...],
-    reference_files: tuple[str, ...],
-    authority_root: Path,
-    reference_anchor: Path,
-) -> TaskContextInputs: ...
-```
-
-Both `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()` call
-this function so both launch paths receive the same user-turn context inputs.
-
-**Content ordering** inside the assembled user turn:
-
-```
-1. -f reference blocks   (reference_items, rendered as context_blocks)
-2. --from prior-context  (render_context_refs + sanitize_prior_output)
-3. -p / --prompt-file    (current_request text)
-```
-
-**`SpawnRequest.prompt` is always the caller's raw prompt.** Every prepare composes
-from the request's inputs (`prompt`, `context_refs`, `reference_files`,
-`template_vars`); the composed text lives on the output side
-(`PreparedLaunchContent.final_prompt`, `prompt_payload.user_turn_content`, and
-after bind `binding.run_params.prompt`). The background worker and a session
-change in `execute_runner` both prepare the persisted request again, so writing
-the composed text back into `prompt` renders prior context and references twice.
-Values for metadata come from `context_ref_values(request.context_refs)`; nothing
-keeps a second string copy of the refs.
-
-**Do not unify `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`.**
-Only the user-turn context resolution step is shared. The two projections differ in
-supplemental documents, agent profile body handling, report instruction, completion
-contract, session seeding, and passthrough arg normalization. `resolve_task_context_inputs()`
-is the only shared extraction between them.
-
-#### Why User-Turn, Not System Prompt
-
-Prior context is rendered into the user turn, not the system prompt. The full
-rationale lives at `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md`;
-at this layer, the rule is simply to keep `--from` blocks in user-turn context
-blocks and out of `SystemInstruction`.
-
-### Skill Loading — Mars Bundle Interface
-
-Skill content comes from the Mars launch-bundle JSON (parsed in
-`bundle_adapter.py`), not from Meridian reading `.mars/skills/` on disk. This includes
-bundled Meridian skills Mars provided when a profile declares them. Mars reads the agent profile's `skills:` (a flat list
-means all `load`; a mapping has `load` and `available`), adds the `--skills`
-names Meridian passes as `--skill` to `load`, selects the harness variant, and
-returns:
-
-```
-skills.loaded[{name, skill_type, source_path, body}]   → _build_resolved_skills_from_bundle()
-                                                          → ResolvedSkills.loaded_skills
-skills.available[{name, skill_type, description, source_path}] → available listing (names only)
-skills.missing[name]                                   → warning, not a failed launch
-```
-
-Neither list is filtered by `model-invocable`. A loaded skill is composed in full
-whatever its value; `model-invocable` only decides whether the harness's own
-skill list shows it, and that list is not how loaded skills arrive. Don't add an
-invocability check on this path. The skill block header (`# Skill: /<name>`,
-`render_skill_block()` in `prompt_context.py`) tells the agent the skill is
-already loaded, because agents otherwise look for it in the harness list, miss
-it, and skip it. `meridian skills <name>` renders bundled skills through the same
-function, so reading one is indistinguishable from activating it.
-
-`SkillContent.path` is the bundle's `source_path` (the base `SKILL.md`, even when
-a variant body was selected); a reconstructed primary-root path is only the
-fallback for producers that omit it. The header's resource directory comes from
-this path.
-
-Snapshot replay consumes only the `loaded_skills` embedded in the snapshot. An empty
-field replays with no loaded skills; Meridian never re-resolves a snapshot against
-the current filesystem.
-
-### Loaded Skills Are Composition Documents
-
-Loaded skills reach the agent one way on every harness, primary and spawn:
-`compose_skill_prompt_documents()` turns them into supplemental documents in
-`_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`, and
-harness projection places them in the system prompt after the agent profile.
-Bind-time re-projection rebuilds from the same composed content, so the skills
-survive it without special handling. An exact continue takes them from the launch
-snapshot, including the on-demand `available_skills` listing (whose bodies the
-snapshot never stores), so the recomposed system prompt matches the conversation's.
-
-`skill_delivery` on the launch policy chooses what each document holds. `inline`
-(the default) writes the skill's body, headed with its name and directory. `named`,
-the experimental `[experimental] skill_delivery` setting, writes one line naming the
-file to read and the skill's `/name` instead — the file-read fallback is what keeps
-a `model-invocable: false` skill reachable, since no harness's skill tool lists it.
-The renderer never sees the mode: it groups documents by type and heads each group
-in both modes, so named delivery keeps the same headers and can only differ inside a
-skill's block. `# Available Skills` is unchanged in both modes. The mode is part of
-the persisted launch-policy snapshot, so an exact continue renders as its source
-launch did even when config or the environment changed; a snapshot written before
-the field existed replays as `inline`. Named mode points at the base `SKILL.md`, so
-on a harness with a `variants/<harness>/SKILL.md` it names the base file rather
-than the variant body Mars delivered.
-
-Don't add a second channel keyed on a harness capability. A native skill list
-shows only model-invocable skills, so a loaded skill that isn't model-invocable
-reaches the agent only through composition. Claude reads the appended prompt from
-`system-prompt.md` (`--append-system-prompt-file`), which `write_projection_artifacts()`
-writes from the full appended prompt. Capability guidance and loaded skills have
-already passed through the same harness projection by then.
-
-Delivery is the harness's job. OpenCode's happens in bind, where `project_launch_env()`
-puts the appended prompt in the child env as a config agent reading `system-prompt.md`
-(see the harness [OpenCode prompt delivery](../../harness/.context/CONTEXT.md#opencode-prompt-agent-and-model-delivery)),
-so loaded skills reach the agent with the rest of the prompt. Don't add a skill channel here.
-
-## Patterns
-
-**Never call `fork.materialize_fork()` before the spawn row exists.** Fork writes
-a session artifact referencing the spawn — the row must exist first.
-
-**Warnings go to `LaunchContext.warnings`, not stderr or logs.** Adapters that
-surface composition issues through other channels are wrong: they make warnings
-invisible to callers.
-
-**Background worker trusts the persisted `BackgroundWorkerLaunchRequest`.** It does
-not re-resolve model or harness from the spawn record. The request is already fully
-resolved when persisted. Empty `model` is accepted — model-optional profiles exist.
-
-**Use `session_scope()` when managed backends need cleanup at session end.** The
-context manager guarantees `reclaim_session_owned_scopes_for_chat()` runs even on
-exception paths. Do not replicate this logic inline.
-
-## Related KB
-
-- `architecture/launch-system.md` — full adapter diagram, prepare/bind split detail, module map
-- `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
-- `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation` — exact continue replay contract
-- `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
-- `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, who writes the terminal row
-- `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
-
-## Lateral Links
-
-- `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
-- `../../harness/` — adapters this layer calls into for `project_content()`, `bind_spec()`, `build_launch_argv()`
-
-### Dry-run model resolution
-
-Primary/launch preparation forwards dry-run to the existing Mars bundle and
-static alias-list `--no-refresh-models` options, including snapshot replay.
-OpenCode catalog-only routing must not run native availability
-probes or materialize a managed backend/session just to describe a launch. Normal
-execution retains its live availability behavior. This does not promise a wholly
-write-free CLI: telemetry/root/static-cache setup may still write local files.
-OpenCode inherited config must remain a JSON object through workspace projection;
-malformed input is rejected, not silently replaced with an empty configuration
-before adapter validation.
-
-OpenCode permissions are compiled in `harness/projections/permissions_opencode.py`
-and projected with workspace grants into the reserved config agent by
-`project_opencode_config.py`. `OpenCodeAdapter.project_launch_env()` writes
-`OPENCODE_CONFIG_CONTENT` at bind for both versions; transports consume it unchanged.
-The ordered policy precedes appended workspace grants, and JSON serialization must
-preserve rule order. See [harness context](../../harness/.context/CONTEXT.md).
-
-## Skill loading (from AGENTS.md)
-
-Mars-resolved skill content comes from the launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
-not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
-constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
-workspace projection. This includes bundled Meridian skills when the profile loads their
-Mars-provided copies. It reconstructs a primary-root path only for older producers that omit
-provenance. Snapshot replay uses only its persisted `loaded_skills`; an empty field means no
-skills are loaded.
-
-Meridian-owned operational skills stay in the wheel and are provided into the
-resolved Mars root before each launch. `bundled_skills.py` owns both the wheel
-inventory and the source a named `meridian skills` read may use. Names Mars reports
-as provided read from `.mars/skills/`; all others read from the wheel. Provided
-skills never enter harness-native skill directories.
-
-Wheel metadata builds the `# Meridian skills` trigger block. A skill already loaded
-by the Mars launch bundle has no trigger line, in either delivery mode: it is read
-from the bundle's copy, so a trigger could only point at a different copy. Otherwise,
-optional `metadata.mode` frontmatter gates the trigger on the resolved profile's
-declared mode, independent of whether the launch is a primary session or a spawn. The
-notify capability line uses the same mode gate. `meridian skills NAME` renders the
-selected copy under the same activation header injected skills get
-(`render_skill_block()`).
-
-The `bundle_adapter.py` module docstring inventories bundle fields Meridian deliberately does
-not read. `tools.rules` is the permission contract; `tools.mcp` is a flat list of permission
-names, never MCP server configuration.
-
-## Startup watchdog (from AGENTS.md)
-
-`_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
-span — backend boot, connection, and session handshake — with an outer
-`asyncio.timeout`. Default bound is 5 minutes, configured via
-`timeouts.startup_minutes` or `MERIDIAN_STARTUP_TIMEOUT_MINUTES`. Both the spawn
-path (`execute_with_streaming`) and the streaming-serve path (`run_streaming_spawn`)
-use the same helper. Exceeding the bound raises `StartupPhaseTimeout`, which the
-runner preserves as the turn's terminal failure.
-
-Rationale: before the watchdog, the pre-connect span was unbounded by accident. The
-recorded worst case was a spawn that wedged for 2h18m before any liveness signal.
-
-## Single-attempt execution and late diagnostics (from AGENTS.md)
-
-A Meridian harness turn executes once. Terminal frames, transport failures,
-timeouts, guardrails, identity failures, and generic subprocess failures all
-finalize that attempt without launch-level replay. Reports, usage, and identity
-come from `AttemptFacts` folded on live events; explicit terminal errors remain
-the causal final result. Transport-owned readiness polling may retry only within
-an adapter when the operation is demonstrably idempotent.
-
-Runner lifecycle diagnostics can execute after async boundaries. Their
-parent-creating writes use the published-spawn artifact mutation seam; never append
-late diagnostics directly into a spawn directory that retention may have deleted.
-Streaming budget checks observe typed cumulative `AttemptFacts.usage` immediately
-after the inline fold, before subscriber fan-out. Harness wire costs must first
-be normalized by the harness fold; a subscriber backlog cannot hide a breach.
-
-## Per-launch values stay out of the system prompt (from AGENTS.md)
-
-per-conversation values may stay in. Every execution has its own chat and so its own
-two links — `sessions/<chat>/work` and `sessions/<chat>/task` (`session_links.py`) —
-and their paths are per-launch for a spawn and per-conversation for a primary. So a
-spawn's run ID, its launching chat, and those two links go in the first user turn
-(`build_launch_facts_prompt()`), never the system prompt: sibling spawns then send
-byte-identical system bytes. A primary's own chat ID and its two links stay in the
-capability block, because a `--continue` replays no user turn. A primary gets no run-ID
-line: it exists so a caller can find and wait on a spawn, and a primary's handle is its chat ID. Bind also pins a
-checkout no store can recompute — this run's `--task-dir`, a launch from outside the
-project, or the pin its launcher passed on (read from the launcher's spawn scope, never
-from `MERIDIAN_TASK_DIR`) — in the execution's spawn scope before it publishes the
-links, and nothing else: a checkout that came from the item or the project root follows
-`work task-dir` and `work switch`, and `meridian task-dir clear` removes the pin. A spawn's `--goal`
-contract is its task turn (`_build_goal_instruction`'s text); a primary's is a
-guidance block, because goal text must never create a user turn, or a bare primary
-submits the goal as its first message, fresh and on every resume. A continued
-conversation inherits the goal from its row (`SpawnRecord.goal`), the way a continued
-spawn does. The work item's own goal is a pointer instead — `meridian work show`
-resolves the current item, so neither the text nor an ID that could go stale enters
-the prompt. An exact continue recomposes the system prompt from the launch snapshot
-(profile, loaded and available skills, inventory, execution policy, tools); within one
-Meridian version identical inputs produce identical bytes, so a fresh launch shares
-the cached prefix with its siblings and a continue keeps the conversation's. Only a
-real identity change — a new goal, surface, or config — may change them. Foreground
-and background spawns share one preamble for the same reason.
+# Launch contracts and rationale
+
+## Composition and identity
+
+Preparation resolves policy and composes content once; binding supplies per-run
+values and can be repeated for preview and execution. Materialization performs
+adapter writes only for real launches. Dry-run preparation forwards `--no-refresh-models`
+to Mars bundle and alias-list paths, including snapshot replay. OpenCode catalog-only
+routing runs no native availability probes and materializes no managed backend or
+session to describe the launch. Other CLI setup may still write local files.
+The spawn path has overlapping runner,
+launch-helper and surface finalizers so partial setup and pre-run failures all
+settle the row; idempotent completion makes the overlap safe.
+
+Bind replaces the inherited caller boundary with the new process's sandbox,
+spawn capability and network policy in the child environment; the child-spawn
+guardrail uses it to reject weaker child policy. User-config detection contributes warnings,
+not the child guardrail or permission report. Projected roots are not part of that
+guardrail. Mars owns model and harness selection and policy precedence; its route
+trace is diagnostic, not a retry queue. The network default is resolved after final
+sandbox precedence, retaining denies; old durable snapshots may use scalar policy.
+
+Runners bind the assigned native session identity before exec, then conclude after
+teardown by validating and publishing the identity boundary: observe
+artifact and connection IDs, consult the adapter, verify entry, allocate an exact
+exit chat, write the boundary and attribute the invocation. A first observation of the launched process’s own native session ID
+that conflicts with assignment or reuses a fork source fails the attempt; subsequent
+IDs are diagnostics. Attribution waits for validation. An exact verified exit chat
+is the target for spawn references and resume hints; unresolved or mismatched runs
+retain the entry chat. Chat references themselves do not change.
+
+## Exact continue
+
+Primary and spawn continue retain the spawn ID and replay the source task directory,
+work attachment, session identity and policy snapshot, including an absent work
+attachment. Ambient caller work or task state must not fill that absence. The
+launch lock covers ending the previous launch, checking the next launch, reopening
+and execution. Dry-run does not write a new launch.
+
+Mars revalidates the recorded model and pinned harness against current restrictions.
+An explicit model override is allowed with a cache/cost warning; agent, skills,
+execution policy, passthrough, environment, work and task-dir changes are rejected.
+The snapshot supplies loaded skills and the available-skills listing; it is not
+re-resolved against the filesystem. Selection records mean accepted selection, not
+model execution; a recording failure must not replay the turn. An unsupported named
+model resume fails before startup instead of silently using the harness default.
+
+The system prompt is recomposed from the snapshot. Identical inputs within one
+Meridian version yield identical bytes for prompt caching; a changed goal or surface
+can change them. Foreground and background spawns share a preamble. Claude's
+`--system-prompt-snapshot` defaults on: Claude records the first request's system
+prompt and reuses it on resume until compaction, even if Meridian passes different
+text. Profile or launch-config edits therefore cannot reach that conversation until
+compaction.
+
+## Prompt and skills
+
+Put `--from` prior output and reference files in the user turn, ahead of the current
+request. Prior output can contain user-generated text and must not acquire the
+system prompt's implicit authority. Keep spawn-specific IDs, launching chat and
+session links there too: changing those bytes in the system prompt would invalidate
+sibling prompt caches. A primary's own chat and links remain in its capability block
+because continue replays no user turn. A primary goal is guidance, not a user turn:
+otherwise a bare launch would submit it as the first message. A work item's goal is
+looked up with `meridian work show` so the prompt cannot retain stale text or an ID.
+
+Mars supplies skill bodies through the launch bundle. Do not filter loaded skills by
+`model-invocable`: the harness-native skill list may omit them, and composition is
+their delivery channel. Loaded skill headers say they are already loaded so agents
+do not look for them in that list. Bundle `tools.mcp` contains permission names,
+not MCP server configuration. Named skill delivery points at the base skill file,
+including when Mars selected a harness variant; inline delivery includes the selected
+body. The snapshot preserves the delivery mode on continue.
+
+The Meridian skills block is a trigger index, not loaded content. It omits a skill
+already loaded with nonblank content so the trigger cannot point to a different copy.
+The block appears in both primary and subagent modes; each listed skill must have
+no mode or match the profile's declared mode (default `subagent`). The agent catalog is also looked
+up live through `meridian spawn subagents`, so a long session can see newly installed
+agents without embedding the catalog in every prompt.
+
+## Directories and references
+
+| Directory | Meaning |
+| --- | --- |
+| `authority_root` | Project/config root for profiles, skills and KB references. |
+| `logical_task_cwd` / `reference_anchor` | Where the agent is expected to work and where relative `-f` paths resolve. |
+| `actual_process_cwd` | Child process cwd, normally the control root even when the task directory differs. |
+
+A session's work and task paths are literal symlinks that follow work switches and
+moves. The task path resolves from an execution pin, then its work item, then the
+project root. Pin only a checkout the store cannot recompute: explicit task-dir, an
+outside-project launch, or an inherited pin read from the launcher's spawn scope.
+Do not inherit `MERIDIAN_TASK_DIR` itself: in a managed run it names the launcher's
+link. A checkout derived from an item follows later work switches. Restricted shells
+need literal paths because they cannot expand variables or run compound `cd` calls.
+
+Task directory precedence is explicit override, explicit work item, inherited pin,
+ambient work item, outside-project caller cwd, then authority root. A missing work
+item task directory falls through with a warning without changing stored work state;
+callers of `resolve_launch_inputs()` must carry that warning into the request.
+`kb:` references resolve under the authority KB root and cannot escape it. Launch
+uses worktree metadata for state and display, not to provision worktrees.
+
+Workspace projection grants access to relevant roots, including an external task
+cwd, runtime, temporary and control socket directories. Claude and Codex use
+`--add-dir`; OpenCode adds external-directory grants to its config. When projection
+is inactive, an external task cwd yields a warning but the launch continues; the
+harness may need separate access configuration. Do not use passthrough arguments as
+a workspace projection channel.
+
+## Environment and lifetime
+
+Ignoring direnv reverses its recorded diff before deriving overlays and propagates
+the decision to descendants. The reversal can run a bounded subprocess during bind;
+never expose its captured environment or stderr in errors or artifacts. It does not
+stop tools from reloading `.env`.
+
+The child PATH may be pinned to a shim for the launching Meridian build so hooks,
+extensions and agents invoke the same build. The shim must not be placed in a
+child-writable root: an agent could replace a command that later runs unsandboxed.
+Bind plans the pin; materialization writes it. A dead interpreter fails rather than
+falling back to another `meridian` on PATH and silently changing builds.
+
+A session holds its entry chat lifetime lock until exit, even if `/clear` changes
+its chat. Session teardown stops the session and reclaims session-owned scopes even
+if stopping fails. Reclamation skips busy launch locks, then rechecks the row and
+chat under the lock; a runner passes its own lock handle because acquiring the same
+lock again would skip its own scopes. Do not add separate cleanup after the scope.
+
+Use structlog in this layer: the spawn preparation diagnostic capture wraps stdlib
+logging, while structlog follows a different output path.
+
+## Execution
+
+The startup watchdog bounds backend boot, connection and session handshake for
+both streaming spawn surfaces. A harness turn executes once; a terminal error,
+transport failure, timeout, guardrail or identity failure does not trigger launch-level
+replay. Adapter readiness polling may retry an operation that is demonstrably
+idempotent. Streaming budget checks consume normalized cumulative usage immediately
+after event folding, before subscribers can backlog.
+
+[Primary process contracts](../process/.context/CONTEXT.md) cover terminal ownership
+and signals. [Harness context](../../harness/.context/CONTEXT.md) covers adapter
+projection and prompt delivery.

@@ -11,7 +11,7 @@ from meridian.lib.harness.projections._guards import (
 )
 from meridian.lib.harness.projections.compaction import project_codex_autocompact_args
 from meridian.lib.harness.projections.native_config import (
-    CODEX_CONFIG_APPROVAL_POLICY_KEY,
+    CODEX_CONFIG_APPROVALS_REVIEWER_KEY,
     CODEX_CONFIG_NOTIFY_KEY,
     CODEX_CONFIG_REASONING_EFFORT_KEY,
     project_codex_native_config,
@@ -19,6 +19,7 @@ from meridian.lib.harness.projections.native_config import (
 from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.projections.project_codex_common import (
     CODEX_DISABLE_BUILTIN_AGENT_FLAGS,
+    project_codex_approval_args,
     project_codex_sandbox,
     project_codex_tool_switch_flags,
 )
@@ -165,13 +166,7 @@ def project_codex_spec_to_appserver_command(
     sandbox = project_codex_sandbox(spec, permissions)
     command.extend(sandbox.appserver_args())
 
-    if permissions.approval_policy is not None:
-        command.extend(
-            (
-                "-c",
-                f"{CODEX_CONFIG_APPROVAL_POLICY_KEY}={json.dumps(permissions.approval_policy)}",
-            )
-        )
+    command.extend(project_codex_approval_args(permissions))
 
     command.extend(project_codex_tool_switch_flags(permissions))
 
@@ -232,6 +227,8 @@ def project_codex_spec_to_thread_request(
     sandbox = project_codex_sandbox(spec, permissions)
     if permissions.approval_policy is not None:
         payload["approvalPolicy"] = permissions.approval_policy
+    if permissions.approvals_reviewer is not None:
+        thread_config[CODEX_CONFIG_APPROVALS_REVIEWER_KEY] = permissions.approvals_reviewer
 
     sandbox_fields, sandbox_config = sandbox.thread_fields()
     payload.update(sandbox_fields)

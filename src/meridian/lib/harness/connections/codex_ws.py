@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
-import importlib.util
 import json
 import logging
 import os
@@ -17,13 +15,19 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
-from aiohttp import ClientSession, WSMsgType
+import websockets
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian import __version__
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import (
+    TUI_MOVED_MESSAGE,
+    DeliveryKind,
+    DeliveryRefused,
+    TransportDead,
+)
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -35,12 +39,12 @@ from meridian.lib.harness.codex_rollout import (
     find_attachable_rollout_session_id,
     resolve_codex_home,
 )
+from meridian.lib.harness.codex_tool_hook import check_hooks_list
 from meridian.lib.harness.connections.base import (
     MAX_HARNESS_MESSAGE_BYTES,
     AutoAcceptHandler,
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     HarnessRequest,
@@ -51,6 +55,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -58,15 +63,14 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.liveness import (
     BackendLivenessPolicy,
     EventStreamLivenessTimeout,
+    LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
-    ResidentBackendControl,
-)
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
 from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
@@ -98,13 +102,6 @@ _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
-def _load_websockets_module() -> Any | None:
-    if importlib.util.find_spec("websockets") is None:
-        return None
-    return importlib.import_module("websockets")
-
-
-_WEBSOCKETS_MODULE: Any | None = _load_websockets_module()
 logger = logging.getLogger(__name__)
 
 
@@ -133,13 +130,9 @@ def _ws_is_open(ws: object) -> bool:
 def _is_clean_websocket_close(exc: BaseException) -> bool:
     """Return whether a websocket close exception represents normal closure."""
 
-    exceptions_module = getattr(_WEBSOCKETS_MODULE, "exceptions", None)
-    connection_closed_ok = getattr(exceptions_module, "ConnectionClosedOK", None)
-    if connection_closed_ok is not None and isinstance(exc, connection_closed_ok):
+    if isinstance(exc, ConnectionClosedOK):
         return True
-
-    connection_closed_error = getattr(exceptions_module, "ConnectionClosedError", None)
-    if connection_closed_error is None or not isinstance(exc, connection_closed_error):
+    if not isinstance(exc, ConnectionClosedError):
         return False
 
     for attr in ("rcvd", "sent"):
@@ -147,52 +140,6 @@ def _is_clean_websocket_close(exc: BaseException) -> bool:
         if getattr(close_frame, "code", None) == 1000:
             return True
     return False
-
-
-class _AiohttpWebSocketCompat:
-    """Compatibility layer matching the subset of the websockets API we use."""
-
-    def __init__(self, session: ClientSession, ws: Any) -> None:
-        self._session = session
-        self._ws = ws
-
-    @property
-    def closed(self) -> bool:
-        return bool(self._ws.closed)
-
-    async def send(self, data: str) -> None:
-        await self._ws.send_str(data)
-
-    async def close(self) -> None:
-        with contextlib.suppress(Exception):
-            await self._ws.close()
-        await self._session.close()
-
-    def __aiter__(self) -> _AiohttpWebSocketCompat:
-        return self
-
-    async def __anext__(self) -> str | bytes:
-        while True:
-            message = await self._ws.receive()
-            msg_type = message.type
-            if msg_type is WSMsgType.TEXT:
-                return cast("str", message.data)
-            if msg_type is WSMsgType.BINARY:
-                return cast("bytes", message.data)
-            if msg_type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
-                raise StopAsyncIteration
-            if msg_type is WSMsgType.ERROR:
-                raise RuntimeError("Aiohttp websocket reported an error")
-
-
-async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
-    session = ClientSession()
-    try:
-        ws = await session.ws_connect(ws_url, max_msg_size=MAX_HARNESS_MESSAGE_BYTES)
-    except Exception:
-        await session.close()
-        raise
-    return _AiohttpWebSocketCompat(session, ws)
 
 
 class _CodexRpcError(RuntimeError):
@@ -248,8 +195,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id: str | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._primary_observer_mode = False
+        self._tui_left_thread = False
+        self._helper_thread_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._event_stream_ended = False
 
@@ -382,7 +330,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._thread_id = None
         self._liveness.reset()
         self._cancel_requested = False
-        self._signal_in_flight = False
 
         host = config.ws_bind_host
         port = config.ws_port if config.ws_port > 0 else _reserve_port(host)
@@ -438,6 +385,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 timeout_seconds=self._connect_timeout(),
             )
             await self._notify("initialized")
+            await self._require_tool_hook(spec, effective_cwd)
 
             if self._is_fresh_session(spec):
                 self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
@@ -469,6 +417,33 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._transition("failed")
             await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _require_tool_hook(self, spec: ResolvedLaunchSpec, cwd: Path) -> None:
+        """Refuse the launch unless Codex lists the shell-rule hook as trusted and enabled.
+
+        Codex skips an untrusted hook without a word and fails open on every hook failure, so
+        a launch whose profile needs the hook must not start a thread without it. A Codex
+        with no ``hooks/list`` answers with a JSON-RPC error and is refused the same way.
+        """
+
+        if compile_codex_permissions(spec)[0].tool_hook is None:
+            return
+        try:
+            listing = await self._request(
+                "hooks/list",
+                {"cwds": [str(cwd)]},
+                timeout_seconds=self._connect_timeout(),
+            )
+        except _CodexRpcError as exc:
+            raise RuntimeError(
+                "This profile's scoped shell rules need Codex's hooks/list to confirm the "
+                f"enforcing hook, and this Codex does not answer it ({exc}). Upgrade Codex."
+            ) from exc
+        problem = check_hooks_list(listing)
+        if problem is not None:
+            raise RuntimeError(
+                f"The shell-rule hook is not running, so the launch is refused: {problem}"
+            )
 
     async def _cleanup_start_failure(self) -> None:
         async with self._stop_lock:
@@ -533,30 +508,32 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def resident_backend(self) -> ResidentBackendControl:
-        return LivenessResidentBackendControl(
-            liveness=self._liveness,
-            backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
-        )
+        return self._liveness
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
+    def backend_dead(self) -> bool:
+        # A silent but living process is stalled, which `health` counts and this does not.
+        return (
+            self._resident_backend_dead()
+            or self._liveness.classify_close_stream() is LivenessDecision.BACKEND_DEAD
+        )
+
     async def send_user_message(self, text: str) -> DeliveryKind:
-        return await self._send_input(text, "send_user_message")
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        await self._send_input(message, "begin_followup_turn")
-
-    async def _send_input(self, text: str, operation: str) -> DeliveryKind:
         """Steer the running turn, else start one; a steer racing a turn end starts one.
 
-        Only a JSON-RPC error (the server refused, nothing delivered) falls back; a
-        timeout or transport failure after the write propagates, never a second send.
+        Only a JSON-RPC error (the server refused, nothing delivered) falls back, and a
+        refused ``turn/start`` is ``DeliveryRefused``; a timeout or transport failure
+        after the write propagates, never a second send.
         """
-        self._require_connected(operation)
-        self._signal_in_flight = False
-        thread_id = self._require_thread_id(operation)
+        self._require_connected("send_user_message")
+        if self._tui_left_thread:
+            raise DeliveryRefused(TUI_MOVED_MESSAGE)
+        if self._ws is None or not _ws_is_open(self._ws):
+            # A send on a closed websocket writes nothing.
+            raise TransportDead("Codex websocket is closed")
+        thread_id = self._require_thread_id("send_user_message")
         if self._current_turn_id:
             try:
                 await self._request(
@@ -572,10 +549,13 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 # The turn ended as the steer went out (expectedTurnId no longer matches).
                 # An idle thread starts a turn; app-server 0.166.0 joins a busy thread's turn.
                 pass
-        await self._request(
-            "turn/start",
-            {"threadId": thread_id, "input": _build_text_user_input(text)},
-        )
+        try:
+            await self._request(
+                "turn/start",
+                {"threadId": thread_id, "input": _build_text_user_input(text)},
+            )
+        except _CodexRpcError as exc:
+            raise DeliveryRefused(str(exc)) from exc
         return DeliveryKind.ACKNOWLEDGED
 
     async def send_cancel(self) -> None:
@@ -587,7 +567,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._require_connected("send_cancel")
 
         self._cancel_requested = True
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._close_ws()
@@ -651,12 +630,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raise self._startup_exit_exception()
 
             try:
-                if _WEBSOCKETS_MODULE is not None:
-                    return await _WEBSOCKETS_MODULE.connect(
-                        ws_url,
-                        max_size=MAX_HARNESS_MESSAGE_BYTES,
-                    )
-                return await _aiohttp_connect(ws_url)
+                return await websockets.connect(ws_url, max_size=MAX_HARNESS_MESSAGE_BYTES)
             except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(0.1)
@@ -675,7 +649,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         ws = self._ws
         if ws is None:
-            raise RuntimeError("Codex websocket is not connected")
+            raise not_ready(self._state, "Codex websocket is not connected")
 
         payload: dict[str, object] = {
             "jsonrpc": "2.0",
@@ -742,21 +716,26 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         try:
-            ws_iter = ws.__aiter__()
             while True:
                 try:
-                    raw_message = await self._liveness.wait_for_activity(ws_iter.__anext__())
-                except StopAsyncIteration:
-                    return
+                    # Not ``async for``: the liveness wait cancels a pending read, and
+                    # cancelling the iterator's async generator ends it for good.
+                    # ``recv`` is cancellation-safe, so a quiet observer keeps reading.
+                    raw_message = await self._liveness.wait_for_activity(ws.recv())
                 except EventStreamLivenessTimeout:
+                    if (
+                        self._primary_observer_mode
+                        and self._liveness.evaluate() is not LivenessDecision.BACKEND_DEAD
+                    ):
+                        # An idle primary is quiet, not failed, and this connection is
+                        # the route a sender needs: only a dead backend ends it.
+                        self._liveness.mark_activity()
+                        continue
                     message = (
                         "Codex event stream liveness timeout after "
                         f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
                     )
-                    logger.log(
-                        logging.DEBUG if self._primary_observer_mode else logging.WARNING,
-                        message,
-                    )
+                    logger.warning(message)
                     await self._emit_connection_closed_once({"message": message})
                     return
                 except Exception as exc:
@@ -979,7 +958,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             self._thread_id = None
             self._cancel_requested = False
-            self._signal_in_flight = False
             self._launch_spec = None
             self._codex_home = None
             self._startup_emitter = None
@@ -1152,6 +1130,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> None:
         if method == "serverRequest/resolved":
             await self._resolve_server_request(payload)
+        elif method == "hook/completed":
+            self._warn_hook_failure(payload)
+        self._note_tui_thread(method=method, payload=payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
             RawHarnessEvent(
@@ -1160,6 +1141,25 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 harness_id=self.harness_id.value,
                 raw_text=raw_text,
             )
+        )
+
+    def _warn_hook_failure(self, payload: dict[str, object]) -> None:
+        """Say when Meridian's shell hook failed to decide, since Codex then lets the call run.
+
+        A crash of the enforcer is a block, not a failure; this is the timeout, the one
+        failure the hook command cannot turn into a block.
+        """
+
+        run = payload.get("run")
+        if not isinstance(run, dict):
+            return
+        hook = cast("dict[str, object]", run)
+        if hook.get("source") != "sessionFlags" or hook.get("status") != "failed":
+            return
+        logger.warning(
+            "Codex shell-rule hook failed for spawn %s, so its shell call ran unchecked: %s",
+            self._spawn_id,
+            hook.get("entries"),
         )
 
     async def _resolve_server_request(self, payload: dict[str, object]) -> None:
@@ -1203,19 +1203,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         except Exception:
             logger.warning(
                 "Codex request handler failed to persist resolved state for request %s",
-                request_id,
-                exc_info=True,
-            )
-
-    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
-        callback = getattr(self._request_handler, "on_request_failed", None)
-        if callback is None:
-            return
-        try:
-            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
-        except Exception:
-            logger.warning(
-                "Codex request handler failed to persist failure state for request %s",
                 request_id,
                 exc_info=True,
             )
@@ -1308,14 +1295,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _require_connected(self, operation: str) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"Codex connection is not connected; cannot {operation} from state '{self._state}'"
+            raise not_ready(
+                self._state,
+                f"Codex connection is not connected; cannot {operation} from state '{self._state}'",
             )
 
     def _require_thread_id(self, operation: str) -> str:
         thread_id = self._thread_id
         if thread_id is None:
-            raise ConnectionNotReady(f"Codex thread ID is unavailable; cannot {operation}")
+            raise DeliveryRefused(f"Codex thread ID is unavailable; cannot {operation}")
         return thread_id
 
     def _connect_timeout(self) -> float:
@@ -1430,11 +1418,57 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise TypeError("Codex managed-primary bootstrap returned invalid types")
         return method_obj, cast("dict[str, object]", payload_obj)
 
+    def _note_tui_thread(self, *, method: str, payload: dict[str, object]) -> None:
+        """Latch ``_tui_left_thread`` when the TUI opens or resumes another thread.
+
+        The app-server broadcasts lifecycle notifications for every thread to every
+        client, but turn events only to the thread's own client, so the move shows
+        only as these. ``/new`` and ``/fork`` announce a non-ephemeral, parentless
+        ``thread/started``; ``/resume`` of a loaded or unloaded thread sends no
+        ``thread/started``, only a status or goal event naming it. Helper threads
+        (titles seen ephemeral, others judged by the same rule; subagents) are ephemeral or
+        parented and are announced first.
+        ``thread/closed`` and ``notLoaded`` are unloads, never a move.
+        """
+        if not self._primary_observer_mode or self._tui_left_thread:
+            return
+        thread_id = _extract_thread_id(payload)
+        if thread_id is None or thread_id == self._thread_id:
+            return
+        if method == "thread/started":
+            thread = cast("dict[str, object]", payload.get("thread") or {})
+            if thread.get("ephemeral") or thread.get("parentThreadId"):
+                # Recorded even before our own id is known: a helper started during
+                # session init must not read as a move when its status arrives.
+                self._helper_thread_ids.add(thread_id)
+                return
+        if self._thread_id is None:
+            return
+        if method == "thread/status/changed":
+            status = payload.get("status")
+            status_type = (
+                cast("dict[str, object]", status).get("type") if isinstance(status, dict) else None
+            )
+            if status_type not in {"idle", "active"}:
+                return
+        elif method not in {"thread/started", "thread/goal/cleared"}:
+            return
+        if thread_id in self._helper_thread_ids:
+            return
+        self._tui_left_thread = True
+        logger.warning(
+            "Codex TUI left thread %s for %s (%s); messages are refused",
+            self._thread_id,
+            thread_id,
+            method,
+        )
+
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
-        if method in {"thread/start", "thread/started"}:
-            thread_id = _extract_thread_id(payload)
-            if thread_id is not None:
-                self._thread_id = thread_id
+        thread_id = _extract_thread_id(payload)
+        if thread_id is not None and thread_id != self._thread_id:
+            # The app-server announces its own helper threads (titles, memory) to every
+            # client, and the TUI may open others: only this connection's thread counts.
+            return
 
         turn_id = _extract_turn_id(payload)
         # A background terminal's delta carries the finished turn's id: only a start
@@ -1446,13 +1480,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id
             self._liveness.signal_turn_started(turn_id)
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
             self._end_current_turn()
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     def _end_current_turn(self) -> None:

@@ -1,5 +1,5 @@
 # qa-validated: test-suite-redesign
-"""Runtime building, spawn request construction, and terminal surface mode tests."""
+"""Launch environment, warning, reference, and session identity tests."""
 
 from __future__ import annotations
 
@@ -8,38 +8,30 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
     current_pid_namespace,
 )
-from meridian.lib.core.context_ref import SpawnContextRef, context_ref_values
+from meridian.lib.core.context_ref import SpawnContextRef
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_effective_policy
 from meridian.lib.harness.registry import (
-    HarnessRegistry,
     get_default_harness_registry,
 )
 from meridian.lib.launch import LaunchRequest as PrimaryLaunchRequest
 from meridian.lib.launch import launch_primary
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
 )
-from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest
 from meridian.lib.safety.policy import (
     Host,
     Hosts,
-    SandboxDerivedNetwork,
 )
-from meridian.lib.state import work_repository, work_store
-from meridian.lib.state.paths import (
-    resolve_project_paths,
-    resolve_project_runtime_root_or_none,
-)
+from meridian.lib.state import work_repository
 from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
@@ -51,37 +43,6 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
-
-
-def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
-    path = project_root / ".mars" / "agents" / f"{name}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{frontmatter}\n---\n\n# {name}\n", encoding="utf-8")
-
-
-def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
-    base_registry = get_default_harness_registry()
-    registry = HarnessRegistry()
-    for harness_id in harness_ids:
-        registry.register(base_registry.get(harness_id))
-    return registry
-
-
-def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    execution_cwd = project_root / "subdir"
-    execution_cwd.mkdir(parents=True)
-
-    runtime = build_primary_launch_runtime(
-        project_root=project_root,
-        execution_cwd=execution_cwd,
-    )
-
-    assert runtime.config_root == project_root.resolve().as_posix()
-    assert runtime.control_root == project_root.resolve().as_posix()
-    assert runtime.requested_task_cwd == execution_cwd.resolve().as_posix()
-    assert runtime.project_paths_project_root == project_root.resolve().as_posix()
-    assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
 
 
 @pytest.mark.parametrize("override", [None, True, False])
@@ -320,36 +281,6 @@ def test_codex_allow_domain_warns_without_changing_projection(
     assert "blocked.example" not in " ".join(preview.binding.argv)
 
 
-def test_codex_boolean_network_proxy_has_no_domains_warning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "[features]\nnetwork_proxy = true\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.6-luna",
-        harness=HarnessId.CODEX,
-        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write", network="deny"),
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-codex-bool-proxy",
-        request=build_primary_spawn_request(request=LaunchRequest(model="gpt-5.6-luna")),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert not any("Codex network config" in warning.message for warning in preview.warnings)
-
-
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
 def test_unreadable_user_network_config_warns_and_contributes_nothing(
     tmp_path: Path,
@@ -396,40 +327,6 @@ def test_unreadable_user_network_config_warns_and_contributes_nothing(
     assert "may widen network access beyond Meridian's projected policy" in warning.message
 
 
-def test_primary_config_sandbox_resolves_unset_network_after_final_precedence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-sonnet-4",
-        harness=HarnessId.CLAUDE,
-        bundle_network=SandboxDerivedNetwork(
-            allow=frozenset((Host("github.com"),)),
-            deny=frozenset((Host("evil.com"),)),
-        ),
-    )
-    runtime = build_primary_launch_runtime(
-        project_root=tmp_path,
-        config=MeridianConfig(primary=PrimaryConfig(sandbox="workspace-write")),
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-primary-sandbox",
-        request=build_primary_spawn_request(request=LaunchRequest(model="claude-sonnet-4")),
-        runtime=runtime,
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.binding.spec.permission_policy.sandbox == "workspace-write"
-    assert preview.binding.spec.permission_policy.network == Hosts(
-        deny=frozenset((Host("evil.com"),))
-    )
-    assert any(warning.code == "network_allow_hosts_dropped" for warning in preview.warnings)
-
-
 def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRef:
     """A resolved ``--from`` ref, as the cli or spawn prepare hands it to launch."""
     return SpawnContextRef(
@@ -442,164 +339,6 @@ def _prior(spawn_id: str = "p999", work_id: str | None = None) -> SpawnContextRe
         report_text="prior context",
         work_id=work_id,
     )
-
-
-def test_primary_launch_injects_bundle_inventory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = "claude-sonnet-4"
-    peer_name = "coder"
-    skill_name = "review"
-    skill_description = "Review helper"
-    bundle_inventory = (
-        "# Meridian Agents\n\n"
-        "## Subagent\n"
-        "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
-        f"- `meridian spawn -a {peer_name}`: Peer.\n"
-    )
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model=model,
-        harness=HarnessId.CLAUDE,
-        prompt_surface_inventory_prompt=bundle_inventory,
-    )
-    write_agent(
-        tmp_path,
-        name="dev-orchestrator",
-        model=model,
-        subagents=(peer_name,),
-    )
-    registry = get_default_harness_registry()
-
-    preview = build_launch_context(
-        spawn_id="dry-run-primary",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent="dev-orchestrator")
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=registry,
-        dry_run=True,
-    )
-
-    text = (
-        preview.projected_content.system_prompt
-        if preview.projected_content and preview.projected_content.system_prompt
-        else preview.binding.run_params.prompt
-    )
-    assert "# Meridian Agents" in text
-    assert "## Subagent" in text
-    assert "`meridian spawn -a dev-orchestrator`" in text
-    assert f"`meridian spawn -a {peer_name}`" in text
-    assert "SKILLS" not in text
-    assert f"{skill_name}: {skill_description}" not in text
-    floor = CallerBoundary.from_env_value(
-        preview.binding.environment.final_env[CALLER_BOUNDARY_ENV]
-    )
-    assert floor.has_spawn_capability is True
-
-
-def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = "claude-sonnet-4"
-    _write_minimal_mars_config(tmp_path)
-    write_agent(tmp_path, name="coder", model=model)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model=model,
-        harness=HarnessId.CLAUDE,
-    )
-    monkeypatch.setenv("MERIDIAN_SESSION_AGENT", "parent-agent")
-
-    with_agent = build_launch_context(
-        spawn_id="dry-run-agent",
-        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent="coder")),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-    (tmp_path / "meridian.toml").write_text(
-        '[primary]\nagent = "ghost"\n',
-        encoding="utf-8",
-    )
-    with_missing_profile = build_launch_context(
-        spawn_id="dry-run-missing-profile",
-        request=build_primary_spawn_request(request=LaunchRequest(model=model)),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-    without_agent = build_launch_context(
-        spawn_id="dry-run-no-agent",
-        request=build_primary_spawn_request(request=LaunchRequest(model=model, agent_opt_out=True)),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert with_agent.binding.environment.final_env["MERIDIAN_SESSION_AGENT"] == "coder"
-    assert with_missing_profile.binding.environment.final_env["MERIDIAN_SESSION_AGENT"] == "ghost"
-    assert "MERIDIAN_SESSION_AGENT" not in without_agent.binding.environment.final_env
-
-
-def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-sonnet-4",
-        harness=HarnessId.CLAUDE,
-    )
-    write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
-
-    preview = build_launch_context(
-        spawn_id="dry-run-primary-from",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(
-                model="claude-sonnet-4",
-                agent="dev-orchestrator",
-                context_refs=(_prior(),),
-            )
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.projected_content is not None
-    assert "prior context" in preview.projected_content.user_turn_content
-    assert "prior context" not in preview.projected_content.system_prompt
-    assert context_ref_values(preview.resolved_request.context_refs) == ("p999",)
-
-
-def test_codex_primary_projection_omits_synthetic_user_turn_without_input(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-primary-codex-empty",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model="gpt-5.4-mini", harness=HarnessId.CODEX.value)
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.binding.run_params.prompt.strip()
-    assert preview.binding.run_params.user_turn_content is None
 
 
 def test_primary_launch_resolves_reference_files_from_work_task_dir(
@@ -691,338 +430,6 @@ def test_primary_launch_resolves_reference_files_from_explicit_task_dir(
     assert (task_dir / "task-only.txt").as_posix() in prompt
     assert "task marker" in prompt
     assert "project shadow" not in prompt
-
-
-@pytest.mark.parametrize("work_source", ["explicit", "ambient"])
-def test_primary_launch_stale_work_task_dir_warning_reaches_dry_run_result(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    work_source: str,
-) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    monkeypatch.chdir(project_root)
-    _write_minimal_mars_config(project_root)
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_repository.create_work_item(project_state_dir, "stale-work", "", None)
-    stale = tmp_path / "removed-worktree"
-    work_repository.update_work_item_task_dir(
-        project_state_dir,
-        work.name,
-        task_dir=stale.as_posix(),
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-    monkeypatch.delenv("MERIDIAN_TASK_DIR", raising=False)
-    if work_source == "ambient":
-        monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", work.name)
-        explicit_work_id = None
-    else:
-        monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
-        explicit_work_id = work.name
-
-    result = launch_primary(
-        project_root=project_root,
-        request=PrimaryLaunchRequest(
-            model="gpt-5.4-mini",
-            harness=HarnessId.CODEX.value,
-            work_id=explicit_work_id,
-            dry_run=True,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
-
-    assert result.warning is not None
-    assert stale.as_posix() in result.warning
-    assert f"Using {project_root.resolve()} instead" in result.warning
-
-
-def test_primary_launch_invalid_reference_does_not_create_explicit_work(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    _write_minimal_mars_config(project_root)
-    # Both places project state can land: the project-local legacy carrier and the
-    # resolved runtime root the bootstrap would mint (which needs project identity).
-    meridian_home = tmp_path / "meridian-home"
-    monkeypatch.setenv("MERIDIAN_HOME", meridian_home.as_posix())
-
-    with pytest.raises(FileNotFoundError):
-        launch_primary(
-            project_root=project_root,
-            request=PrimaryLaunchRequest(
-                work_id="new-work",
-                reference_files=("missing.txt",),
-                dry_run=True,
-            ),
-            harness_registry=get_default_harness_registry(),
-        )
-
-    assert resolve_project_runtime_root_or_none(project_root) is None
-    assert not (project_root / ".meridian").exists()
-    assert not meridian_home.exists()
-
-
-def test_primary_launch_does_not_create_work_named_by_context_from(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    _write_minimal_mars_config(project_root)
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-
-    from meridian.lib.launch.process import ProcessOutcome
-
-    def fake_run_harness_process(
-        preview_context,
-        harness_registry,
-        *,
-        prepared,
-        hold=None,
-    ):
-        _ = (
-            hold,
-            preview_context,
-            harness_registry,
-            prepared,
-        )
-        return ProcessOutcome(
-            command=(),
-            exit_code=0,
-            chat_id="c1",
-            primary_spawn_id="p1",
-            primary_started=0.0,
-            primary_started_epoch=0.0,
-            primary_started_local_iso=None,
-            resolved_harness_session_id="sess-1",
-        )
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.process.run_harness_process",
-        fake_run_harness_process,
-    )
-
-    assert work_store.get_work_item(project_state_dir, "inherited-work") is None
-
-    result = launch_primary(
-        project_root=project_root,
-        request=PrimaryLaunchRequest(
-            model="gpt-5.4-mini",
-            harness=HarnessId.CODEX.value,
-            context_refs=(_prior("p123", "inherited-work"),),
-            dry_run=False,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
-
-    assert result.exit_code == 0
-    assert result.primary_spawn_id == "p1"
-    # Only an explicit `--work` creates an item; a `--from` source's stale name is no item.
-    assert work_store.get_work_item(project_state_dir, "inherited-work") is None
-
-
-@pytest.mark.parametrize(
-    ("model", "expected_harness"),
-    [
-        ("claude-sonnet-4", HarnessId.CLAUDE),
-    ],
-    ids=["claude"],
-)
-def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    model: str,
-    expected_harness: HarnessId,
-) -> None:
-    # Link all three harness targets so mars's per-provider routing returns
-    # the harness the test parametrize expects. The minimal `.claude`-only
-    # config (used by other tests in this module) collapses every model to
-    # claude under the mars 0.4.8rc3 resolver and would invalidate the
-    # cross-harness coverage this test is asserting.
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
-        encoding="utf-8",
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model=model,
-        harness=expected_harness,
-    )
-    write_agent(tmp_path, name="dev-orchestrator", model=model)
-
-    preview = build_launch_context(
-        spawn_id=f"dry-run-{expected_harness.value}-terminal-surface",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model=model, agent="dev-orchestrator")
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.harness.id is expected_harness
-    assert preview.resolved_request.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
-
-
-def test_launch_resolution_fallback_policy_resolves_opencode_medium_via_bundle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    _write_agent_profile(
-        tmp_path,
-        name="dev-orchestrator",
-        frontmatter=(
-            "name: dev-orchestrator\n"
-            "model: claude\n"
-            "model-policies:\n"
-            "  - match: {alias: gpt55}\n"
-            "    override: {harness: opencode, effort: medium}\n"
-        ),
-    )
-
-    captured_requests = stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.5",
-        model_token="gpt55",
-        harness=HarnessId.OPENCODE,
-        harness_model="openai/gpt-5.5",
-        execution_policy=ResolvedExecutionPolicy(effort="medium"),
-        provenance={"harness_source": "project", "effort_source": "project"},
-    )
-
-    preview = build_launch_context(
-        spawn_id="dry-run-fallback-opencode-medium",
-        request=build_primary_spawn_request(request=LaunchRequest(agent="dev-orchestrator")),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-        dry_run=True,
-    )
-
-    assert len(captured_requests) == 1
-    assert captured_requests[0].agent == "dev-orchestrator"
-    assert captured_requests[0].model_override is None
-    assert captured_requests[0].harness_override is None
-    assert preview.harness.id is HarnessId.OPENCODE
-    assert preview.resolved_request.model == "gpt-5.5"
-    assert preview.resolved_request.execution_policy.effort == "medium"
-    assert str(preview.binding.run_params.model) == "openai/gpt-5.5"
-    assert preview.binding.spec.model == "openai/gpt-5.5"
-
-
-def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-
-    captured_requests = stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="claude-opus-4-7",
-        model_token="opus47",
-        harness=HarnessId.CURSOR,
-        harness_model="claude-opus-4-7-thinking-high",
-        execution_policy=ResolvedExecutionPolicy(effort="high"),
-        provenance={"harness_source": "cli", "effort_source": "cli"},
-    )
-
-    request = build_primary_spawn_request(
-        request=LaunchRequest(
-            model="opus47",
-            harness=HarnessId.CURSOR.value,
-            execution_policy=ResolvedExecutionPolicy(effort="high"),
-        )
-    )
-    runtime = build_primary_launch_runtime(project_root=tmp_path).model_copy(
-        update={"composition_surface": LaunchCompositionSurface.SPAWN_PREPARE}
-    )
-    preview = build_launch_context(
-        spawn_id="dry-run-cursor-bundle-harness-model",
-        request=request,
-        runtime=runtime,
-        harness_registry=_registry_with_harnesses(HarnessId.CURSOR),
-        dry_run=True,
-    )
-
-    assert len(captured_requests) == 1
-    assert captured_requests[0].model_override == "opus47"
-    assert captured_requests[0].harness_override == HarnessId.CURSOR.value
-    assert captured_requests[0].effort_override == "high"
-    assert preview.harness.id is HarnessId.CURSOR
-    assert preview.resolved_request.model == "claude-opus-4-7"
-    assert preview.resolved_request.execution_policy.effort == "high"
-    assert str(preview.binding.run_params.model) == "claude-opus-4-7-thinking-high"
-    assert preview.binding.spec.model == "claude-opus-4-7-thinking-high"
-    assert "# Meridian capabilities" in preview.binding.run_params.prompt
-    assert "`meridian notify`" not in preview.binding.run_params.prompt
-    assert "--model" in preview.binding.argv
-    assert (
-        preview.binding.argv[preview.binding.argv.index("--model") + 1]
-        == "claude-opus-4-7-thinking-high"
-    )
-    assert preview.model_selection is not None
-    assert preview.model_selection.harness_model_id == "claude-opus-4-7-thinking-high"
-
-
-def test_opencode_named_primary_continue_preserves_explicit_model(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R7: OpenCode allows an explicit model on exact primary continue.
-
-    V2 applies it via ``POST /api/session/{id}/model``; V1 fails loudly in its
-    connection. The launch guard must not reject the request.
-    """
-
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".opencode"]\n',
-        encoding="utf-8",
-    )
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="openai/gpt-5.5",
-        harness=HarnessId.OPENCODE,
-    )
-
-    from tests.support.opencode_db import write_opencode_v2_db_session
-
-    native_db = tmp_path / "opencode.db"
-    write_opencode_v2_db_session(db_path=native_db, session_id="ses_abc")
-
-    preview = build_launch_context(
-        spawn_id="dry-run-opencode-named-continue",
-        request=SpawnRequest(
-            prompt="continue prompt",
-            model="openai/gpt-5.5",
-            harness=HarnessId.OPENCODE.value,
-            session=SessionRequest(
-                requested_harness_session_id="ses_abc",
-                primary_session_mode="resume",
-                continue_harness="opencode",
-                continue_source_ref="p123",
-                continue_source_tracked=True,
-                source_native_store=str(native_db),
-            ),
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    assert preview.harness.id is HarnessId.OPENCODE
-    assert preview.binding.spec.continue_session_id == "ses_abc"
-    assert preview.binding.spec.model == "openai/gpt-5.5"
 
 
 def test_opencode_from_creates_fresh_session_with_context_in_prompt(

@@ -19,34 +19,20 @@ from meridian.lib.launch.composition import (
     CompositionBlock,
     GuidancePhase,
 )
+from meridian.plugin_api.types import SpawnKind
 
-_GENERAL_CAPABILITIES: tuple[tuple[AgentMode | None, str], ...] = (
-    (None, "- Work item (tracked effort): `meridian work`."),
-    (
-        None,
-        "- Past sessions/transcripts: `meridian session search` with a ref, `--work`, "
-        "`--workspace`, or `--global`; read with `meridian session log`.",
-    ),
-    ("primary", "- Notify the human: `meridian notify`."),
-    (
-        "primary",
-        "- Message a running spawn or another live session: `meridian spawn message`; "
-        "read `meridian skills messaging__meridian`.",
-    ),
-    (
-        None,
-        "- Validate Markdown links / inspect the link graph / validate Mermaid: "
-        "`meridian kg check` / `meridian kg graph` / `meridian mermaid check`.",
-    ),
-    (None, "- Project guidance graph: `meridian qi graph`."),
-)
+# Capabilities a bundled `*__meridian` skill covers are named only in the
+# `# Meridian skills` list, so each appears once. Lead-only skills (work items,
+# notify) leave subagents without those pointers on purpose.
+_GENERAL_CAPABILITIES = ("- Project guidance graph: `meridian qi graph`.",)
 
 _SPAWN_CAPABILITIES = (
     "- Delegate to an `@agent`: `meridian spawn`; write the brief under the work directory's "
     "`prompts/` with `meridian work path`, pass its absolute path to `--prompt-file`, attach "
     "skills with `--skills`, pass files or a folder with `-f`, carry a prior run with "
     "`--from`, choose its checkout with `--task-dir`, or override its model with `-m`.\n"
-    "- Agents you can use: `meridian spawn subagents`.\n"
+    "- Agents you can spawn, and when to use each: run `meridian spawn subagents` "
+    "before delegating.\n"
     "- Live model catalog / model-specific prompting: `meridian mars models list` / "
     "`meridian mars models prompting`."
 )
@@ -70,6 +56,26 @@ Agent defaults fit most work. Say why before overriding the model: do so only
 when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
+_PRIMARY_WAIT_BULLET = """\
+- Drain every --bg spawn with no-arg `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn. It finds
+  running and owed spawns by session; re-invoke to keep waiting. The wait
+  itself can run in your native background execution to keep working
+  while it blocks — it's the launch, not the wait, that must never be
+  background-wrapped. Do not pipe or truncate its output. Un-waited
+  background spawns are lost."""
+
+_CHILD_WAIT_BULLET = """\
+- To wait for --bg spawns, end your turn. You stay open while they run,
+  and when they have all finished Meridian wakes you with each spawn and
+  its report path. You can't act until then, so if you need a result in
+  this turn use no-arg `meridian spawn wait`; do not pipe or truncate
+  its output. Closing cancels spawns still running."""
+
+_CHILD_CLOSE_BULLET = """\
+- Before a child closes, Meridian may ask it to confirm completion; follow the
+  confirmation message's instructions."""
+
 
 def _build_meridian_skills_prompt(
     *,
@@ -90,7 +96,7 @@ def _build_meridian_skills_prompt(
 
 
 def _work_link_line(work_link: Path) -> str:
-    """The one work-link wording, for a primary's prompt and a spawn's run block."""
+    """The one work-link wording, for a primary's prompt and a spawn's `# Meridian spawn` block."""
 
     return (
         f"- `{work_link.as_posix()}` — work directory "
@@ -117,14 +123,12 @@ def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
-    profile_mode: AgentMode,
     project_root: Path,
     control_root: Path,
     task_dir: Path,
     task_link: Path | None = None,
     work_link: Path | None = None,
     paths_in_user_turn: bool = False,
-    has_message_route: bool,
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
@@ -134,7 +138,7 @@ def build_capabilities_prompt(
     Only values shared by every launch of this conversation belong here: an exact
     continue recomposes the block from the launch snapshot, and a fresh launch of
     the same agent in the same work context must share the cached prefix. Per-launch
-    identity (the run ID, the conversation that launched the run, and a spawn's
+    identity (the spawn ID, the conversation that launched the spawn, and a spawn's
     per-chat links) goes in the first user turn through
     :func:`build_launch_facts_prompt`; a primary's own chat ID and its per-chat
     links stay here because they outlive the launch.
@@ -166,11 +170,7 @@ def build_capabilities_prompt(
     ]
     if spawn_capable:
         lines.append(_SPAWN_CAPABILITIES)
-    lines.extend(
-        capability
-        for required_mode, capability in _GENERAL_CAPABILITIES
-        if required_mode is None or required_mode == profile_mode
-    )
+    lines.extend(_GENERAL_CAPABILITIES)
 
     if work_link is not None:
         # A per-chat link outlives the launch and follows `work start`,
@@ -188,21 +188,21 @@ def build_capabilities_prompt(
     if resolved_chat_id:
         # Only a primary renders this: its chat is the conversation's own, so it
         # survives resume. A spawn's launching chat is per-launch and lives in the
-        # `# Meridian run` block.
+        # `# Meridian spawn` block.
         lines.append(
             f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`); use it in names. For a handoff's `--from`, use your run ID "
-            "instead (`meridian task-dir --json` prints it as `spawn_id`): it follows this "
-            "conversation across `/clear`, which this chat ID does not."
+            "(`$MERIDIAN_CHAT_ID`); use it in names. For a handoff's `--from`, use your spawn "
+            "ID instead (`$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints it as "
+            "`spawn_id`): it follows this conversation across `/clear`, which this chat ID "
+            "does not."
         )
-        if has_message_route:
-            # Chat IDs count per project, so the bare ID is ambiguous to a peer in
-            # another repo; the command carries the project it belongs to.
-            lines.append(
-                "- To message this session from another session or repo: "
-                f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-                f'{resolved_chat_id} --message "..."`.'
-            )
+        # Chat IDs count per project, so the bare ID is ambiguous to a peer in
+        # another repo; the command carries the project it belongs to.
+        lines.append(
+            "- To message this session from another session or repo: "
+            f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
+            f'{resolved_chat_id} --message "..."`.'
+        )
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()
@@ -231,7 +231,7 @@ def build_capabilities_prompt(
         lines.append(
             f"- Shell cwd is `{control_path}` (`$MERIDIAN_PROJECT_DIR`); your work "
             "directory and source checkout are the links `$MERIDIAN_ACTIVE_WORK_DIR` and "
-            "`$MERIDIAN_TASK_DIR`, which this run's `# Meridian run` block names. Write "
+            "`$MERIDIAN_TASK_DIR`, which this spawn's `# Meridian spawn` block names. Write "
             "those literal paths, never the directories they resolve to; inspect: "
             f"`meridian task-dir`{spawn_suffix}."
         )
@@ -259,12 +259,6 @@ def build_capabilities_prompt(
             "(`$MERIDIAN_CONTEXT_KB_DIR`); inspect: `meridian context kb`."
         )
 
-    lines.append(
-        "- Your run ID is in `$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints "
-        "it as `spawn_id`, and a launch with a first user turn also gets it in that "
-        "turn's `# Meridian run` block."
-    )
-
     other_context: list[str] = []
     if resolved_context.work_archive is not None:
         other_context.append(
@@ -290,23 +284,23 @@ def build_launch_facts_prompt(
     """Render per-launch identity for the first user turn.
 
     Only values that change between launches of the same conversation belong here:
-    the run ID, the conversation that launched this run, and a spawn's per-chat
+    the spawn ID, the conversation that launched this spawn, and a spawn's per-chat
     links, whose paths name the chat it runs in. Keeping them out of the system
     prompt lets sibling spawns send byte-identical system bytes, so the harness
     prompt cache is shared.
     """
 
     lines: list[str] = []
-    run_id = (spawn_id or "").strip()
-    if run_id:
+    own_spawn_id = (spawn_id or "").strip()
+    if own_spawn_id:
         lines.append(
-            f"- `{run_id}` — your run ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
+            f"- `{own_spawn_id}` — your spawn ID (`$MERIDIAN_SPAWN_ID`), the ID your caller "
             "holds; use it in names."
         )
     launched_by = (chat_id or "").strip()
     if launched_by:
         lines.append(
-            f"- `{launched_by}` — the conversation that launched this run "
+            f"- `{launched_by}` — the conversation that launched this spawn "
             "(`$MERIDIAN_CHAT_ID`), parent for handoff `--from`."
         )
     if work_link is not None:
@@ -315,27 +309,23 @@ def build_launch_facts_prompt(
         lines.append(_task_link_line(task_link))
     if not lines:
         return ""
-    return "\n".join(("# Meridian run", "", *lines))
+    return "\n".join(("# Meridian spawn", "", *lines))
 
 
-def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
-    """Render the behavioral spawn contract filled with adapter-owned phrasing."""
+def build_spawn_usage_contract(variants: SpawnUsageContractVariants, *, kind: SpawnKind) -> str:
+    """Render the behavioral spawn contract for a parent of this kind."""
 
+    wait_rules = _PRIMARY_WAIT_BULLET
+    if kind != "primary":
+        wait_rules = f"{_CHILD_WAIT_BULLET}\n{_CHILD_CLOSE_BULLET}"
     return f"""\
 # Meridian spawn rules
 
-- Use Meridian, not the harness's native agent tool, when a listed Meridian agent fits.
+- Launch each agent `meridian spawn subagents` lists with `meridian spawn -a NAME`,
+  except those it marks native: use your harness's own agent tool for them.
 - {variants.double_wrap_bullet}
 - {variants.timeout_bullet}
-- Drain every --bg spawn with no-arg `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn. It finds
-  running and owed spawns by session; re-invoke to keep waiting. The wait
-  itself can run in your native background execution to keep working
-  while it blocks — it's the launch, not the wait, that must never be
-  background-wrapped. Do not pipe or truncate its output. Un-waited
-  background spawns are lost.
-- Before a child closes, Meridian may ask it to confirm completion; follow the
-  confirmation message's instructions."""
+{wait_rules}"""
 
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
@@ -351,24 +341,20 @@ def build_guidance_blocks(
     profile: AgentProfile | None,
     loaded_skills: frozenset[str],
     spawn_usage_contract: str,
-    bundle_inventory_prompt: str | None,
     harness_guidance: str | None = None,
+    waiting_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
     """Build all system-prompt guidance blocks.
 
-    Spawn-gated (only when has_spawn_capability): inventory, spawn capabilities,
-    prompting judgment, and the spawn behavior contract. Profile-mode gates apply to
-    bundled skill triggers and individual general capabilities. Context paths are always
-    present. The empty capability block is filled at bind, after its directory and run
-    identity facts are known.
+    Spawn-gated (only when has_spawn_capability): spawn capabilities,
+    prompting judgment, and the spawn behavior contract. The profile-mode gate applies to
+    bundled skill triggers. Context paths are always present. The empty capability block
+    is filled at bind, after its directory and spawn identity facts are known. ``waiting_line``
+    goes to every child that can be woken, spawn-capable or not.
     """
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
     profile_mode: AgentMode = profile.mode if profile is not None else "subagent"
-    if spawn_capable:
-        inventory = (bundle_inventory_prompt or "").strip()
-        if inventory:
-            blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
     blocks.append(
         CompositionBlock(
             "meridian-skills",
@@ -400,6 +386,8 @@ def build_guidance_blocks(
                 spawn_usage_contract,
             )
         )
+    if waiting_line is not None:
+        blocks.append(CompositionBlock("waiting", GuidancePhase.GUIDANCE, 12, waiting_line))
     harness_hint = (harness_guidance or "").strip()
     if harness_hint:
         blocks.append(

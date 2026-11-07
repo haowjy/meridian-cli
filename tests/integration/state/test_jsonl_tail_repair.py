@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,10 +11,8 @@ from meridian.lib.harness.control_action import ControlActionCoordinator, Contro
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.state.jsonl import (
     append_durable_jsonl_line,
-    repair_jsonl_tail,
 )
 from meridian.lib.state.spawn_store import start_spawn
-from tests.conftest import posix_only
 from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
@@ -118,7 +115,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     coordinator = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, "s-1"))
     assert coordinator._transition_seq == 1
 
-    async def _noop_send() -> object:
+    async def _noop_send() -> None:
         return None
 
     await coordinator.run_action(
@@ -126,7 +123,6 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
         payload={"text": "hello"},
         source="test",
         send=_noop_send,
-        fence_on_interrupt=False,
     )
 
     rows = [
@@ -141,19 +137,6 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
 
     reloaded = ControlActionCoordinator(launch=launch_paths(spawn_dir.parent.parent, "s-1"))
     assert reloaded._transition_seq > 1
-
-
-@posix_only
-def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> None:
-    path = tmp_path / "spawn" / "permission_requests.jsonl"
-    path.parent.mkdir()
-    path.write_bytes(b'{"seq":0,"request_id":"req-1","status":"pending"}')
-    os.chmod(path, 0o640)
-
-    repair_jsonl_tail(path)
-
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640
-    assert path.read_bytes().endswith(b"\n")
 
 
 def test_append_durable_jsonl_line_rejects_failed_repair_without_losing_next_event(

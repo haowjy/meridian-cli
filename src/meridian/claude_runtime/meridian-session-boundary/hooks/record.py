@@ -6,7 +6,6 @@ import contextlib
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import cast
 
@@ -72,7 +71,6 @@ def record() -> None:
         "launch_nonce": nonce,
         # The hook command execs this interpreter; its parent is Claude.
         "pid": os.getppid(),
-        "recorded_at": time.time(),
         "source": source,
         "session_id": session_id,
         "transcript_path": transcript,

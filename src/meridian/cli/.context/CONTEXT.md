@@ -1,356 +1,65 @@
-# cli/ — Startup Pipeline and Import Strategy
-
-## Descriptor-Driven Startup
-
-Every CLI invocation is classified against `COMMAND_CATALOG` before any
-heavy module loads. `CommandDescriptor` carries all routing information:
-
-- `startup_class` — drives telemetry mode + primary-launch background repairs (TRIVIAL, READ_ROOTLESS, READ_PROJECT, READ_RUNTIME, WRITE_PROJECT, WRITE_RUNTIME, PRIMARY_LAUNCH, SERVICE_ROOTLESS, SERVICE_RUNTIME)
-- `bootstrap_plan` — state preparation requirement
-- `telemetry_mode` — `none | stderr | segment`
-- `root_source` — `"cwd"` (default) or `"argv"` (post-parse root resolution)
-
-The catalog is the single source of truth for routing. The CLI startup path
-never queries the extension registry for routing answers.
-
-## Invocation Class Table
-
-| Class | Examples | Bootstrap | Telemetry |
-|---|---|---|---|
-| `TRIVIAL` | `--help`, `--version` | none | none |
-| `READ_ROOTLESS` | `doctor`, `kg check`, `qi`, `mermaid check`, `config show`, `ext list`, `skills` | none | none |
-| `READ_PROJECT` | `context`, `work current`, `hooks list` | project-read | none |
-| `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
-| `WRITE_PROJECT` | `config init` | project-write | optional |
-| `WRITE_RUNTIME` | `spawn`, `work start` | runtime-write | segment |
-| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write | segment |
-| `SERVICE_ROOTLESS` | `serve` | none | stderr |
-| `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
-
-Read-only classes (`READ_ROOTLESS`, `READ_PROJECT`, `READ_RUNTIME`, `TRIVIAL`) install no
-telemetry, spawn no writer thread, and create no UUID. The `skills NAME` command is the
-one external-state exception: in an existing Mars project it lets Mars refresh
-Meridian's provided copy under `.mars/`, without preparing Meridian runtime state.
-
-## Lazy Import Strategy
-
-Four independent mechanisms reduce startup latency and keep dependencies acyclic:
-
-1. **Selective command registration** — `_register_commands_for_invocation()`
-   imports only the module group matching the first positional token.
-   Full registration fires only for `--help`.
-
-2. **`app_tree.py` pattern** — defines top-level Cyclopts app objects
-   (`spawn_app`, `session_app`, …) without importing any command implementations.
-   Breaks the circular import where importing app objects pulled in all commands.
-
-3. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
-   inside handler functions, not at module scope.
-
-4. **One-way invocation state** — `invocation.py` owns the typed global options
-   context, its explicit `invocation_scope()` lifetime, and output routing.
-   Both `main.py` and command modules depend on it; command modules never import
-   back into `main.py`. Registration functions receive no invocation callbacks
-   and return no metadata to the dispatcher. In-process callers must supply a
-   scope; no default options are fabricated when the context is absent.
-
-Together these mechanisms keep startup and help paths from importing command
-implementations they do not need.
-
-`skills` is one root command with positional dispatch rather than a Cyclopts
-sub-app: `list` occupies the same positional slot as a skill name, so both
-`meridian skills list` and `meridian skills NAME [RESOURCE-PATH]` stay valid.
-Bundled names end in `__meridian` to share Mars's `name__source` collision rule.
-`list` reads only package data; a named read provides into an already existing
-project Mars root and otherwise uses the wheel. Neither path initializes the user
-Mars root, so the command remains `READ_ROOTLESS`.
-
-## Mars passthrough roots
-
-`mars_passthrough.py` owns the Meridian-only `--user` flag. It always replaces a
-Mars `--root` with the primary root from `resolve_mars_roots()`; `--user` selects
-`~/.meridian/mars` explicitly. Package mutations in a bare directory are rejected
-before root injection unless `--user` is present, preventing Mars auto-init from
-writing a project marker there. Plain `mars init` remains project authoring.
-
-## Help Profile Selection
-
-Human vs agent mode selects a `HelpProfile` at app-build time from the
-command catalog — no runtime mutation of shared `App` objects.
-
-`AlignedPlainFormatter` also removes Cyclopts-generated display aliases that
-do not change a parameter's default behavior. This stays in the formatter so
-legacy generated forms remain parseable; setting `App.default_parameter`
-negation defaults would remove those forms from the parser too.
-
-## Project Root Resolution
-
-`resolve_cli_project_root() -> Path` in `utils.py` selects `-C`, then
-`MERIDIAN_PROJECT_DIR`, then the literal cwd. Identity resolution happens below
-the CLI boundary and never walks ancestors: a marker selects committed identity;
-otherwise the canonical path selects `adhoc.*` identity.
-
-Runtime-write preparation materializes ad-hoc state under the user home without
-writing the cwd. Project authoring (`config set/reset`, `workspace init`, Mars
-mutations) still requires a marker or an explicit init operation. Read
-preparation never mints or materializes. `doctor` is rootless startup: it repairs
-only an already existing runtime root, while `--global` scans user state.
-
-## `to_cli_output()` Dispatch
-
-Command handlers emit results through `to_cli_output()` dispatch rather
-than `isinstance` branches in `main.py`. This keeps the root CLI module
-free of spawn-op and output-model imports. Each result type implements
-the small protocol to produce its wire-shaped output.
-
-## `init` Command Routing
-
-`init_alias` in `main.py` has two branches:
-
-- **With `--add` or `--link`** → routes through `init_ops.run_init_flow`, which
-  handles package installation, config bootstrap, and tool directory linking in
-  one call. Mars is invoked internally by `init_ops`, not via `mars_passthrough`.
-- **Bare `meridian init`** (no flags) → calls `config_init_sync` directly to
-  bootstrap the project config only.
-
-Both branches atomically write the scaffold and committed ID before runtime
-bootstrap. If the path already has materialized ad-hoc state, the result names
-that untouched root; no history is moved into the committed project.
-
-There is no passthrough path in this command; do not add one. Auto-link is the
-default behavior, and the init flow has no confirmation prompts or `--yes` option.
-
-## Session Initiation Argument Handling
-
-`argv_normalization.py` is the central hub for `--fork`, `--fork-fresh`, `--from`,
-and `--continue` argument handling. `canonicalize_argv()` runs before every
-startup classifier and before Cyclopts parsing.
-
-### The Sentinel: `SELF_FORK_REF_SENTINEL = "__SELF__"`
-
-Cyclopts requires a value for `str | None` parameters. Bare `--fork` (no value)
-causes a parse error. The fix: `normalize_optional_value_flags(argv)` rewrites
-bare and equals-form flags before Cyclopts sees them, inserting `__SELF__` as
-the value token.
-
-| Input form | Normalized form |
-|---|---|
-| `--fork` | `--fork __SELF__` |
-| `--fork=` | `--fork __SELF__` |
-| `--fork=p123` | `--fork p123` |
-| `--from` | `--from __SELF__` |
-
-`__SELF__` is not a valid spawn ref (`pN`), chat ref (`cN`), or UUID — no
-collision risk. `SYNTHETIC_VALUE_TOKENS` (a `frozenset` containing `__SELF__`)
-is imported by `bootstrap.py` so it can skip synthetic values during
-passthrough-args splitting and positional-token detection.
-
-`canonicalize_argv()` owns the optional-value normalization and the bare
-`--continue` rewrite to `session browse`. It is idempotent, runs in both the thin
-entrypoint and direct `main()` path, and leaves `mars` arguments verbatim.
-
-### Ref Resolution: `resolve_optional_ref(raw_ref, *, flag_name)`
-
-When a handler receives `__SELF__`, it calls `resolve_optional_ref()` to resolve
-it to the current session's spawn ID from `MERIDIAN_SPAWN_ID`. If
-`MERIDIAN_SPAWN_ID` is not set (agent is not inside a managed session), it raises
-`ValueError` with a flag-specific error message:
-
-- `--fork` → `FORK_INFERENCE_ERROR`: "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills."
-- `--from` → `FROM_INFERENCE_ERROR`
-
-### Conflict Matrix: `validate_fork_mode()`
-
-All mutual exclusion checks for session-initiation flags live in one place.
-Both `spawn.py` (`_spawn_create`) and `primary_launch.py` (`run_primary_launch`)
-call `validate_fork_mode()` and receive a `ForkModeResolution` — neither
-re-implements validation.
-
-Enforced conflicts:
-
-| Combination | Error |
-|---|---|
-| `--fork` + `--fork-fresh` | Cannot combine |
-| `--fork` + `--continue` | Cannot combine |
-| `--fork-fresh` + `--continue` | Cannot combine |
-| `--from` + `--continue` | Cannot combine |
-| `--fork` + `--from` | Cannot combine (MVP limitation) |
-| `--fork-fresh` + `--from` | Cannot combine (MVP limitation) |
-| `--fork` + `--agent`/`--model`/`--skills` | Identity lock violation |
-
-The identity lock (`--fork` blocks agent/model/skills overrides) is CLI policy,
-not an ops invariant. The ops layer (`SpawnForkInput`) handles both
-identity-preserving and identity-changing forks correctly. Non-CLI callers (MCP,
-programmatic) may fork with identity changes legitimately. Do not push this check
-into the ops layer.
-
-### `ForkModeResolution` (frozen dataclass)
-
-```
-ForkModeResolution
-  fork_ref: str | None          — resolved --fork ref (sentinel expanded)
-  fork_fresh_ref: str | None    — resolved --fork-fresh ref
-  is_fork: bool                 — True if either fork flag present
-  is_fresh: bool                — True if --fork-fresh was used
-  resolved_context_from: tuple[str, ...]  — --from refs, bare sentinel expanded
-                                           (primary_launch resolves them to ContextRefs)
-```
-
-### Pipeline Position
-
-```
-argv
-  └── canonicalize_argv()                  ← routes bare --continue; normalizes refs
-        └── _extract_global_options()      ← strips global flags, returns cleaned argv
-              └── _split_passthrough_args() ← splits at --, skips SYNTHETIC_VALUE_TOKENS
-                    └── Cyclopts parse      ← always sees a value for optional-value flags
-                          └── validate_fork_mode()  ← conflict checks + ref resolution
-```
-
-## Session Browse Presentation and Handoff
-
-`session_cmd.py` resolves the presentation before it lists sessions or imports
-`prompt_toolkit`: non-TTY output, `--plain`, and empty or `dumb` terminals print
-the plain table; interactive use inside a managed Meridian session is refused.
-This keeps supervisor ownership explicit rather than presenting a picker that
-cannot safely transfer the process.
-
-The full-screen application lives in `browse/`: `model.py` owns pure state for
-the list, detail and lineage views (a view stack; the list keeps its highlight
-and filter while deeper views are open), `render.py` produces width-aware
-formatted text, `transcript.py` holds one parsed snapshot per detail view and
-pages it with `select_session_log_window`, `lanes.py` runs blocking ops on daemon
-threads (latest request per lane wins, stale results are dropped), and `tui.py`
-binds keys and owns navigation. No view loads anything on highlight: Space reads the
-transcript once (reload only when the session generation changes) and refreshes the
-shown model through `session_model_refresh_sync`; `l` loads lineage plus the
-nodes' rows through `session_list_sync(chat_ids=...)`.
-
-Lineage is a tree of primary sessions only. Browse lists `kind == "primary"`
-sessions, the history index writes `session_lineage` edges only for primary chats,
-and the edge query drops edges whose parent is a spawn chat. So a spawn's `--from`
-is not recorded on its session start event: nothing could read it there. A spawn's
-`--from` shows in its create output (`context_from_resolved`) and its
-`starting-prompt.md`. Recording it would only pay off with spawn rows in browse,
-which is a product change.
-
-Rows carry no live marker or live-first order; each row's `reentry` (decided in
-`session_list_sync`) is what makes a running session fork rather than resume, and
-the footer's Enter hint reads it (`enter fork`, `enter resume`, or nothing when
-blocked). Enter itself still asks `session_reentry.py` for a fresh decision.
-
-Start-from is the third re-entry action (`StartFrom`, kind `start-from`, in `session_reentry.py`).
-Each row carries only its eligibility as `start_from` (`chat_id` + `kind`, like `Resume`/`Fork`),
-separate from `reentry` because it does not depend on liveness: `--from` reads recorded state
-only, so running, stopped and restored historical chats all qualify; only a row with no recorded
-harness session (and archived-history rows) is blocked. `n` (Ctrl-N once a filter exists, same
-rule as `l`) in the list or detail view opens a one-line `StartPrompt` in the footer, built from
-the row's agent and work item and the model on screen (detail's refreshed `view.model`, else
-`row.model`); Enter returns a `StartFromLaunch` with the typed text, Esc cancels. The picker
-returns a `Launch` (`Resume | Fork | StartFromLaunch`); `session_cmd._exec_decision` is the single
-argv builder for all three and renders start-from as
-`--from <chat> --agent=<a> [--model=] [--work=] [--prompt=]`.
-`--opt=value` keeps a prompt such as `-x fix` from parsing as a flag; `--agent` is always
-present because omitting it would select the configured default profile for an agentless source.
-The values are used as shown (no re-read at Enter): the launch's own `--from` resolver
-is the validity check.
-`/` searches the transcripts of the rows the Status view shows.
-Type-to-search is always on, so printable keys feed the filter. The filter has one
-definition: `session_list`'s `query`, matched in the history index before LIMIT.
-Typing re-runs that query after a 150 ms debounce, and the body shows `loading…` until
-the answer for the current status, sort and text lands; the TUI never matches filter
-text against rows itself. (`/` results are different: they narrow the loaded rows to
-the chats the transcript search matched.) Space always opens
-the detail view and never filters. `l` opens lineage only while the filter is
-empty (it is text afterwards); Ctrl-L always does. A worker preload thread imports
-the cyclic transcript/search/lineage ops once before any lane runs: concurrent
-first imports from worker threads saw half-initialized packages. Enter asks
-`session_reentry.py` for a fresh authoritative decision, then returns that typed
-decision from `Application.run()`. The command handler performs `os.execv()` only
-after the application and its lanes have closed. Nothing may write to stderr
-while the application runs; read paths keep skew warnings out of the listing
-(`IdleStore.read` is quiet).
-
-## Related KB
-
-KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
-
-- `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md` — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
-- `$MERIDIAN_CONTEXT_KB_DIR/decisions/launch.md` — rationale for the launch-mode split and argv normalization
-
-## Spawn Output Contract
-
-### Catalog default_output_mode for spawn
-
-`("spawn",)` and `("spawn", "wait")` have `default_output_mode="text"` in `catalog.py`. This means agent mode (no explicit `--format`) uses compact text output, not JSON. All other spawn subcommands retain `"json"`.
-
-Rule: if you add a new spawn subcommand, default to `"json"` unless it surfaces content agents need to read directly.
-
-The hidden runtime-only `spawn collect` and `spawn ack` commands default to JSON
-and stay out of help. Their shapes are a protocol with the Claude runtime mod, not
-human-facing spawn output.
-
-### Injected message frame
-
-`spawn message` (`cli/spawn_message.py`) posts text, not just a payload. It opens
-the message with a `[Meridian]` line naming the sender and, when the sender's active
-record has a route the post can reach, the
-`meridian spawn message <sender chat>` command that answers it. The frame asks the
-route the post uses: a child's control socket must exist, and a Claude primary must have
-published a live inbox socket (`resolve_primary_inbox`, shared with the post), so a bare
-or pre-2.1.224 primary gets "no reply route here". The check reads the sender's record's
-own runtime root, which differs from the receiver's under `-C`. The reply names the
-sender's current chat (`continue_chat_id`, so the address survives a `/clear`),
-which is the chat the sender's primary runs in. The chat id comes from
-the sender's own record, not `$MERIDIAN_CHAT_ID`, which names the conversation that launched it.
-A session that receives a message otherwise cannot tell which session sent it or
-where to reply.
-
-Under `-C` into another project the caller's `MERIDIAN_*` IDs are dropped (#794), so
-the sender comes from `GlobalOptions.caller` (captured before the drop; see
-`../AGENTS.md`), never from the env. Its record is read with
-`resolve_runtime_root_for_read`, which creates no state in the sender's project, and the
-reply gains `-C <sender project root>`. Do not restore caller IDs into the env to fix a
-missing sender: children launched in the other project would inherit them.
-
-A chat ref goes to the run live in that chat now: a running spawn whose
-`current_chat_id` is the chat, else the chat's owner if it still runs and is still in
-that chat. Native `/resume` can move a running process into a chat some other run
-started, so the owner may not be the one listening. This is not specific to `message`:
-every spawn command resolves chat and native refs through `locate_run`, which asks the
-same occupant question, then falls back to the chat's owner (`ops/.context/CONTEXT.md`,
-"Session Reference Resolution"). `spawn message` additionally refuses a chat with no
-running session, and refuses `@` selectors, which name finished spawns.
-
-The frame is message text, built once in the CLI, so the control-socket and
-primary-inbox routes carry it identically and every harness renders it. Do not
-move it into a harness wire field: Claude's peer-message envelope carries
-`from`/`from-mode`, and Meridian forges neither (KB
-`decisions/primary-inject.md#d-claude-primary-inbox` — the same reason a
-bypass-mode primary holds the message for approval).
-
-`spawn inject` remains as a hidden deprecated alias for one release; it warns on
-stderr and calls the same handler.
-
-### `--metadata` flag
-
-`_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
-
-Pattern: compact default → `--metadata` inline accounting → `spawn show` full record.
-
-### Verbose threading at emit point
-
-Both `_spawn_create` and `_spawn_wait` thread `--verbose` and `--metadata` into `FormatContext` at the emit point:
-
-```python
-if output_format != "json" and (metadata or verbose):
-    emit(result.format_text(FormatContext(verbosity=1)))
-else:
-    emit(result)
-```
-
-This avoids touching the global emit pipeline. Use this same pattern if you add new spawn subcommands that need context-aware text formatting.
-
-## Lateral Links
-
-→ [../../lib/bootstrap/.context/CONTEXT.md](../../lib/bootstrap/.context/CONTEXT.md) — bootstrap functions invoked after classification
+# CLI context
+
+## Startup and parsing
+
+Read-only invocation classes install no telemetry, start no writer thread, and
+create no UUID. A named `skills` read can refresh Meridian's provided copy in an
+existing Mars project without preparing Meridian runtime state. `skills` uses
+positional dispatch because `list` and a skill name occupy the same argument slot.
+
+Invocation state lives outside the root dispatcher so command modules need not
+import it. In-process callers must provide an invocation scope; no default
+options are fabricated. Result objects provide their own CLI output, keeping
+spawn operations and output models out of the root dispatcher.
+
+Cyclopts requires a value for optional string parameters, so bare `--fork` and
+`--from` become the synthetic value `__SELF__` before parsing. Argument splitting
+must skip that value. Mars arguments remain verbatim. The CLI's `--fork` identity
+lock is not an ops invariant: programmatic callers may change identity on a fork.
+
+Help hides generated negation aliases that do not change the default in the
+formatter, preserving those forms in the parser for compatibility.
+
+Mars passthrough rejects package mutations in a bare directory unless `--user`
+is given, before injecting a root. This prevents Mars auto-init from writing a
+project marker there; plain `mars init` remains project authoring.
+
+## Session browse
+
+Interactive browse is refused inside a managed session because the supervisor
+cannot safely transfer the process. Start-from eligibility is independent of
+liveness: `--from` reads recorded state, so a running session can be a source.
+The launch uses the values shown in the picker; its resolver checks validity.
+It always supplies the agent, avoiding the configured default for an agentless
+source, and uses `--opt=value` so prompt text beginning with `-` stays a value.
+
+The list filter is the history index query, applied before the result limit;
+transcript search instead narrows the loaded rows. Browse preloads cyclic
+transcript, search and lineage imports before worker lanes run, because concurrent
+first imports can see partially initialized packages. Nothing may write to stderr
+while the full-screen application runs.
+
+## Spawn output and messages
+
+New spawn subcommands default to JSON unless they surface content agents need
+to read directly. The hidden `spawn collect` and `spawn ack` output shapes are
+a protocol with the Claude runtime mod in
+`src/meridian/claude_runtime/meridian-spawn-watch/hooks/register.ts`; change
+its parser and these output shapes together.
+
+`spawn message` frames the message as text with the sender and, when available,
+a reply command: recipients otherwise cannot tell who sent it or how to reply.
+The reply uses the sender's current chat so it survives `/clear`; its control
+socket must exist for a reply route to be offered. A Claude primary binds that
+socket only after Claude publishes its inbox; bare or pre-2.1.224 primaries have
+no reply route. A socket file can remain after its server dies, so its existence
+is not a connection check.
+
+The frame must remain message text so every harness receives it. Claude's
+peer-message envelope carries `from` and `from-mode`, which Meridian does not
+forge. A chat reference targets its live occupant: native `/resume` can move a
+process into a chat started by another run. See
+[session reference resolution](../../lib/ops/.context/CONTEXT.md).
+
+[Bootstrap context](../../lib/bootstrap/.context/CONTEXT.md) describes state
+preparation after classification.

@@ -1,118 +1,36 @@
-# lib/catalog/ — Context
+# Catalog context
 
-Alias resolution and agent profile parsing. The catalog layer translates symbolic
-names into concrete execution parameters before any process launches. Skill
-resolution belongs exclusively to the Mars launch bundle.
+## Mars roots
 
-`resolve_mars_roots()` is the package-content authority. It walks up for the
-nearest `mars.toml`; without one it selects `~/.meridian/mars`. Project agent and
-package-content lookup then fall back to the user root, while aliases, models cache,
-bootstrap documents, targets, and other Mars configuration come only from the primary
-root. `ensure_user_mars_root()` initializes that ordinary Mars project under a Meridian
-lock before any Mars subprocess targets it.
-Read-pure inspection is the exception: it may show the resolved user root while
-absent, but it must not call the ensure function or launch Mars. Bare-directory
-`doctor` depends on this distinction.
+Mars resolves package content from the nearest `mars.toml`, or the user Mars
+root when none exists. Project content can fall back to user packages when the
+installed Mars supports fallback roots; other Mars configuration comes from the
+primary root. Read-pure inspection may report an absent user root but must not
+initialize it or launch Mars: bare-directory `doctor` depends on this distinction.
 
-## Contracts
+## Models
 
-### Zero Builtin Aliases
+Meridian defines no builtin model aliases. Mars resolution fails loudly when
+Mars cannot run, while alias inventory can fall back to `.mars/models-merged.json` under the primary Mars root. That
+file contains pinned aliases only; auto-resolve aliases need Mars to expand them.
+Inventory is static, not live routing availability. Mars subprocesses allow 60
+seconds because a cold models.dev refresh can be slow.
 
-Meridian defines no alias-to-model-id mappings internally. All aliases come from
-mars packages (`.mars/models-merged.json`) and consumer config (`mars.toml [models]`).
-Do not add hardcoded alias definitions to this module.
+Cache-only and normal alias lookups have separate cache keys so a dry run cannot
+suppress a later refresh within the same operation. Missing results are cached
+for the operation as well.
 
-### Mars Subprocess Integration
+Mars can prefix-match a literal model ID to a different ID. The direct resolution
+helper checks the catalog for an exact literal match before accepting that result;
+the catalog proves identity, not a harness route. Static aliases and exact-ID
+matches can legitimately lack a harness.
 
-**`run_mars_models_resolve(name, project_root)`** — raises `RuntimeError` when mars
-is unavailable or broken. Returns `None` only when the alias is unknown (mars exit
-code 1). Mars is always bundled with meridian, so unavailability is a hard error,
-not a soft fallback.
+## Agent profiles
 
-**`run_mars_models_aliases(project_root)`** — reads `mars models aliases --json`
-and returns `None` silently when mars is unavailable. Falls back to reading
-`.mars/models-merged.json` directly. This asymmetry is intentional: resolution must
-succeed or fail loudly; alias inventory can degrade gracefully. The aliases output
-is static inventory, not routed/live availability.
+`model-invocable` controls default subagent visibility, not whether a profile
+can be loaded. Keep catalog scanning neutral: explicit agent selection and other
+consumers need every profile. Missing or non-boolean values default to true for
+compatibility. See the [agent catalog](../../launch/.context/CONTEXT.md).
 
-**`run_mars_models_catalog(project_root)`** — reads the raw `catalog` array from
-`mars models catalog --json` and returns `None` on failure. Catalog entries carry
-model metadata but no harness, aliases, or runnable paths. Launch-bundle owns
-runtime routing.
-
-Dry-run static alias lookup passes `no_refresh_models=True` through the same
-aliases path to Mars. Cold cache retains the existing merged-file fallback for
-pinned aliases. Alias-map and aliases caches distinguish refresh policy so a
-cache-only lookup cannot suppress a later normal lookup in the same operation.
-
-**Timeout:** 60 seconds for all mars subprocess calls. Mars may do a cold
-`models.dev` fetch on first boot; 60s leaves headroom for slow DNS, disk, and startup.
-
-### MarsResultCache Scoping
-
-`MarsResultCache` is per-operation, not module-global. Create it inside
-`CatalogSession.__init__` or pass an existing one. It caches resolve, aliases,
-and catalog results for the duration of one CLI invocation.
-
-Caching transient `None` results is intentional — if mars returns "unknown alias"
-once, it will return the same for the same input within the operation. Don't retry.
-
-**Do not make `MarsResultCache` a module-level singleton** — it would cache across
-separate CLI invocations and prevent alias updates from being picked up.
-
-### Resolution Pipeline
-
-`resolve_model(name_or_alias, project_root)` in `models.py` is a legacy direct
-helper; launches obtain runtime routing from the Mars launch bundle:
-
-1. Call `mars models resolve <name> --json` (via `cached_mars_models_resolve`).
-2. If Mars returned a different ID, check `mars models catalog --json` for the exact literal ID.
-3. If found in catalog, return the literal ID with empty alias and unresolved harness; otherwise keep Mars's resolution.
-4. If Mars returned an unknown alias, pass the input through with unresolved harness.
-
-### AliasEntry
-
-`AliasEntry.harness` property: returns the recorded harness if present, raises
-`ValueError` otherwise. Static aliases and exact-ID catalog matches can
-legitimately have no harness; do not guess one from model-name patterns.
-Launch-bundle owns the runtime route.
-
-`AliasEntry.mars_provided_harness` exposes the raw mars-provided value for
-diagnostic display — do not use it for routing decisions.
-
-### AgentProfile.model_invocable
-
-`AgentProfile.model_invocable: bool = True` — controls whether an agent appears in
-the model-facing inventory prompt. Rules:
-
-- **Default is `True`** — profiles that omit `model-invocable` are visible to models.
-  This preserves backward compatibility for all existing profiles.
-- **YAML native booleans only** — `true` / `false` in frontmatter. Non-boolean values
-  (strings, integers) silently default to `True`; they do not raise.
-- **Informational metadata only** — `model_invocable` is not checked by
-  `load_agent_profile()` or `scan_agent_profiles()`. Those remain neutral scanners
-  that return all profiles regardless of this field.
-- **Visibility filtering is the caller's responsibility.** The catalog layer does not
-  filter. Mars renders harness-aware agent inventory in the launch-bundle
-  `prompt_surface.inventory_prompt`; meridian consumes that string verbatim.
-
-Do not add `model_invocable` checks to catalog scanning or loading functions —
-consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)
-must not be affected by this flag.
-
-### Profile Skills Belong to Mars
-
-`AgentProfile` has no skills field. Mars reads the profile's `skills:` itself
-when it builds the launch bundle, and the bundle's `skills.loaded` is the set an
-agent gets. Don't add a Meridian-side parse of profile skills.
-
-## Fallback to `.mars/models-merged.json`
-
-When the mars binary is unavailable, `load_mars_aliases()` falls back to reading
-`.mars/models-merged.json` directly. This file contains only pinned aliases (those
-with an explicit `model` key); auto-resolve aliases require mars to expand. Pinned
-aliases resolve correctly from the file; auto-resolve aliases are skipped.
-
-## Related KB
-
-- `$MERIDIAN_CONTEXT_KB_DIR/concepts/model-resolution/overview.md` — full resolution pipeline design (see `meridian context kb`)
+Mars reads profile skills when building the launch bundle. A separate Meridian
+parse would diverge from the skills actually loaded.

@@ -1,94 +1,51 @@
-"""Post messages to live Claude primary inbox sockets."""
+"""Post messages to the inbox socket a live Claude primary publishes."""
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import socket
 from pathlib import Path
 
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.bundle import PrimaryInboxError
+from meridian.lib.core.delivery import (
+    DeliveryKind,
+    DeliveryRefused,
+    MessageRoute,
+    TransportDead,
+)
 from meridian.lib.harness.claude_boundary import (
     claude_boundary_journal_path,
     latest_messaging_socket,
 )
-from meridian.lib.state.liveness import is_process_alive_born_by
 from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.spawn.model import SpawnRecord
 
 _SOCKET_TIMEOUT_SECONDS = 3.0
+_ROUTE_NOTE = (
+    "Claude may hold it for approval when that session bypasses permission prompts; "
+    'set crossSessionInbound to "accept" in Claude settings to skip the prompt.'
+)
 
 
-def _gone(spawn_id: SpawnId) -> PrimaryInboxError:
-    return PrimaryInboxError(f"Claude primary {spawn_id}'s inbox is gone")
-
-
-def _process_exited(spawn_id: SpawnId) -> PrimaryInboxError:
-    return PrimaryInboxError(
-        f"Claude primary {spawn_id}'s inbox is gone because the Claude process exited"
-    )
-
-
-def resolve_primary_inbox(*, runtime_root: Path, record: SpawnRecord) -> Path:
-    """Return the live inbox socket a Claude primary published, or raise why none is reachable."""
-
-    spawn_id = SpawnId(record.id)
-    worker_pid = record.worker_pid
-    if worker_pid is None or worker_pid <= 0:
-        raise PrimaryInboxError(f"Claude primary {spawn_id}'s worker PID is unknown")
-
-    journal = claude_boundary_journal_path(LaunchPaths.for_row(runtime_root, record))
-    published_inbox = latest_messaging_socket(journal, pid=worker_pid)
-    if published_inbox is None:
-        raise PrimaryInboxError(
-            f"Claude primary {spawn_id} has not published an inbox socket "
-            "(needs Claude Code >= 2.1.224; bare mode has none)"
-        )
-    inbox, recorded_at = published_inbox
-    if not is_process_alive_born_by(worker_pid, recorded_at):
-        raise _process_exited(spawn_id)
-    return inbox
-
-
-def post_primary_message(
-    *,
-    runtime_root: Path,
-    record: SpawnRecord,
-    message: str,
-) -> str:
-    """Post one user message to the inbox published by a live Claude primary."""
-
-    spawn_id = SpawnId(record.id)
-    inbox = resolve_primary_inbox(runtime_root=runtime_root, record=record)
-
+def _post(inbox: Path, text: str) -> None:
     wire_message = (
         json.dumps(
-            {
-                "type": "user",
-                "message": {"role": "user", "content": message},
-            },
+            {"type": "user", "message": {"role": "user", "content": text}},
             separators=(",", ":"),
         ).encode("utf-8")
         + b"\n"
     )
-
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(_SOCKET_TIMEOUT_SECONDS)
         try:
-            client.settimeout(_SOCKET_TIMEOUT_SECONDS)
             client.connect(str(inbox))
-            client.sendall(wire_message)
+        except TimeoutError as exc:
+            raise DeliveryRefused("Claude's inbox timed out accepting a connection") from exc
         except OSError as exc:
             if exc.errno in {errno.ENOENT, errno.ECONNREFUSED}:
-                raise _gone(spawn_id) from exc
-            if isinstance(exc, TimeoutError):
-                raise PrimaryInboxError(
-                    f"Claude primary {spawn_id}'s inbox timed out while posting the message"
-                ) from exc
-            detail = exc.strerror or str(exc)
-            raise PrimaryInboxError(
-                f"Could not post to Claude primary {spawn_id}'s inbox: {detail}"
-            ) from exc
+                raise TransportDead("Claude's inbox is gone") from exc
+            raise DeliveryRefused(f"Could not reach Claude's inbox: {exc.strerror or exc}") from exc
+        client.sendall(wire_message)
 
         try:
             client.shutdown(socket.SHUT_WR)
@@ -97,8 +54,23 @@ def post_primary_message(
         except OSError:
             pass
 
-    return (
-        f"Message posted to primary {spawn_id}'s Claude inbox\n"
-        "Claude may hold it for approval when that session bypasses permission prompts; "
-        'set crossSessionInbound to "accept" in Claude settings to skip the prompt.'
-    )
+
+def claude_primary_message_route(launch: LaunchPaths, pid: int) -> MessageRoute | None:
+    """The route to Claude process *pid*, or ``None`` until it has published an inbox.
+
+    Each send looks the inbox up again: the journal is the authority for which socket
+    is current.
+    """
+
+    journal = claude_boundary_journal_path(launch)
+    if latest_messaging_socket(journal, pid=pid) is None:
+        return None
+
+    async def deliver(text: str) -> DeliveryKind:
+        inbox = latest_messaging_socket(journal, pid=pid)
+        if inbox is None:
+            raise TransportDead("Claude's inbox is gone")
+        await asyncio.to_thread(_post, inbox, text)
+        return DeliveryKind.POSTED
+
+    return MessageRoute(deliver, note=_ROUTE_NOTE)

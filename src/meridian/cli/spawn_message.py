@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
 import shlex
 import sys
@@ -11,14 +10,9 @@ import time
 from pathlib import Path
 from typing import Never, cast
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS, DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.harness.bundle import (
-    PrimaryInboxError,
-    post_to_primary,
-    primary_accepts_messages,
-)
 from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
@@ -27,10 +21,10 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
-from meridian.lib.streaming.control_socket import control_socket_path
+from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES, control_socket_path
 
-# Above the 30 s harness request timeouts, so their failure text reaches the sender.
-_RESPONSE_TIMEOUT_SECONDS = 35.0
+# Above the server's send bound, so its failure text reaches the sender.
+_RESPONSE_TIMEOUT_SECONDS = SEND_TIMEOUT_SECONDS + 2.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
@@ -96,16 +90,14 @@ def _sender_record(runtime_root: Path | None, sender_spawn_id: str | None) -> Sp
 def _can_receive_reply(sender: SpawnRecord, sender_root: Path) -> bool:
     """True when a message sent back to the sender would resolve a route.
 
-    Applies the post's resolution checks, not a connect: a primary's published inbox,
-    a child's control socket file. A dead socket on a live runner still passes.
-    *sender_root* is the runtime root the sender's record came from.
+    Checks the control socket file, not a connect: a dead socket on a live runner
+    still passes. *sender_root* is the runtime root the sender's record came from.
     """
 
-    if not is_active_spawn_status(sender.status):
-        return False
-    if sender.kind == "primary":
-        return primary_accepts_messages(sender, runtime_root=sender_root)
-    return control_socket_path(sender_root, sender.id).exists()
+    return (
+        is_active_spawn_status(sender.status)
+        and control_socket_path(sender_root, sender.id).exists()
+    )
 
 
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
@@ -135,26 +127,16 @@ def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
 async def _send_and_receive(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
-    request: dict[str, str],
+    line: bytes,
 ) -> bytes:
-    """Send request and receive response, with proper cleanup."""
+    """Send one encoded request line and receive the response, with proper cleanup."""
     try:
-        writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        writer.write(line)
         await writer.drain()
         return await asyncio.wait_for(reader.readline(), timeout=_RESPONSE_TIMEOUT_SECONDS)
     finally:
         writer.close()
         await writer.wait_closed()
-
-
-def _post_primary(runtime_root: Path, record: SpawnRecord, message: str) -> None:
-    if not is_active_spawn_status(record.status):
-        _fail(f"spawn not running: {record.id}")
-    try:
-        confirmation = post_to_primary(record, runtime_root=runtime_root, message=message)
-    except PrimaryInboxError as exc:
-        _fail(str(exc))
-    print(confirmation)
 
 
 async def send_message(
@@ -199,11 +181,6 @@ async def send_message(
         sender_project_root=sender_project_root,
     )
 
-    record = read_derived(runtime_root, normalized_spawn_id)
-    if record is not None and record.kind == "primary":
-        _post_primary(runtime_root, record, framed)
-        return
-
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
         record = read_derived(runtime_root, normalized_spawn_id)
@@ -213,15 +190,26 @@ async def send_message(
             break
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
-            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+            older = (
+                "; a primary may have been started by an older build (relaunch it)"
+                " or run without a message channel"
+                if record.kind == "primary"
+                else ""
+            )
+            _fail(f"spawn {normalized_spawn_id} has no message route{older}")
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
-    request: dict[str, str] = {"type": "user_message", "text": framed}
+    # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
+    line = (
+        json.dumps({"type": "user_message", "text": framed}, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    if len(line) > MAX_REQUEST_BYTES:
+        _fail(f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit")
 
     response_data = b""
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
-        response_data = await _send_and_receive(reader, writer, request)
+        response_data = await _send_and_receive(reader, writer, line)
     except TimeoutError:
         _fail(
             f"timed out waiting for response from spawn {normalized_spawn_id}; "
@@ -231,12 +219,11 @@ async def send_message(
         _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
     except FileNotFoundError:
         _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
-    except OSError as exc:
-        if exc.errno == errno.ENOENT:
-            _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
-        if exc.errno == errno.ECONNREFUSED:
-            _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
-        raise
+    except (ConnectionResetError, BrokenPipeError):
+        _fail(
+            f"connection to spawn {normalized_spawn_id} was reset; "
+            "the message may not have been delivered and was not resent"
+        )
 
     if not response_data:
         _fail(f"spawn not running: {normalized_spawn_id} returned no response")
@@ -258,6 +245,9 @@ async def send_message(
             print(f"Message delivered to spawn {normalized_spawn_id}")
         else:
             print(f"Message posted to spawn {normalized_spawn_id} (no receipt)")
+        note = parsed.get("note")
+        if isinstance(note, str):
+            print(note)
         return
 
     error_value = parsed.get("error")

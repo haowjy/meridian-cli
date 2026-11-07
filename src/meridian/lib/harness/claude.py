@@ -51,7 +51,7 @@ from meridian.lib.harness.claude_boundary import (
     read_observations,
 )
 from meridian.lib.harness.claude_idle import detect_ttl
-from meridian.lib.harness.claude_inbox import post_primary_message, resolve_primary_inbox
+from meridian.lib.harness.claude_inbox import claude_primary_message_route
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
@@ -634,7 +634,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         """Claude projection: route system content to append-system-prompt.
 
-        - SYSTEM_INSTRUCTION (skills, profile, report, inventory, passthrough)
+        - SYSTEM_INSTRUCTION (skills, profile, report, capabilities, passthrough)
           → --append-system-prompt channel
         - USER_TASK_PROMPT + TASK_CONTEXT → positional prompt argument (user turn)
         """
@@ -777,6 +777,10 @@ class _ClaudeSemantics(HarnessSemantics):
         # Background Agent frames share stdout, but cannot reset the parent's wait.
         if event.event_type == "assistant" and event.payload.get("parent_tool_use_id"):
             return EventSemantics()
+        # `init` opens every turn, a model call ahead of `assistant`; until then the hold
+        # would close a child that is starting one. It is not work, so it renews nothing.
+        if event.event_type == "system" and event.payload.get("subtype") == "init":
+            return EventSemantics(activity="turn_active")
         return super().normalize(event, primary_event_scope=primary_event_scope)
 
 
@@ -807,8 +811,7 @@ register_harness_bundle(
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,
-        primary_inbox=post_primary_message,
-        primary_inbox_route=resolve_primary_inbox,
+        primary_message_route=claude_primary_message_route,
         detect_ttl=detect_ttl,
     )
 )

@@ -58,11 +58,11 @@ Roots are deduplicated and resolved to absolute paths before projection. Paths t
 
 Managed primary sessions surface approval requests instead of auto-accepting or rejecting them.
 
-In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian's permission broker records it in the session's `permission_requests.jsonl` and publishes the transition to runtime consumers. A controller can then answer through the connection API.
+In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to every connected client: the TUI shows the prompt and Meridian's observer receives the same request. Meridian's permission broker records it in the session's `permission_requests.jsonl` and publishes the transition to runtime consumers. Nothing in Meridian answers it on a primary, including for a turn that `spawn message` injected; the person answers in the TUI and the broker records the resolution. After the TUI moves to another thread (`/new`, `/fork`, `/resume`) the route refuses messages, so no injected turn runs unseen on the first thread; see [primary message delivery](harness-integration.md).
 
 Key properties:
 
-- **Requests are surfaced, not auto-accepted.** Pending requests stay open until a controller responds or Codex times out.
+- **Requests are surfaced, not auto-accepted.** Pending requests stay open until the person answers in the TUI or Codex times out.
 - **Subagent spawns fail closed.** The permission broker refuses requests immediately, journals the refusal, and does not route it to the parent session.
 - **Unsupported server request methods** (anything other than approval and user-input variants) still return a transport-level error.
 
@@ -71,7 +71,7 @@ Key properties:
 Codex managed primary uses these channels:
 
 - `baseInstructions`: agent/profile or role instructions
-- `developerInstructions`: Meridian runtime instructions, skills, inventory, and reporting guidance
+- `developerInstructions`: Meridian runtime instructions, skills, and reporting guidance
 - `turn/start input`: the visible user turn
 
 That keeps Meridian's system content out of the visible TUI prompt on managed paths.

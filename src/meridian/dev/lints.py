@@ -540,6 +540,7 @@ _SYS_EXECUTABLE_OWNERS = frozenset(
     {
         "meridian/lib/platform/python_module.py",
         "meridian/lib/harness/claude.py",  # hands the interpreter to a stdlib hook script
+        "meridian/lib/harness/codex_tool_hook.py",  # runs the stdlib Codex hook script with it
         "meridian/lib/catalog/mars_roots.py",  # finds the scripts dir beside the interpreter
         "meridian/lib/launch/cli_shim.py",  # compares PATH's `meridian` to this build's
     }

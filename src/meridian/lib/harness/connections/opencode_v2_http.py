@@ -353,54 +353,12 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             accepted_statuses=self._SUCCESS_STATUSES,
         )
 
-    async def _post_session_action(
-        self,
-        *,
-        path_templates: tuple[str, ...],
-        payload_variants: tuple[dict[str, object], ...],
-        accepted_statuses: frozenset[int],
-    ) -> None:
-        session_id = self._require_session_id()
-        last_error: str | None = None
-
-        for template in path_templates:
-            path = template.format(session_id=session_id)
-            for payload in payload_variants:
-                status, body, content_type = await self._post_json(
-                    path,
-                    payload,
-                    skip_body_on_statuses=accepted_statuses,
-                    tolerate_incomplete_body=True,
-                )
-                # Unknown routes fall through to the SPA ``200 text/html`` handler,
-                # which would otherwise masquerade as a successful delivery and
-                # silently drop the prompt. Success requires a non-HTML content
-                # type (the same guard ``_switch_session_model`` uses).
-                if status in accepted_statuses and "text/html" not in content_type:
-                    return
-                if status in self._PAYLOAD_RETRY_STATUSES:
-                    last_error = (
-                        f"OpenCode V2 session action rejected payload on {path}: "
-                        f"status={status} body={summarize_body(body)}"
-                    )
-                    continue
-                if status in self._PATH_RETRY_STATUSES:
-                    last_error = (
-                        f"OpenCode V2 session endpoint unavailable on {path}: "
-                        f"status={status} body={summarize_body(body)}"
-                    )
-                    break
-                if status in accepted_statuses:
-                    raise RuntimeError(
-                        f"OpenCode V2 session action returned an HTML fallback on {path}: "
-                        f"status={status} content_type={content_type}"
-                    )
-                raise RuntimeError(
-                    f"OpenCode V2 session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}"
-                )
-
-        raise RuntimeError(last_error or "OpenCode V2 session action failed")
+    def _accepted(self, status: int, content_type: str, accepted_statuses: frozenset[int]) -> bool:
+        # Unknown routes fall through to the SPA ``200 text/html`` handler, which would
+        # otherwise masquerade as a delivery and silently drop the prompt.
+        return super()._accepted(status, content_type, accepted_statuses) and (
+            "text/html" not in content_type
+        )
 
     async def respond_request(
         self,
@@ -482,6 +440,43 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             harness_id=HarnessId.OPENCODE.value,
             raw_text=raw_text,
         )
+
+    def _created_session_ids(self, payload: dict[str, object]) -> tuple[str | None, str | None]:
+        # ``_event_from_json_line`` flattened ``data`` into the payload.
+        session_id, parent_id = payload.get("sessionID"), payload.get("parentID")
+        return (
+            session_id if isinstance(session_id, str) else None,
+            parent_id if isinstance(parent_id, str) and parent_id else None,
+        )
+
+    def _note_tui_session(self, event: RawHarnessEvent) -> None:
+        """Also latch on the human's fork and on input to a session this run never saw.
+
+        ``session.forked`` carries the new session's id (only the fork API and the
+        TUI's Fork session emit it; subagents arrive as ``session.created`` with a
+        parent). ``session.inbox.enqueued`` names the session receiving input, so an
+        id that is neither ours nor a recorded child means the human is elsewhere,
+        which also covers ``ctrl+x l`` to an existing session once they type. A child
+        whose ``session.created`` fell in a reconnect gap reads as a move: the
+        refusal stays honest.
+        """
+        if (
+            self._primary_observer_mode
+            and not self._tui_left_session
+            and event.event_type in {"session.forked", "session.inbox.enqueued"}
+        ):
+            session_id = event.payload.get("sessionID")
+            if (
+                isinstance(session_id, str)
+                and session_id != self._session_id
+                and (
+                    event.event_type == "session.forked"
+                    or session_id not in self._child_session_ids
+                )
+            ):
+                self._latch_tui_left(session_id, event.event_type)
+            return
+        super()._note_tui_session(event)
 
     async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
         """Synthesize a terminal the live ``/api/event`` stream may have missed.

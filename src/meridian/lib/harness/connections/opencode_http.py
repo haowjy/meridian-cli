@@ -24,7 +24,12 @@ import aiohttp
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
-from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.delivery import (
+    TUI_MOVED_MESSAGE,
+    DeliveryKind,
+    DeliveryRefused,
+    TransportDead,
+)
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
@@ -35,7 +40,6 @@ from meridian.lib.harness.connections.base import (
     AutoAcceptHandler,
     ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
     HarnessRequest,
@@ -46,6 +50,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    not_ready,
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
@@ -59,10 +64,7 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
-    ResidentBackendControl,
-)
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.opencode_backend import v1_session_running
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -254,11 +256,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
-        self._signal_in_flight = False
         # True once ``events()`` has returned: nothing reads the stream, so a
         # failed cancel must leave ``stopping`` in place (see ``send_cancel``).
         self._events_exited = False
         self._primary_observer_mode = False
+        self._tui_left_session = False
+        # Sessions announced with a parent (subagents, nested): never a move.
+        self._child_session_ids: set[str] = set()
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._stop_lock = asyncio.Lock()
@@ -400,6 +404,54 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             resolution={"decision": decision, **(payload or {})},
         )
 
+    def _created_session_ids(self, payload: dict[str, object]) -> tuple[str | None, str | None]:
+        """Return ``(session id, parent id)`` of a ``session.created`` payload.
+
+        V1 nests ``info`` under ``properties``.
+        """
+        props = payload.get("properties")
+        info = cast("dict[str, object]", props).get("info") if isinstance(props, dict) else None
+        if not isinstance(info, dict):
+            return None, None
+        source = cast("dict[str, object]", info)
+        session_id, parent_id = source.get("id"), source.get("parentID")
+        return (
+            session_id if isinstance(session_id, str) else None,
+            parent_id if isinstance(parent_id, str) and parent_id else None,
+        )
+
+    def _note_tui_session(self, event: RawHarnessEvent) -> None:
+        """Latch ``_tui_left_session`` when a new top-level session appears.
+
+        The event stream is global, and the TUI's ``ctrl+x n`` creates its session on
+        the first message, so ``session.created`` with no parent is the sign of a
+        move. A subagent's session has a parent and is recorded as a child. Switching
+        to an existing session sends nothing, so that move is invisible until V2
+        shows the human's input (see ``OpenCodeV2Connection``).
+        """
+        if (
+            not self._primary_observer_mode
+            or self._tui_left_session
+            or event.event_type != "session.created"
+        ):
+            return
+        created_id, parent_id = self._created_session_ids(event.payload)
+        if created_id is None or created_id == self._session_id:
+            return
+        if parent_id:
+            self._child_session_ids.add(created_id)
+            return
+        self._latch_tui_left(created_id, event.event_type)
+
+    def _latch_tui_left(self, session_id: str, signal: str) -> None:
+        self._tui_left_session = True
+        logger.warning(
+            "OpenCode TUI left session %s for %s (%s); messages are refused",
+            self._session_id,
+            session_id,
+            signal,
+        )
+
     async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
         """Route an inbound permission ask or reply to the request handler.
 
@@ -413,6 +465,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         read keeps flowing. A native reply is reconciled inline: its journal
         write is local, so it cannot stall the drain.
         """
+
+        self._note_tui_session(event)
 
         if event.event_type in self._PERMISSION_ASK_EVENT_TYPES:
             session_id, request_id = _extract_opencode_permission_context(event.payload)
@@ -598,7 +652,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             agent=spec.agent_name,
         )
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._events_exited = False
         self._event_queue = asyncio.Queue()
         self._queue_waiter = None
@@ -661,33 +714,29 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         await self._cleanup_runtime()
         self._cancel_requested = False
-        self._signal_in_flight = False
         self._transition("stopped")
         return StopResult()
 
     @property
     def resident_backend(self) -> ResidentBackendControl:
-        return LivenessResidentBackendControl(
-            liveness=self._liveness,
-            backend_dead=self._resident_backend_dead,
-            begin_followup_turn=self._begin_followup_turn,
-        )
+        return self._liveness
 
     def health(self) -> bool:
         return not self._resident_backend_dead() and self._liveness.healthy
 
+    def backend_dead(self) -> bool:
+        # A silent but living process is stalled, which `health` counts and this does not.
+        return (
+            self._resident_backend_dead()
+            or self._liveness.classify_close_stream() is LivenessDecision.BACKEND_DEAD
+        )
+
     async def send_user_message(self, text: str) -> DeliveryKind:
         self._require_connected()
-        self._signal_in_flight = False
+        if self._tui_left_session:
+            raise DeliveryRefused(TUI_MOVED_MESSAGE)
         await self._post_session_message(text)
         return DeliveryKind.ACKNOWLEDGED
-
-    async def _begin_followup_turn(self, message: str) -> None:
-        self._require_connected()
-        if self._signal_in_flight:
-            raise ConnectionNotReady("OpenCode follow-up turns require an idle backend")
-        self._signal_in_flight = False
-        await self._post_session_message(message)
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:
@@ -700,7 +749,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # the SSE read, so a later terminal (V1 ``session.idle`` reads as
         # SUCCEEDED and outranks ``cancel_sent``) is never read. A failed POST
         # undoes it, so a retry sends again.
-        self._signal_in_flight = True
         self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         try:
@@ -710,7 +758,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 accepted_statuses=self._ACTION_SUCCESS_STATUSES,
             )
         except BaseException:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
             # Roll back only while the drain is alive and ``stop()`` has not
             # taken over: otherwise ``stopping`` is the truth (no reader, or a
@@ -1328,6 +1375,56 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 "OpenCode effective configuration overrides the selected model"
             )
 
+    async def _add_committed_target(self, payload: dict[str, object]) -> None:
+        """Copy the session's committed agent and model into *payload*; the reads write nothing."""
+
+        native = await self._native_json(f"/session/{self._require_session_id()}")
+        native = cast("dict[str, object]", native) if isinstance(native, dict) else {}
+        choice = native.get("model")
+        agent = self._agent_name or native.get("agent")
+        if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
+            messages = await self._native_json(f"/session/{self._require_session_id()}/message")
+            if isinstance(messages, list):
+                for item in reversed(cast("list[object]", messages)):
+                    info = (
+                        cast("dict[str, object]", item).get("info")
+                        if isinstance(item, dict)
+                        else None
+                    )
+                    if not isinstance(info, dict):
+                        continue
+                    info = cast("dict[str, object]", info)
+                    if info.get("role") != "user":
+                        continue
+                    latest = info.get("model")
+                    if isinstance(latest, dict):
+                        latest = cast("dict[str, object]", latest)
+                        choice = {
+                            "id": latest.get("modelID"),
+                            "providerID": latest.get("providerID"),
+                            "variant": latest.get("variant", "default"),
+                        }
+                        agent = self._agent_name or info.get("agent")
+                    break
+        if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
+            raise HarnessCapabilityMismatch(
+                "OpenCode has no observable committed agent/model for this injection"
+            )
+        choice = cast("dict[str, object]", choice)
+        provider, model_id = choice.get("providerID"), choice.get("id")
+        if (
+            not isinstance(provider, str)
+            or not isinstance(model_id, str)
+            or not provider
+            or not model_id
+        ):
+            raise HarnessCapabilityMismatch("OpenCode returned an invalid committed model")
+        payload["agent"] = agent
+        payload["model"] = {"providerID": provider, "modelID": model_id}
+        variant = choice.get("variant")
+        if isinstance(variant, str):
+            payload["variant"] = variant
+
     async def _post_session_message(
         self, text: str, *, fresh: bool = False, model: str | None = None
     ) -> None:
@@ -1339,57 +1436,19 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if self._agent_name:
                 payload["agent"] = self._agent_name
         else:
-            native = await self._native_json(f"/session/{self._require_session_id()}")
-            native = cast("dict[str, object]", native) if isinstance(native, dict) else {}
-            choice = native.get("model")
-            agent = self._agent_name or native.get("agent")
-            if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
-                messages = await self._native_json(f"/session/{self._require_session_id()}/message")
-                if isinstance(messages, list):
-                    for item in reversed(cast("list[object]", messages)):
-                        info = (
-                            cast("dict[str, object]", item).get("info")
-                            if isinstance(item, dict)
-                            else None
-                        )
-                        if not isinstance(info, dict):
-                            continue
-                        info = cast("dict[str, object]", info)
-                        if info.get("role") != "user":
-                            continue
-                        latest = info.get("model")
-                        if isinstance(latest, dict):
-                            latest = cast("dict[str, object]", latest)
-                            choice = {
-                                "id": latest.get("modelID"),
-                                "providerID": latest.get("providerID"),
-                                "variant": latest.get("variant", "default"),
-                            }
-                            agent = self._agent_name or info.get("agent")
-                        break
-            if not isinstance(choice, dict) or not isinstance(agent, str) or not agent:
-                raise HarnessCapabilityMismatch(
-                    "OpenCode has no observable committed agent/model for this injection"
-                )
-            choice = cast("dict[str, object]", choice)
-            provider, model_id = choice.get("providerID"), choice.get("id")
-            if (
-                not isinstance(provider, str)
-                or not isinstance(model_id, str)
-                or not provider
-                or not model_id
-            ):
-                raise HarnessCapabilityMismatch("OpenCode returned an invalid committed model")
-            payload["agent"] = agent
-            payload["model"] = {"providerID": provider, "modelID": model_id}
-            variant = choice.get("variant")
-            if isinstance(variant, str):
-                payload["variant"] = variant
+            try:
+                await self._add_committed_target(payload)
+            except (HarnessCapabilityMismatch, aiohttp.ClientError, TimeoutError) as exc:
+                # Only reads have run: nothing was posted.
+                raise DeliveryRefused(str(exc)) from exc
         await self._post_session_action(
             path_templates=self._MESSAGE_PATH_TEMPLATES,
             payload_variants=(payload,),
             accepted_statuses=self._SUCCESS_STATUSES,
         )
+
+    def _accepted(self, status: int, content_type: str, accepted_statuses: frozenset[int]) -> bool:
+        return status in accepted_statuses
 
     async def _post_session_action(
         self,
@@ -1399,18 +1458,22 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         accepted_statuses: frozenset[int],
     ) -> None:
         session_id = self._require_session_id()
-        last_error: str | None = None
+        last_error = ""
 
         for template in path_templates:
             path = template.format(session_id=session_id)
             for payload in payload_variants:
-                status, body, _content_type = await self._post_json(
-                    path,
-                    payload,
-                    skip_body_on_statuses=accepted_statuses,
-                    tolerate_incomplete_body=True,
-                )
-                if status in accepted_statuses:
+                try:
+                    status, body, content_type = await self._post_json(
+                        path,
+                        payload,
+                        skip_body_on_statuses=accepted_statuses,
+                        tolerate_incomplete_body=True,
+                    )
+                except aiohttp.ClientConnectorError as exc:
+                    # No connection was made, so nothing was sent.
+                    raise TransportDead(f"OpenCode server unreachable: {exc}") from exc
+                if self._accepted(status, content_type, accepted_statuses):
                     return
                 if status in self._PAYLOAD_RETRY_STATUSES:
                     last_error = (
@@ -1424,12 +1487,21 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         f"status={status} body={summarize_body(body)}"
                     )
                     break
-                raise RuntimeError(
+                detail = (
                     f"OpenCode session action failed on {path}: "
-                    f"status={status} body={summarize_body(body)}"
+                    f"status={status} content_type={content_type or '<none>'} "
+                    f"body={summarize_body(body)}"
+                )
+                # A status the loop would accept but ``_accepted`` vetoed (V2's HTML
+                # fallback) was answered by a handler that acted on nothing.
+                raise (
+                    DeliveryRefused(detail)
+                    if status in accepted_statuses
+                    else http_rejection(status, detail)
                 )
 
-        raise RuntimeError(last_error or "OpenCode session action failed")
+        # Only 4xx statuses reach here: the server answered and acted on nothing.
+        raise DeliveryRefused(last_error)
 
     async def _post_json(
         self,
@@ -1616,7 +1688,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
         if semantics.clears_signal:
-            self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
     async def _ensure_http_client(self) -> aiohttp.ClientSession:
@@ -1658,7 +1729,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_path = None
         self._last_health_ok = False
         self._cancel_requested = False
-        self._signal_in_flight = False
         try:
             await self._cancel_request_dispatch_tasks()
             await self._clear_stale_pending_requests(reason="connection_stopped")
@@ -1674,13 +1744,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _require_session_id(self) -> str:
         if self._session_id is None:
-            raise ConnectionNotReady("OpenCode session has not been created yet")
+            raise DeliveryRefused("OpenCode session has not been created yet")
         return self._session_id
 
     def _require_connected(self) -> None:
         if self._state != "connected":
-            raise ConnectionNotReady(
-                f"OpenCode connection is not ready (current state: {self._state})"
+            raise not_ready(
+                self._state, f"OpenCode connection is not ready (current state: {self._state})"
             )
 
     def _process_exited(self) -> bool:
@@ -1984,6 +2054,12 @@ def find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def http_rejection(status: int, text: str) -> RuntimeError:
+    """A 4xx answered a POST and acted on nothing; a 5xx may have acted, so it stays unknown."""
+
+    return DeliveryRefused(text) if 400 <= status < 500 else RuntimeError(text)
 
 
 def summarize_body(body: object | None) -> str:

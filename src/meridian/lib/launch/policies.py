@@ -172,7 +172,6 @@ class ResolvedLaunchPolicy:
     selection_report: dict[str, object] | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
-    bundle_inventory_prompt: str | None = None
     bundle_available_skills: tuple[AvailableSkillEntry, ...] = ()
     """Available skill entries from bundle (on-demand, not loaded at launch)."""
     skill_delivery: SkillDeliveryMode = "inline"
@@ -642,7 +641,6 @@ def _resolve_policy_from_snapshot(
         selection_report=replayed.selection_report,
         warnings=(),
         alias_catalog=replayed.alias_catalog,
-        bundle_inventory_prompt=snapshot.bundle_inventory_prompt,
         bundle_available_skills=replayed.available_skills,
         skill_delivery=snapshot.skill_delivery,
     )

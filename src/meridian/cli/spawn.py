@@ -46,6 +46,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnCreateInput,
     SpawnForkInput,
     SpawnListInput,
+    SpawnRearmInput,
     SpawnShowInput,
     SpawnSignalInput,
     SpawnStatsInput,
@@ -76,9 +77,13 @@ from meridian.lib.ops.spawn.owed import (
 )
 
 logger = structlog.get_logger(__name__)
-_SPAWN_STATUS_VALUES = tuple(ALL_SPAWN_STATUSES)
+_LISTABLE_SPAWN_STATUS_VALUES = tuple(
+    status
+    for status in ALL_SPAWN_STATUSES
+    if status not in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}
+)
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
-    status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
+    status for status in ALL_SPAWN_STATUSES if status in ACTIVE_SPAWN_STATUSES
 )
 _SPAWN_USAGE_EPILOGUE = (
     "Launch detached, then track:\n\n"
@@ -170,31 +175,46 @@ def _emit_spawn_warnings(*results: SpawnActionOutput) -> None:
             sink.warning(result.warning)
 
 
-def _read_prompt_from_stdin() -> str:
+def _read_text_from_stdin(*, label: str) -> str:
     if sys.stdin.isatty():
-        raise ValueError("--prompt-file - requires stdin to be piped or redirected")
+        raise ValueError(f"--{label}-file - requires stdin to be piped or redirected")
     try:
-        prompt_text = sys.stdin.read()
+        text = sys.stdin.read()
     except UnicodeDecodeError as exc:
-        raise ValueError("prompt stdin is not valid UTF-8") from exc
-    if not prompt_text:
-        raise ValueError("prompt stdin is empty")
-    return prompt_text
+        raise ValueError(f"{label} stdin is not valid UTF-8") from exc
+    if not text:
+        raise ValueError(f"{label} stdin is empty")
+    return text
 
 
-def _read_prompt_from_file(prompt_file: str) -> str:
-    if not prompt_file.strip():
-        raise ValueError("prompt file path is empty")
-    prompt_path = Path(prompt_file)
+def _read_text_from_file(path: str, *, label: str) -> str:
+    if not path.strip():
+        raise ValueError(f"{label} file path is empty")
     try:
-        prompt_text = prompt_path.read_text(encoding="utf-8")
+        text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError as exc:
-        raise ValueError(f"prompt file not found: {prompt_file}") from exc
+        raise ValueError(f"{label} file not found: {path}") from exc
     except UnicodeDecodeError as exc:
-        raise ValueError(f"prompt file is not valid UTF-8: {prompt_file}") from exc
-    if not prompt_text:
-        raise ValueError(f"prompt file is empty: {prompt_file}")
-    return prompt_text
+        raise ValueError(f"{label} file is not valid UTF-8: {path}") from exc
+    if not text:
+        raise ValueError(f"{label} file is empty: {path}")
+    return text
+
+
+def _resolve_rearm_reason(reason: str | None, reason_file: str | None) -> str | None:
+    if reason is not None and reason_file is not None:
+        raise ValueError("cannot specify both --reason and --reason-file")
+    if reason_file is None:
+        text = reason
+    elif reason_file == "-":
+        text = _read_text_from_stdin(label="reason")
+    else:
+        text = _read_text_from_file(reason_file, label="reason")
+    if text is None:
+        return None
+    if not text.strip():
+        raise ValueError("reason is empty")
+    return text.strip()
 
 
 def _resolve_spawn_prompt(
@@ -210,8 +230,8 @@ def _resolve_spawn_prompt(
         return prompt
     if prompt_file is not None:
         if prompt_file == "-":
-            return _read_prompt_from_stdin()
-        return _read_prompt_from_file(prompt_file)
+            return _read_text_from_stdin(label="prompt")
+        return _read_text_from_file(prompt_file, label="prompt")
     if has_files or is_continue:
         return ""
     raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
@@ -831,24 +851,13 @@ def _spawn_create(
         raise SystemExit(exit_code)
 
 
-def _warn_deprecated_list_filter(flag: str) -> None:
-    print(
-        f"warning: `{flag}` is deprecated and will be removed in the next minor release; "
-        "new spawns go straight to running.",
-        file=sys.stderr,
-    )
-
-
 def _spawn_list(
     emit: Emitter,
     status: Annotated[
         str | None,
         Parameter(
             name="--status",
-            help=(
-                "Filter by status: running, succeeded, failed, cancelled, timed_out "
-                "(queued and finalizing are deprecated)."
-            ),
+            help=("Filter by status: running, succeeded, failed, cancelled, timed_out."),
         ),
     ] = None,
     view: Annotated[
@@ -857,8 +866,7 @@ def _spawn_list(
             name="--view",
             help=(
                 "Preset list view: active, recent (recent active spawns), "
-                "all, running, completed, failed, cancelled, timed_out "
-                "(queued is deprecated). Default: active."
+                "all, running, completed, failed, cancelled, timed_out. Default: active."
             ),
         ),
     ] = "active",
@@ -898,7 +906,6 @@ def _spawn_list(
         "recent": _ACTIVE_VIEW_STATUSES,
         "all": (),
         "running": (SpawnStatus.RUNNING,),
-        "queued": (SpawnStatus.QUEUED,),
         "completed": (SpawnStatus.SUCCEEDED,),
         "failed": (SpawnStatus.FAILED,),
         "cancelled": (SpawnStatus.CANCELLED,),
@@ -910,16 +917,12 @@ def _spawn_list(
 
     if status is not None and status.strip():
         candidate = status.strip()
-        if candidate not in _SPAWN_STATUS_VALUES:
+        if candidate not in _LISTABLE_SPAWN_STATUS_VALUES:
             raise ValueError(f"Unsupported spawn status '{status}'")
         normalized_status = SpawnStatus(candidate)
-        if normalized_status in {SpawnStatus.QUEUED, SpawnStatus.FINALIZING}:
-            _warn_deprecated_list_filter(f"--status {candidate}")
     elif failed:
         normalized_statuses = (SpawnStatus.FAILED,)
     else:
-        if normalized_view == "queued":
-            _warn_deprecated_list_filter("--view queued")
         normalized_statuses = view_map[normalized_view]
 
     result = spawn_list_sync(
@@ -1300,10 +1303,22 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
         return None
 
 
-def _spawn_subagents(emit: Emitter) -> None:
+def _spawn_subagents(
+    emit: Emitter,
+    all_agents: Annotated[
+        bool,
+        Parameter(
+            name="--all",
+            help=(
+                "List every installed agent, including model-invocable: false ones and "
+                "agents outside your subagents list."
+            ),
+        ),
+    ] = False,
+) -> None:
     emit(
         spawn_subagents_sync(
-            SpawnSubagentsInput(),
+            SpawnSubagentsInput(all=all_agents),
             ctx=resolve_cli_observer_context(observe=True),
             sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
@@ -1352,7 +1367,7 @@ def _spawn_done(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current completion candidate to accept: {_RUNNING_REF_FORMS}; "
+                f"Spawn to close when its turn ends: {_RUNNING_REF_FORMS}; "
                 f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
@@ -1376,14 +1391,41 @@ def _spawn_rearm(
         str | None,
         Parameter(
             help=(
-                f"Spawn whose current candidate to reject and rearm: {_RUNNING_REF_FORMS}; "
+                f"Spawn to keep open: {_RUNNING_REF_FORMS}; "
                 f"{_SELECTORS_NOTE} (defaults to MERIDIAN_SPAWN_ID)."
             )
         ),
     ] = None,
+    reason: Annotated[
+        str | None,
+        Parameter(
+            name="--reason",
+            help="Why this spawn stays. Stored with the rearm and shown in `spawn show`.",
+        ),
+    ] = None,
+    reason_file: Annotated[
+        str | None,
+        Parameter(
+            name="--reason-file",
+            help="Read the reason from a file; `-` reads stdin.",
+            allow_leading_hyphen=True,
+        ),
+    ] = None,
+    long: Annotated[
+        bool,
+        Parameter(
+            name="--long",
+            help=(
+                "Next check at the idle limit, not 270 s after going idle: for a wait "
+                "Meridian can't see, such as remote CI."
+            ),
+        ),
+    ] = False,
 ) -> None:
     result = spawn_rearm_sync(
-        SpawnSignalInput(spawn_id=spawn_id),
+        SpawnRearmInput(
+            spawn_id=spawn_id, reason=_resolve_rearm_reason(reason, reason_file), long=long
+        ),
         ctx=RuntimeContext.from_environment(),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
@@ -1409,18 +1451,7 @@ def _spawn_message(
         str,
         Parameter(help="Message text. Put long content in a file and send its path."),
     ] = "",
-    spawn_id: Annotated[
-        str | None,
-        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
-    ] = None,
 ) -> None:
-    if spawn_id is not None:
-        print(
-            "warning: `--spawn-id` is deprecated and will be removed in the next minor "
-            "release; pass the ref positionally.",
-            file=sys.stderr,
-        )
-        ref = ref or spawn_id
     if not ref:
         raise ValueError("spawn message needs a spawn ID or chat ID")
     caller = get_global_options().caller
@@ -1432,28 +1463,6 @@ def _spawn_message(
             sender_project_root=caller.project_root if caller is not None else None,
         )
     )
-
-
-def _spawn_inject_deprecated(
-    ref: Annotated[
-        str,
-        Parameter(show_default=False, help=f"Required. Session to message: {_MESSAGE_REF_FORMS}."),
-    ] = "",
-    message: Annotated[
-        str,
-        Parameter(help="Message text."),
-    ] = "",
-    spawn_id: Annotated[
-        str | None,
-        Parameter(name="--spawn-id", help="Deprecated: pass REF.", show=False),
-    ] = None,
-) -> None:
-    print(
-        "warning: `meridian spawn inject` is deprecated and will be removed in the "
-        "next minor release; use `meridian spawn message`.",
-        file=sys.stderr,
-    )
-    _spawn_message(ref, message, spawn_id)
 
 
 def _spawn_log_removed(
@@ -1508,13 +1517,13 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         partial(_spawn_done, emit),
         name="done",
-        help="Accept a resident spawn's current completion candidate.",
+        help="Close a resident spawn when its turn ends, over anything still running.",
     )
     registered.add("spawn.done")
     app.command(
         partial(_spawn_rearm, emit),
         name="rearm",
-        help="Reject the current candidate and open another completion window.",
+        help="Keep a resident spawn open past its next check.",
     )
     registered.add("spawn.rearm")
     app.command(
@@ -1543,13 +1552,6 @@ def register_spawn_commands(app: App) -> None:
         ),
     )
     registered.add("spawn.message")
-    app.command(
-        _spawn_inject_deprecated,
-        name="inject",
-        help="Deprecated: use `meridian spawn message`.",
-        show=False,
-    )
-    registered.add("spawn.inject")
     app.command(
         _spawn_log_removed,
         name="log",

@@ -160,6 +160,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return False
         return self._impl.health()
 
+    def backend_dead(self) -> bool:
+        if self._impl is None:
+            return True
+        return self._impl.backend_dead()
+
     async def send_user_message(self, text: str) -> DeliveryKind:
         return await self._transport().send_user_message(text)
 
@@ -206,14 +211,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         answers: dict[str, object],
     ) -> None:
         await self._transport().respond_user_input(request_id, answers)
-
-    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
-        if self._impl is None:
-            return
-        callback = getattr(self._impl, "_notify_request_failed", None)
-        if callback is None:
-            return
-        await callback(request_id, error=error)
 
 
 __all__ = ["OpenCodeConnection"]

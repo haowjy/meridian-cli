@@ -28,6 +28,7 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
     DrainTerminalDecision,
+    ReportStep,
 )
 
 if TYPE_CHECKING:
@@ -106,6 +107,12 @@ class CompletionCoordinator:
             or self._assessment.disposition == "unknown"
         )
 
+    def report_step(self, *, had_candidate: bool, turn_ended: bool, published: bool) -> ReportStep:
+        """The report is the candidate's: taken with it, dropped with it."""
+        if not published and self._candidate is None and (had_candidate or turn_ended):
+            return "clear"
+        return "capture" if turn_ended and not had_candidate else "keep"
+
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._active_turn = True
@@ -163,18 +170,15 @@ class CompletionCoordinator:
             return None
         return max(min(candidates) - now, _TIMEOUT_FLOOR_SECONDS)
 
-    async def observe_event(
-        self, normalized_event: NormalizedHarnessEvent
-    ) -> NormalizedHarnessEvent | None:
-        event = normalized_event.raw
-        transition = normalized_event.semantics.activity
+    async def observe_event(self, event: NormalizedHarnessEvent) -> NormalizedHarnessEvent | None:
+        transition = event.semantics.activity
         self.note_activity_transition(transition)
-        decision = await self._evidence.observe_event(event, transition)
-        if not decision.duplicate_canonical_event and self._profile.refresh_deadline_after_event(
-            self.state, normalized_event.semantics
+        decision = await self._evidence.observe_event(event.raw, transition)
+        if not decision.duplicate_canonical_event and self._profile.observe_event(
+            self.state, event.semantics
         ):
             self._refresh_profile_deadline()
-        return None if decision.duplicate_canonical_event else normalized_event
+        return None if decision.duplicate_canonical_event else event
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         decision = self._evidence.note_event_delivered(event, self.state)
@@ -199,18 +203,9 @@ class CompletionCoordinator:
         if self._terminal_published:
             return DrainTerminalDecision()
         if outcome.status == "succeeded":
+            directives = self._profile.consume_directives(self.state, "terminal_candidate")
             if self._candidate is None:
-                with self._profile.candidate_transition():
-                    directives = self._profile.consume_directives(
-                        self.state,
-                        "terminal_candidate",
-                    )
-                    self._candidate = outcome
-            else:
-                directives = self._profile.consume_directives(
-                    self.state,
-                    "terminal_candidate",
-                )
+                self._candidate = outcome
             self._success_validation = None
             self._active_turn = False
             if action.terminate:

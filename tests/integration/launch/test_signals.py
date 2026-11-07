@@ -35,8 +35,8 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     ).run_streaming_spawn
 
     class _FakeControlSocketServer:
-        def __init__(self, spawn_id: str, socket_path: Path, manager: object) -> None:
-            _ = spawn_id, manager
+        def __init__(self, socket_path: Path, route: object) -> None:
+            _ = route
             self.socket_path = socket_path
 
         async def start(self) -> None:
@@ -321,24 +321,30 @@ def test_signal_callback_receiver_delayed_repeat_escalates(
     assert kills == [(os.getpid(), signal.SIGHUP)]
 
 
-def test_signal_callback_receiver_without_escalation_never_re_raises(
+def test_mask_termination_defers_then_redelivers_once_and_a_late_repeat_escapes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import meridian.lib.launch.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
-    installed, kills = _install_signal_spies(monkeypatch)
-    calls: list[signal.Signals] = []
-    receiver = SignalCallbackReceiver(
-        target_signals=(signal.SIGHUP,),
-        callback=calls.append,
-    )
+    seen: list[str] = []
+    previous = signal.signal(signal.SIGINT, lambda *_: seen.append("previous"))
+    try:
+        coordinator = SignalCoordinator()
+        with coordinator.mask_termination():
+            os.kill(os.getpid(), signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)  # a burst counts once
+            assert seen == []
+            assert coordinator.deferred_signal() == signal.SIGINT
+            clock["now"] += 1.5
+            os.kill(os.getpid(), signal.SIGINT)  # a deliberate repeat force-quits
+            assert seen == ["previous"]
+            assert coordinator.deferred_signal() is None
+        assert seen == ["previous"]
 
-    receiver.forward_signal(signal.SIGHUP)
-    clock["now"] += 5.0
-    receiver.forward_signal(signal.SIGHUP)
-
-    assert calls == [signal.SIGHUP, signal.SIGHUP]
-    assert installed == []
-    assert kills == []
+        with coordinator.mask_termination():
+            os.kill(os.getpid(), signal.SIGINT)
+        assert seen == ["previous", "previous"]
+    finally:
+        signal.signal(signal.SIGINT, previous)

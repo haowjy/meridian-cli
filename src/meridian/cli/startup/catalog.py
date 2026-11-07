@@ -316,15 +316,10 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         default_output_mode="text",
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
-    _write_runtime(("spawn", "rearm"), "Reject completion and open a new child window."),
+    _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
     _write_runtime(
         ("spawn", "message"),
         "Send a message to a running spawn.",
-        default_output_mode="text",
-    ),
-    _write_runtime(
-        ("spawn", "inject"),
-        "Deprecated: use `spawn message`.",
         default_output_mode="text",
     ),
     _read_runtime(
@@ -334,7 +329,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _read_runtime(
         ("spawn", "subagents"),
-        "List subagents the current agent may spawn.",
+        "List the agents to delegate to; `--all` for every installed agent.",
     ),
     _read_runtime(("spawn", "stats"), "Show spawn stats."),
     _read_runtime(("spawn", "report", "show"), "Show a spawn report."),

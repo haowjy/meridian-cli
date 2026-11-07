@@ -11,7 +11,7 @@ import signal
 import socket
 import sys
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock, Thread
@@ -21,6 +21,7 @@ from typing import Any
 import psutil
 import structlog
 
+from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -36,7 +37,11 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
+from meridian.lib.launch.signals import (
+    SignalCallbackReceiver,
+    signal_coordinator,
+    signal_to_exit_code,
+)
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
@@ -48,6 +53,7 @@ from meridian.lib.state.process_scope_projection import record_scope
 
 from .native_launcher import native_sigint_shield
 from .ports import TUI_TERMINATE_GRACE_SECONDS, LaunchedProcess, ProcessLauncher, RunningProcess
+from .primary_control_socket import serving_route
 from .terminal_ownership import tui_terminal_window
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
@@ -220,12 +226,13 @@ class PrimaryAttachLauncher:
         self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
-        self._signal_cancel_requested = False
+        self._received_signal: signal.Signals | None = None
 
-    def _request_signal_cancel(self) -> None:
+    def _request_signal_cancel(self, signum: signal.Signals) -> None:
         """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
-        self._signal_cancel_requested = True
+        if self._received_signal is None:
+            self._received_signal = signum
         running = self._running_process
         if running is not None:
             running.cancel_wait()
@@ -309,10 +316,10 @@ class PrimaryAttachLauncher:
 
         if not self._durable:
             self._launch.dir.mkdir(parents=True, exist_ok=True)
-        self._signal_cancel_requested = False
+        self._received_signal = None
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
-            callback=lambda _signum: self._request_signal_cancel(),
+            callback=self._request_signal_cancel,
             escalate_on_repeat=True,
         )
         signal_coordinator().register_receiver(cancel_receiver)
@@ -322,6 +329,7 @@ class PrimaryAttachLauncher:
         launch_task: asyncio.Future[LaunchedProcess] | None = None
         tui_lifecycle_finished = False
         telemetry = _StartupTelemetry()
+        route_stack = AsyncExitStack()
 
         try:
             telemetry.update(_startup_phase_message(self._connection))
@@ -379,7 +387,7 @@ class PrimaryAttachLauncher:
                         terminal_fds=window.terminal_fds,
                     )
                     self._running_process = running_process
-                    if self._signal_cancel_requested:
+                    if self._received_signal is not None:
                         # A signal arrived during backend startup; honor it now that the
                         # TUI process exists.
                         running_process.cancel_wait()
@@ -395,11 +403,13 @@ class PrimaryAttachLauncher:
                         env=env,
                         launch_task=launch_task,
                     )
+                    await self._bind_route(route_stack)
                     # The TUI owns the primary. Observer silence is not a quit.
                     launched = await asyncio.shield(launch_task)
                     # A pane close can make the TUI return zero. Observation order,
                     # not its exit code, distinguishes cancellation from normal quit.
-                    cancelled = self._signal_cancel_requested
+                    signal_exit_code = signal_to_exit_code(self._received_signal)
+                    cancelled = signal_exit_code is not None
                     if cancelled:
                         # The wait stopped on the signal; ensure the TUI scope is gone.
                         await self._stop_idle_task()
@@ -410,21 +420,26 @@ class PrimaryAttachLauncher:
                         )
                     tui_lifecycle_finished = True
                 finally:
-                    if (
-                        running_process is not None
-                        and launch_task is not None
-                        and not tui_lifecycle_finished
-                    ):
-                        await self._stop_idle_task()
-                        await self._stop_tui_launch_task(
-                            running_process,
-                            launch_task,
-                            reason="primary_attach_shutdown",
-                        )
+                    try:
+                        if (
+                            running_process is not None
+                            and launch_task is not None
+                            and not tui_lifecycle_finished
+                        ):
+                            await self._stop_idle_task()
+                            await self._stop_tui_launch_task(
+                                running_process,
+                                launch_task,
+                                reason="primary_attach_shutdown",
+                            )
+                    finally:
+                        # Unbind once the TUI is gone: nothing renders a message after that.
+                        # Unbinding first would hold TUI termination behind a hung send.
+                        await route_stack.aclose()
 
             return PrimaryAttachOutcome(
                 facts=self._facts,
-                exit_code=130 if cancelled else launched.exit_code,
+                exit_code=launched.exit_code if signal_exit_code is None else signal_exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
                 cancelled=cancelled,
@@ -432,7 +447,7 @@ class PrimaryAttachLauncher:
             )
         except Exception:
             telemetry.fail()
-            if self._signal_cancel_requested:
+            if self._received_signal is not None:
                 # A signal arrived before the TUI was interruptible (e.g. during
                 # backend startup) and startup failed. Honor the cancellation
                 # instead of surfacing a failure the fallback path would relaunch.
@@ -442,7 +457,7 @@ class PrimaryAttachLauncher:
                 )
                 return PrimaryAttachOutcome(
                     facts=self._facts,
-                    exit_code=130,
+                    exit_code=signal_to_exit_code(self._received_signal),
                     session_id=session_id,
                     tui_pid=None,
                     cancelled=True,
@@ -474,6 +489,19 @@ class PrimaryAttachLauncher:
                     await self._connection.stop()
             finally:
                 signal_coordinator().unregister_receiver(cancel_receiver)
+
+    async def _bind_route(self, stack: AsyncExitStack) -> None:
+        """Serve the control socket over the observer connection. A failure costs only
+        the message route, never the launch."""
+
+        try:
+            await stack.enter_async_context(
+                serving_route(self._launch, MessageRoute(self._connection.send_user_message))
+            )
+        except Exception:
+            logger.warning(
+                "primary_attach.route_bind_failed", spawn_id=str(self._spawn_id), exc_info=True
+            )
 
     async def _start_primary_observer_connection_with_retry(
         self,
