@@ -1,110 +1,68 @@
 # lib/harness/ — Harness Adapters
 
-Mechanism side of the policy/mechanism split. Translates harness-agnostic
-`SpawnParams` into a runnable process and extracts results back into Meridian's
-domain types. `ops/` and `launch/` work with domain types; harness specifics stay here.
+Translates harness-agnostic `SpawnParams` into a runnable process and extracts results
+back into Meridian's domain types. `ops/` and `launch/` work with domain types; harness
+specifics stay here.
 
 ```
 SpawnParams → adapter.resolve_launch_spec() → HarnessLaunchSpec
   → project_<harness>_spec_to_cli_args() → argv + env → subprocess / connection.start()
 ```
 
-Two launch paths: a one-shot subprocess, and a long-lived `connections/` transport whose
-events flow through the SpawnManager drain loop (streaming). Per-harness commands and
-transports: [.context/adapter-notes.md](.context/adapter-notes.md).
+OpenCode 1.x is legacy and frozen; new OpenCode work targets V2. Transcript and storage
+reads pick their dialect by DB schema, never by the installed binary or an env var.
 
-OpenCode 1.x is legacy and frozen (registered as fallback); new OpenCode work targets
-V2. `opencode_backend.py` is the version seam; transcript/storage reads pick their
-dialect by DB schema, never by the installed binary or env var.
+## Bootstrap
 
-## Bootstrap Is Load-Bearing
+`ensure_bootstrap()` runs once, on first call, never on package import, so no module may
+call it, `get_harness_bundle` or `get_bundle_registry` at module level (a lint enforces
+it). Importing a submodule must not load the adapters: a thread importing `adapter` while
+another loads `claude` can see a half-initialized module.
 
-`ensure_bootstrap()` runs `_run_bootstrap()` once, on first call, not on package
-import. `get_harness_bundle` and `get_bundle_registry` call it, so no module may call
-any of the three at module level (a lint enforces it): adapters register `HarnessBundle`s as side effects, projection modules run
-drift guards, then `_enforce_spawn_params_accounting()` requires each adapter's
-`handled_fields` to equal `SpawnParams` fields exactly (raises `ImportError` otherwise).
-Package import only defines `ensure_bootstrap`; importing `adapter` (or any other
-submodule) must not load the adapter implementations, or a thread that imports
-`adapter` while another loads `claude` can see a half-initialized module. The guard runs
-inside the bootstrap after every adapter loads, so an early adapter import does not
-trip it. Ignoring a `SpawnParams` field is a decision; list it in
-`explicitly_ignored_fields` only when the projection has no use for it. Each
-`projections/project_<harness>_*.py` declares `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`;
-a spec field in neither fails startup.
+Bootstrap fails startup if an adapter's `handled_fields` differ from the `SpawnParams`
+fields, or a spec field is in neither `_PROJECTED_FIELDS` nor `_DELEGATED_FIELDS`. Ignoring
+a field is a decision: list it in `explicitly_ignored_fields`.
 
 ## Rules
 
-- **Terminal events are harness-aware.** `event_type` is not globally unique; always
-  qualify by `event.harness_id`. Streams that multiplex child work make
-  `connection.primary_event_scope` part of the contract: child Codex threads / OpenCode
-  task sessions reach subscribers but never complete or fail the parent. Shared
-  `semantics.py` contains no harness event names; each adapter's `HarnessBundle`
-  registers its own `HarnessSemantics` table.
+- **Terminal events are harness-aware.** `event_type` is not globally unique, so qualify
+  it by `event.harness_id`. Child Codex threads and OpenCode task sessions reach
+  subscribers but never complete or fail the parent (`connection.primary_event_scope`).
+  Shared `semantics.py` holds no harness event names, and a new harness adds no cases to it.
 - **Native identity is planned, not discovered.** A chat binds one immutable
-  `(harness, native_store, id)`. `plan_native_identity()` picks operation and source;
-  `finalize_native_identity()` pins store/ID against the final child env before argv
-  projection; `observe_after_exit()` returns `PostExit` and never binds or persists; `turn_since()` is
-  a separate probe, run only for interactive primaries on the session current at exit (`None` = no
-  reliable signal: Codex, Pi, OpenCode 1.x);
-  `launch/native_run.py` owns ordering and attribution. Source store always comes from
-  the recorded chat (`SessionRequest.source_native_store`), never config hints. Cwd,
-  timestamps, logs, and newest-file or prefix scans never establish chat identity.
-  `legacy_native_stores.py` is a one-time import seam, not a runtime repair fallback.
-- **Transcript resolution is exact.** Recorded store plus full native ID; multiple
-  matches fail as `ambiguous_native_file`. Never reinterpret a recorded Claude project
-  store as a config root. A missing file is searched for by exact ID only within the
-  recorded config root, only on a tracked `--continue`, and the result is linked back
-  into the recorded store; there is no ambient-store fallback, and several distinct
-  files refuse. Recorded paths change only through `meridian session relocate`.
-- **Model observations have one writer**: `model_observation.observe_session_model`
-  stores the raw native model token. Don't call `session_store.record_model_observation`
-  elsewhere.
+  `(harness, native_store, id)`. The source store comes from the recorded chat, never
+  config hints. Cwd, timestamps, logs and newest-file or prefix scans never establish
+  chat identity. `observe_after_exit()` never binds or persists; `launch/native_run.py`
+  owns ordering and attribution. `legacy_native_stores.py` is a one-time import, not a
+  runtime fallback.
+- **Transcript resolution is exact**: recorded store plus full native ID, and several
+  matches fail. A recorded Claude project store is never a config root. A missing file is searched for by exact ID, within the recorded config
+  root, only on a tracked `--continue`. Recorded paths change only through
+  `meridian session relocate`.
 - **OpenCode's prompt, permissions, model and workspace grants ride
-  `OPENCODE_CONFIG_CONTENT`**, built once at bind by `OpenCodeAdapter.project_launch_env()`;
-  connections never rewrite it. Every surface that opens or resumes a session must select
-  the reserved policy agent (`ResolvedLaunchSpec.agent_name`). See
-  [.context/CONTEXT.md](.context/CONTEXT.md).
+  `OPENCODE_CONFIG_CONTENT`**, built once at bind; connections never rewrite it. Every
+  surface that opens or resumes a session must select the reserved policy agent, or the
+  session runs without Meridian's permissions.
 - **`env_defaults()` fills missing or blank child values** from the launch context and
-  effective child env; never reread ambient env. Forced adapter policy rides
+  effective child env, never ambient env. Forced adapter policy rides
   `project_launch_env()`.
-- **Spawn-owned journals** (permission, control-action, Pi runtime metadata) write through
-  the published-spawn artifact mutation seam; a late write must not recreate a deleted
-  spawn directory.
-- **Pi usage is per assistant message**: fold each `message_end` once; `agent_end.messages`
-  is repeated history.
-- **No second per-spawn file store.** Harnesses expose native evidence and attempt facts;
-  launch finalization owns `report.md` and `stderr.log`.
-- Idle sensing: native parsing and facts stay in `*_idle.py`; `lib/idle/` owns policy.
-
-## Entry Points
-
-- `adapter.py` — `SpawnParams`, `HarnessAdapter`, `HarnessContract`: what an adapter must implement.
-- `registry.py` — `HarnessRegistry`, `with_defaults()`.
-- `claude.py` / `codex.py` / `opencode.py` / `cursor.py` / `pi.py` — adapters.
-- `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS`, `ensure_bootstrap()`.
-- `semantics.py` — `HarnessSemantics` port, `normalize_event()`.
-- `transcript.py`, `transcript_capture.py`, `capture_qualify.py`, `native_witness.py`,
-  `opencode_snapshot.py` — read paths and capture. See
-  [.context/session-transcripts.md](.context/session-transcripts.md).
-
-Subpackages: [connections/](connections/AGENTS.md) (transports),
-[projections/](projections/AGENTS.md) (spec → args/env),
-[extractors/](extractors/AGENTS.md) (session ID, usage, report),
-[passthrough/](passthrough/AGENTS.md) (TUI attach commands).
+- **Spawn-owned journals** write through the published-spawn artifact seam, so a late write
+  can't recreate a deleted spawn directory.
+- **Pi usage is per assistant message**: fold each `message_end` once, because
+  `agent_end.messages` repeats history.
+- **Launch finalization owns `report.md` and `stderr.log`.** Harnesses expose evidence and
+  attempt facts, not a second per-spawn file store.
+- **`model_observation.observe_session_model` is the one writer of model observations.**
+- Native idle parsing stays in `*_idle.py`; `lib/idle/` owns policy.
 
 ## Adding a Harness
 
-Follow [`docs/harness-integration.md`](../../../../docs/harness-integration.md) (Pi is the
-worked example) and touch every file in `HARNESS_EXTENSION_TOUCHPOINTS`. Adding a harness
-never adds cases to shared `semantics.py`. Missing ports fail loudly at construction or
-bootstrap. Checklist: [.context/CONTEXT.md](.context/CONTEXT.md).
+Follow [`docs/harness-integration.md`](../../../../docs/harness-integration.md) and touch
+every file in `HARNESS_EXTENSION_TOUCHPOINTS`.
 
 ## Depth
 
-[.context/CONTEXT.md](.context/CONTEXT.md) — contracts, session-ID chain, Claude PTY
-rationale, Codex managed-primary approval routing, OpenCode env merging, terminal event
-table. [.context/adapter-notes.md](.context/adapter-notes.md) — per-harness detail.
-[.context/pi-integration.md](.context/pi-integration.md) — Pi.
-
-Related: [../launch/AGENTS.md](../launch/AGENTS.md), [../state/AGENTS.md](../state/AGENTS.md).
+[.context/CONTEXT.md](.context/CONTEXT.md) holds contracts, approval routing and the
+terminal event table. See also [adapter-notes.md](.context/adapter-notes.md),
+[session-transcripts.md](.context/session-transcripts.md) and
+[pi-integration.md](.context/pi-integration.md).
