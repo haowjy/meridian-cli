@@ -1,5 +1,3 @@
-"""Session search operation with deterministic open commands and corpus scopes."""
-
 from __future__ import annotations
 
 import sqlite3
@@ -156,7 +154,6 @@ def _normalize_content(value: str) -> str:
 def iter_session_subset_search(
     *, project_root: str, chat_ids: Sequence[str], query: str
 ) -> Iterator[SubsetSearchStep]:
-    """Yield one isolated matched/error step for each requested primary chat."""
 
     normalized_query = query.strip().lower()
     if not normalized_query:

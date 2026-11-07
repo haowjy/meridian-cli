@@ -116,7 +116,7 @@ class HoldFacts:
     expired: bool
     candidate: TerminalEventOutcome | None
     assessment: WorkAssessment
-    rearm: bool  # signalled and within budget; only row B2 charges it
+    rearm: bool  # signalled and within budget
     rearm_long: bool  # that rearm asked for the idle limit, not the spacing
     dead: bool  # connection health says BACKEND_DEAD
     accepts_signals: bool
@@ -131,12 +131,11 @@ class HoldFacts:
 class HoldStep:
     state: HoldState
     decision: ProfileDecision
-    leave_awaiting: bool = False  # D2, E2, E3 away from a turn end change nothing
+    leave_awaiting: bool = False  # non-turn wakes can leave awaiting state unchanged
     wake: tuple[FinishedChild, ...] = ()  # set on a nudge: the finished children it must name
 
 
 def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
-    """Run the table: the first matching row wins."""
     # Timers past due end here, so neither can stay a wake.
     if state.ask is AskPhase.SENT and facts.now >= _grace_ends(state, facts.grace_seconds):
         state = replace(state, ask=AskPhase.SETTLED)
@@ -146,7 +145,6 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     if end is not None:
         state = replace(state, reply_replaces=False)
 
-    # A1
     if end is not None and not end.action.terminate:
         decision = ProfileDecision(action="clear", emit_turn_boundary=end.action.emit_turn_boundary)
         return HoldStep(HoldState(), decision)
@@ -155,68 +153,67 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
             facts.candidate is not None
             and end.outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
         ):
-            if disposition == "ready" and not facts.active_turn:  # A2
+            if disposition == "ready" and not facts.active_turn:
                 return _publish(state, facts)
-            if facts.expired:  # A3
+            if facts.expired:
                 return _timeout(facts)
-            if facts.active_turn:  # A3b
+            if facts.active_turn:
                 # The turn outdated the candidate, and nothing that follows can vouch for
                 # it, so no later row may publish: end here, without orphaning descendants.
                 decision = ProfileDecision(
                     action="cleanup", outcome=end.outcome, cleanup_reason=_TURN_CUT_OFF
                 )
                 return HoldStep(HoldState(), decision)
-            if disposition == "unknown" or _descendant_blocked(facts.assessment):  # A4
+            if disposition == "unknown" or _descendant_blocked(facts.assessment):
                 ask = AskPhase.SETTLED if state.ask is AskPhase.SENT else state.ask
                 return _wait(replace(state, ask=ask), facts)
-            if state.closing:  # A4b
+            if state.closing:
                 return _close(facts)
-        if state.reply_closes:  # A5a
+        if state.reply_closes:
             # The failure stands and the report stays, but this was a close: the ask said so.
             decision = ProfileDecision(
                 action="cleanup", outcome=end.outcome, cleanup_reason=_REPLY_FAILED
             )
             return HoldStep(HoldState(), decision)
-        decision = ProfileDecision(action="fail", outcome=end.outcome)  # A5
+        decision = ProfileDecision(action="fail", outcome=end.outcome)
         return HoldStep(HoldState(), decision)
-    if state.answer is not None and facts.dead:  # B1
+    if state.answer is not None and facts.dead:
         return _timeout(facts)
-    if facts.rearm:  # B2
+    if facts.rearm:
         decision = ProfileDecision(
             action="abandon_candidate", emit_turn_boundary=end is not None, reset_deadline=True
         )
         return HoldStep(_after_rearm(state, facts), decision)
     if facts.candidate is None:
-        if facts.expired:  # C1
+        if facts.expired:
             return _expiry(state, facts)
-        wake = _wake(state, facts)  # C1b
+        wake = _wake(state, facts)
         if wake is not None:
             return wake
-        if _rearm_ran_out(state, facts):  # C1c
+        if _rearm_ran_out(state, facts):
             return _expiry(state, facts)
-        return _wait(state, facts)  # C2
-    if end is not None and state.reply_closes:  # D0
+        return _wait(state, facts)
+    if end is not None and state.reply_closes:
         return _close(facts)
     if state.closing:
         if disposition == "unknown":
-            if facts.expired and end is None:  # D1
+            if facts.expired and end is None:
                 decision = ProfileDecision(action="fail", outcome=_UNREADABLE)
                 return HoldStep(HoldState(), decision)
-            return _wait(state, facts, leave_awaiting=end is None)  # D2
-        if not facts.active_turn:  # D3
+            return _wait(state, facts, leave_awaiting=end is None)
+        if not facts.active_turn:
             return _close(facts)
-    if facts.expired:  # E1
+    if facts.expired:
         return _expiry(state, facts)
     if end is not None:
         state = replace(state, rearmed=False)
-    if facts.active_turn:  # E2
+    if facts.active_turn:
         return _wait(state, facts, leave_awaiting=end is None)
-    if disposition == "unknown":  # E3
+    if disposition == "unknown":
         return _wait(state, facts, leave_awaiting=end is None)
-    wake = _wake(state, facts)  # E3b
+    wake = _wake(state, facts)
     if wake is not None:
         return wake
-    # E4
     if (
         facts.accepts_signals
         and (state.stays or not facts.skips_ask)
@@ -225,11 +222,11 @@ def decide(state: HoldState, facts: HoldFacts) -> HoldStep:
     ):
         return _wait(replace(state, lease=None), facts, nudge=True)
     if disposition == "ready" and _settled(state, facts):
-        if facts.wake_coming:  # E5a
+        if facts.wake_coming:
             decision = ProfileDecision(action="stabilize", emit_turn_boundary=end is not None)
             return HoldStep(state, decision)
-        return _publish(state, facts)  # E5
-    return _wait(state, facts)  # E6
+        return _publish(state, facts)
+    return _wait(state, facts)
 
 
 def outcome_at_close(
@@ -471,7 +468,6 @@ def _descendant_blocked(assessment: WorkAssessment) -> bool:
 
 
 def blocker_labels(blockers: Sequence[DiagnosticBlocker]) -> tuple[str, ...]:
-    """What the `spawn wait` checkpoint names."""
     return tuple(
         f"spawn {blocker.identity}"
         if blocker.source == "persisted_descendant"

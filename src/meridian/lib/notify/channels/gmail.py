@@ -1,5 +1,3 @@
-"""Gmail preset for the SMTP notification channel."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

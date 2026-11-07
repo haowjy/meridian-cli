@@ -1,5 +1,3 @@
-"""Single registration point for notification channels."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

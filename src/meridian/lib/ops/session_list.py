@@ -1,5 +1,3 @@
-"""List recent primary sessions for interactive and plain browse surfaces."""
-
 from __future__ import annotations
 
 import time
@@ -66,7 +64,6 @@ class SessionListRow(BaseModel):
         return self.cache_deadline is not None and time.time() > self.cache_deadline
 
     def agent_label(self, *, with_model: bool = True) -> str:
-        """``agent (model)``; either alone when the other is unknown."""
 
         if self.agent and self.model and with_model:
             return f"{self.agent} ({self.model})"

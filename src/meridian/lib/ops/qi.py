@@ -1,5 +1,3 @@
-"""Ops module for `meridian qi` — inline knowledge navigation."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.util import FormatContext
 
-# Directories to skip during discovery scans.
 _SKIP_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -64,9 +61,9 @@ class QiShowOutput(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    boundary_path: str  # root-relative path to the knowledge boundary directory
-    agents_content: str | None  # content of AGENTS.md if found
-    context_content: str | None  # content of .context/CONTEXT.md if found
+    boundary_path: str
+    agents_content: str | None
+    context_content: str | None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -87,7 +84,6 @@ class QiShowOutput(BaseModel):
 
 
 def discover_knowledge_points(root: Path) -> list[QiKnowledgePoint]:
-    """Walk the tree under *root* and return all AGENTS.md / .context/CONTEXT.md files."""
     import os
 
     points: list[QiKnowledgePoint] = []
@@ -128,7 +124,6 @@ def find_boundary(path: Path) -> Path | None:
 
     Returns the boundary directory or None when nothing is found.
     """
-    # Start from the directory itself; if given a file, start from its parent.
     candidate = path if path.is_dir() else path.parent
     candidate = candidate.resolve()
 
@@ -142,7 +137,6 @@ def find_boundary(path: Path) -> Path | None:
 
 
 def _is_knowledge_boundary(directory: Path) -> bool:
-    """Return True if *directory* has AGENTS.md or .context/CONTEXT.md."""
     return (directory / "AGENTS.md").is_file() or (directory / ".context" / "CONTEXT.md").is_file()
 
 
@@ -151,13 +145,12 @@ class QiCheckFinding(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # "missing_context_md" | "orphan_context" | "broken_link" | "missing_agents" | "unreadable"
     category: str
-    severity: str  # "error" or "warning"
-    file: str  # root-relative path to the file with the issue
+    severity: str
+    file: str
     line: int  # 1-indexed line number (0 if not line-specific)
     message: str
-    detail: str | None = None  # e.g., the broken link target
+    detail: str | None = None
 
 
 class QiCheckOutput(BaseModel):
@@ -197,7 +190,6 @@ class QiCheckOutput(BaseModel):
 
 
 def qi_summary_sync(root: Path) -> QiSummaryOutput:
-    """Synchronous handler for bare ``meridian qi``."""
     points = discover_knowledge_points(root)
     return QiSummaryOutput(
         root=root.as_posix(),
@@ -207,7 +199,6 @@ def qi_summary_sync(root: Path) -> QiSummaryOutput:
 
 
 def qi_show_sync(path: Path, project_root: Path) -> QiShowOutput:
-    """Synchronous handler for ``meridian qi graph``."""
 
     resolved = path.resolve()
     boundary = find_boundary(resolved)
@@ -240,7 +231,6 @@ def qi_show_sync(path: Path, project_root: Path) -> QiShowOutput:
 
 
 def qi_check_sync(root: Path) -> QiCheckOutput:
-    """Synchronous handler for `meridian qi check`."""
     import os
 
     from meridian.lib.markdown.extract import extract_file
@@ -255,7 +245,6 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
             return p.as_posix()
 
     def _check_links(md_file: Path, is_agents: bool) -> None:
-        """Extract links from *md_file* and emit findings for broken ones."""
         doc = extract_file(md_file)
         if doc.error is not None:
             findings.append(
@@ -311,7 +300,6 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
         dirpath = Path(dirpath_str)
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
 
-        # Check .context/ directory health
         if ".context" in dirnames:
             context_dir = dirpath / ".context"
             context_file = context_dir / "CONTEXT.md"
@@ -340,13 +328,11 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
                     )
                 _check_links(context_file, is_agents=False)
 
-        # Check AGENTS.md health
         if "AGENTS.md" in filenames:
             agents_file = dirpath / "AGENTS.md"
             points_scanned += 1
             _check_links(agents_file, is_agents=True)
 
-    # Sort: errors before warnings, then by file path, then by line
     findings.sort(key=lambda f: (0 if f.severity == "error" else 1, f.file, f.line))
 
     return QiCheckOutput(

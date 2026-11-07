@@ -95,7 +95,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def resolved_version(self) -> OpenCodeVersion | None:
-        """Return the backend dialect selected for the active transport."""
 
         return self._resolved_version
 

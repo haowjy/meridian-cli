@@ -1,5 +1,3 @@
-"""Structured JSONL debug event writer for streaming pipeline observability."""
-
 from __future__ import annotations
 
 import json

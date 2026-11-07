@@ -1,5 +1,3 @@
-"""Harness-agnostic contracts for idle sensors."""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping

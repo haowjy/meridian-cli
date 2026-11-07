@@ -1,5 +1,3 @@
-"""Canonical spawn-tree traversal and descendant cleanup."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -16,14 +14,7 @@ def iter_descendants_from_parent_map(
     root_id: str,
     by_parent: Mapping[str | None, Sequence[SpawnRecord]],
 ) -> Iterator[SpawnRecord]:
-    """Yield transitive child rows below ``root_id`` once per spawn id.
-
-    Spawn parent links are persisted data and may be malformed. Treat cycles as
-    corrupt rows to walk past, not as a reason for readers to wedge forever.
-    The root id starts as visited so a cycle back to the root does not report
-    the root as its own descendant.
-    """
-
+    # Persisted parent links may contain cycles, including one back to the root.
     visited = {root_id}
     stack = [root_id]
     while stack:
@@ -45,7 +36,6 @@ def _by_parent(rows: Sequence[SpawnRecord]) -> dict[str | None, list[SpawnRecord
 
 
 def collect_descendants(root_id: str, rows: Sequence[SpawnRecord]) -> list[SpawnRecord]:
-    """Return the root spawn, when present, followed by all descendants."""
 
     result: list[SpawnRecord] = []
     for row in rows:
@@ -57,7 +47,6 @@ def collect_descendants(root_id: str, rows: Sequence[SpawnRecord]) -> list[Spawn
 
 
 def descendant_id_set(root_id: str, rows: Sequence[SpawnRecord]) -> set[str]:
-    """Return transitive descendant ids below ``root_id``, excluding the root."""
 
     return {row.id for row in iter_descendants_from_parent_map(root_id, _by_parent(rows))}
 
@@ -83,7 +72,6 @@ def terminate_recorded_spawn_scope(
     reason: str,
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
-    """Terminate one already-selected spawn record's process scopes."""
 
     from meridian.lib.core.process_cleanup import terminate_spawn_scopes
 

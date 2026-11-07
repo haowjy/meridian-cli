@@ -16,21 +16,10 @@ verified final-exit receipt: its last observed session is not proof of the exit 
 evidence is diagnostic only. Missing receipts do not trigger transcript scans.
 
 Harness event names are not globally unique. A connection's primary scope distinguishes
-parent events from child events: all are persisted, but children cannot complete the
-parent turn or change its activity. Codex accepts an unscoped `turn/completed` as parent;
+parent events from child events: child events can reach subscribers, but cannot
+complete the parent turn or change its activity. Codex accepts an unscoped `turn/completed` as parent;
 OpenCode does so only before a parent scope is known, because its global stream also
 carries child events.
-
-Terminal classification depends on the harness and parent scope:
-
-| Harness | Terminal evidence |
-|---|---|
-| Claude | `result` reports success or failure. |
-| Codex | `turn/completed` carries completed, failed or interrupted status. |
-| OpenCode V1 | Parent `session.idle` succeeds; `session.error` fails. |
-| OpenCode V2 | Parent `session.execution.succeeded` succeeds; failed or unpaired interrupted fails. |
-| Cursor | Process exit zero succeeds; nonzero fails. |
-| Pi | `agent_settled` resolves the preceding attempt, subject to quiescence. |
 
 A connection delivers specific terminal evidence before EOF; a later generic close must
 not hide it. Cursor's successful process exit is its success boundary. Pi's `agent_end`
@@ -46,14 +35,10 @@ and [transport contracts](../connections/.context/CONTEXT.md).
 completed without a receipt. Neither proves the model saw or executed it. A timeout after
 a write leaves delivery uncertain and must not cause a replay.
 
-| Harness | Receipt | Meaning |
-|---|---|---|
-| Claude | posted | The stdin frame was written; busy-turn acceptance is not established. |
-| Codex | acknowledged | The app-server accepted `turn/steer` or `turn/start`. A steer RPC error may fall back to start; timeout or transport failure may not. |
-| OpenCode V2 | acknowledged | The message endpoint accepted the request; this does not prove a turn was scheduled. HTML responses are rejected. |
-| OpenCode V1 | acknowledged | Status-based only; this path has not been run against a 1.x server. |
-| Cursor | unsupported | No injection transport. |
-| Pi | acknowledged | The matching prompt RPC response succeeded. Initial delivery does not wait for an acknowledgment. |
+Claude's stdin write has no acceptance receipt. Codex may fall back from a
+rejected steer RPC to start, but not after timeout or transport failure. OpenCode's
+message receipt does not prove a turn was scheduled; its V1 path has not been run
+against a 1.x server. Cursor has no injection transport.
 
 Managed Codex and OpenCode primary routes remain attached through idle silence, but
 refuse sends after detecting the TUI has moved to another session. They stay scoped to

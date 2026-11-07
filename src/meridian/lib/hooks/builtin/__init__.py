@@ -1,5 +1,3 @@
-"""Builtin hook registry."""
-
 from meridian.lib.hooks.builtin.base import BuiltinHook
 from meridian.lib.hooks.builtin.git_autosync import GIT_AUTOSYNC
 from meridian.lib.hooks.builtin.notify import NOTIFY

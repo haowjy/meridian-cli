@@ -1,13 +1,3 @@
-"""Crash-safe consumption, wait-lease and wait-pin state for spawn results.
-
-A result is one launch of a spawn, so every entry is keyed ``"<spawn id>:<n>"``
-(``str(LaunchKey)``; the string form exists only in these files). ``observed-launches.json``
-is the only file written. The files older
-builds wrote (``observed-spawns.json``, keyed by bare spawn ID) are read and never written:
-a bare ID is launch 1, which is exact because an older build cannot read a v4 row and so only
-ever consumed launch 1.
-"""
-
 from __future__ import annotations
 
 import os
@@ -35,11 +25,6 @@ if TYPE_CHECKING:
 
 
 class LaunchKey(NamedTuple):
-    """One launch of a spawn: what is owed, leased, pinned and consumed.
-
-    ``str()`` is the ledger key, the only place the string form is used.
-    """
-
     spawn_id: str
     n: int
 
@@ -104,7 +89,7 @@ def _read(path: Path, parent_spawn_id: str) -> LaunchObservations | None:
 
 
 def legacy_view(legacy: LegacyObservations) -> LaunchObservations:
-    """An older build's ledger as launch-1 entries: the one place a bare ID gains a launch."""
+    # Older builds cannot read multi-launch rows, so their bare IDs mean launch 1.
     return LaunchObservations(
         v=1,
         spawn_id=legacy.spawn_id,
@@ -148,21 +133,6 @@ def record(
     lease_seconds: float = 30.0,
     lock_timeout: float | None = None,
 ) -> bool:
-    """Record results consumed by a parent, leased by its explicit wait, or pinned by it.
-
-    Launches are :func:`launch_key` strings. Returns ``False`` when the parent's published
-    row is gone or unreadable, so nothing was written. ``spawn ack`` treats that as an
-    error; ``spawn wait`` proceeds without a record because no reader selects that parent's
-    children. A finite ``lock_timeout`` bounds best-effort shown-result observation.
-
-    A pin dies with the first of: its launch being consumed, expiry, ``pins_clear``.
-
-    ``delivered_set`` replaces the delivery record of each spawn it names. ``ack_delivered``
-    consumes the recorded launches of those spawns and drops their records; a spawn with no
-    record is left to the caller. Only ``ack_delivered`` drops a record, so a record that is
-    absent means "delivered and acked", never "consumed some other way and maybe not delivered".
-    """
-
     waiting_add_ids = tuple(waiting_add)
     waiting_remove_ids = tuple(waiting_remove)
     observed_add_ids = tuple(observed_add)

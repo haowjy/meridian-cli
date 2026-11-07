@@ -1,5 +1,3 @@
-"""Telemetry v1 envelope and event registry."""
-
 from __future__ import annotations
 
 import traceback
@@ -32,7 +30,6 @@ class TelemetryEnvelope:
     data: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a JSON-ready dict, omitting absent optional fields."""
         payload: dict[str, Any] = {
             "v": self.v,
             "ts": self.ts,
@@ -123,12 +120,10 @@ EVENT_REGISTRY: dict[str, EventDefinition] = {
 
 
 def utc_timestamp() -> str:
-    """Return a UTC ISO-8601 timestamp using the envelope's Z suffix."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def validate_event(domain: str, event: str, severity: str | None) -> None:
-    """Validate producer-supplied event fields against the v1 contract."""
     if domain not in VALID_DOMAINS:
         raise ValueError(f"invalid telemetry domain: {domain}")
     if severity is not None and severity not in VALID_SEVERITIES:
@@ -143,14 +138,12 @@ def validate_event(domain: str, event: str, severity: str | None) -> None:
 
 
 def concerns_for_event(event: str) -> tuple[Concern, ...]:
-    """Return concern tags for a registered event."""
     return EVENT_REGISTRY[event]["concerns"]
 
 
 def make_error_data(
     exc: BaseException | None = None, *, message: str | None = None
 ) -> dict[str, Any]:
-    """Build structured error metadata for error-tagged events."""
     error_info: dict[str, Any] = {}
     if exc is not None:
         error_info["type"] = type(exc).__name__

@@ -40,13 +40,11 @@ def project_opencode_variant_args(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
 
 
 def project_pi_thinking_level(effort: str | None) -> str | None:
-    """Return Pi's ``--thinking`` level for an effort, or ``None`` for an unknown one."""
 
     return _PI_THINKING_BY_EFFORT.get((effort or "").strip().lower())
 
 
 def effort_report(spec: ResolvedLaunchSpec, *, harness: str) -> EnforcementReport:
-    """Describe the effort a harness leaves unapplied."""
 
     effort = (spec.effort or "").strip()
     if not effort:

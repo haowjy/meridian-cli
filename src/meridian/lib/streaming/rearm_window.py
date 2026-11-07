@@ -1,5 +1,3 @@
-"""Idle-limit completion windows and the persisted, budgeted rearm count."""
-
 from __future__ import annotations
 
 from pathlib import Path

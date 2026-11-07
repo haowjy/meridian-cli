@@ -1,5 +1,3 @@
-"""Telemetry maintenance: bounded background retention scheduling."""
-
 from __future__ import annotations
 
 import threading
@@ -56,7 +54,6 @@ def schedule_maintenance(
 
 
 def _cooldown_active(marker: Path, cooldown_seconds: int) -> bool:
-    """Return True when the marker exists and its mtime is still fresh."""
     try:
         mtime = marker.stat().st_mtime
     except (FileNotFoundError, OSError):
@@ -65,7 +62,6 @@ def _cooldown_active(marker: Path, cooldown_seconds: int) -> bool:
 
 
 def _update_marker(marker: Path) -> None:
-    """Update the cooldown marker timestamp, ignoring best-effort failures."""
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(str(time.time()), encoding="utf-8")

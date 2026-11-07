@@ -1,5 +1,3 @@
-"""PTY-backed process launching."""
-
 from __future__ import annotations
 
 import os
@@ -66,7 +64,6 @@ def _duplicate_terminal_fds(terminal_fds: TerminalFds) -> TerminalFds:
 
 
 def _read_winsize(fd: int) -> bytes | None:
-    """Return packed winsize bytes for one terminal fd, or None if unavailable."""
 
     try:
         return fcntl.ioctl(fd, termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
@@ -75,7 +72,6 @@ def _read_winsize(fd: int) -> bytes | None:
 
 
 def _sync_pty_winsize(*, source_fd: int, target_fd: int) -> None:
-    """Copy the current terminal winsize onto the PTY master."""
 
     winsize = _read_winsize(source_fd)
     if winsize is None:

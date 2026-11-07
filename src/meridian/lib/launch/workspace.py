@@ -1,5 +1,3 @@
-"""Launch-time workspace policy gates."""
-
 from pathlib import Path
 
 from meridian.lib.config.workspace import WorkspaceSnapshot, resolve_workspace_snapshot
@@ -18,7 +16,6 @@ def _format_workspace_source_path(*, project_root: Path, source_paths: tuple[Pat
 
 
 def resolve_workspace_snapshot_for_launch(project_root: Path) -> WorkspaceSnapshot:
-    """Resolve launch workspace snapshot and raise on invalid topology."""
 
     snapshot = resolve_workspace_snapshot(project_root)
     if snapshot.status != "invalid":
@@ -37,7 +34,6 @@ def resolve_workspace_snapshot_for_launch(project_root: Path) -> WorkspaceSnapsh
 
 
 def ensure_workspace_valid_for_launch(project_root: Path) -> None:
-    """Raise when workspace topology is invalid for launch-time commands."""
 
     resolve_workspace_snapshot_for_launch(project_root)
 

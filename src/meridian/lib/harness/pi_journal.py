@@ -30,12 +30,10 @@ PI_JOURNAL_ENTRY_TYPES = frozenset(
 
 
 def is_pi_journal_entry_type(value: object) -> bool:
-    """Whether a value is a supported Pi 0.87.1 persisted entry type."""
     return isinstance(value, str) and value in PI_JOURNAL_ENTRY_TYPES
 
 
 def pi_context_edit_annotation(row: dict[str, object]) -> str:
-    """Return a compact display annotation for a context edit."""
     target = row.get("targetId")
     target_id = target if isinstance(target, str) else "unknown entry"
     replacement = row.get("replacement")
@@ -155,7 +153,6 @@ def project_pi_reopen_default(source: str) -> PiJournalProjection:
                     )
                 ):
                     reasons.append("invalid_message")
-        # SessionManager._buildIndex sets leaf to every non-session entry.
         leaf_id = entry_id
 
     # Validate the full parent graph in linear time; selection below still

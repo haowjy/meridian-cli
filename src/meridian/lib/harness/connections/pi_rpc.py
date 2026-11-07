@@ -1,5 +1,3 @@
-"""Pi RPC stdio connection implementation."""
-
 from __future__ import annotations
 
 import asyncio
@@ -71,12 +69,10 @@ PI_SUBPROCESS_EXIT_ERROR_PREFIX: Final[str] = "Pi subprocess exited with code "
 
 
 def pi_subprocess_exit_error(return_code: int) -> str:
-    """Return the canonical failure emitted for a non-zero Pi process exit."""
     return f"{PI_SUBPROCESS_EXIT_ERROR_PREFIX}{return_code}."
 
 
 def is_pi_subprocess_exit_error(error: str | None) -> bool:
-    """Whether an error originated from the canonical Pi process-exit failure."""
     return error is not None and error.startswith(PI_SUBPROCESS_EXIT_ERROR_PREFIX)
 
 

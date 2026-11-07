@@ -1,5 +1,3 @@
-"""Filesystem-backed bootstrap document registry."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

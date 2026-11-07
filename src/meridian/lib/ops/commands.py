@@ -1,5 +1,3 @@
-"""Explicit operation manifest shared by CLI and MCP surfaces."""
-
 from meridian.lib.extensions.declaration import OpDeclaration
 from meridian.lib.extensions.types import ExtensionSurface
 

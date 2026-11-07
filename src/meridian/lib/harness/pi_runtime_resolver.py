@@ -1,5 +1,3 @@
-"""Pi runtime resolution and compatibility probes for harness launches."""
-
 from __future__ import annotations
 
 import re
@@ -72,7 +70,6 @@ class _ProbeFailure:
 
 
 def resolve_pi_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRuntimeResolution:
-    """Resolve one compatible Pi runtime binary for a launch role."""
 
     override = env.get(_PI_BINARY_ENV, "").strip()
     if override:

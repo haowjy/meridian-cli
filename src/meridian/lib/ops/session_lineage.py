@@ -1,5 +1,3 @@
-"""Indexed top-level conversation relationships, excluding subagent ownership."""
-
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict

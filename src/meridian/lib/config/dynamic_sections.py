@@ -1,5 +1,3 @@
-"""Model-backed validation and merge policy for dynamic config sections."""
-
 from __future__ import annotations
 
 from typing import Annotated
@@ -126,7 +124,6 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
 
 
 def _dump_configured_value(value: object) -> object:
-    """Dump explicitly configured model fields, including excluded inspection fields."""
 
     if isinstance(value, RootModel):
         dumped: object = value.model_dump(exclude_unset=True)
@@ -148,7 +145,6 @@ def normalize_dynamic_sections(
     *,
     payload: dict[str, object],
 ) -> dict[str, object]:
-    """Validate configured dynamic sections and return mergeable values."""
 
     normalized: dict[str, object] = {}
     for section_key, descriptor in DYNAMIC_SECTION_DESCRIPTORS.items():

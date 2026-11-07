@@ -1,5 +1,3 @@
-"""Shared reconciled, transitive persisted-descendant evidence."""
-
 from __future__ import annotations
 
 import asyncio

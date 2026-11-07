@@ -1,5 +1,3 @@
-"""Explicit resident-backend control seam for long-lived harness connections."""
-
 from __future__ import annotations
 
 from typing import Protocol

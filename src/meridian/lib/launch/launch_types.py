@@ -1,5 +1,3 @@
-"""Leaf launch contracts shared across launch policy, content, and runners."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -89,35 +87,27 @@ class ResolvedLaunchSpec(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    # Identity
     # str at runtime (HarnessId is StrEnum — direct import triggers harness __init__ bootstrap).
     harness: str | None = None
     model: str | None = None
 
-    # Execution parameters
     effort: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
     prompt: str = ""
 
-    # Session continuity
     continue_session_id: str | None = None
     continue_fork: bool = False
     native_identity: NativeIdentity | None = None
 
-    # Permissions: defaults to no tool rules and default sandbox/approval.
     permission_policy: PermissionPolicy = PermissionPolicy()
-    # Harness-native execution settings preserved from the selected Mars profile.
     native_config: NativeConfigValue = Field(
         default_factory=lambda: ResolvedExecutionPolicy().native_config
     )
-    # Passthrough args forwarded verbatim to the harness process.
     extra_args: tuple[str, ...] = ()
 
-    # Interactive mode
     interactive: bool = False
 
-    # First-class workspace root projection — harness-agnostic, deduplicated.
     projected_roots: tuple[Path, ...] = ()
 
     # Adapter-local projections: fields used by specific harness adapters.
@@ -128,12 +118,10 @@ class ResolvedLaunchSpec(BaseModel):
     agent_name: str | None = None
     appended_system_prompt: str | None = None
 
-    # Claude only
     agents_payload: str | None = None
     prompt_file_path: str | None = None
     claude_runtime: ClaudeRuntimeResolution = ClaudeRuntimeResolution()
 
-    # Claude + Codex
     user_turn_content: str | None = None
 
     # Codex only: subprocess `-o` target; None for every other harness.
@@ -142,7 +130,6 @@ class ResolvedLaunchSpec(BaseModel):
     developer_instructions: str | None = None
     codex_runtime: CodexRuntimeResolution = CodexRuntimeResolution()
 
-    # OpenCode only
     skills: tuple[str, ...] = ()
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
@@ -154,7 +141,6 @@ class ResolvedLaunchSpec(BaseModel):
 
     task_cwd: str | None = None
 
-    # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()
     load_all_pi_extensions: bool = False
 

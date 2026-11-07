@@ -1,5 +1,3 @@
-"""Shared Pi lifecycle event parsing helpers."""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -33,7 +31,6 @@ def build_pi_phase_event(
     phase: str,
     **data: object,
 ) -> RawHarnessEvent:
-    """Build one Meridian-authored Pi lifecycle phase event."""
 
     payload: dict[str, object] = {
         "type": PI_PHASE_EVENT_TYPE,

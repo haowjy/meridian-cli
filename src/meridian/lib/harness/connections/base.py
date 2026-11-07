@@ -1,5 +1,3 @@
-"""Core data contracts for bidirectional harness connections."""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,10 +21,8 @@ if TYPE_CHECKING:
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.streaming.completion_contracts import NativeTaskSource
 
-# Uniform transport message cap across harness adapters.
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
 
-# Uniform initial-prompt cap across adapters; fail loudly if the prompt is too large.
 MAX_INITIAL_PROMPT_BYTES: Final[int] = 10 * 1024 * 1024
 
 # Foreground ownership-transfer cleanup bound; residue is owned by durable scopes.
@@ -314,7 +310,6 @@ class ConnectionConfig:
 
 
 def validate_prompt_size(config: ConnectionConfig) -> None:
-    """Validate initial prompt size before contacting harness transport endpoints."""
 
     prompt_bytes = len(config.prompt.encode("utf-8"))
     if prompt_bytes > MAX_INITIAL_PROMPT_BYTES:
@@ -350,11 +345,9 @@ class HarnessConnection(Generic[SpecT], ABC):
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        """Parent scope for events that multiplex child activity on the same stream."""
         return None
 
     def observe_event_semantics(self, semantics: EventSemantics) -> None:
-        """Apply connection-local state changes from the drain's interpretation."""
 
         _ = semantics
 
@@ -364,7 +357,6 @@ class HarnessConnection(Generic[SpecT], ABC):
 
     @property
     def resident_backend(self) -> ResidentBackendControl | None:
-        """Resident backend control seam, when this transport supports resident turns."""
         return None
 
     def backend_dead(self) -> bool:
@@ -372,17 +364,14 @@ class HarnessConnection(Generic[SpecT], ABC):
         return not self.health()
 
     def native_task_source(self) -> NativeTaskSource | None:
-        """Harness-native background tasks, independent of resident backend control."""
         return None
 
     @property
     def completion_signals_available(self) -> bool:
-        """Whether this launch can write Meridian's completion signals."""
         return True
 
     @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
-        """Process scope facts for the managed backend subprocess, if any."""
         return None
 
     @abstractmethod
@@ -390,7 +379,6 @@ class HarnessConnection(Generic[SpecT], ABC):
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
-        """Attach endpoint for primary observer mode. None if not in observer mode."""
         return None
 
     async def start_observer(self, config: ConnectionConfig, spec: SpecT) -> None:
@@ -411,7 +399,6 @@ class HarnessConnection(Generic[SpecT], ABC):
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         request_handler: ServerRequestHandler | None = None,
     ) -> None:
-        """Configure runtime-request handling for one primary-session launch."""
 
         _ = event_sink, request_handler
         if policy is PrimaryRuntimeRequestPolicy.NONE:
@@ -421,7 +408,6 @@ class HarnessConnection(Generic[SpecT], ABC):
         )
 
     async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
-        """Inject one synthesized runtime event into the connection event stream."""
 
         _ = event
         raise NotImplementedError(
@@ -434,7 +420,6 @@ class HarnessConnection(Generic[SpecT], ABC):
         decision: str,
         payload: dict[str, object] | None = None,
     ) -> None:
-        """Send an approval or rejection response through the harness transport."""
 
         _ = request_id, decision, payload
         raise NotImplementedError(
@@ -446,7 +431,6 @@ class HarnessConnection(Generic[SpecT], ABC):
         request_id: str,
         answers: dict[str, object],
     ) -> None:
-        """Send user-input answers through the harness transport."""
 
         _ = request_id, answers
         raise NotImplementedError(f"{self.harness_id.value} does not support runtime user input")

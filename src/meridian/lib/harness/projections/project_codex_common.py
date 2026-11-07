@@ -1,5 +1,3 @@
-"""Shared Codex projection utilities used by multiple launch transports."""
-
 from __future__ import annotations
 
 import json
@@ -46,7 +44,6 @@ class CodexSandboxProjection:
     network_domains: tuple[tuple[str, str], ...]
 
     def subprocess_args(self) -> tuple[str, ...]:
-        """Return sandbox arguments for ``codex exec``."""
 
         arguments: list[str] = []
         if self.sandbox_mode is not None:
@@ -59,7 +56,6 @@ class CodexSandboxProjection:
         return tuple(arguments)
 
     def appserver_args(self) -> tuple[str, ...]:
-        """Return sandbox arguments for ``codex app-server``."""
 
         arguments: list[str] = []
         if self.sandbox_mode is not None:
@@ -96,7 +92,6 @@ class CodexSandboxProjection:
             arguments.extend(("-c", f"{_CODEX_NETWORK_PROXY_DOMAINS_KEY}={domains}"))
 
     def thread_fields(self) -> tuple[dict[str, object], dict[str, object]]:
-        """Return thread request fields and config overrides for app-server."""
 
         fields: dict[str, object] = {}
         if self.sandbox_mode is not None:
@@ -134,7 +129,6 @@ def project_codex_sandbox(
     spec: ResolvedLaunchSpec,
     permissions: CodexPermissions,
 ) -> CodexSandboxProjection:
-    """Build the shared sandbox projection consumed by both Codex transports."""
 
     return CodexSandboxProjection(
         sandbox_mode=permissions.sandbox_mode,
@@ -146,7 +140,6 @@ def project_codex_sandbox(
 
 
 def project_codex_tool_switch_flags(permissions: CodexPermissions) -> tuple[str, ...]:
-    """Spell Codex's process-level tool switches and shell hook for either launch transport."""
 
     projected: list[str] = []
     if permissions.shell_tool is not None:

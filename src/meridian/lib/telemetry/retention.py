@@ -1,5 +1,3 @@
-"""Retention cleanup for local telemetry JSONL segments."""
-
 from __future__ import annotations
 
 import os
@@ -90,7 +88,6 @@ def scan_telemetry_segments(
     runtime_root: Path | None = None,
     max_age_days: int = _DEFAULT_MAX_AGE_DAYS,
 ) -> RetentionStats:
-    """Scan telemetry segments and return stats without deleting anything."""
     if not telemetry_dir.is_dir():
         return RetentionStats(0, 0, 0, 0, 0, 0, 0)
     now = time.time()
@@ -118,7 +115,6 @@ def run_retention_cleanup(
     max_age_days: int = _DEFAULT_MAX_AGE_DAYS,
     max_total_bytes: int = _DEFAULT_MAX_TOTAL_BYTES,
 ) -> RetentionStats:
-    """Delete eligible telemetry segments by age and total-size cap."""
     telemetry_dir.mkdir(parents=True, exist_ok=True)
     now = time.time()
     current_pid = os.getpid()

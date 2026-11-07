@@ -1,14 +1,3 @@
-"""Make ``meridian`` on a harness's PATH resolve to the build that launched it.
-
-Code inside a harness (plugin hooks, Pi extensions, Mars hooks, the model's own
-shell) reaches Meridian by the name ``meridian``. When another build is first on
-PATH, that code talks to the wrong one. The fix lives in the child PATH, so no
-caller needs to change.
-
-Two halves: ``pin_launching_build`` decides and edits PATH at bind (pure, runs in
-previews too); ``write_pinned_shim`` writes the file at materialize (real launches).
-"""
-
 import hashlib
 import shlex
 import shutil
@@ -35,13 +24,6 @@ def _shim_location(env: Mapping[str, str]) -> tuple[Path, str]:
 
 
 def pin_launching_build(env: dict[str, str], *, write_roots: Collection[Path]) -> str | None:
-    """Put the shim's directory first on ``env["PATH"]`` when ``meridian`` there is another build.
-
-    ``write_roots`` is what a sandboxed agent can write. The shim lives under the user
-    home, outside them: a shim an agent could rewrite would run unsandboxed through
-    ``meridian spawn``. Returns a warning when it refuses. Writes nothing.
-    """
-
     path = env.get("PATH")
     if not path:
         return None
@@ -50,7 +32,7 @@ def pin_launching_build(env: dict[str, str], *, write_roots: Collection[Path]) -
     resolved = Path(found).resolve() if found and Path(found).is_absolute() else None
     if resolved == (Path(sys.executable).parent / "meridian").resolve():
         return None
-    # /tmp is writable even when TMPDIR moved it out of the projected roots.
+    # A writable shim could run unsandboxed through spawn; treat /tmp as writable.
     if any(path_within(shim, root) for root in (*write_roots, Path("/tmp"))):
         return (
             f"Not pinning `meridian` to this build: {shim.parent} is inside a writable "
@@ -63,12 +45,7 @@ def pin_launching_build(env: dict[str, str], *, write_roots: Collection[Path]) -
 
 
 def drop_inherited_shims(env: dict[str, str]) -> None:
-    """Remove shim directories from ``env["PATH"]``, for a launch that refused to pin.
-
-    Otherwise an inherited one stays first, and ``write_pinned_shim`` would rewrite it
-    inside the sandbox root that made the launch refuse.
-    """
-
+    # An inherited shim could otherwise be rewritten in a refused sandbox root.
     shim, _ = _shim_location(env)
     env["PATH"] = ":".join(
         entry
@@ -78,8 +55,6 @@ def drop_inherited_shims(env: dict[str, str]) -> None:
 
 
 def write_pinned_shim(env: Mapping[str, str]) -> None:
-    """Write the shim when ``pin_launching_build`` put its directory first on PATH."""
-
     shim, text = _shim_location(env)
     if env.get("PATH", "").split(":", 1)[0] != shim.parent.as_posix() or shim.exists():
         return

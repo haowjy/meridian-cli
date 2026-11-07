@@ -1,5 +1,3 @@
-"""Harness-native projection of semantic autocompaction thresholds."""
-
 from __future__ import annotations
 
 from meridian.lib.harness.projections.native_config import (
@@ -14,7 +12,6 @@ CLAUDE_AUTOCOMPACT_MAX_TOKENS = 1_000_000
 
 
 def project_claude_autocompact_args(autocompact: int | None) -> tuple[str, ...]:
-    """Return Claude's absolute-token threshold flag when its CLI can express it."""
 
     if autocompact is None or not (
         CLAUDE_AUTOCOMPACT_MIN_TOKENS <= autocompact <= CLAUDE_AUTOCOMPACT_MAX_TOKENS
@@ -26,7 +23,6 @@ def project_claude_autocompact_args(autocompact: int | None) -> tuple[str, ...]:
 def project_codex_autocompact_args(
     autocompact: int | None, autocompact_pct: int | None
 ) -> tuple[str, ...]:
-    """Return Codex config overrides for the two semantic thresholds."""
 
     arguments: list[str] = []
     if autocompact is not None:
@@ -42,7 +38,6 @@ def project_codex_autocompact_args(
 
 
 def compaction_report(spec: ResolvedLaunchSpec, *, harness: str) -> EnforcementReport:
-    """Describe how one harness applies or declines the resolved thresholds."""
 
     lines: list[ReportLine] = []
     if harness == "Claude":

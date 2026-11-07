@@ -1,5 +1,3 @@
-"""Extension command registry and first-party registry helpers."""
-
 from __future__ import annotations
 
 import hashlib
@@ -30,7 +28,6 @@ class ExtensionCommandRegistry:
         self._cli_commands: dict[tuple[str, str], str] = {}  # (group, name) -> fqid
 
     def register(self, spec: CommandEntry) -> None:
-        """Register a command spec or declaration. Raises ValueError on validation failure."""
 
         fqid = spec.fqid
         if fqid in self._commands:
@@ -61,7 +58,6 @@ class ExtensionCommandRegistry:
         return _resolved(entry) if entry is not None else None
 
     def list_for_cli_group(self, group: str) -> list[CommandEntry]:
-        """Return a CLI group's entries, sorted by cli_name, without resolving them."""
         return sorted(
             (s for s in self._commands.values() if s.cli_group == group),
             key=lambda s: s.cli_name or "",
@@ -71,7 +67,6 @@ class ExtensionCommandRegistry:
         return [_resolved(entry) for entry in self._commands.values()]
 
     def list_for_surface(self, surface: ExtensionSurface) -> list[ExtensionCommandSpec]:
-        """Return commands available on a specific surface."""
 
         return [_resolved(e) for e in self._commands.values() if surface in e.surfaces]
 
@@ -86,7 +81,6 @@ _first_party_registry: ExtensionCommandRegistry | None = None
 
 
 def get_first_party_registry() -> ExtensionCommandRegistry:
-    """Return the singleton first-party registry."""
 
     global _first_party_registry
     if _first_party_registry is None:
@@ -95,7 +89,6 @@ def get_first_party_registry() -> ExtensionCommandRegistry:
 
 
 def build_first_party_registry() -> ExtensionCommandRegistry:
-    """Build a fresh registry with first-party commands. For testing."""
 
     from meridian.lib.extensions.first_party import register_first_party_commands
 

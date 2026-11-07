@@ -1,8 +1,3 @@
-"""File-backed spawn state store for a Meridian runtime root.
-
-Also includes file-backed ID generation for spawns and sessions.
-"""
-
 from __future__ import annotations
 
 import os
@@ -89,11 +84,6 @@ from meridian.plugin_api.types import SpawnKind
 logger = structlog.get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# ID generation (absorbed from state/id_gen.py)
-# ---------------------------------------------------------------------------
-
-
 def _spawn_id_index(spawn_id: SpawnId | str) -> int:
     value = str(spawn_id)
     if is_spawn_id(value):
@@ -106,7 +96,6 @@ def _spawn_counter_path(paths: RuntimePaths) -> Path:
 
 
 def read_spawn_counter(runtime_root: Path) -> int:
-    """The last ID reserved from the counter every build shares (0 when unreadable)."""
     try:
         return int((runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -123,14 +112,6 @@ def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
 def reserve_launch(
     runtime_root: Path,
 ) -> LaunchPaths:
-    """Reserve the next spawn ID (`p1`, `p2`, ...) and return its first launch.
-
-    Reservation is persisted separately from spawn rows so callers can compose
-    launch context with the final launch before writing lifecycle-visible events.
-    Pass the result to ``start_spawn`` (via the reservation); the launch it publishes
-    equals this one.
-    """
-
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.spawns_flock):
         current = read_spawn_counter(paths.root_dir)
@@ -212,17 +193,6 @@ FIRST_LAUNCH = 1
 
 @dataclass
 class LaunchInput:
-    """What one launch of a spawn is told at start; the same for a first launch and a reopen.
-
-    Construction validates and resolves, so a bad input fails before any file is written:
-    ``goal`` is stripped (``None`` means the caller keeps the row's goal) and
-    ``runner_created_at_epoch`` is looked up from ``runner_pid`` when not given.
-
-    No field has a default: ``start_spawn`` builds this from its own parameters, and a
-    field it forgot to forward is then a type error, not a silent default. The status is
-    not here: a creation chooses it, a reopen is always running.
-    """
-
     chat_id: str | None
     prompt: str
     kind: SpawnKind
@@ -291,16 +261,6 @@ def _launch_fields(
     started_at: str,
     status: SpawnStatus,
 ) -> _LaunchFields:
-    """Every field of a row that one launch owns, or derives from who starts it.
-
-    The one builder behind a new spawn's first launch and a reopen's next one: a field
-    added here reaches both, and the reset list cannot drift from the creation list.
-    That includes the model and the three paths, which a continue may change. Spawn-level
-    fields (ID, history identity, work, harness, agent, skills, launch policy) stay with
-    the caller; ``goal``, ``desc`` and ``forked_from_history_id`` are the row's effective
-    values. A reopen overrides ``session_instance_id``: the owner chat's current one
-    belongs to the launch that just ended, not to this launch's runner.
-    """
     from meridian.lib.state.session_store import chat_record
 
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -487,12 +447,7 @@ def start_spawn(
 
 
 def reject_continue_cycle(spawns_dir: Path, spawn_id: str, new_parent_id: str | None) -> None:
-    """Refuse a continue that would make ``spawn_id`` its own ancestor.
-
-    Walks the new parent's stored ancestor chain to its end; the visited set only stops a
-    chain that already loops. Re-parenting moves whole subtrees, so no depth bound is safe.
-    The answer is only stable under ``spawns_flock``.
-    """
+    # Reparenting moves whole subtrees, so no depth bound is safe.
     visited: set[str] = set()
     current = new_parent_id
     while current is not None and current not in visited:
@@ -515,21 +470,6 @@ def reopen_spawn(
     work_id: str | None = None,
     clock: Clock | None = None,
 ) -> SpawnRecord:
-    """Start the next launch of a finished spawn under its launch lock; return its new row.
-
-    ``handle`` is the proof that no runner of launch K is alive, so this is the only
-    writer that may set ``launch`` on a v3 row. Order: K's row is copied to
-    ``launch_archive`` (idempotent, so a crash here repeats it), ``launches/K+1/`` is
-    created with the prompt, then one ``state.json`` write turns the row into launch
-    K+1. K's outcome must already be written: the archive is terminal by construction.
-
-    ``desc`` and ``work_id``, when given, replace the spawn's own (as ``work rename`` does);
-    ``None`` keeps them. A continue moves the spawn under its caller. When the parent
-    changes, the ancestor walk, the check and the write share ``spawns_flock``, so two
-    continues moving each other's ancestors cannot both pass the check. The caller's wait
-    pin for the spawn is dropped last: it has moved past launch K.
-    """
-
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawn_id = str(handle.spawn_id)
     observed = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
@@ -544,6 +484,7 @@ def reopen_spawn(
         terminal = current.terminal
         if terminal is None or current.launch_number != k:
             raise ValueError(f"{spawn_id} changed under its launch lock")
+        # Archive the terminal row and publish its successor's prompt before advancing state.
         atomic_write_text(
             launch_archive(runtime_root, handle.spawn_id, k),
             record_to_stored_state(current).model_dump_json(indent=2) + "\n",
@@ -567,6 +508,7 @@ def reopen_spawn(
                     started_at=started,
                     status=SpawnStatus.RUNNING,
                 ),
+                # The prior owner's generation belongs to the launch that just ended.
                 "session_instance_id": None,
                 "goal": effective_goal,
                 "desc": effective_desc,
@@ -585,6 +527,7 @@ def reopen_spawn(
     if launch.parent_id == observed.parent_id:
         result = commit()
     else:
+        # Keep the ancestor check and mutation together to prevent concurrent cycles.
         with (
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.spawns_flock),
@@ -619,7 +562,6 @@ def update_spawn(
     work_id: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
-    """Update v2 spawn metadata under the per-spawn state lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
@@ -726,11 +668,6 @@ def finalize_spawn(
     expected_n: int | None = None,
     clock: Clock | None = None,
 ) -> LockedMutationResult:
-    """Finalize under the lock when terminal authority accepts the transition.
-
-    ``expected_n`` limits the write to that launch: a row a continue has since moved to a
-    later launch declines, so a finish decided for launch K never lands on K+1.
-    """
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 
@@ -779,7 +716,6 @@ def record_spawn_launch_facts(
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
 ) -> LockedMutationResult:
-    """Record launch facts on an active row under the per-spawn lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
@@ -820,7 +756,6 @@ class SpawnScan:
         records: Sequence[SpawnRecord],
         quarantines: Sequence[SpawnStateQuarantineReport],
     ) -> SpawnScan:
-        """Build a scan with the canonical persisted-spawn ordering."""
         return cls(tuple(sorted(records, key=_spawn_sort_key)), tuple(quarantines))
 
 
@@ -872,13 +807,6 @@ def list_spawns(
 
 
 def read_launch_paths(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchPaths:
-    """Read the published row once and return its launch's paths.
-
-    For a process that adopts a launch it did not publish and holds only the ID (the
-    background worker) or sits at an ID-only command boundary. The publisher hands out
-    the launch it wrote; read surfaces use the row they already hold.
-    """
-
     row = get_spawn(runtime_root, spawn_id)
     if row is None:
         raise ValueError(f"spawn row not found: {spawn_id}")
@@ -889,10 +817,6 @@ def get_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> SpawnRecord | None:
-    """Return one spawn by ID.
-
-    Reads ``spawns/<id>/state.json`` and its prompt body without locking.
-    """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     return _read_state(paths.spawns_dir, str(spawn_id))

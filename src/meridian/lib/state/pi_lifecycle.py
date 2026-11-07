@@ -1,5 +1,3 @@
-"""Bounded Pi lifecycle diagnostics, independent of transcript persistence."""
-
 from pydantic import BaseModel
 
 from meridian.lib.state.json_doc import mutate_model, read_model

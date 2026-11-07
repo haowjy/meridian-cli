@@ -1,5 +1,3 @@
-"""Spawn execution runner: prepare handoff, invoke runner, launch_prepared_spawn."""
-
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -66,7 +64,6 @@ logger = structlog.get_logger(__name__)
 
 
 def _spawn_request_needs_recompose(before: SpawnRequest, after: SpawnRequest) -> bool:
-    """Return whether session/fork resolution changed policy-relevant request fields."""
 
     if before.session != after.session:
         return True
@@ -308,7 +305,6 @@ async def _invoke_runner(
     stream_stderr_to_terminal: bool,
     debug: bool,
 ) -> int:
-    """Delegate execution to the streaming runner after preparation succeeds."""
 
     return await execute_with_streaming(
         spawn,
@@ -325,7 +321,6 @@ async def _invoke_runner(
 
 
 def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
-    """Close session scope owned by a prepared execution handoff."""
 
     handoff.session_exit_stack.close()
 
@@ -352,7 +347,6 @@ async def launch_prepared_spawn(
     prepared: PreparedLaunchSurface | None = None,
     warning_observer: Callable[[str | None], None] | None = None,
 ) -> int:
-    """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
     handoff: PreparedExecutionHandoff
     prelaunch_state = HarnessPrelaunchState()

@@ -1,5 +1,3 @@
-"""Codex TUI passthrough configuration for managed primary sessions."""
-
 from __future__ import annotations
 
 import socket

@@ -1,5 +1,3 @@
-"""Spawn create-input validation and payload preparation helpers."""
-
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,7 +93,6 @@ def build_create_payload(
     ctx: RuntimeContext | None = None,
     models_readonly: bool = False,
 ) -> SpawnCreateArtifacts:
-    """Build a spawn request and prepared launch surface for create/execute handoff."""
 
     with capture_library_diagnostics():
         if runtime is not None:

@@ -1,5 +1,3 @@
-"""Telemetry status reporting."""
-
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -31,7 +29,6 @@ class TelemetryStatus:
 
     @property
     def total_size_human(self) -> str:
-        """Human-readable total size."""
         if self.total_bytes < 1024:
             return f"{self.total_bytes} B"
         if self.total_bytes < 1024 * 1024:
@@ -39,13 +36,11 @@ class TelemetryStatus:
         return f"{self.total_bytes / (1024 * 1024):.1f} MB"
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        """Render a human-readable telemetry health summary."""
         _ = ctx
         return format_status_dict(status_to_dict(self))
 
 
 def status_to_dict(status: TelemetryStatus) -> dict[str, Any]:
-    """Return a JSON-serializable telemetry status payload."""
     result = asdict(status)
     telemetry_dir = result["telemetry_dir"]
     if isinstance(telemetry_dir, list):
@@ -58,7 +53,6 @@ def status_to_dict(status: TelemetryStatus) -> dict[str, Any]:
 
 
 def format_status_dict(status: dict[str, Any]) -> str:
-    """Render a telemetry status payload as human-readable text."""
     active_writers = status.get("active_writers", [])
     if isinstance(active_writers, list):
         writer_values = cast("list[object]", active_writers)
@@ -94,7 +88,6 @@ def compute_status(
     telemetry_dirs: list[Path] | None = None,
     legacy_dir: Path | None = None,
 ) -> TelemetryStatus:
-    """Compute telemetry sink status from disk state."""
     dirs = telemetry_dirs if telemetry_dirs is not None else [runtime_root / "telemetry"]
     segments: list[Path] = []
     for directory in dirs:

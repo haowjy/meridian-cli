@@ -1,5 +1,3 @@
-"""Materialization layer: CompilerResult → runtime objects."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,7 +22,6 @@ def materialize_harness(
     *,
     harness_registry: HarnessRegistry,
 ) -> MaterializedLaunch:
-    """Turn CompilerResult harness string into runtime adapter."""
 
     harness_id = HarnessId(result.harness)
     try:

@@ -1,5 +1,3 @@
-"""Durable cleanup intent for finalize-first orphan reconciliation."""
-
 from __future__ import annotations
 
 import dataclasses

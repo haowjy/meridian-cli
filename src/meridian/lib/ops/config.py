@@ -1,5 +1,3 @@
-"""Config file management operations."""
-
 import json
 import os
 from pathlib import Path
@@ -494,7 +492,6 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
         raise ValueError("Project context paths are unresolved after identity creation.")
     # For context directories, skip only git-backed contexts with remotes.
     if context_config is None:
-        # No context config = all local, create everything
         repo_state.kb_dir.mkdir(parents=True, exist_ok=True)
         repo_state.work_dir.mkdir(parents=True, exist_ok=True)
         repo_state.work_archive_dir.mkdir(parents=True, exist_ok=True)
@@ -547,7 +544,6 @@ def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
 
 
 def config_init_sync(payload: ConfigInitInput) -> ConfigInitOutput:
-    # init targets explicit path, then MERIDIAN_PROJECT_DIR, then CWD.
     if payload.project_root:
         project_root = Path(payload.project_root).expanduser().resolve()
     else:

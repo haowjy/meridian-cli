@@ -16,7 +16,6 @@ from meridian.lib.platform import IS_WINDOWS
 
 
 def _is_root_help_request(argv: Sequence[str]) -> bool:
-    """Return true when argv requests root help before a command path."""
 
     if not any(token in {"--help", "-h"} for token in argv):
         return False
@@ -24,7 +23,6 @@ def _is_root_help_request(argv: Sequence[str]) -> bool:
 
 
 def _is_version_request(argv: Sequence[str]) -> bool:
-    """Return true when argv requests the root version before a command path."""
 
     if not any(token in {"--version", "-v"} for token in argv):
         return False

@@ -1,5 +1,3 @@
-"""Best-effort terminal location lookup shared by launch and notifications."""
-
 import subprocess
 
 

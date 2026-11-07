@@ -1,5 +1,3 @@
-"""TuiPassthrough protocol — builds harness-specific attach configuration."""
-
 from __future__ import annotations
 
 from collections.abc import Callable

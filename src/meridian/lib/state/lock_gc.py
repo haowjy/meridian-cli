@@ -1,5 +1,3 @@
-"""Garbage collection for orphaned per-spawn coordination locks."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -27,7 +25,6 @@ class LockGcStats:
     pass_skipped: bool = False
 
     def combine(self, other: LockGcStats) -> LockGcStats:
-        """Aggregate counts from independently triggered GC passes."""
 
         return LockGcStats(
             files_seen=self.files_seen + other.files_seen,

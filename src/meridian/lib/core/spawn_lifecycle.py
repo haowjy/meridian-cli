@@ -30,18 +30,14 @@ if TYPE_CHECKING:
     from meridian.lib.state.spawn.model import LaunchMode
     from meridian.plugin_api.types import SpawnKind
 
-# Cancel SIGKILLs a runner still alive after this long, and a SIGKILLed runner loses its
-# usage. A runner stopped by a termination signal must therefore finish its harness stop and
-# terminal write inside SIGNAL_STOP_BUDGET_SECS, which sits below the grace by the time the
-# terminal write itself needs.
+# Leave time for the terminal write before cancellation escalates to SIGKILL,
+# which would lose the runner's usage.
 CANCEL_GRACE_SECS = 5.0
 SIGNAL_STOP_BUDGET_SECS = CANCEL_GRACE_SECS - 2.0
 
 
 @dataclass(frozen=True)
 class SpawnReservation:
-    """Creation-time fields needed to persist a spawn row before announcement."""
-
     chat_id: str | None
     session_metadata: PrimarySessionMetadata
     prompt: str
@@ -106,8 +102,6 @@ _REPORT_TEXT_KEYS: tuple[str, ...] = ("result", "message", "output", "text", "co
 
 
 class DurableReportEvidence(StrEnum):
-    """Classification of persisted report text as lifecycle evidence."""
-
     ABSENT = "absent"
     COMPLETION = "completion"
     SYNTHETIC_FAILURE = "synthetic_failure"
@@ -116,8 +110,6 @@ class DurableReportEvidence(StrEnum):
 
 @dataclass(frozen=True)
 class ExecutionTerminalFacts:
-    """Execution evidence reported by runners before lifecycle finalization."""
-
     exit_code: int
     failure_reason: str | None = None
     cancellation_observed: bool = False
@@ -127,8 +119,6 @@ class ExecutionTerminalFacts:
 
 @dataclass(frozen=True)
 class ExecutionTerminalOutcome:
-    """Lifecycle-resolved terminal tuple derived from execution facts."""
-
     status: TerminalSpawnStatus
     exit_code: int
     error: str | None
@@ -177,7 +167,6 @@ def _is_codex_control_event_payload(payload: dict[str, object]) -> bool:
 
 
 def is_control_report_payload(payload: dict[str, object]) -> bool:
-    """Return whether a structured payload is non-durable report/control evidence."""
 
     event_name = _event_name(payload)
     if event_name in _CONTROL_EVENT_NAMES:
@@ -206,14 +195,12 @@ def is_terminal_spawn_status(status: str) -> TypeIs[TerminalSpawnStatus]:
 
 
 def parse_terminal_status(status: str) -> TerminalSpawnStatus:
-    """Return a validated terminal status, raising for active or unknown values."""
     if is_terminal_spawn_status(status):
         return status
     raise ValueError(f"Invalid terminal spawn status: {status!r}")
 
 
 def coerce_spawn_status(status: str) -> SpawnStatus:
-    """Preserve every known spawn status; recover unknown persisted values as failed."""
 
     if status in ALL_SPAWN_STATUSES:
         return cast("SpawnStatus", status)
@@ -221,7 +208,6 @@ def coerce_spawn_status(status: str) -> SpawnStatus:
 
 
 def _has_report_text(payload: dict[str, object]) -> bool:
-    """Return whether a structured payload carries explicit report text."""
 
     for key in _REPORT_TEXT_KEYS:
         value = payload.get(key)
@@ -272,7 +258,6 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
 
 
 def has_durable_report_completion(report_text: str | None) -> bool:
-    """Return True when report text is durable completion evidence."""
 
     return classify_durable_report_text(report_text) is DurableReportEvidence.COMPLETION
 
@@ -322,7 +307,6 @@ def resolve_execution_terminal_state(
 def resolve_execution_terminal_outcome(
     facts: ExecutionTerminalFacts,
 ) -> ExecutionTerminalOutcome:
-    """Resolve runner facts into the authoritative terminal tuple."""
 
     status, exit_code, error = resolve_execution_terminal_state(
         exit_code=facts.exit_code,

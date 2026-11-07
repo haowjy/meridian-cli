@@ -1,5 +1,3 @@
-"""Shared event-stream liveness policy for managed harness connections."""
-
 from __future__ import annotations
 
 import asyncio

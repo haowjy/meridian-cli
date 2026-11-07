@@ -140,7 +140,6 @@ async def _send_and_receive(
     writer: asyncio.StreamWriter,
     line: bytes,
 ) -> bytes:
-    """Send one encoded request line and receive the response, with proper cleanup."""
     try:
         writer.write(line)
         await writer.drain()

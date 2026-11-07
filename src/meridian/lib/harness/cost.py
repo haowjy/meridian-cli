@@ -1,5 +1,3 @@
-"""Token cost estimation from mars model catalog pricing."""
-
 from __future__ import annotations
 
 import json

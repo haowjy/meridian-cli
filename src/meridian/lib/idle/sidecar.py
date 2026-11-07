@@ -1,5 +1,3 @@
-"""Launcher-hosted idle sensor task."""
-
 from __future__ import annotations
 
 import asyncio
@@ -70,7 +68,6 @@ class SensorErrorReporter:
             )
 
     def record_session_mismatch(self, *, expected: str, received: str) -> None:
-        """Record one adapter identity violation selected by the coordinator."""
 
         if self._closed:
             return

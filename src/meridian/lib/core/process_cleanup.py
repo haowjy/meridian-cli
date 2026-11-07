@@ -33,7 +33,6 @@ logger = structlog.get_logger(__name__)
 
 
 def _wait_for_scope_exit(scope: ProcessScopeSnapshot, *, timeout: float) -> None:
-    """Wait only while a scope's recorded root process is still alive."""
 
     import time
 
@@ -61,7 +60,6 @@ def terminate_recorded_spawn_scopes(
     reason: str,
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
-    """Terminate scope sidecars recorded for a spawn record."""
 
     launch = LaunchPaths.for_row(runtime_root, spawn_record)
     scopes = read_scopes_from_disk(launch)
@@ -80,7 +78,6 @@ def terminate_legacy_worker_fallback(
     reason: str,
     grace_seconds: float = 5.0,
 ) -> CleanupResult | None:
-    """Terminate a legacy spawn worker when no scope sidecars exist."""
 
     if spawn_record.worker_pid is None or spawn_record.worker_pid <= 0:
         return None
@@ -98,7 +95,6 @@ def terminate_spawn_scopes(
     reason: str,
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
-    """Terminate recorded scopes, with legacy worker fallback when none exist."""
 
     launch = LaunchPaths.for_row(runtime_root, spawn_record)
     scopes = read_scopes_from_disk(launch)
@@ -209,20 +205,6 @@ def should_skip_cleanup(
     scope: ProcessScopeSnapshot,
     spawn_record: SpawnRecord,
 ) -> bool:
-    """Return True when a session_owned scope should be preserved.
-
-    A ``session_owned`` scope is preserved while the managed primary runtime
-    is considered active.  However, if the root process died independently
-    (e.g. crashed while the lease was still valid), there is nothing to
-    preserve — the scope must be reclaimed rather than silently leaked
-    (PROC-007).
-
-    Validation order:
-    1. Only ``session_owned`` scopes are candidates for skip.
-    2. If the root PID is dead or its birth time has drifted (PID reuse),
-       return False so the caller reclaims the already-gone scope.
-    3. Otherwise return True (preserve — process is alive and verified).
-    """
     if scope.owner_policy != "session_owned":
         return False
 
@@ -239,7 +221,7 @@ def should_skip_cleanup(
             )
             return False
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        # Root process is gone — reclaim despite the session_owned policy.
+        # A missing or unverifiable root cannot justify preserving the scope.
         logger.debug(
             "session_owned scope root process dead — reclaiming.",
             spawn_id=spawn_record.id,
@@ -258,7 +240,6 @@ def _terminate_legacy_worker_pid(
     reason: str,
     grace_seconds: float,
 ) -> CleanupResult:
-    """Fallback for legacy spawns without scope metadata."""
     worker_pid = spawn_record.worker_pid
     if worker_pid is None or worker_pid <= 0:
         return CleanupResult(
@@ -315,7 +296,6 @@ def cancel_managed_primary(
     scopes = read_scopes_from_disk(launch)
     results: list[CleanupResult] = []
 
-    # 1. Terminate launcher scope first (spawn_owned).
     for scope in scopes:
         if scope.scope_id == "launcher":
             if is_scope_released(launch, scope.release_id):
@@ -342,7 +322,6 @@ def cancel_managed_primary(
     if results and launcher_scope is not None:
         _wait_for_scope_exit(launcher_scope, timeout=min(1.0, grace_seconds))
 
-    # 3. Terminate backend and TUI if still unreleased.
     for scope in scopes:
         if scope.scope_id not in {"backend", "tui"}:
             continue

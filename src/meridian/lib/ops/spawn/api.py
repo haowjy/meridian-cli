@@ -1,5 +1,3 @@
-"""Spawn operations used by CLI and MCP surfaces."""
-
 import asyncio
 import os
 import sqlite3
@@ -187,7 +185,6 @@ def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = No
 
 
 def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float) -> str:
-    """Build actionable timeout message for LLM agents."""
     sorted_ids = sorted(pending_spawn_ids)
     ids_str = ", ".join(sorted_ids)
     ids_joined = " ".join(sorted_ids)
@@ -325,7 +322,6 @@ class SpawnCreatePreparation:
 def _failure_create_input(
     payload: SpawnCreateInput | SpawnContinueInput | SpawnForkInput,
 ) -> SpawnCreateInput:
-    """Give the shared pre-init boundary one failure payload shape."""
 
     if isinstance(payload, SpawnCreateInput):
         return payload
@@ -1237,7 +1233,6 @@ def _row_in_cancel_scope(
 
 
 def _resolve_caller_spawn_id(spawn_id: str | None, ctx: RuntimeContext | None) -> str:
-    """Resolve an explicit spawn id, else the caller's own spawn, else fail."""
 
     candidate = (spawn_id or "").strip()
     if not candidate:
@@ -1781,7 +1776,6 @@ def _emit_wait_set(
     runtime_root: Path | None = None,
     sink: OutputSink,
 ) -> None:
-    """Print the wait set table before blocking."""
     entries: list[SpawnListEntry] = []
     for spawn_id in spawn_ids:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
@@ -1938,7 +1932,6 @@ def _resolve_wait_checkpoint_seconds(
     payload: SpawnWaitInput,
     config: MeridianConfig,
 ) -> float:
-    """Resolve per-invocation or harness-aware wait-yield interval."""
 
     if payload.yield_after_secs is not None:
         return payload.yield_after_secs
@@ -2253,7 +2246,6 @@ def _source_spawn_for_follow_up(
 
 
 def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
-    """Reject launch-contract changes for exact continuation."""
 
     reject_continue_policy_overrides(
         {

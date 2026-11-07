@@ -1,5 +1,3 @@
-"""Mermaid diagram validation — Python default with optional JS strict mode."""
-
 from meridian.lib.mermaid.style.types import CheckResult, StyleCheckOptions, StyleWarning
 from meridian.lib.mermaid.validator import (
     BlockResult,

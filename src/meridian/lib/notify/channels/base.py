@@ -1,5 +1,3 @@
-"""Notification channel contract and result value."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

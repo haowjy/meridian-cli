@@ -41,7 +41,6 @@ def kv_block(pairs: list[tuple[str, str | None]]) -> str:
 
 
 def relative_time(iso_str: str) -> str:
-    """Format an ISO timestamp as a compact relative time string."""
 
     try:
         normalized = iso_str.strip()

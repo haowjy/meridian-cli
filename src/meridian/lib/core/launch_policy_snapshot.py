@@ -1,5 +1,3 @@
-"""Durable launch-policy snapshot DTO persisted with spawn state."""
-
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field

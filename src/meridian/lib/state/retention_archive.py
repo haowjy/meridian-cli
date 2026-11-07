@@ -1,9 +1,3 @@
-"""Immutable portable ZIPs, verified streams, and file-authoritative receipts.
-
-This module owns byte mechanics, not eligibility. Publication never removes
-sources; the policy layer must independently revalidate its capture before reclaim.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -221,11 +215,6 @@ def _is_reserved_atomic_temp(name: str) -> bool:
 def required_members(
     names: Iterable[str], launch: LaunchRef | None, *, has_prompt: bool
 ) -> tuple[str, tuple[str, ...]]:
-    """The transcript member and the members a retained record cannot lack.
-
-    The transcript and prompt belong to the current launch, so they sit in its directory
-    (``launches/<n>/`` for a v4 row, the top level for a v3 row).
-    """
     sub = row_launch_subdir(launch).as_posix()
     prefix = "" if sub == "." else sub + "/"
     transcript = prefix + canonical_transcript_member(
@@ -391,7 +380,6 @@ def archive_location_id(destination: Path) -> UUID:
 
 
 def record_member(history_id: UUID, *parts: str) -> str:
-    """Return the archive member path for one retained history record."""
     return f"{_ARCHIVE_MEMBER_PREFIX}records/{history_id}/" + "/".join(parts)
 
 
@@ -405,7 +393,6 @@ def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
 
 
 def read_record_metadata(archive: zipfile.ZipFile, history_id: UUID) -> bytes:
-    """The bounded ``record.json`` bytes exactly as one record stored them."""
     return _member_bytes(archive, record_member(history_id, "record.json"), limit=_MAX_METADATA)
 
 
@@ -718,7 +705,6 @@ def archive_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Pa
 
 
 def archive_display_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Path:
-    """Display the configured remount when its location identity matches."""
     if destination is not None:
         try:
             return archive_path(receipt, destination)
@@ -734,11 +720,6 @@ def archive_locations(
     full: bool = False,
     deadline: float | None = None,
 ) -> tuple[ArchiveLocation, ...]:
-    """Resolve only the supplied selection, checking every location against its receipt.
-
-    Callers select a history digest or an explicit archive UUID. This module owns
-    physical availability, remount hints and verification, never currentness.
-    """
     available: list[ArchiveLocation] = []
     errors: list[str] = []
     seen: set[tuple[Path, UUID, str]] = set()
@@ -774,13 +755,6 @@ def read_archived_member(
     destination: Path | None = None,
     limit: int = _MAX_METADATA,
 ) -> bytes | None:
-    """One small retained file (e.g. ``report.md``) of the catalog-selected snapshot.
-
-    The bytes are checked against the size and sha256 that the local catalog
-    receipt recorded for that file, so the result is exactly what was archived
-    even for older ZIPs whose portable digests no longer recompute. ``None``
-    when the record did not retain the file or no copy is reachable.
-    """
     for receipt in selected_snapshot_receipts(receipts, history_id):
         member = next((m for m in receipt.records[0].files if m.name == name), None)
         if member is None:
@@ -837,11 +811,7 @@ def iter_archived_events(
     consume: Callable[[int], None] | None = None,
     check_header: Callable[[SnapshotHeader], None] | None = None,
 ) -> Generator[dict[str, object]]:
-    """Stream one verified member without reading/extracting other transcript bodies.
-
-    Yielded prefixes are unverified until EOF. A paused read (``current``) leaves
-    ``validation`` partial; corruption or a checksum mismatch raises.
-    """
+    # Yielded prefixes remain unverified until EOF and the final checksum.
     validation = validation if validation is not None else TranscriptValidation()
     manifest = verify_archive(path, full=False, manifest_sha256=manifest_sha256)
     record = next((r for r in manifest.records if r.history_id == history_id), None)
@@ -882,10 +852,6 @@ class ArchiveImport(NamedTuple):
 
 
 def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveImport:
-    """Register a verified ZIP for direct reads; never extract or start anything.
-
-    ``recorded`` is False when the same selection was already current (idempotent).
-    """
     path = path.expanduser().resolve()
     with lock_file(root / "history-archives/archive.lock"):
         manifest_hash = archive_manifest_digest(path)

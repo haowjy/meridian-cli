@@ -1,5 +1,3 @@
-"""Claude on-disk session and history helpers."""
-
 from __future__ import annotations
 
 import json
@@ -224,7 +222,6 @@ def candidate_claude_project_dirs(
     project_root: Path,
     config_root_hint: Path | None = None,
 ) -> list[Path]:
-    """Return Claude project directories ordered by transcript lookup trust."""
     slug = project_slug(project_root)
     if config_root_hint is None:
         return [_claude_config_root() / "projects" / slug]

@@ -1,5 +1,3 @@
-"""KG graph analysis — build AnalysisResult from markdown files."""
-
 from __future__ import annotations
 
 import os
@@ -21,7 +19,6 @@ from meridian.lib.kg.types import (
 from meridian.lib.markdown.extract import extract_file
 from meridian.lib.markdown.types import ExtractedLink
 
-# Directories to skip when walking
 _SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -52,20 +49,8 @@ def build_analysis(
     targeted_path: Path | None = None,
     exclude: list[str] | None = None,
 ) -> AnalysisResult:
-    """Build complete KG analysis from a root directory.
-
-    Args:
-        root: Root directory to scan for .md files
-        include_backlinks: Whether to compute missing backlinks
-        include_clusters: Whether to compute connected clusters
-        targeted_path: If set, only analyze this file/directory (for kg check)
-
-    Returns:
-        AnalysisResult with nodes, edges, broken_links, orphans, etc.
-    """
     root = root.resolve()
 
-    # Collect markdown files
     if targeted_path is not None:
         targeted = targeted_path.resolve()
         if targeted.is_file():
@@ -78,14 +63,12 @@ def build_analysis(
         md_files = _collect_md_files(root, exclude=exclude)
         scan_root = root
 
-    # Build nodes dict
     nodes: dict[Path, GraphNode] = {}
     for md_path in md_files:
         doc = extract_file(md_path)
         rel_path = _rel_posix(md_path, scan_root)
         nodes[md_path] = GraphNode(doc=doc, rel_path=rel_path, in_degree=0)
 
-    # Build edges and track inbound links
     edges: list[GraphEdge] = []
     broken_links: list[GraphEdge] = []
     inbound: dict[Path, set[Path]] = {p: set() for p in nodes}
@@ -117,7 +100,6 @@ def build_analysis(
             for ref in node.doc.references:
                 if isinstance(ref.resolved, Path) and ref.resolved in nodes:
                     target = ref.resolved
-                    # Check if target links back to src
                     target_links_back = any(
                         r.resolved == src_path for r in nodes[target].doc.references
                     )
@@ -126,7 +108,6 @@ def build_analysis(
                         if pair not in missing_backlinks:
                             missing_backlinks.append(pair)
 
-    # Compute connected clusters via BFS
     clusters: list[list[Path]] = []
     if include_clusters:
         clusters = _compute_clusters(nodes, inbound)
@@ -149,7 +130,6 @@ def build_check(
     exclude: list[str] | None = None,
     strict: bool = False,
 ) -> CheckResult:
-    """Build kg check result with broken links and content findings."""
     analysis = build_analysis(
         root=root,
         include_backlinks=False,
@@ -229,7 +209,6 @@ def _scan_file_findings(path: Path, warning_severity: FindingSeverity) -> list[C
 
 
 def _fenced_lines(text: str) -> set[int]:
-    """Return 1-indexed line numbers covered by fenced code block tokens."""
     fenced: set[int] = set()
     for token in _md_parser.parse(text):
         if token.type == "fence" and token.map:
@@ -251,7 +230,6 @@ def _conflict_marker_finding(path: Path, line_number: int, line: str) -> CheckFi
 
 
 def _is_external(target: str) -> bool:
-    """Check if a target is an external URL."""
     return any(target.startswith(prefix) for prefix in _EXTERNAL_PREFIXES)
 
 
@@ -260,7 +238,6 @@ def _collect_md_files(
     *,
     exclude: list[str] | None = None,
 ) -> list[Path]:
-    """Walk directory and collect .md files, applying skip dirs and exclusions."""
     kgignore_spec = load_ignore_patterns(root, ".kgignore")
 
     exclude_spec = compile_gitwildmatch(exclude) if exclude else None
@@ -292,7 +269,6 @@ def _make_edge(
     ref: ExtractedLink,
     nodes: dict[Path, GraphNode],
 ) -> GraphEdge:
-    """Convert an ExtractedLink to a GraphEdge."""
     _ = nodes  # Available for future use (e.g., node-aware resolution)
 
     resolved: bool
@@ -319,8 +295,6 @@ def _make_edge(
 def _compute_clusters(
     nodes: dict[Path, GraphNode], inbound: dict[Path, set[Path]]
 ) -> list[list[Path]]:
-    """Compute connected components via BFS over bidirectional adjacency."""
-    # Build bidirectional adjacency
     adj: dict[Path, set[Path]] = {p: set() for p in nodes}
     for target, sources in inbound.items():
         for src in sources:
@@ -333,7 +307,6 @@ def _compute_clusters(
     for start in nodes:
         if start in visited:
             continue
-        # BFS from start
         component: list[Path] = []
         queue: deque[Path] = deque([start])
         while queue:
@@ -353,7 +326,6 @@ def _compute_clusters(
 
 
 def _rel_posix(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:

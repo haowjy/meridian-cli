@@ -1,5 +1,3 @@
-"""Pi-specific idle policy observations."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -33,7 +31,6 @@ def detect_ttl(
     provider: str | None,
     env: Mapping[str, str],
 ) -> CacheTtl | None:
-    """Resolve Pi cache retention and confidence from its provider and mode."""
 
     _ = session_id, native_store
     normalized_provider = (provider or "").strip().lower()

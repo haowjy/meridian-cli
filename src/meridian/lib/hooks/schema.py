@@ -1,5 +1,3 @@
-"""Typed schema and validation for configured lifecycle hooks."""
-
 from __future__ import annotations
 
 import hashlib
@@ -181,7 +179,6 @@ class HookSpec(BaseModel):
 
 
 def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
-    """Return raw hook rows while keeping hook-section shape validation here."""
 
     values = json_list(raw_value)
     if values is None:
@@ -193,7 +190,6 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
 
 
 def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
-    """Validate one hook row, rejecting names and keys that were removed."""
 
     warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
     try:
@@ -211,7 +207,6 @@ def _slugify_hook_name_component(raw: str) -> str:
 
 
 def _synthesize_builtin_hook_name(builtin: BuiltinHook, options: Mapping[str, object]) -> str:
-    """Name an unnamed row by its builtin and the options that pick its target."""
 
     identity = {
         key: options[key] for key in builtin.identity_options if options.get(key) is not None
@@ -283,7 +278,6 @@ def hooks_from_spec(
     source: str,
     row_source: str,
 ) -> tuple[Hook, ...]:
-    """Apply semantic validation and construct runtime hooks from one typed spec."""
 
     command = spec.command
     options = dict(spec.options)

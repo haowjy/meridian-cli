@@ -91,7 +91,6 @@ def assign_to_new_job(pid: int) -> tuple[str, Any] | None:
         kernel32.CloseHandle(job_handle)
         return None
 
-    # Open a handle to the target process.
     PROCESS_ALL_ACCESS = 0x1F0FFF
     proc_handle = kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
     if not proc_handle:
@@ -116,12 +115,6 @@ def terminate_job(
     reason: str,
     scope_id: str,
 ) -> CleanupResult:
-    """Terminate all processes in a Windows Job Object.
-
-    Validates PID birth time before signalling (PROC-006).
-    Returns CleanupResult with ``degraded_fallback=True`` if *job_handle* is
-    None or if not running on Windows (handle was never created).
-    """
 
     if not IS_WINDOWS or job_handle is None:
         return CleanupResult(
@@ -139,7 +132,7 @@ def terminate_job(
 
     kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # ctypes exposes windll only on Windows.
 
-    # --- PID reuse guard (PROC-006) ---
+    # A reused PID must not authorize termination.
     skip_reason: str | None = None
     if not birth_time_unverified(created_at_epoch):
         with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):

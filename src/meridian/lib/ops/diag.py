@@ -1,5 +1,3 @@
-"""Doctor operation for file-authoritative state health and repair."""
-
 import asyncio
 import time
 from dataclasses import dataclass, field
@@ -99,7 +97,6 @@ class DoctorOutput(BaseModel):
     killed_orphan_spawns: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        """Key-value health check output for text output mode."""
         from meridian.lib.core.formatting import kv_block
 
         status = "ok" if self.ok else "WARNINGS"

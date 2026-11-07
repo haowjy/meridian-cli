@@ -1,5 +1,3 @@
-"""Spawn operation input/output models and shared lightweight helpers."""
-
 import shlex
 from collections.abc import Sequence
 from typing import Literal, NotRequired, TypedDict
@@ -323,7 +321,6 @@ class SpawnActionOutput(BaseModel):
         return f"meridian session log {self.spawn_id}"
 
     def to_wire(self) -> dict[str, object]:
-        """Project minimal external JSON shape. Omit nulls and input echo."""
         wire: dict[str, object] = {"status": self.status}
         if self.identity_created:
             wire["identity_created"] = True
@@ -426,11 +423,9 @@ class SpawnActionOutput(BaseModel):
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:
-        """Project the explicit CLI JSON contract."""
         return self.to_wire()
 
     def to_agent_wire(self) -> dict[str, object]:
-        """Project sparse JSON for implicit agent-mode consumers."""
         if not (self.background and self.status == "running"):
             return self.to_cli_wire()
 
@@ -460,7 +455,6 @@ class SpawnActionOutput(BaseModel):
         explicit_format: str | None,
         agent_mode: bool,
     ) -> object:
-        """CLI output protocol: shape output for the given format context."""
         _ = agent_mode
         if format != "json":
             return self
@@ -736,7 +730,6 @@ class SpawnListEntry(BaseModel):
         return self.status
 
     def as_row(self) -> list[str]:
-        """Return columnar cells for tabular alignment."""
         return [
             self.spawn_id,
             self.display_status(),
@@ -748,7 +741,6 @@ class SpawnListEntry(BaseModel):
 def format_spawn_identity_table(
     entries: Sequence[SpawnListEntry], *, include_duration: bool
 ) -> str:
-    """Render the compact identity table used by wait and direct-child listings."""
     from meridian.lib.core.formatting import tabular
 
     headers = ["spawn", "agent", "model", "status"]
@@ -806,7 +798,6 @@ class SpawnListOutput(BaseModel):
         return payload
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        """Columnar list of spawns for text output mode."""
         if not self.spawns:
             if self.text_view == "children":
                 return "(no children)"
@@ -919,7 +910,6 @@ class DeniedRequestOutput(BaseModel):
     reason: str | None = None
 
     def format_line(self) -> str:
-        """One line: what was tried (a multi-line command folded, long ones cut) and why not."""
 
         what = " ".join((self.summary or self.method).split())
         if len(what) > _DENIED_REQUEST_WHAT_LIMIT:
@@ -1073,7 +1063,6 @@ class SpawnDetailOutput(BaseModel):
         return task_dir_line(self.task_cwd, self.work_id)
 
     def to_cli_wire(self) -> dict[str, object]:
-        """Project slim JSON shape for wire serialization. Omits internal fields."""
         wire: dict[str, object] = {
             "spawn_id": self.spawn_id,
             "status": self.status,
@@ -1161,7 +1150,6 @@ class SpawnDetailOutput(BaseModel):
         explicit_format: str | None,
         agent_mode: bool,
     ) -> object:
-        """CLI output protocol: shape output for the given format context."""
         _ = explicit_format
         _ = agent_mode
         if format != "json":
@@ -1246,7 +1234,6 @@ class SpawnDetailOutput(BaseModel):
         return "\n".join(lines)
 
     def _format_verbose_text(self, *, always_show_transcript: bool = False) -> str:
-        """Key-value detail view for text output mode. Omits None/empty fields."""
         from meridian.lib.core.formatting import kv_block
 
         status_str = self.status
@@ -1504,7 +1491,6 @@ class SpawnWaitMultiOutput(BaseModel):
     exit_code: int | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        """Render waited spawns, expanding report content when available."""
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
             return self._format_with_advisories(self._format_checkpoint_text())
@@ -1612,7 +1598,6 @@ class SpawnWaitMultiOutput(BaseModel):
         return "\n".join(lines)
 
     def to_cli_wire(self) -> dict[str, object]:
-        """Sparse wire projection. Includes spawn summaries, not full details."""
         wire: dict[str, object] = {
             "total_runs": self.total_runs,
             "succeeded_runs": self.succeeded_runs,
@@ -1670,7 +1655,6 @@ class SpawnWaitMultiOutput(BaseModel):
         explicit_format: str | None,
         agent_mode: bool,
     ) -> object:
-        """CLI output protocol: shape output for the given format context."""
         _ = explicit_format
         _ = agent_mode
         if format != "json":

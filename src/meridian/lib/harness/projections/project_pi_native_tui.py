@@ -1,5 +1,3 @@
-"""Pi native TUI command projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import logging
@@ -138,7 +136,6 @@ def project_pi_native_tui_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered native Pi TUI command list."""
 
     command: list[str] = list(base_command)
     passthrough_tail = spec.extra_args

@@ -10,10 +10,8 @@ export const OwnerIdentity = {
   owner_birth_epoch: Type.Number({ exclusiveMinimum: 0 }),
 };
 
-/** A hold file: the CLI process running a wait or foreground spawn inside one bash task. */
 export const BashHoldSchema = Type.Object({ v: Type.Literal(1), ...OwnerIdentity });
 
-/** Whether the process named by an owner identity is still the one that wrote it (PID and birth time). */
 export async function ownerIsAlive(owner: { owner_pid: number; owner_birth_epoch: number }): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(owner.owner_pid)],

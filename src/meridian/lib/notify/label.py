@@ -1,5 +1,3 @@
-"""Build notification labels from the current terminal and work context."""
-
 from __future__ import annotations
 
 import os
@@ -28,7 +26,6 @@ _MAX_ANCESTRY = 32
 
 
 def _primary_of(runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
-    """The primary at the root of a spawn's parent chain, or None."""
 
     from meridian.lib.state import spawn_store
 

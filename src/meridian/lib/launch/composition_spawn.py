@@ -29,7 +29,6 @@ def compose_spawn_launch_surface(
     runtime_work_id: str | None = None,
     cache: MarsResultCache | None = None,
 ) -> PreparedLaunchSurface:
-    """Policy + Mars + surface. No bind."""
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     resolved_requested_task_cwd = (
@@ -65,7 +64,6 @@ def bind_spawn_launch_context(
     harness_registry: HarnessRegistry,
     plan_overrides: Mapping[str, str] | None = None,
 ) -> LaunchContext:
-    """Thin wrapper over bind_launch_context."""
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     merged_bindings = RuntimeBindings(

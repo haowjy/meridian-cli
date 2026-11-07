@@ -1,5 +1,3 @@
-"""Runtime state root derivation from project identity (read-only)."""
-
 from __future__ import annotations
 
 import os
@@ -32,8 +30,6 @@ def derive_runtime_root_from_project(
     *,
     for_write: bool = False,
 ) -> Path | None:
-    """Derive runtime state root from project identity without reading ``_MERIDIAN_RUNTIME_DIR``."""
-
     if for_write:
         identity = ensure_project_identity(project_root)
         project_id = state_id(identity)
@@ -52,16 +48,6 @@ def runtime_override_root(
     project_root: Path | None,
     environ: Mapping[str, str] | None = None,
 ) -> Path | None:
-    """Return the explicit ``_MERIDIAN_RUNTIME_DIR`` runtime root, at any spawn depth.
-
-    The one rule for the override; ``ops/runtime.py`` and ``ResolvedContext`` both
-    call it. Launchers set the variable on a child only when their own runtime came
-    from an override (``launch/context.py``), so a value present is a deliberate
-    choice. ``-C`` to another project unsets it at process scope, and hooks and
-    ``BLOCKED_CHILD_ENV_VARS`` strip it from foreign envs. A relative value needs
-    *project_root* to anchor it.
-    """
-
     env = os.environ if environ is None else environ
     override = env.get("_MERIDIAN_RUNTIME_DIR", "").strip()
     if not override:

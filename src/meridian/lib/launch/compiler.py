@@ -1,9 +1,3 @@
-"""Pure-data compiler contract for launch parameter resolution.
-
-DEPRECATED: Spawn preparation resolves through Mars launch-bundle. This module
-serves PRIMARY/CHAT local resolution paths.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -70,7 +64,6 @@ class FieldProvenance:
 class CompilerRequest:
     """Pure-data input to the compiler. JSON-serializable."""
 
-    # Identity
     requested_agent: str | None
 
     # Layered override sources — separate for provenance accuracy
@@ -78,17 +71,14 @@ class CompilerRequest:
     env_overrides: RuntimeOverrides
     config_defaults: RuntimeOverrides
 
-    # Agent profile data (loaded by caller, passed as data)
     profile_routing_model: str | None
     profile_routing_harness: str | None
     profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
 
-    # Model catalog data
     resolved_alias_entry: AliasEntry | None
     alias_catalog: dict[str, AliasEntry]
 
-    # Options
     project_root: str = ""
     supported_execution_policy_fields: tuple[ExecutionPolicyField, ...] = EXECUTION_POLICY_FIELDS
 
@@ -104,34 +94,27 @@ class CompilerRequest:
 class CompilerResult:
     """Pure-data compiler output. JSON-serializable."""
 
-    # Identity
     agent_name: str | None
 
-    # Model + routing
     model: str
     model_token: str
     harness: str
 
-    # Runtime policy
     execution_policy: ResolvedExecutionPolicy
 
-    # Selection context
     model_selection_requested_token: str = ""
     model_selection_canonical_id: str = ""
     harness_provenance: str = ""
 
-    # Provenance + diagnostics
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     warnings: tuple[str, ...] = ()
 
-    # Selection diagnostics
     selection_report: dict[str, object] | None = None
     model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
     matched_model_policy: bool = False
 
 
 def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
-    """Render provenance to a human-readable mapping for dry-run/diagnostic output."""
     output: dict[str, str] = {}
     for field_name in (
         "model",
@@ -153,7 +136,6 @@ def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
 
 
 def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]:
-    """Convert CompilerResult to a dict suitable for dry-run display."""
     output: dict[str, object] = {
         "agent": result.agent_name,
         "model": result.model_token or result.model,
@@ -185,7 +167,6 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
 
 
 def compile_launch_params(request: CompilerRequest) -> CompilerResult:
-    """Compile launch parameters from layered inputs."""
 
     warnings: list[str] = []
 
@@ -344,11 +325,6 @@ def match_model_policy(
     canonical_model_id: str,
     selected_model_token: str,
 ) -> ModelPolicyRule | None:
-    """Find the first matching model policy rule by list order.
-
-    Rules are evaluated in order. The first match wins.
-    """
-
     for rule in model_policies:
         if rule.match_type == "model" and rule.match_value == canonical_model_id:
             return rule

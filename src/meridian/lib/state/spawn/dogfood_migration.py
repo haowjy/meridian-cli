@@ -1,10 +1,4 @@
-"""One-time rewrite of spawn rows written by the PR-1 dogfood build.
-
-That build persisted the run boundary as flat ``entry_chat_id`` / ``exit_chat_id``
-/ ``exit_identity`` / ``trampoline_successor_id`` fields. The strict v3 schema
-rejects them, so such rows quarantine until this migration rewrites them.
-Remove this module once no dogfood rows remain on user machines.
-"""
+"""Rewrite legacy flat boundary fields before strict v3 loading can quarantine the row."""
 
 from __future__ import annotations
 

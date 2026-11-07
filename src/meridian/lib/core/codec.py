@@ -1,5 +1,3 @@
-"""Input/schema helpers shared by typed app surfaces."""
-
 import types
 from typing import Any, TypeGuard, TypeVar, Union, cast, get_args, get_origin
 
@@ -9,7 +7,6 @@ PayloadT = TypeVar("PayloadT")
 
 
 def normalize_optional(annotation: Any) -> tuple[Any, bool]:
-    """Return the wrapped type + whether the annotation is Optional[T]."""
 
     origin = get_origin(annotation)
     if origin is None:
@@ -49,7 +46,6 @@ def schema_from_annotation(annotation: Any) -> dict[str, object]:
 
 
 def schema_from_type(payload_type: type[Any]) -> dict[str, object]:
-    """Build a basic JSON schema from a Pydantic model."""
 
     if _is_pydantic_model_type(payload_type):
         return cast("dict[str, object]", payload_type.model_json_schema())

@@ -29,8 +29,6 @@ from meridian.lib.state.session_fold import PathMove, SessionRecord, SessionRelo
 
 
 def adapter_for(harness: str) -> SubprocessHarness | None:
-    """The adapter for a record's harness; None for a harness this build has no adapter
-    for, so every caller treats that record the same way: nothing harness-side to do."""
     try:
         return get_default_harness_registry().get_subprocess_harness(HarnessId(harness))
     except KeyError:
@@ -51,8 +49,6 @@ def _control_roots(generations: Sequence[SessionRecord]) -> tuple[Path, ...]:
 
 
 def harness_cwd(generations: Sequence[SessionRecord], *, skip: Path | None = None) -> Path | None:
-    """The directory the chat's harness records for it, or None when it keeps none.
-    A recorded root equal to ``skip`` is not offered to the harness as evidence."""
     adapter = adapter_for(generations[-1].harness) if generations else None
     if adapter is None:
         return None
@@ -61,9 +57,6 @@ def harness_cwd(generations: Sequence[SessionRecord], *, skip: Path | None = Non
 
 
 def needs_relocate(generations: Sequence[SessionRecord]) -> Path | None:
-    """The gate: the directory the harness records for this chat when it is gone, so
-    the next launch would fail on it. ``generations`` are the chat's
-    (``session_store.chat_generations``)."""
     resumes_in = harness_cwd(generations)
     return resumes_in if resumes_in is not None and not resumes_in.is_dir() else None
 
@@ -78,8 +71,6 @@ def _relocations(runtime_root: Path, chat_id: str) -> list[PathMove]:
 
 
 def _pinned_dir(generations: Sequence[SessionRecord]) -> Path | None:
-    """The directory the chat is pinned to on purpose (a worktree: newest ``task_cwd``
-    differs from its ``control_root``), or None for an unpinned chat."""
     newest = generations[-1]
     if newest.task_cwd and newest.control_root and newest.task_cwd != newest.control_root:
         return Path(newest.task_cwd)
@@ -165,8 +156,6 @@ def moved_root(
 
 
 def _recorded_dir(generations: Sequence[SessionRecord]) -> Path | None:
-    """The newest directory the chat's own records name: its ``task_cwd``, else its
-    ``control_root``. What a read hint tests for existence, not the harness's record."""
     newest = generations[-1]
     path = newest.task_cwd or newest.control_root
     return Path(path) if path else None
@@ -270,8 +259,6 @@ def with_relocate_hint(
     chat_id: str | None,
     target: Path,
 ) -> NativeSessionUnavailable:
-    """``exc`` with the relocate hint a ``store_moved`` refusal carries, or a ``missing``
-    one when the chat's recorded directory is gone (a live one says nothing of a move)."""
     if exc.reason not in ("store_moved", "missing") or chat_id is None:
         return exc
     hint = relocate_hint(
@@ -287,8 +274,6 @@ def with_relocate_hint(
 def with_read_hint(
     exc: NativeSessionUnavailable, *, project_root: Path
 ) -> NativeSessionUnavailable:
-    """``exc`` with the relocate hint for a transcript read whose recorded directory is
-    gone. Reads never search or launch, so only a gone directory gets a hint."""
     runtime_root = resolve_runtime_root_for_read(project_root)
     if exc.reason != "missing" or runtime_root is None:
         return exc

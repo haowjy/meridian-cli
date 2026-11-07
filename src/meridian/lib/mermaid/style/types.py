@@ -1,5 +1,3 @@
-"""Public contracts for Mermaid style warnings."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

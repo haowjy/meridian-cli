@@ -1,22 +1,3 @@
-"""Authoritative lifecycle-transition seam for spawn state.
-
-This module is the single service boundary for lifecycle transitions
-(``start``, ``record_launch_facts``, ``finalize``) and post-write
-lifecycle hook dispatch.
-Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
-
-Hooks fire after a successful store write. Metrics may be None on spawn.finished;
-the event fires for persisted terminal writes, including a terminal a runner writes
-over a derived one. update_spawn remains public for metadata, not transitions.
-
-Import note
------------
-Shared spawn record types live in ``meridian.lib.state.spawn.model`` and
-launch-policy snapshot lives in ``meridian.lib.core.launch_policy_snapshot``.
-Store access stays lazy so package-level compatibility re-exports do not
-reintroduce cycles.
-"""
-
 from __future__ import annotations
 
 import os
@@ -78,8 +59,7 @@ def _pid_created_at_epoch(pid: int | None) -> float | None:
 
 
 def _spawn_store() -> Any:
-    """Return the spawn store module without importing it during lifecycle init."""
-
+    # An eager import cycles through state initialization.
     from meridian.lib.state import spawn_store
 
     return spawn_store
@@ -95,20 +75,11 @@ def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | No
     return None
 
 
-# ---------------------------------------------------------------------------
-# Public type aliases
-# ---------------------------------------------------------------------------
-
 EventType = Literal["spawn.created", "spawn.started", "spawn.finished"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
 type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
-
-
-# ---------------------------------------------------------------------------
-# Event ID generation
-# ---------------------------------------------------------------------------
 
 
 def generate_event_id(spawn_id: str, n: int, event_type: str) -> UUID:
@@ -123,45 +94,29 @@ def generate_event_id(spawn_id: str, n: int, event_type: str) -> UUID:
     return uuid.uuid5(namespace, name)
 
 
-# ---------------------------------------------------------------------------
-# LifecycleEvent
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class LifecycleEvent:
-    """Immutable event passed to lifecycle hooks.
-
-    Provides stable identity for idempotent execution and full context
-    for declarative filters.
-    """
-
-    # Identity
     event_id: UUID
     event_type: EventType
     timestamp: datetime
 
-    # Spawn context (always present)
     spawn_id: str
     parent_id: str | None
     # Whose spawn: the owner's chat, not the child's own session chat.
     chat_id: str | None
     work_id: str | None
 
-    # Execution context (always present)
     agent: str | None
     kind: SpawnKind
     model: str | None
     harness: str | None
 
-    # Terminal-only fields (None for non-terminal events)
     status: TerminalSpawnStatus | None = None
     origin: TerminalOrigin | None = None
     error: str | None = None
 
     outcome_category: TerminalOutcomeCategory | None = None
 
-    # Metrics (may be None even on terminal events — reducer may merge later)
     duration_secs: float | None = None
     total_cost_usd: float | None = None
     input_tokens: int | None = None
@@ -170,11 +125,6 @@ class LifecycleEvent:
     cache_creation_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cost_is_estimate: bool = False
-
-
-# ---------------------------------------------------------------------------
-# LifecycleHook protocol
-# ---------------------------------------------------------------------------
 
 
 class LifecycleHook(Protocol):
@@ -191,19 +141,7 @@ class LifecycleHook(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# SpawnLifecycleService
-# ---------------------------------------------------------------------------
-
-
 class SpawnLifecycleService:
-    """Authoritative lifecycle API that wraps spawn_store with hook dispatch.
-
-    This class is the intended caller-facing transition seam. It delegates
-    persistence to ``spawn_store`` and only adds consistent post-write
-    ``LifecycleEvent`` dispatch semantics.
-    """
-
     def __init__(
         self,
         runtime_root: Path,
@@ -213,10 +151,6 @@ class SpawnLifecycleService:
         self._runtime_root = runtime_root
         self._hooks = hooks or []
         self._record: SpawnRecord | None = None
-
-    # ------------------------------------------------------------------
-    # Lifecycle transitions
-    # ------------------------------------------------------------------
 
     def start(
         self,
@@ -254,7 +188,6 @@ class SpawnLifecycleService:
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
             session_metadata = reservation.session_metadata
-            # Authoritative transition write still happens in _spawn_store().
             launch = _spawn_store().start_spawn(
                 self._runtime_root,
                 chat_id=reservation.chat_id,
@@ -421,12 +354,8 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            # A SIGTERM, SIGHUP (a closing terminal) or SIGINT mid-write would leave the launch
-            # reading as crashed where it had finished, and one right after would kill the runner
-            # before the hooks ran. The mask defers it past the hooks and re-delivers it on exit,
-            # so a cancel racing the finish still gets ``spawn.finished``. What bounds the wait:
-            # ``spawn cancel``'s SIGKILL deadline, or a repeat signal 1s or more after the first
-            # (Ctrl-C twice); a lone Ctrl-C or ``kill -INT`` waits for the hooks and the lock.
+            # Defer termination until the durable outcome and finished hooks land;
+            # otherwise a completed launch can read as crashed or miss its hook.
             with signal_coordinator().mask_termination():
                 outcome = _spawn_store().finalize_spawn(
                     self._runtime_root,
@@ -452,10 +381,6 @@ class SpawnLifecycleService:
                     self._dispatch(event)
                     self._emit_telemetry_event_for_record(f"spawn.{snapshot.status}", snapshot)
             return outcome
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _correlation(
         self,
@@ -652,7 +577,6 @@ def _emit_lifecycle_event(
     *,
     payload: dict[str, Any] | None = None,
 ) -> None:
-    """Emit a telemetry lifecycle event through the observer registry."""
     event = TelemetryLifecycleEvent(
         event=event_name,
         spawn_id=str(spawn.id),
@@ -701,7 +625,6 @@ def _terminal_outcome_category(
 
 
 def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
-    """Build sparse terminal lifecycle payload for observer projections."""
     terminal = spawn.terminal
     payload: dict[str, Any] = {
         "status": spawn.status,
@@ -737,13 +660,7 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     return payload
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle service factory seam
-# ---------------------------------------------------------------------------
-
-
 def _hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether hook dispatch should run globally."""
 
     scope = os.environ if env is None else env
     value = scope.get("MERIDIAN_HOOKS_ENABLED")
@@ -753,7 +670,6 @@ def _hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 
 def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatcher | None:
-    """Build a hook dispatcher when hook dispatch is enabled."""
 
     if not _hooks_dispatch_enabled():
         return None
@@ -792,7 +708,6 @@ def create_lifecycle_service(
     project_root: Path,
     runtime_root: Path,
 ) -> SpawnLifecycleService:
-    """Create a spawn lifecycle service with centralized hook wiring."""
 
     dispatcher = get_hook_dispatcher(project_root, runtime_root)
     hooks: list[LifecycleHook] | None = [dispatcher] if dispatcher is not None else None

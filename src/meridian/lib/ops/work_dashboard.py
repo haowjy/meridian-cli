@@ -1,5 +1,3 @@
-"""Work item dashboard and projection operations."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -159,7 +157,6 @@ def work_dir_display(project_root: Path, project_state_dir: Path, work_id: str) 
 
 
 def _display_worktree_path(worktree_path: str, project_root: Path) -> str:
-    """Display-friendly worktree path, relative to project root parent when possible."""
     try:
         wt = Path(worktree_path)
         rel = wt.relative_to(project_root.parent)
@@ -305,7 +302,6 @@ class WorkShowOutput(BaseModel):
     worktree_pending: bool = False  # creation interrupted
 
     def to_cli_wire(self) -> dict[str, object]:
-        """Project work identity and summary-only related records."""
         wire: dict[str, object] = {
             "name": self.name,
             "status": self.status,
@@ -344,7 +340,6 @@ class WorkShowOutput(BaseModel):
         explicit_format: str | None,
         agent_mode: bool,
     ) -> object:
-        """CLI output protocol: project only JSON output."""
         _ = explicit_format
         _ = agent_mode
         if format != "json":

@@ -1,5 +1,3 @@
-"""Runtime registry and durable drain for active harness connections."""
-
 from __future__ import annotations
 
 import asyncio
@@ -110,13 +108,11 @@ class SpawnManager:
 
     @property
     def runtime_root(self) -> Path:
-        """Return the resolved Meridian state root."""
 
         return self._runtime_root
 
     @property
     def project_root(self) -> Path:
-        """Return the repository root used for managed spawns."""
 
         return self._project_root
 
@@ -128,7 +124,6 @@ class SpawnManager:
         drain_policy: DrainPolicy | None = None,
         event_hook: EventHook | None = None,
     ) -> HarnessConnection[Any]:
-        """Start one connection and register durable drain/control resources."""
 
         launch = config.launch
         spawn_id = launch.spawn_id
@@ -223,12 +218,10 @@ class SpawnManager:
         return connection
 
     def register_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
-        """Register a synchronous, best-effort hook for each received event."""
 
         self._event_hooks.setdefault(spawn_id, []).append(hook)
 
     def control_endpoint(self, spawn_id: SpawnId) -> str | None:
-        """Return the current platform-aware control endpoint for one active spawn."""
 
         session = self._sessions.get(spawn_id)
         if session is None or session.terminal_published:
@@ -265,7 +258,6 @@ class SpawnManager:
         receiver: HarnessConnection[Any],
         config: ConnectionConfig,
     ) -> DrainPlan:
-        """Choose drain-loop configuration before entering the loop."""
         return build_drain_plan(
             project_root=self._project_root,
             launch=launch,
@@ -290,7 +282,6 @@ class SpawnManager:
         return session.raw_terminal_frames_authoritative
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[NormalizedHarnessEvent | None] | None:
-        """Attach one subscriber queue to the spawn, or return None if unavailable."""
 
         session = self._sessions.get(spawn_id)
         if session is None or session.subscriber is not None:
@@ -299,14 +290,12 @@ class SpawnManager:
         return session.subscriber
 
     def unsubscribe(self, spawn_id: SpawnId) -> None:
-        """Detach the current subscriber for one spawn."""
 
         session = self._sessions.get(spawn_id)
         if session is not None:
             session.subscriber = None
 
     async def wait_for_completion(self, spawn_id: SpawnId) -> DrainOutcome | None:
-        """Await one spawn's terminal drain outcome, if still tracked."""
 
         completion_future = self._completion_futures.get(spawn_id)
         if completion_future is None:
@@ -334,7 +323,6 @@ class SpawnManager:
         *,
         source: str = "runtime",
     ) -> None:
-        """Send one serialized interrupt to an active spawn connection."""
 
         session = self._sessions.get(spawn_id)
         if session is None:
@@ -348,7 +336,6 @@ class SpawnManager:
         )
 
     def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
-        """Return the active connection for one spawn, if present."""
 
         session = self._sessions.get(spawn_id)
         if session is None or session.terminal_published:
@@ -356,7 +343,6 @@ class SpawnManager:
         return session.connection
 
     def get_tracer(self, spawn_id: SpawnId) -> DebugTracer | None:
-        """Return the active debug tracer for one spawn, if present."""
 
         session = self._sessions.get(spawn_id)
         return session.debug_tracer if session is not None else None
@@ -601,7 +587,6 @@ class SpawnManager:
         spawn_id: SpawnId,
         outcome: TerminalEventOutcome,
     ) -> None:
-        """Emit a synthetic turn boundary event for persistent drain sessions."""
 
         synthetic = RawHarnessEvent(
             event_type=TURN_BOUNDARY_EVENT_TYPE,
@@ -616,7 +601,6 @@ class SpawnManager:
         self.emit_event(spawn_id, synthetic)
 
     def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
-        """Run hooks for and publish one manager-authored harness event."""
         self._run_event_hooks(spawn_id, event)
         session = self._sessions.get(spawn_id)
         scope = session.connection.primary_event_scope if session is not None else None
@@ -653,7 +637,6 @@ class SpawnManager:
         exit_code: int = 1,
         error: str | None = None,
     ) -> None:
-        """Stop every active spawn and clear the session registry."""
 
         active_spawn_ids = [
             spawn_id
@@ -676,7 +659,6 @@ class SpawnManager:
         self._completion_futures.clear()
 
     def list_spawns(self) -> list[SpawnId]:
-        """List active spawn IDs."""
 
         return [
             spawn_id
@@ -738,7 +720,6 @@ class SpawnManager:
         session: SpawnSession,
         outcome: DrainOutcome,
     ) -> None:
-        """Clean up resources after a receiver drain loop exits naturally."""
 
         if session.debug_tracer is not None:
             session.debug_tracer.close()
@@ -780,7 +761,6 @@ class SpawnManager:
 
 
 def _safe_connection_session_id(connection: object) -> str | None:
-    """Read optional connection session id without assuming a concrete adapter."""
 
     try:
         session_id = cast("Any", connection).session_id

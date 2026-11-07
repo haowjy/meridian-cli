@@ -1,5 +1,3 @@
-"""Shared trace helper functions for common instrumentation patterns."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

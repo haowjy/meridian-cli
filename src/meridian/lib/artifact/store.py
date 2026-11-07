@@ -1,5 +1,3 @@
-"""Persistent state for artifact serves."""
-
 from __future__ import annotations
 
 import json
@@ -32,7 +30,6 @@ _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def is_valid_slug(slug: str) -> bool:
-    """Return whether *slug* is a canonical safe URL path component."""
     return 1 <= len(slug) <= 64 and _SLUG_PATTERN.fullmatch(slug) is not None
 
 
@@ -47,12 +44,10 @@ def _is_valid_created(created: str) -> bool:
 
 
 def serves_path() -> Path:
-    """Return the user-level artifact serve state file."""
     return get_user_home() / "serves.json"
 
 
 def serves_lock_path() -> Path:
-    """Return the lock protecting artifact state transactions."""
     path = serves_path()
     return path.with_name(f"{path.name}.lock")
 
@@ -99,7 +94,6 @@ def _serve_from_json(value: object) -> Serve | None:
 
 
 def load_serves() -> list[Serve]:
-    """Load valid serve entries, tolerating missing or damaged state."""
     try:
         value: object = json.loads(serves_path().read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
@@ -121,7 +115,6 @@ def load_serves() -> list[Serve]:
 
 
 def save_serves(serves: list[Serve]) -> None:
-    """Atomically replace artifact serve state."""
     path = serves_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps([asdict(serve) for serve in serves], indent=2) + "\n")

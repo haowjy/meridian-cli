@@ -1,5 +1,3 @@
-"""Runtime context derived from MERIDIAN_* environment variables."""
-
 from pathlib import Path
 from typing import Self
 
@@ -23,7 +21,6 @@ class RuntimeContext(BaseModel):
 
     @property
     def is_nested(self) -> bool:
-        """Whether this context is below the primary Meridian root."""
         return is_nested_meridian_depth(self.depth)
 
     @classmethod
@@ -33,7 +30,6 @@ class RuntimeContext(BaseModel):
         project_root: Path | None = None,
         runtime_root: Path | None = None,
     ) -> Self:
-        """Build context from MERIDIAN_* environment variables."""
         resolved = ResolvedContext.from_environment(
             explicit_project_root=project_root,
             explicit_runtime_root=runtime_root,
@@ -51,7 +47,6 @@ class RuntimeContext(BaseModel):
 
 
 def resolve_runtime_context(*, project_root: Path, runtime_root: Path | None) -> ResolvedContext:
-    """Resolve runtime context with explicit roots and no environment mutation."""
 
     return ResolvedContext.from_environment(
         explicit_project_root=project_root,

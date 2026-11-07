@@ -1,5 +1,3 @@
-"""Hook operations exposed via CLI manifest."""
-
 from __future__ import annotations
 
 import asyncio
@@ -146,7 +144,6 @@ class HookRunOutput(BaseModel):
     include_output: bool = False
 
     def to_cli_wire(self) -> dict[str, object]:
-        """Project hook outcome, optionally including captured process output."""
         wire: dict[str, object] = {
             "hook": self.hook,
             "event": self.event,
@@ -171,7 +168,6 @@ class HookRunOutput(BaseModel):
         explicit_format: str | None,
         agent_mode: bool,
     ) -> object:
-        """CLI output protocol: project only JSON output."""
         _ = explicit_format
         _ = agent_mode
         if format != "json":

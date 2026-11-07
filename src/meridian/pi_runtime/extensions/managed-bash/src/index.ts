@@ -139,7 +139,6 @@ function formatBashStatus(row: BashListRow, theme: Theme): string {
   return error(`✗ ${row.status}`);
 }
 
-/** Bytes of the selected task's combined log read for the panel preview. */
 const PREVIEW_TAIL_BYTES = 2048;
 
 function bashPreviewOutput(detail: PanelDetail<string> | undefined, theme: Theme): string[] {
@@ -170,7 +169,6 @@ const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashListRow>[] = [
   { header: "COMMAND", width: 56, render: (row) => row.command },
 ];
 
-/** Captured UI context for widget-only foreground hints (no conversation injection). */
 let capturedSetWidget: ((key: string, content: string[] | undefined) => void) | null = null;
 let activeForegroundCount = 0;
 
@@ -233,7 +231,6 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     onBackgroundPing: (record) => sendBackgroundPing(pi, record),
   });
 
-  // Capture setWidget from the first event context that provides UI.
   pi.on?.("agent_start", (_event, ctx) => {
     if (!capturedSetWidget && ctx?.ui?.setWidget) {
       capturedSetWidget = (key: string, content: string[] | undefined) => ctx.ui.setWidget(key, content);

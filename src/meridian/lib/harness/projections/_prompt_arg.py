@@ -1,5 +1,3 @@
-"""Shared validation for prompts passed as individual harness arguments."""
-
 _MAX_ARG_BYTES = 128 * 1024
 
 

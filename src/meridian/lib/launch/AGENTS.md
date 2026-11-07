@@ -14,8 +14,9 @@ for a real launch.
 - Execute one attempt per turn; do not replay a model turn after a terminal or
   transport failure. Late diagnostics must use the published-spawn artifact mutation
   seam so they cannot recreate a directory deleted by retention.
-- Use `LaunchArgvIntent.SPEC_ONLY` on execution paths; `REQUIRED` is for dry-run
-  display. Preserve JSON-safe request fields for the background worker's disk round trip.
+- Spawn execution uses `LaunchArgvIntent.SPEC_ONLY`; primary launch also uses
+  `REQUIRED` to construct its command. Preserve JSON-safe request fields for the
+  background worker's disk round trip.
 - Use `session_scope()` for managed backend cleanup; do not add competing cleanup
   after its exit.
 

@@ -1,5 +1,3 @@
-"""Provide and read Meridian's packaged operational skills."""
-
 from __future__ import annotations
 
 import json

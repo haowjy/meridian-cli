@@ -1,5 +1,3 @@
-"""Project-config state shared by loader, config ops, and bootstrap paths."""
-
 from pathlib import Path
 from typing import Literal
 
@@ -21,7 +19,6 @@ class ProjectConfigState(BaseModel):
 
     @classmethod
     def from_project_paths(cls, project_paths: ProjectConfigPaths) -> "ProjectConfigState":
-        """Build config state from resolved project paths."""
 
         write_path = project_paths.meridian_toml
         if write_path.is_file():
@@ -34,7 +31,6 @@ def resolve_project_config_state(
     *,
     project_paths: ProjectConfigPaths | None = None,
 ) -> ProjectConfigState:
-    """Resolve canonical project-config state for one repo root."""
 
     return ProjectConfigState.from_project_paths(
         project_paths or resolve_project_config_paths(project_root)

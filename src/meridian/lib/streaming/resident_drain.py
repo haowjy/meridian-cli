@@ -1,5 +1,3 @@
-"""Hold evidence, resident policy, cleanup, and the hold drain adapter."""
-
 from __future__ import annotations
 
 import time

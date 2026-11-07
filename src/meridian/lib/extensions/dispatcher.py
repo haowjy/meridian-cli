@@ -1,5 +1,3 @@
-"""Extension command dispatcher with validation gates and observability."""
-
 from __future__ import annotations
 
 import traceback
@@ -143,12 +141,10 @@ class ExtensionCommandDispatcher:
         spec: ExtensionCommandSpec,
         surface: ExtensionSurface,
     ) -> bool:
-        """Check if command can run on the invocation surface."""
 
         return surface in spec.surfaces
 
     def _redact_result(self, result: ExtensionResult | None) -> dict[str, Any]:
-        """Redact result for observability output."""
 
         if isinstance(result, ExtensionJSONResult):
             return RedactionPipeline.redact(result.payload)

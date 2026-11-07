@@ -1,5 +1,3 @@
-"""Refresh executed-model metadata through the canonical native reader."""
-
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.model_observation import observe_session_model

@@ -108,7 +108,6 @@ def _warn_work_state_validation_failure(path: str, error: str) -> None:
 
 
 def _normalize_worktree_path_text(path: str) -> str:
-    """Store worktree filesystem paths with stable POSIX separators."""
 
     return path.replace("\\", "/")
 
@@ -167,8 +166,7 @@ class StoredWorkItemState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    # Readers learn the format before writers emit it. Field exclusion keeps
-    # this release's files readable by strict older builds.
+    # Omitting the field keeps these files readable by strict older builds.
     v: Literal[1] = Field(default=WORK_STATE_VERSION, exclude=True)
     status: str
     description: str
@@ -187,7 +185,6 @@ class StoredWorkItemState(BaseModel):
 
 
 def slugify(label: str) -> str:
-    """Return a normalized work-item slug."""
 
     normalized = label.strip().lower()
     normalized = _WHITESPACE_OR_UNDERSCORE.sub("-", normalized)
@@ -204,7 +201,6 @@ def status_path(work_dir: Path) -> Path:
 def project_paths_for_work_store(
     project_state_dir: Path, *, create_project_uuid: bool = False
 ) -> ProjectPaths:
-    """Resolve authoritative work/archive paths for one project state dir."""
 
     if project_state_dir.name == ".meridian":
         resolver = resolve_project_paths_for_write if create_project_uuid else resolve_project_paths
@@ -213,7 +209,6 @@ def project_paths_for_work_store(
 
 
 def project_root_for_work_store(project_state_dir: Path) -> Path:
-    """Return the checkout a work item falls back to: the project root."""
 
     return project_state_dir.parent if project_state_dir.name == ".meridian" else project_state_dir
 
@@ -297,7 +292,6 @@ def load_work_item_from_dir(
     default_worktree: WorktreeMetadata | None = None,
     mark_unsupported: bool = False,
 ) -> WorkItem:
-    """Project a work item from its directory and optional stored metadata."""
 
     def dir_mtime_iso() -> str:
         timestamp = datetime.fromtimestamp(work_dir.stat().st_mtime, tz=UTC)

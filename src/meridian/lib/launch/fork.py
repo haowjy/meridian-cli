@@ -1,16 +1,3 @@
-"""Fork materialization — sole owner of the adapter.fork_session callsite.
-
-Single owner: materialize_fork() is the only callsite that invokes
-adapter.fork_session().  No other module may call fork_session() directly.
-
-Fork-after-row ordering: fork_session is invoked only after a spawn row exists
-for the current launch.  Callers MUST call start_spawn before materialize_fork().
-
-Fork lineage coherence: the spawn row's harness_session_id is written via
-update_spawn after forking — the start row MUST NOT pre-populate it.
-materialize_fork() owns that update_spawn call.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,13 +14,7 @@ if TYPE_CHECKING:
 
 
 def fork_usage_seed(runtime_root: Path, session: SessionRequest) -> dict[str, JsonValue] | None:
-    """The usage baseline of a spawn that forks a native session, for its creation metadata.
-
-    Claude and Codex report usage as a running total of the native session, so a fork's
-    first report includes everything its source already used. The baseline is what the
-    source chat's owner spawn stored for that same session (``harness_cumulative``), never
-    inferred; anything unknown counts from zero.
-    """
+    # Claude and Codex fork usage includes the source session's cumulative usage.
     source_session_id = session.requested_harness_session_id
     if not session.continue_fork or not session.forked_from_chat_id or not source_session_id:
         return None
@@ -53,14 +34,6 @@ def materialize_fork(
     spawn_id: SpawnId,
     native_store: str | None = None,
 ) -> str:
-    """Fork one harness session and record the new session ID on the spawn row.
-
-    Precondition: a spawn row for *spawn_id* must already exist in the spawn
-    store (``spawns/<id>/state.json``).  Raises ``RuntimeError`` if the row is absent.
-
-    Returns the new (forked) harness session ID.
-    """
-
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None:
         raise RuntimeError(

@@ -1,5 +1,3 @@
-"""OpenCode transcript provider with opencode.db preference."""
-
 from __future__ import annotations
 
 import base64
@@ -24,14 +22,6 @@ _V2_VERSION = 2
 
 
 def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve the OpenCode SQLite database path.
-
-    Precedence: ``OPENCODE_DB`` (absolute, or relative to the OpenCode data
-    dir; ``:memory:`` is preserved verbatim) → ``OPENCODE_HOME``/``opencode.db``
-    → ``$XDG_DATA_HOME/opencode/opencode.db`` →
-    ``~/.local/share/opencode/opencode.db``.
-    """
-
     env = launch_env if launch_env is not None else os.environ
     override = env.get("OPENCODE_DB", "").strip()
     if override:
@@ -78,7 +68,6 @@ def opencode_db_session_exists(
     session_id: str,
     db_path: Path | None = None,
 ) -> bool:
-    """Return whether opencode.db contains a session row for ``session_id``."""
 
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -99,12 +88,6 @@ def opencode_db_v2_session_exists(
     session_id: str,
     db_path: Path | None = None,
 ) -> bool:
-    """Return whether a V2 ``session_v2`` table contains ``session_id``.
-
-    A missing database or ``session_v2`` table is not existence evidence; it is
-    reported as ``False`` rather than raising.
-    """
-
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
         return False
@@ -129,14 +112,6 @@ def opencode_db_any_session_exists(
     session_id: str,
     db_path: Path | None = None,
 ) -> bool:
-    """Return whether either OpenCode schema family contains ``session_id``.
-
-    V2 is checked when ``session_v2`` is present, V1 when only ``session`` is.
-    A migrated database keeps both tables but V2 copies every session, so the V2
-    probe is authoritative there. A database with neither table is not existence
-    evidence; a corrupt database still surfaces its read error.
-    """
-
     if not session_id.strip():
         return False
     resolved_db_path = db_path or resolve_opencode_db_path()
@@ -144,6 +119,7 @@ def opencode_db_any_session_exists(
         return False
     with closing(connect_readonly(resolved_db_path)) as connection:
         names = _table_names(connection)
+        # Migration retains both tables but copies every session into V2.
         table = "session_v2" if "session_v2" in names else "session" if "session" in names else None
         if table is None:
             return False
@@ -391,7 +367,6 @@ def _compaction_handoff_event(
 
 
 def _raw_row(row: sqlite3.Row) -> dict[str, object]:
-    """Preserve the three native tables' SQLite values in the raw-row dialect."""
     result: dict[str, object] = {}
     for key, value in zip(row.keys(), row, strict=True):
         if isinstance(value, bytes):
@@ -495,7 +470,6 @@ def iter_opencode_v2_db_events(
     session_id: str,
     db_path: Path | None = None,
 ) -> Generator[dict[str, object]]:
-    """Read a V2 session and its messages in sequence; absent sources yield nothing."""
 
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -535,7 +509,6 @@ def iter_v2_session_events(
 
 
 def v2_message_event(message: sqlite3.Row, session_id: str) -> dict[str, object]:
-    """One `session_message` row (type, seq, data) as a V2 transcript event."""
     payload = loads_json_object(str(message["data"]))
     return {
         "record": _V2_RECORD,
@@ -815,7 +788,6 @@ def extract_last_assistant_report(events: Iterable[dict[str, object]]) -> str | 
 
 
 def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
-    """Return the last assistant message text for one OpenCode session file."""
 
     def _no_json(
         path: Path,

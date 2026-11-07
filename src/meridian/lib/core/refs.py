@@ -49,7 +49,6 @@ class Ref:
 
 
 def is_spawn_id(value: str) -> bool:
-    """True for Meridian's spawn ID shape: ``p`` and ASCII digits."""
     return _SPAWN_ID_RE.fullmatch(value) is not None
 
 
@@ -62,7 +61,6 @@ def is_chat_id(value: str) -> bool:
 
 
 def parse_ref(raw: str) -> Ref:
-    """Classify a reference: spawn, chat, selector, or (anything else) a native session ID."""
     value = raw.strip()
     if not value:
         raise ValueError("A reference is required.")

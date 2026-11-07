@@ -120,7 +120,6 @@ def locate(
 
 
 def chat_spawn(hit: ChatHit) -> SpawnId | None:
-    """The spawn that owns the located chat: the one that ran it."""
 
     # Only a chat ref carries the chat's newest record, the fast path for a linked chat.
     return session_identity.chat_owner_spawn(
@@ -171,7 +170,6 @@ def locate_run(project_root: Path, ref: str, *, runtime_root: Path | None = None
 
 
 def resolve_spawn_target(project_root: Path, ref: str, *, runtime_root: Path | None = None) -> str:
-    """The spawn ID a spawn command acts on."""
 
     return str(locate_run(project_root, ref, runtime_root=runtime_root).spawn_id)
 

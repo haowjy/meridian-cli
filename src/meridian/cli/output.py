@@ -85,8 +85,6 @@ def resolve_effective_format(
 
 
 def _render_text(value: Any, format_ctx: FormatContext | None = None) -> str:
-    # "text" mode: prefer format_text() if available, fall back to indented JSON
-    # for types that have not yet implemented the protocol.
     if isinstance(value, TextFormattable):
         return value.format_text(format_ctx or _DEFAULT_FORMAT_CTX)
     return json.dumps(_to_json_value(value), sort_keys=True, indent=2)

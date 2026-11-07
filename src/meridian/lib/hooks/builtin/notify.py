@@ -1,5 +1,3 @@
-"""Built-in notification delivery: routes a notification event to transports."""
-
 from __future__ import annotations
 
 import time

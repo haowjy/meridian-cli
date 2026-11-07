@@ -1,5 +1,3 @@
-"""Context query operations — runtime context derivation via CLI query."""
-
 from __future__ import annotations
 
 import asyncio
@@ -78,7 +76,6 @@ class ContextOutput(BaseModel):
         return ("work", "kb", "work.archive", *sorted(self.extra_contexts))
 
     def _to_resolved_paths(self) -> ResolvedContextPaths:
-        """Convert output fields back to ResolvedContextPaths for rendering."""
 
         from meridian.lib.config.context_config import ContextSourceType
 
@@ -157,7 +154,6 @@ class ContextOutput(BaseModel):
         return "\n".join(lines)
 
     def resolve_name(self, name: str) -> str:
-        """Resolve one context-name query to its absolute path string."""
 
         normalized = name.strip().lower()
         if normalized == "work":
@@ -280,7 +276,6 @@ def _resolve_runtime_context(
     *,
     chat_id: str | None = None,
 ) -> ResolvedContext:
-    """Resolve context with explicit roots — no env mutation needed."""
 
     normalized_chat_id = (chat_id or "").strip()
     return ResolvedContext.from_environment(
@@ -296,7 +291,6 @@ def resolve_active_work_scope(
     *,
     chat_id: str | None = None,
 ) -> WorkScope | None:
-    """Return the active work scope using authoritative context resolution."""
 
     resolved = _resolve_runtime_context(project_root, runtime_root, chat_id=chat_id)
     return resolved.work_scope
@@ -308,7 +302,6 @@ def resolve_active_work_scope_dir(
     *,
     chat_id: str | None = None,
 ) -> Path | None:
-    """Return the active work scope directory using the same resolution as work current."""
 
     scope = resolve_active_work_scope(project_root, runtime_root, chat_id=chat_id)
     return scope.root if scope is not None else None
@@ -321,9 +314,7 @@ def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
     if not normalized:
         raise ValueError("work path relpath must not be empty.")
     relative = Path(normalized)
-    # Reject absolute/rooted/drive paths under either OS convention — `is_absolute()`
-    # is platform-dependent (e.g. "/tmp/x" is absolute on POSIX but drive-relative,
-    # so non-absolute, on Windows), and Windows is a first-class target.
+    # Reject rooted and drive paths in either syntax regardless of the host OS.
     if (
         PurePosixPath(normalized).is_absolute()
         or PureWindowsPath(normalized).is_absolute()
@@ -382,14 +373,12 @@ def _resolve_effective_task_dir_output() -> TaskDirOutput:
 
 
 def task_dir_sync(input: TaskDirInput) -> TaskDirOutput:
-    """Synchronous handler for spawn-scope task-dir query."""
 
     _ = input
     return _resolve_effective_task_dir_output()
 
 
 def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
-    """Write spawn-scope task-dir override for the current session."""
 
     authority = resolve_runtime_authority_for_write()
     runtime_ctx = RuntimeContext.from_environment()
@@ -402,7 +391,6 @@ def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
 
 
 def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
-    """Tombstone spawn-scope task-dir for the current session."""
 
     _ = input
     authority = resolve_runtime_authority_for_write()
@@ -418,7 +406,6 @@ def _refresh_session_task_links(
     authority: RuntimeAuthoritySnapshot,
     runtime_ctx: RuntimeContext,
 ) -> None:
-    """Repoint the links of the execution this session belongs to."""
 
     spawn_id = str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else ""
     if authority.runtime_root is None or not spawn_id:
@@ -443,7 +430,6 @@ async def task_dir_clear(input: TaskDirClearInput) -> TaskDirMutationOutput:
 
 
 def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
-    """Return arbitrary context configs keyed by normalized lookup name."""
 
     extras_raw = getattr(config, "__pydantic_extra__", None)
     extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
@@ -458,7 +444,6 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
 
 
 def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str | None:
-    """Return compact sync status text for one context root."""
     status = read_status(context_root, runtime_root=runtime_root)
     if status.state is None and not status.unresolved_conflicts:
         return None
@@ -486,7 +471,6 @@ def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str |
 
 
 def context_sync(input: ContextInput) -> ContextOutput:
-    """Synchronous handler for context query."""
 
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root
@@ -572,13 +556,11 @@ def context_sync(input: ContextInput) -> ContextOutput:
 
 
 async def context(input: ContextInput) -> ContextOutput:
-    """Async handler for context query."""
 
     return await asyncio.to_thread(context_sync, input)
 
 
 def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
-    """Synchronous handler for work current query."""
 
     _ = input
     authority = resolve_runtime_authority_for_read()
@@ -591,7 +573,6 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
 
 
 def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
-    """Materialize a path under the active work scope and return its absolute path."""
 
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root
@@ -607,7 +588,6 @@ def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
 
 
 def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
-    """Synchronous handler for work root query."""
 
     _ = input
     import os
@@ -625,19 +605,16 @@ def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
 
 
 async def work_current(input: WorkCurrentInput) -> WorkCurrentOutput:
-    """Async handler for work current query."""
 
     return await asyncio.to_thread(work_current_sync, input)
 
 
 async def work_root(input: WorkRootInput) -> WorkRootOutput:
-    """Async handler for work root query."""
 
     return await asyncio.to_thread(work_root_sync, input)
 
 
 async def work_path(input: WorkPathInput) -> WorkPathOutput:
-    """Async handler for work path materialization."""
 
     return await asyncio.to_thread(work_path_sync, input)
 

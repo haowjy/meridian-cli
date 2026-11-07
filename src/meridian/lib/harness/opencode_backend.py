@@ -1,18 +1,3 @@
-"""OpenCode backend version seam.
-
-OpenCode 1.x and 2.x are distinct runtimes: different server APIs, event names,
-and on-disk storage schemas. This module resolves which major version a spawn
-talks to. V1 is frozen; V2 is the target.
-
-Nothing here starts a server or writes state. It probes ``opencode --version``
-at most once per resolution, and launch bind resolves once per launch: the spec carries
-the result, which every reader takes through ``bound_opencode_version``. Concrete transports live in
-``connections/opencode_http.py`` (V1) and ``connections/opencode_v2_http.py``
-(V2); ``OpenCodeConnection`` selects one from the resolved version. Version
-capabilities are not modeled here — the adapter's ``HarnessCapabilities`` is the
-consumer contract, and per-version capability descriptors were dead scaffolding.
-"""
-
 from __future__ import annotations
 
 import re
@@ -30,12 +15,9 @@ OpenCodeVersion = Literal["v1", "v2"]
 OpenCodeVersionPreference = Literal["auto", "v1", "v2"]
 
 VERSION_PREFERENCES: tuple[OpenCodeVersionPreference, ...] = ("auto", "v1", "v2")
-#: The launch env carries the ``[harness.opencode] version`` preference under this name.
 OPENCODE_VERSION_ENV = "MERIDIAN_HARNESS_OPENCODE_VERSION"
 VALID_VERSION_VALUES: tuple[str, ...] = VERSION_PREFERENCES
 
-#: Version assumed when the installed binary cannot be probed. V2 is the current
-#: GA runtime; an unprobeable binary fails the spawn later regardless.
 DEFAULT_OPENCODE_VERSION: OpenCodeVersion = "v2"
 
 _VERSION_RE = re.compile(r"(?P<major>\d+)\.(?P<minor>\d+)")
@@ -43,11 +25,6 @@ _V2_MAJOR = 2
 
 
 def parse_opencode_version(output: str) -> OpenCodeVersion | None:
-    """Map ``opencode --version`` output to a backend version.
-
-    V1 prints a bare semver (``1.18.31``); V2 prefixes it (``opencode v2.0.6``).
-    Returns ``None`` when no version number is present.
-    """
     match = _VERSION_RE.search(output or "")
     if match is None:
         return None
@@ -57,7 +34,6 @@ def parse_opencode_version(output: str) -> OpenCodeVersion | None:
 def detect_opencode_version(
     binary: str = "opencode", *, env: Mapping[str, str], timeout_seconds: float = 10.0
 ) -> OpenCodeVersion | None:
-    """Probe ``binary --version``. Returns ``None`` when it cannot be run."""
     try:
         completed = subprocess.run(
             [binary, "--version"],
@@ -81,7 +57,6 @@ def detect_opencode_version(
 
 
 def normalize_version_preference(value: str | None) -> OpenCodeVersionPreference:
-    """Coerce a config value to a preferred backend version, defaulting to auto."""
     normalized = (value or "").strip().lower()
     if normalized in VERSION_PREFERENCES:
         return normalized
@@ -95,11 +70,6 @@ def resolve_opencode_version(
     binary: str = "opencode",
     detected: OpenCodeVersion | None = None,
 ) -> OpenCodeVersion:
-    """Resolve the backend version from config preference plus binary probe.
-
-    An explicit ``v1``/``v2`` preference always wins. ``auto`` probes the binary
-    and falls back to :data:`DEFAULT_OPENCODE_VERSION` when the probe fails.
-    """
     normalized = normalize_version_preference(preference)
     if normalized in ("v1", "v2"):
         return normalized
@@ -108,17 +78,6 @@ def resolve_opencode_version(
 
 
 def v1_session_running(payload: object, session_id: str) -> bool:
-    """Whether ``GET /session/status`` reports *session_id* as executing.
-
-    The listing maps every session the server knows to its ``SessionStatus``:
-    ``busy`` is a turn in progress and ``retry`` is a provider backoff that turn
-    is waiting out. A missing or ``null`` entry is an idle session. Anything else
-    -- a non-string type, or a type this client does not know -- raises
-    ``ValueError``, because guessing would turn a protocol change into "the turn
-    ended" and end a live stream. Asked by the connection on a liveness stall,
-    so a long tool is not mistaken for a dead stream.
-    """
-
     statuses = json_object(payload)
     if statuses is None:
         raise ValueError("session status listing is not an object")
@@ -135,16 +94,11 @@ def v1_session_running(payload: object, session_id: str) -> bool:
         return False
     if status_type in ("busy", "retry"):
         return True
+    # An unknown status might be active; treating it as idle would end a live stream.
     raise ValueError(f"unknown session status type: {status_type}")
 
 
 def v2_session_running(payload: object, session_id: str) -> bool:
-    """Whether ``GET /api/session/active`` lists *session_id* as executing.
-
-    Shared by the idle sensor (after a reconnect) and the connection (on a
-    liveness stall), so both read the server's answer the same way.
-    """
-
     response = json_object(payload)
     active = json_object(response.get("data")) if response is not None else None
     if active is None:
@@ -153,13 +107,6 @@ def v2_session_running(payload: object, session_id: str) -> bool:
 
 
 def bound_opencode_version(version: OpenCodeVersion | None) -> OpenCodeVersion:
-    """The version launch bind resolved onto the spec (``spec.opencode_version``).
-
-    The permission compile, the config projection, the managed-primary preview and the
-    connection all read it, so the report and the launch cannot disagree. A spec that did
-    not pass through bind has none, and nothing may guess one for it.
-    """
-
     if version is None:
         raise ValueError("OpenCode launch spec has no backend version; bind resolves it")
     return version

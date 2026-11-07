@@ -1,5 +1,3 @@
-"""Pi-specific connection teardown policy for completed drain sessions."""
-
 from __future__ import annotations
 
 from collections.abc import Callable

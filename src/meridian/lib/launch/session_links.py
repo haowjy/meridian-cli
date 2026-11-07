@@ -55,13 +55,11 @@ class Execution(NamedTuple):
 
 
 def session_work_link_path(runtime_root: Path, chat_id: str) -> Path:
-    """Return the stable work-directory link for one chat (pure path math)."""
 
     return _link_path(runtime_root, chat_id, _WORK_LINK)
 
 
 def session_task_link_path(runtime_root: Path, chat_id: str) -> Path:
-    """Return the stable source-checkout link for one chat (pure path math)."""
 
     return _link_path(runtime_root, chat_id, _TASK_LINK)
 

@@ -1,5 +1,3 @@
-"""Shared runtime override fields and layer resolution helpers."""
-
 from __future__ import annotations
 
 import os
@@ -41,7 +39,6 @@ KNOWN_EFFORT_VALUES = frozenset({"none", "low", "medium", "high", "xhigh", "max"
 
 
 def _validate_autocompact_value(v: object) -> object:
-    """Shared validator: reject bool, enforce minimum token count."""
     if isinstance(v, bool):
         raise ValueError("autocompact must be an integer, not a boolean")
     if v is None:
@@ -54,7 +51,6 @@ def _validate_autocompact_value(v: object) -> object:
 
 
 def _validate_autocompact_pct_value(v: object) -> object:
-    """Shared validator: reject bool, enforce 1-100 range."""
     if isinstance(v, bool):
         raise ValueError("autocompact_pct must be an integer, not a boolean")
     if v is None:
@@ -74,7 +70,6 @@ KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "never", "yolo"
 
 
 def _validate_effort_value(v: object) -> object:
-    """Shared validator: normalize and check effort against known values."""
     if v is None:
         return None
     if not isinstance(v, str):
@@ -88,7 +83,6 @@ def _validate_effort_value(v: object) -> object:
 
 
 def _validate_approval_value(v: object) -> object:
-    """Shared validator: normalize and check approval against known values."""
     if v is None:
         return None
     if not isinstance(v, str):
@@ -168,7 +162,6 @@ def _normalize_optional_string(value: str | None) -> str | None:
 def normalize_execution_policy_fields(
     fields: Iterable[str],
 ) -> tuple[ExecutionPolicyField, ...]:
-    """Validate and normalize execution-policy field names."""
 
     normalized: list[ExecutionPolicyField] = []
     unknown: list[str] = []
@@ -214,7 +207,6 @@ class RuntimeOverrides(BaseModel):
         self,
         allowed_fields: frozenset[str] | None = None,
     ) -> RuntimeOverrides:
-        """Return only execution-policy fields resolved after routing selection."""
 
         field_names = (
             _EXECUTION_POLICY_FIELD_SET
@@ -230,7 +222,6 @@ class RuntimeOverrides(BaseModel):
         )
 
     def to_env(self) -> dict[str, str]:
-        """Render captured runtime overrides back to MERIDIAN_* env vars."""
 
         rendered: dict[str, str] = {}
         for field_name, env_name in RUNTIME_OVERRIDE_ENV_BY_FIELD.items():
@@ -339,7 +330,6 @@ class RuntimeOverrides(BaseModel):
 
     @classmethod
     def from_spawn_config(cls, config: MeridianConfig | None) -> RuntimeOverrides:
-        """Build overrides from spawn-level config defaults."""
 
         if config is None:
             return cls()
@@ -347,7 +337,6 @@ class RuntimeOverrides(BaseModel):
 
 
 def resolve(*layers: RuntimeOverrides) -> RuntimeOverrides:
-    """Merge layers with first-non-none precedence."""
 
     resolved: dict[str, object] = {}
     for field_name in RuntimeOverrides.model_fields:

@@ -1,5 +1,3 @@
-"""Containment-aware termination dispatch."""
-
 from __future__ import annotations
 
 import structlog
@@ -17,12 +15,6 @@ def terminate_scope_sync(
     grace_seconds: float,
     reason: str,
 ) -> CleanupResult:
-    """Synchronous containment-aware termination dispatch.
-
-    Counterpart to ScopedProcessHandle.terminate() for sync callers
-    (reaper, cancel, session-exit).  Never raises — termination failures
-    are returned as a degraded CleanupResult.
-    """
     try:
         if scope.containment == "posix_pgid" and scope.pgid is not None:
             return terminate_pgid(

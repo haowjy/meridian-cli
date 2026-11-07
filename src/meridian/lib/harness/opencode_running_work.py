@@ -79,7 +79,6 @@ def _text(value: object) -> str | None:
 
 
 def _tool_work_id(event: RawHarnessEvent, *, running: bool) -> str | None:
-    """The shell or child a tool event names in its metadata."""
 
     metadata = json_object(event.payload.get("metadata"))
     if metadata is None:
@@ -93,7 +92,6 @@ def _tool_work_id(event: RawHarnessEvent, *, running: bool) -> str | None:
 
 
 def _synthetic_work_id(event: RawHarnessEvent) -> str | None:
-    """The shell or child whose completion a synthetic inbox message reports."""
 
     item = json_object(event.payload.get("item"))
     if item is None or item.get("type") != "synthetic":
@@ -119,7 +117,6 @@ def _background_task(live: _Live) -> BackgroundTask:
 
 
 def _listed_running_ids(payload: object, *, shells: bool) -> set[str]:
-    """Ids a listing reports as still running."""
 
     response = json_object(payload)
     rows = response.get("data") if response is not None else None
@@ -237,7 +234,6 @@ class RunningWork:
         return [work_id for work_id, live in self._live.items() if live.named]
 
     def tasks(self) -> tuple[BackgroundTask, ...]:
-        """The running work to report at a turn end, agents first under the bound."""
 
         counted = [self._live[work_id] for work_id in self._live if self._counts(work_id)]
         ordered = [live for live in counted if live.command is None] + [

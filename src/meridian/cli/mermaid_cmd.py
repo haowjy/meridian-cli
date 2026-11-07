@@ -138,7 +138,6 @@ def cmd_mermaid_check(
 
 
 def _parse_disabled_categories(disable: str | None) -> set[str]:
-    """Parse comma-separated style warning categories."""
     if not disable:
         return set()
     return {category.strip() for category in disable.split(",") if category.strip()}

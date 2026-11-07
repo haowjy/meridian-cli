@@ -1,5 +1,3 @@
-"""Claude command-line projection from ``ResolvedLaunchSpec``."""
-
 from __future__ import annotations
 
 import json
@@ -130,7 +128,6 @@ def project_claude_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered command list."""
 
     command: list[str] = list(base_command)
     if not spec.interactive:
@@ -160,7 +157,6 @@ def project_claude_spec_to_cli_args(
             # Use file-based delivery to avoid ARG_MAX limits
             command.extend(("--append-system-prompt-file", spec.prompt_file_path))
         else:
-            # Fallback to inline delivery
             command.extend(("--append-system-prompt", spec.appended_system_prompt))
     if spec.agents_payload:
         command.extend(("--agents", spec.agents_payload))
@@ -201,9 +197,7 @@ def project_claude_spec_to_cli_args(
     if not permissions.settings.empty:
         command.extend(("--settings", _settings_json(permissions.settings)))
 
-    # USER_TASK_PROMPT and TASK_CONTEXT go to the user-turn channel instead of
-    # --append-system-prompt (spec S-2a): through the first-turn mod when it is
-    # loaded, else as the positional argument.
+    # The first-turn mod delivers the user turn when loaded; otherwise it is positional.
     if spec.interactive and spec.user_turn_content and not spec.claude_runtime.first_turn_by_mod:
         command.extend(("--", check_prompt_argument(spec.user_turn_content)))
 

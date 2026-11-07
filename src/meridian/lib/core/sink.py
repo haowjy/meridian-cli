@@ -1,5 +1,3 @@
-"""Shared output sink protocol and no-op sink."""
-
 from typing import Any, Protocol, runtime_checkable
 
 

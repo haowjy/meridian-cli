@@ -1,5 +1,3 @@
-"""Shared spawn state models and closed persisted vocabularies."""
-
 from __future__ import annotations
 
 from typing import Any, Literal, Self, cast

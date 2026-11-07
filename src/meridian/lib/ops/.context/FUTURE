@@ -1,2 +1,4 @@
 - `spawn/query.py`: resolve read authority once at the operation boundary
   instead of repeating runtime-root resolution in each query.
+- Untangle in the rewrite: src/meridian/lib/ops/context.py:299-307 exports resolve_active_work_scope_dir, a wrapper around resolve_active_work_scope, but the repository has no callers. Remove the wrapper if external compatibility permits; it is exported and appeared in a historical changelog, so check consumers first.
+- Untangle in the rewrite: src/meridian/lib/ops/init_ops.py:73-94 and 256-261 builds CLI-style Mars arguments inside an operation, imports the CLI passthrough parser and executor, then parses their JSON output. The CLI module itself imports the operations layer. Use a typed Mars invocation boundary shared by the CLI and initialization, carrying resolved root and provisioning policy explicitly instead of routing an internal operation through CLI argument parsing.

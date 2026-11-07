@@ -1,5 +1,3 @@
-"""Subprocess-backed process launching."""
-
 from __future__ import annotations
 
 import os
@@ -26,7 +24,6 @@ from .ports import (
 
 
 def _write_chunk_to_stdout(chunk: bytes) -> None:
-    """Best-effort mirror of captured subprocess output to parent stdout."""
 
     try:
         stdout_buffer = getattr(sys.stdout, "buffer", None)
@@ -41,7 +38,6 @@ def _write_chunk_to_stdout(chunk: bytes) -> None:
 
 
 def _write_chunk_to_fd(fd: int, chunk: bytes) -> None:
-    """Best-effort write of one captured chunk to a terminal descriptor."""
 
     view = memoryview(chunk)
     try:

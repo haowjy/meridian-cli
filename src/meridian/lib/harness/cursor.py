@@ -1,5 +1,3 @@
-"""Cursor CLI harness adapter and bundle registration."""
-
 from __future__ import annotations
 
 from typing import ClassVar

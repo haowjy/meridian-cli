@@ -1,5 +1,3 @@
-"""OpenCode-owned session id and report extraction."""
-
 from __future__ import annotations
 
 from typing import cast
@@ -10,7 +8,6 @@ from meridian.lib.harness.common import (
 
 
 def extract_opencode_session_id(payload: dict[str, object]) -> str | None:
-    """Read an OpenCode session id from an event payload."""
 
     normalized_payload = _opencode_message_payload(payload)
     for candidate in _opencode_session_id_candidates(normalized_payload):

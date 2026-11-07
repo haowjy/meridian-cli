@@ -1,5 +1,3 @@
-"""Explicitly disabled notification channel."""
-
 from __future__ import annotations
 
 from meridian.lib.config.models import NotifyConfig

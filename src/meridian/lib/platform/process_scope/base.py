@@ -1,5 +1,3 @@
-"""Core process-scope contracts: dataclasses and the ScopedProcessHandle wrapper."""
-
 from __future__ import annotations
 
 import asyncio
@@ -188,12 +186,6 @@ class ScopedProcessHandle:
         grace_seconds: float = 5.0,
         reason: str = "stop_called",
     ) -> CleanupResult:
-        """Terminate the process scope and return a structured result.
-
-        Delegates to the correct platform adapter based on ``snapshot.containment``.
-        Emits a structlog event with PROC-011 fields after completion.
-        Never raises — termination failures are returned as degraded CleanupResult.
-        """
         snap = self._snapshot
         result: CleanupResult
 
@@ -202,7 +194,6 @@ class ScopedProcessHandle:
                 from meridian.lib.platform.process_scope.posix import terminate_pgid
 
                 if snap.pgid is None:
-                    # Degenerate case: containment says posix_pgid but pgid is missing.
                     result = await _fallback_terminate(self._process, snap, grace_seconds, reason)
                 else:
                     result = await asyncio.to_thread(
@@ -228,7 +219,6 @@ class ScopedProcessHandle:
                 )
 
             else:
-                # 'pid_tree_fallback' or unknown
                 result = await _fallback_terminate(self._process, snap, grace_seconds, reason)
         except Exception:
             logger.warning(
@@ -262,11 +252,6 @@ class ScopedProcessHandle:
             self._job_handle = None
         _emit_termination_event(snap, result)
         return result
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 async def _fallback_terminate(

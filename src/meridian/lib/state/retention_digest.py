@@ -1,11 +1,3 @@
-"""The portable record digest: SHA-256 over a record's JSON exactly as stored.
-
-Integrity must not depend on the reader's models. A field added to a model
-after a ZIP was written (``run_boundary``, ``native_store``) was never hashed by
-that writer, so the digest is computed over the stored JSON object, never over
-a re-serialization through today's models. Writers hash exactly what they store.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -74,7 +66,7 @@ def canonical(value: object) -> bytes:
 
 
 def stored_record_digest(stored: Mapping[str, object]) -> str:
-    """Digest of one stored record object (manifest entry or ``record.json``)."""
+    # Re-serializing through current models would add fields absent from older archives.
     state = json_object(stored.get("state"))
     if state is None:
         raise ValueError("Portable record state is not a JSON object")
@@ -112,11 +104,6 @@ def _stored(model: BaseModel) -> dict[str, Any]:
 def model_record_digest(
     state: BaseModel, files: Iterable[BaseModel], session: BaseModel | None
 ) -> str:
-    """Digest of the record current models would store for these facts.
-
-    New records are captured this way. Comparing a stored digest to this is only
-    valid when both sides went through current models; use it for both sides.
-    """
     return stored_record_digest(
         {
             "state": _stored(state),

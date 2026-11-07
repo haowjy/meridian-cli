@@ -34,13 +34,11 @@ class NotFound(ValueError):
 
 
 def lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """The spawn-level lock, shared by every launch of the spawn."""
     return resolve_spawn_dir(runtime_root, spawn_id) / "launch.lock"
 
 
 @contextmanager
 def shared_hold(path: Path) -> Generator[bool | None]:
-    """Try a shared lock and keep it held across the caller's read."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
     except FileNotFoundError:
@@ -59,7 +57,6 @@ def shared_hold(path: Path) -> Generator[bool | None]:
 
 
 def shared_try(path: Path) -> bool | None:
-    """True if free of writers, False if exclusively held, None if lockless."""
     with shared_hold(path) as result:
         return result
 
@@ -110,7 +107,6 @@ class LaunchSlot(AbstractContextManager["LaunchSlot"]):
 
     @property
     def held(self) -> LaunchHandle | None:
-        """The bound handle, or ``None`` before the slot is bound."""
         return self._handle
 
     def bind_staged(self, spawn_id: SpawnId, stage: Path) -> LaunchHandle:
@@ -142,7 +138,6 @@ class LaunchSlot(AbstractContextManager["LaunchSlot"]):
 
 
 def acquire(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
-    """Acquire a published spawn's lock, distinguishing runners from brief readers."""
     spawn_dir = resolve_spawn_dir(runtime_root, spawn_id)
     path = lock_path(runtime_root, spawn_id)
     try:
@@ -175,13 +170,7 @@ def acquire(runtime_root: Path, spawn_id: SpawnId | str) -> LaunchHandle:
 def try_exclusive(
     runtime_root: Path, spawn_id: SpawnId | str, held: LaunchHandle | None = None
 ) -> Generator[bool | None]:
-    """Hold a published spawn's launch lock exclusively, without waiting, for the caller's work.
-
-    ``True``: held, so no runner of this spawn is alive. ``False``: a runner or a brief
-    holder has it; skip, never retry. ``None``: a row from before launch locks, whose
-    liveness the caller must judge itself. ``held`` is a handle the caller's process already
-    holds: a second ``acquire`` there would find it Busy, so a matching one counts as held.
-    """
+    # Reacquiring a lock held by this process would report it busy.
     if held is not None and str(held.spawn_id) == str(spawn_id):
         yield True
         return

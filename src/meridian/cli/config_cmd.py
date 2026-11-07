@@ -34,7 +34,6 @@ def _config_reset(emit: Emitter, key: str) -> None:
 
 def register_config_commands(app: App) -> None:
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
-        # config.init and config.show are auto-generated (no required CLI args).
         "meridian.config.set": lambda: partial(_config_set, emit),
         "meridian.config.get": lambda: partial(_config_get, emit),
         "meridian.config.reset": lambda: partial(_config_reset, emit),

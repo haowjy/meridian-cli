@@ -1,5 +1,3 @@
-"""Operation-scoped collaborator for model catalog lookups."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -32,15 +30,12 @@ class CatalogSession:
 
     @property
     def project_root(self) -> Path:
-        """Project root used for catalog resolution."""
         return self._project_root
 
     def resolve_model(self, name_or_alias: str) -> AliasEntry:
-        """Resolve alias to model entry, caching mars calls for this operation."""
         return resolve_model(name_or_alias, self._project_root, cache=self._cache)
 
     def load_aliases(self, *, no_refresh_models: bool = False) -> list[AliasEntry]:
-        """Load model aliases, caching mars calls for this operation."""
         return load_merged_aliases(
             self._project_root,
             cache=self._cache,
@@ -48,7 +43,6 @@ class CatalogSession:
         )
 
     def alias_map(self, *, no_refresh_models: bool = False) -> dict[str, AliasEntry]:
-        """Return aliases indexed by alias name, memoized for this operation."""
         if no_refresh_models not in self._alias_map:
             by_alias: dict[str, AliasEntry] = {}
             for item in self.load_aliases(no_refresh_models=no_refresh_models):

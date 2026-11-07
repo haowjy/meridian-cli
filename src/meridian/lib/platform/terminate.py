@@ -1,9 +1,3 @@
-"""Backward-compat shim — delegates to process_scope.fallback.
-
-Existing callers (runner_helpers.py, etc.) continue to work unchanged.
-The canonical implementation lives in platform/process_scope/fallback.py.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -18,12 +12,9 @@ _UNSET_EPOCH = 0.0
 
 
 def _validate_pid_birth(pid: int, created_at_epoch: float) -> bool:
-    """Return False if PID has been reused (birth time mismatch), else True.
-
-    Skips the check when created_at_epoch is 0.0 (sentinel for 'unknown').
-    """
     if created_at_epoch == _UNSET_EPOCH:
         return True
+    # An unavailable birth time does not establish process identity.
     with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         actual = psutil.Process(pid).create_time()
         if abs(actual - created_at_epoch) > 1.0:
@@ -32,7 +23,6 @@ def _validate_pid_birth(pid: int, created_at_epoch: float) -> bool:
 
 
 def _snapshot_tree(pid: int) -> tuple[psutil.Process | None, list[psutil.Process]]:
-    """Return a stable snapshot of root process and descendants."""
 
     try:
         root = psutil.Process(pid)
@@ -50,7 +40,6 @@ async def terminate_tree(
     *,
     grace_secs: float = 5.0,
 ) -> None:
-    """Terminate a subprocess tree, escalating to kill after a grace period."""
     await _terminate_tree(process, grace_secs=grace_secs)
 
 
@@ -62,17 +51,6 @@ def terminate_tree_sync(
     reason: str = "stop_called",
     scope_id: str = "",
 ) -> None:
-    """Synchronous process-tree termination for contexts without an event loop.
-
-    Sends SIGTERM/terminate to the entire process tree rooted at *pid*, waits
-    up to *grace_secs* for clean exit, then escalates to SIGKILL/kill for any
-    survivors.  Validates PID birth time when *created_at_epoch* is non-zero to
-    guard against PID reuse.
-
-    Uses psutil for cross-platform tree discovery and signal delivery (POSIX and
-    Windows compatible).  NoSuchProcess / AccessDenied errors are suppressed so
-    the function is safe to call on already-dead processes.
-    """
     _ = reason, scope_id  # unused here; present for forward-compat with richer variants
 
     if not _validate_pid_birth(pid, created_at_epoch):

@@ -40,7 +40,6 @@ class RelocateStop(ValueError):
 
 
 def _ask(options: dict[str, str]) -> str | None:
-    """The chosen key, or None on end of input. Re-asks on anything else."""
     keys = "/".join(options)
     while True:
         for key, label in options.items():

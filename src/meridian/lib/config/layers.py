@@ -1,5 +1,3 @@
-"""Shared discovery and reading of layered Meridian config files."""
-
 from __future__ import annotations
 
 import tomllib
@@ -36,7 +34,6 @@ class ConfigLayer:
 
 
 def read_config_payload(path: Path) -> dict[str, object]:
-    """Read one Meridian TOML layer as an object-shaped payload."""
 
     payload: object = tomllib.loads(path.read_text(encoding="utf-8"))
     if not is_json_object(payload):
@@ -50,7 +47,6 @@ def iter_config_layers(
     authority: ConfigLayerAuthority | None = None,
     user_config: Path | None = None,
 ) -> Iterator[ConfigLayer]:
-    """Yield user, project, and local config files from low to high precedence."""
 
     resolved_root = (
         authority.project_root.expanduser().resolve()
