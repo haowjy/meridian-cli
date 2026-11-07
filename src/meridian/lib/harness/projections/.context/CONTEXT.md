@@ -1,304 +1,92 @@
-# harness/projections/ — Context
+# Harness projection contracts
 
-## Architecture
+A permission compile maps the transport-neutral policy to a native value and an
+enforcement report. Platform agent and task denies override profile rules; their native
+names come from Mars, not a second table. Completion grants for `meridian spawn done`
+and `meridian spawn rearm` cannot be restricted by profile rules; read and launch
+grants allow an equally or more specific profile restriction. Harness limitations
+can make a grant partial or unsupported.
 
-Each projector maps a harness-specific `LaunchSpec` to the executable form:
-`(list[str] command_args, dict[str, str] env_overrides)`. Two projectors exist per
-harness where subprocess and streaming differ materially:
+| Report status | Meaning |
+|---|---|
+| `native` | Enforced as stated |
+| `partial` | Only part of the rule reaches the harness; the note says which part |
+| `unsupported` | No part reaches the harness |
+| `platform` | A Meridian platform rule decided it |
 
-```
-project_claude.py          → ClaudeLaunchSpec → args + env
-project_codex_subprocess.py → CodexLaunchSpec → args + env   (codex exec --json)
-project_codex_streaming.py  → CodexLaunchSpec → args + env   (codex app-server)
-project_opencode_subprocess.py → OpenCodeLaunchSpec → args + env  (opencode run)
-project_opencode_streaming.py  → OpenCodeLaunchSpec → args + env  (opencode serve)
-project_cursor.py          → ResolvedLaunchSpec → args        (cursor agent)
-project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi --mode rpc)
-project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI, primary only)
-pi_extension_projection.py → (built extension artifacts → stable -e paths, no spec dependency)
-```
+Report what was actually emitted. The effective policy used by the child-spawn guardrail
+uses the same Claude and Codex network projection functions as native emission; user and project config may widen actual
+access and is warned about separately. OpenCode and Pi have no effective-policy port and
+are treated as unrestricted. Shell network policy is separate from built-in web tools.
 
-`project_codex_common.py` is not a projector — it holds the Codex spellings both Codex
-projectors share (sandbox, writable-root and network settings, tool switches, and
-built-in-agent flags). The shared sandbox value spells `--add-dir` for subprocesses and
-Codex config for app-server startup/thread creation so those boundaries cannot drift.
-`native_config.py` flattens
-the selected harness-native config, spells Codex TOML literals, and owns the reserved keys
-that Meridian's Codex projections write themselves. Meridian writes no Codex MCP config,
-so `mcp_servers.*` passes through. `compaction.py` owns the semantic
-`autocompact` / `autocompact_pct` projection and report: Claude gets its token flag and
-percentage environment variable, Codex gets config overrides, and the other harnesses
-report both fields unsupported. `effort.py` owns the effort spellings that are not a
-plain pass-through, and the report lines for what a harness leaves unapplied: Claude's
-`--effort` (none for `none`: current Claude models cannot turn thinking off, and `MAX_THINKING_TOKENS=0` was checked live and still thought), OpenCode's V1-only
-`--variant` (none for `none`), and Pi's one `--thinking` map (`none` is `off`, `max` stays
-`max`; Pi clamps to the model). Codex's two projectors write the level unchanged as
-`model_reasoning_effort`, `none` included. Cursor's effort is Mars's: it folds the level
-into `harness_model`.
+## Claude
 
-`sandbox_workspace_write.network_access` is a reserved Codex native key: the projectors drop
-it, so a snapshot an older build wrote (continue, resume) runs under its stored `network`.
-A fresh launch fails before projection (`reject_removed_native_config` on the Codex
-adapter, called from `launch/policies.py`); the profile `network` field is its only owner.
+Claude evaluates deny, then ask, then allow. A plain deny or ask shadows scoped allows
+for the same native tool or permission spelling, including `Write` or `Edit` beside a
+scoped write allow expressed as `Edit(path)`. The compile gates unmatched calls through
+permission mode instead. Headless spawns refuse calls requiring approval. `auto` cannot
+serve as that gate because its classifier approves unmatched calls; `acceptEdits` can
+also run file commands, so edit gates need `manual`. `dontAsk` is reserved for a whole
+policy allowlist because it refuses every other tool. Ask rules hold even in bypass mode;
+plain deny and ask also hold under `auto` on Claude Haiku 5.5.
 
-`pi_extension_projection.py` is not a spec projector — it resolves stable
-Meridian-owned Pi extension entrypoints without copying or materializing them.
-It does not consume a `LaunchSpec`. See the Pi Extension Projection section below.
+Passthrough permission modes can override the profile and are reported. Claude merges
+user, project and local settings; their allows are reported when a gate or allowlist is
+present. `autoAllowBashIfSandboxed` must be explicitly false for gates, allowlists and
+ask: otherwise sandbox auto-approval can bypass them.
 
-## Contracts
+A launch with spawn capability excludes `meridian spawn *` from Claude's Bash sandbox,
+even when sandbox enablement comes from user settings. Claude runs matching standalone
+commands outside the sandbox; compound commands stay inside, and the spawn operation
+refuses a different PID namespace when procfs is readable.
 
-### Drift Guard (`_guards.py`)
+Claude's finite network rules (an explicit allowlist, rather than unrestricted
+network access) use domain allow and deny lists. Local binding and Unix
+sockets are explicitly disabled unless localhost is allowed, so wider user settings do
+not survive. Enabling either is partial because the switches are coarse; Linux host
+localhost also requires the sandbox proxy. Spawn's sandbox escape has host network access
+and remains visible in the report.
 
-Each projector declares two frozensets at module level:
+## Codex
 
-- `_PROJECTED_FIELDS` — spec fields the projector handles directly (turned into flags/env)
-- `_DELEGATED_FIELDS` — spec fields handled upstream (by the adapter or spec builder)
+Unscoped shell, web and image rules use process switches. Scoped shell rules use a
+Meridian `PreToolUse` hook; scoped ask and other scoped capabilities have no carrier.
+The hook cannot ask, so unscoped ask becomes deny. Codex silently skips untrusted hooks
+and fails open on hook failures: the launcher verifies the enabled, trusted hook and its
+hash through `hooks/list` before starting the thread, and the hook converts execution
+failures to denial. No shared Codex config file is written for the hook.
 
-`check_projection_drift(spec_cls, projected, delegated)` runs at module import time.
-It compares `projected | delegated` against `spec_cls.model_fields`. If any field is
-missing from both sets, `ImportError` is raised. If any field in the sets no longer
-exists on the spec, `ImportError` is raised.
+The hook matches command segments by wildcard, like Pi's permission extension. It is an
+accident guard, not a sandbox: wrappers, substitutions, scripts, interpreters and
+`apply_patch` or MCP calls can bypass it. `bash_fail_closed` adds a simple-command check;
+do not add a shell parser to close individual gaps. Hook enforcement is reported partial.
 
-**Effect:** Adding a field to a harness `LaunchSpec` without updating the corresponding
-projector causes import failure. This is not a test — it fires in production on the
-first spawn. Fix by updating `_PROJECTED_FIELDS` or `_DELEGATED_FIELDS` in the
-projector.
+Codex native config passes through as process overrides except keys Meridian owns, such
+as model, sandbox and approval. The removed `sandbox_workspace_write.network_access`
+key is rejected on fresh launches and ignored in replayed snapshots so their stored
+network policy remains authoritative.
 
-### Cursor Projection (`project_cursor.py`)
+Codex network restrictions apply only under `workspace-write`; proxy-based restrictions
+are partial because local services remain reachable. `read-only` stays offline. Unset
+network denies access in constrained Claude and Codex sandboxes. Cursor, Pi and OpenCode
+report restrictions unenforced. Under Codex's constrained sandboxes, a Meridian-owned
+user rules file grants the `meridian spawn` prefix outside the sandbox for every session
+using that Codex home; a write failure is reported without blocking launch.
 
-#### Model + effort resolution
+## OpenCode
 
-Cursor projection now treats `spec.model` as already-resolved runnable ID and passes it
-through directly to `--model`. It does not perform local slug/effort matching.
-Mars launch-bundle resolves Cursor effort into `routing.harness_model`, and Meridian
-bind selects that value as `effective_model` before `ResolvedLaunchSpec` is created.
-So by projection time there is nothing to resolve locally.
+OpenCode applies the last matching rule. Order wildcard defaults, unscoped rules, then
+scoped rules by specificity, with stricter equal matches last. Platform denies follow
+profile rules; completion grants follow profile restrictions, and workspace grants come
+last. With headless `approval: default` and no wildcard rule, Meridian emits `*: allow`
+only when the profile names no OpenCode tool; otherwise native defaults and user config
+remain in charge.
 
-#### `_PROJECTED_FIELDS` excludes `"effort"`
+## Effort and cursor
 
-Cursor still receives `effort` on `ResolvedLaunchSpec`, but projection no longer
-consumes it. The field is delegated/accounted to keep drift-guard coverage complete.
-
-#### MVP capability restrictions
-
-The following raise `HarnessCapabilityMismatch` immediately:
-- `spec.continue_fork` set — fork-based session continuation not supported
-- `spec.continue_session_id` non-empty — session resume not supported
-- `spec.interactive` set — interactive mode not supported
-
-These are architecture gaps, not user errors. The adapter layer should filter them
-before reaching projection; if they arrive here, something upstream is wrong.
-
-#### `projected_roots` is silently ignored
-
-Cursor subprocess only projects `--workspace` from `task_cwd`. If `projected_roots`
-is non-empty, the projector logs a debug warning and continues — not an error, because
-`task_cwd` is the common case and extra roots are best-effort for cursor.
-
-### Permission compile (`permissions_<harness>.py`)
-
-`spec.permission_policy` (`lib/safety/policy.py`) is transport-neutral: tool rules plus the
-resolved sandbox and approval modes. Each harness module compiles it to a typed value and
-its projectors spell that value:
-
-Mars names the candidate `agent` and `task` platform denies in
-`tools.capability_natives`. Bind selects them (`agent` unless native agent copies are on;
-`task` on spawns unless the profile has an unscoped `task: allow|ask`) and appends them to
-the ordinary rule sequence with `origin="platform"`; compiles must not keep a second
-native-name table. A platform deny overrides the profile's rules for its capability rather
-than taking part in specificity: Claude turns those rules into denies (else its plain deny
-beside a scoped allow would compile as a gated allowlist), and OpenCode emits the deny after
-every profile rule in place of the profile's entries for that action. `builtin-agents` and
-`meridian-commands` remain separate platform mechanisms because they are not ordinary tool
-denies.
-
-| Harness | Compile result | Spelled by |
-|---|---|---|
-| Claude | tool availability, plain denies, scoped permissions, sandbox and prompt mode | `project_claude.py` (`--tools`, `--disallowedTools`, one `--settings`, permission flags) |
-| Codex | sandbox mode, approval policy, shell/web/image switches, scoped shell rules as a `PreToolUse` hook | `project_codex_subprocess.py` (`--sandbox`, `-c`/feature flags), `project_codex_streaming.py` (process flags and the thread payload) |
-| OpenCode | ordered config-agent rules for spawns and primaries | `OpenCodeAdapter.project_launch_env()` → version-native `OPENCODE_CONFIG_CONTENT` |
-| Cursor | `--yolo`/`--force` choice, `--sandbox` value | `project_cursor.py` |
-| Pi | `--tools`/`--exclude-tools`, plus rules for the `meridian-permissions` extension's `tool_call` block | `project_pi_rpc.py` / `project_pi_native_tui.py` (argv); `PiAdapter` env `_MERIDIAN_TOOL_POLICY`, plus the pre-rename `_MERIDIAN_PI_PERMISSION_POLICY` for one release (extension rules) |
-
-Claude emits `ask` only as `settings.permissions.ask`; it never contributes to an allow
-channel. Claude checks deny, then ask, then allow, so a plain deny or ask beside scoped
-allows of the same tool would shadow them. "The same tool" is either a tool the scoped
-allow concerns (its `native_tools`) or the permission it is spelled with: Claude checks
-paths only through `Edit(path)`/`Read(path)`, so a scoped write allow is `Edit(src/*)`, and a
-plain `Write` (the write allowlist's deny) and a plain `Edit` (`edit: deny`) both shadow it.
-The compile therefore emits no such plain rule (a per-capability allowlist arrives as one,
-written by the policy) and gates the capability through the permission mode instead: a
-mode in which unmatched calls need approval, which a headless spawn refuses. `--tools`
-under a whole allowlist is `PermissionPolicy.allowed_tools` plus Bash for the Meridian command
-grants: the tools, not the permission spellings, so `write(src/*)` keeps `Write` callable.
-A gate cannot use `--permission-mode auto`, the mode a plain `approval: auto` compiles to:
-its classifier approves unmatched calls instead of refusing them. So `approval: auto|never|yolo`
-with a gate uses `acceptEdits` (edits keep running; it also runs file
-commands such as `touch`, `rm` and redirects inside the working directories), unless an
-edit capability is gated, which needs `manual`; `default` and `confirm` gate with `manual`.
-An unscoped `*: ask` gates the same way. Plain deny and ask rules stay authoritative under
-`auto` (checked live on `claude-haiku-5-5`; `claude-haiku-4-5` does not offer `auto`, runs `manual`,
-and proves nothing about it). Claude's init event reports the mode it ran; `ClaudeFold` warns into
-the report when that differs from the launch.
-`dontAsk` is reserved for a whole-policy allowlist (`*: deny`), which also limits
-`--tools`; it refuses every tool not allowed, so it would turn a bash allowlist into a
-whole-policy one. Ask rules hold under every mode, bypass included, so they do not change
-the mode. Passthrough `--allowedTools` grants are merged and dropped where a profile
-allowlist or gate owns the tool. Passthrough `--dangerously-skip-permissions`,
-`--allow-dangerously-skip-permissions` and `--permission-mode` stay (the compile omits its
-own mode when passthrough sets one) and the report says they override the profile; the
-user, project and local settings files' allows, which Claude merges itself, are read by
-the Claude bind into `ClaudeRuntimeResolution.settings_allows` and reported when an
-allowlist or gate is present.
-Every Claude report line is read back from the emitted channels, so a rule the deny/ask
-order shadows or the compile left out is `partial`.
-
-When Claude's sandbox is enabled, the settings JSON always spells
-`autoAllowBashIfSandboxed`: true only for an unrestricted `approval: auto`, false for
-allowlists, gates and `ask`. Omitting false lets Claude's sandbox auto-approval accept
-unmatched Bash calls before the mode can refuse them, which defeats the allowlist. A launch
-with spawn capability also spells `excludedCommands = ["meridian spawn *"]`, including when
-the profile leaves the sandbox at `default` and the user's own settings enable it; the
-default projection omits `enabled` so the user's choice remains authoritative. Claude runs a
-matching standalone command wholly outside the Bash sandbox. Compound commands stay inside
-and the spawn operation refuses them when its current `/proc/self/ns/pid` differs from the
-namespace the Meridian launcher recorded. On systems without readable procfs the check skips.
-
-Codex compiles exact unscoped `bash`, `web`/`web_search` (the narrower wins), and `image` allow/deny rules to process-level
-switches. Scoped `bash` rules and per-capability shell allowlists go to a Meridian-owned
-`PreToolUse` hook instead (below); scoped `ask` and every other scoped capability have no
-carrier and remain unsupported. A per-capability allowlist's deny (origin `allowlist`) sets no
-switch, so the shell stays on for the hook to decide. A whole-policy allowlist disables web
-search and image viewing but deliberately leaves that shell on. Platform-origin rules never
-drive these tool switches; the built-in-agent mechanism still drives Codex's multi-agent
-feature switch. `project_codex_tool_switch_flags` is the one spelling shared by `codex exec`
-and `codex app-server`; it also spells the hook. Native config also goes to both paths as process-level `-c`
-overrides; the app-server thread payload remains authoritative for its model, effort,
-sandbox, and approval fields, so those native collisions are skipped and reported.
-
-**The Codex shell hook.** `CodexPermissions.tool_hook` holds the `ExtensionPolicy` (the
-compile Pi's extension also reads, `tool_extension_policy.py`) restricted to `bash` and `*`
-rules, set only when one is scoped. A hook cannot ask, so an unscoped `ask` is carried as
-`deny`; a scoped `ask` is not carried and stays unsupported. The hook definition and its trust
-(`hooks.state.<key>.trusted_hash`, an inline table: the dotted spelling is ignored) ride the
-`codex app-server` argv from `codex_tool_hook.py`, so Meridian writes no `config.toml` and a
-shared `CODEX_HOME` is untouched; the policy reaches the stdlib-only enforcer
-(`codex_runtime/tool_hook.py`) in `_MERIDIAN_TOOL_POLICY`, which a launch never inherits.
-Codex skips an untrusted hook silently and fails open on every hook failure, so:
-
-- the hook command is `"<py>" -I "<script>" || exit 2`, with a message for any failure other
-  than the enforcer's own deny (exit 2);
-- `CodexConnection.start` calls `hooks/list` before the thread starts and refuses the launch
-  unless exactly one `sessionFlags` `preToolUse` entry is trusted, enabled and has the
-  expected `currentHash` (a Codex without `hooks/list` is refused too). A project
-  `.codex/config.toml` that turns hooks off is caught here.
-
-The enforcer is wildcard matching and nothing else, deliberately: it splits the command on
-`;`, `&&`, `||`, `|`, `&` and newlines (outside quotes) and ranks each segment against the rules
-exactly as Pi's `policyDecision` does, so a rule means the same on both. It is a guard against
-accidents, not a sandbox (owner's call: don't harden it); wrapped and compound forms it does
-not see (`sudo git reset --hard`, `bash -c`, substitutions, subshells, scripts, interpreters,
-`git -C <dir> reset --hard`) are known gaps, not bugs, so don't add a parser to close one.
-Under `bash_fail_closed` it also applies Pi's simple-command check (no `$`, backticks,
-redirection, `( )`, `{ }`, `#`, backslash outside quotes). Matching is linear, so no input can
-reach Codex's 10 s timeout, which fails open. The hook payload carries only `command`. `codex
-exec` is not a live Codex path (the contract lists only the streaming transport, and a primary
-is a managed attach), so its argv is preview only and has no `hooks/list` check. The hook does
-not see `apply_patch` or MCP calls. Every hook report line is `partial`.
-
-OpenCode decides a headless `approval: default` spawn's unmatched calls by a toggle carried
-from v0.11.8: without a `*` rule, the compile emits `*: allow` only when no profile rule
-names an OpenCode tool; one such rule leaves OpenCode's own defaults, and the user's OpenCode config, in charge.
-The toggle is deliberate: Meridian stays out of a user's OpenCode setup whenever the profile
-says something. The compile reports whichever branch applied as an
-`approval: default` line, which follows the policy elements since `default` approval is
-not one.
-
-A compile that restricts the shell must spell every `meridian-commands` entry in its own
-scope syntax, where a broad `bash` or `*` deny does not shadow it. Completion and read
-entries are present on every launch; profiles with spawn capability also receive the
-`meridian spawn` prefix. Each entry declares a completion/read/launch role and exact or
-prefix matching. Completion grants are final; read and launch grants let a narrower or
-equal scoped profile deny/ask remain stricter. OpenCode maps exact
-entries to `shell(<cmd>)` and prefix entries to `shell(<cmd> *)` after its own `*` default.
-Claude maps an exact entry to `Bash(<cmd>)`, and a prefix to both `Bash(<cmd>)` and
-`Bash(<cmd> *)`; under a whole allowlist it also keeps Bash available through `--tools`.
-A plain `bash` deny or ask is gated rather than emitted so it cannot shadow the commands.
-Claude cannot make a completion allow override a scoped deny/ask and reports that gap as
-partial. OpenCode orders completion grants last. Pi short-circuits a matching completion
-grant and otherwise evaluates profile specificity. The Codex shell hook does the same when it
-exists; otherwise Codex cannot scope its shell per launch. Under `read-only` or
-`workspace-write`, its Meridian-owned user rules file grants the whole `meridian spawn`
-prefix outside the sandbox for every session using that Codex home; the compile reports the
-remaining exact/prefix list as unsupported. A rules-file write failure is reported without
-blocking the launch.
-
-Each compile also returns an `EnforcementReport` (`lib/safety/policy.py`): one `ReportLine`
-(`element`, `status`, `note`) per tool rule, platform rule, sandbox, network and approval
-value, saying
-what that harness did with it. Status `native` means enforced as stated, `partial` means part
-of the meaning reaches the harness (the note says which), `unsupported` means nothing does,
-`platform` means a Meridian platform rule decided it. The report states today's
-projection, not the intended one: write the note from what the compile emitted. The
-compile's report is registered as `HarnessProjectionPorts.permission_report` (the projectors
-call the typed compile directly for its native value; nothing generic reads that value);
-`LaunchContext.enforcement_report()` calls it for the `--dry-run` "Permissions:" section (and
-`permission_report` in `--json`) and for `permission_report` in `projection-manifest.json`.
-Claude, Codex, and Cursor also register `HarnessProjectionPorts.effective_policy`: a pure
-function of the resolved `PermissionPolicy` and Meridian-owned native config returning the
-sandbox and shell network the harness really applies. OpenCode and Pi register none and get
-`UNENFORCED_POLICY` (`danger-full-access`, open network). Harness user/project
-configuration is not an input: Claude and Codex adapters inspect the final child environment
-and cwd separately and emit attributed warnings when those files can widen actual access.
-Claude and Codex derive their `network:` report line from the same network projector;
-`complete_report()` uses unrestricted network for the other harnesses' default line. The
-child-spawn guardrail calls the same registered port, so the public three-field `ReportLine`
-has no hidden propagation state.
-
-Every compile reports the effective shell `network` policy separately from built-in web
-tools. The report element is the compact typed value: its mode plus each non-empty host
-set's count and first three entries. Claude projects finite allows and denies through
-`allowedDomains` / `deniedDomains`, translating `**.x` to `x` plus `*.x`. It leaves local
-binding and Unix sockets off unless `localhost` or `127.0.0.1` is effectively allowed; the
-launch emits explicit `false` values so wider user settings cannot survive. The native
-switches are coarse, so enabling either is partial. On Linux host localhost is also
-partial because clients must use the sandbox proxy. Claude user settings can widen actual
-access, but warnings name the source without changing the projected policy. Codex enables
-network only for `workspace-write`: finite allows, and allow-all with denies, use its proxy
-with one inline TOML domain map and remain partial because local services stay reachable.
-`read-only` reports an authored allow or non-empty allowlist as unsupported and stays
-offline. Unset projects deny for constrained Claude and Codex sandboxes. OpenCode, Pi, and
-Cursor satisfy unrestricted allow but report restrictions unenforced. A `meridian spawn`
-sandbox escape remains visible on the network line because that command runs with host
-network access.
-
-### Adding a New Harness
-
-Follow the full touchpoint list in [../../.context/CONTEXT.md](../../.context/CONTEXT.md).
-For projections specifically: add `project_<harness>_subprocess.py` and/or
-`project_<harness>_streaming.py`, declare `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`,
-call `check_projection_drift()` at module level, and put any harness-specific permission
-compile in `permissions_<harness>.py`.
-
-## Related .context/
-
-- [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — full translation pipeline;
-  `SpawnParams` accounting invariant (the adapter-level counterpart to projection drift)
-- [../../../../pi_runtime/.context/CONTEXT.md](../../../../pi_runtime/.context/CONTEXT.md) —
-  source of stable built extension artifacts that `pi_extension_projection.py` resolves
-
-## Permission compile and effective policy (from AGENTS.md)
-
-- **Permission compile** (`permissions_<harness>.py`): one module per harness turns
-  `spec.permission_policy` into a typed native value (sandbox/approval modes, tool
-  allow/deny lists, OpenCode's version-canonical ordered agent rules). The harness's projectors call it and
-  spell the result as argv, env or payload; nothing outside the harness module reads the
-  policy's rules. The compile returns `(native value, EnforcementReport)`; its report is
-  registered as `HarnessProjectionPorts.permission_report`, and the harness's pure
-`effective_policy` port is registered beside it: the sandbox and shell network the harness
-really applies, which the child-spawn guardrail compares. Claude and Codex build it from
-the same pure network projector their compile uses, so compile, report, and guardrail
-cannot decide independently; Cursor maps its binary sandbox. OpenCode and Pi omit the port
-and get `UNENFORCED_POLICY` (`danger-full-access`, open network); `complete_report()`
-supplies their report line. The projectors, `--dry-run` and
-  `projection-manifest.json` all read these same policy facts.
+Claude cannot turn thinking off on current models: even `MAX_THINKING_TOKENS=0` was
+observed to think. Pi maps `none` to `off` and clamps effort to the model. OpenCode V1
+uses variants; V2 has no working effort channel. Cursor receives a model already resolved
+with effort by Mars. Cursor is unmaintained; keep it building without adding parity work.
+Additional workspace roots are best-effort: Cursor receives only `task_cwd` as its
+workspace.
