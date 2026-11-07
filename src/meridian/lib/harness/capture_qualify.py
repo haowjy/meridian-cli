@@ -63,6 +63,10 @@ class ClaudeObserver:
 
     def observe(self, event: dict[str, object]) -> None:
         event_type = str(event.get("type") or event.get("event_type") or "").strip().lower()
+        # Claude Code copies API request messages into these records, sometimes after the
+        # tool_result they precede; walking them leaves answered tool calls pending.
+        if event_type == "api-request-blob":
+            return
         stop = str(event.get("stop_reason") or event.get("stopReason") or "").strip().lower()
         subtype = str(event.get("subtype") or "").strip().lower()
         error = event.get("is_error") is True or event_type in {"error", "interrupt"}
