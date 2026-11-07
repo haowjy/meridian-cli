@@ -49,6 +49,11 @@ _ALLOWLIST = {
     "bash_fail_closed": True,
 }
 
+_WRAPPERS_ALLOWED = {
+    **_ALLOWLIST,
+    "rules": [_rule(None, "deny"), *(_rule(p, "allow") for p in ("rg *", "sudo *", "env *"))],
+}
+
 # `"*": deny` beside a scoped bash allow, and a bash rule that outranks `*`.
 _STAR_DENY = {
     "rules": [_rule(None, "deny", "*"), _rule("git *", "allow")],
@@ -208,6 +213,15 @@ _DENIED_BY_ALLOWLIST = [
     "bash --anything-new -c 'rg x'",
     "env bash -ic 'rg x'",
     "/usr/bin/time -o out rg x",
+    # A wrapper needs its own allow, not only the command it runs.
+    "sudo rg x",
+    "sudo -n rg x",
+    "timeout 5 rg x",
+    "env -u HOME rg x",
+    "nice rg x",
+    "xargs rg x",
+    "sudo env rg x",
+    "bash -c 'sudo rg x'",
 ]
 _ALLOWED_BY_ALLOWLIST = [
     "rg foo | cat",
@@ -215,10 +229,6 @@ _ALLOWED_BY_ALLOWLIST = [
     "bash -c 'rg x'",
     "bash -ec 'rg x'",
     "sh -c -- 'rg x'",
-    "sudo rg x",
-    "sudo -n rg x",
-    "timeout 5 rg x",
-    "env -u HOME rg x",
     "/usr/bin/rg x",
     "rg 'a b' src",
     "rg 'a $b `c` \\d' src",
@@ -239,7 +249,9 @@ _ALLOWED_BY_ALLOWLIST = [
         *((_DENY_LIST, command, False) for command in _ALLOWED_BY_LIST),
         *((_ALLOWLIST, command, True) for command in _DENIED_BY_ALLOWLIST),
         *((_ALLOWLIST, command, False) for command in _ALLOWED_BY_ALLOWLIST),
-        *((_STAR_DENY, command, True) for command in ("touch x", "git status; touch x")),
+        *((_WRAPPERS_ALLOWED, command, False) for command in ("sudo rg x", "sudo env rg x")),
+        *((_WRAPPERS_ALLOWED, command, True) for command in ("timeout 5 rg x", "sudo cat x")),
+        *((_STAR_DENY, command, True) for command in ("touch x", "git status; touch x", "sudo git status")),
         *((_STAR_DENY, command, False) for command in ("git status", "git log | git show")),
         *((_BASH_OVER_STAR, command, True) for command in ("rm -rf x", "sudo rm x")),
         *((_BASH_OVER_STAR, command, False) for command in ("touch x", "git status")),

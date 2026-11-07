@@ -24,7 +24,8 @@ What changes for you:
   and a program run by path outside `/usr/bin`, `/bin`, `/usr/local/bin`, `/usr/sbin`, `/sbin` are
   refused, even when the command inside them would be allowed. Single-quote strings that need a
   `$`. `bash -c '...'` (with at most `-e`, `-u`, `-x`), `sudo`, `env`, `timeout` and similar
-  wrappers are read, with their string held to the same grammar. A shell carrying any other option
+  wrappers are read, with their string held to the same grammar. Under an allowlist a wrapper
+  must be allowed too: `git *` permits `git status` but not `sudo git status` (add `sudo *`). A shell carrying any other option
   (`-i`, `-l`, `--rcfile`, `--init-file`, `-O`, `--posix`) is refused, because an rc file runs
   before the string, and `time -o` is refused because it writes a file.
 - **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows

@@ -702,6 +702,8 @@ class Layered:
     dynamic: bool
     # A `NAME=value` precedes the program, so the environment it runs in is not the agent's.
     assigned: bool
+    # The layers that are exec wrappers (`sudo`, `xargs`, ...) rather than a plain `sh -c`.
+    wrappers: tuple[tuple[str, ...], ...] = ()
 
 
 def _base(argv: list[str]) -> str:
@@ -863,7 +865,11 @@ def layered_commands(
     problem = parsed.problem
 
     def resolve(
-        argv: list[str], layers: list[tuple[str, ...]], dynamic: bool, assigned: bool
+        argv: list[str],
+        layers: list[tuple[str, ...]],
+        dynamic: bool,
+        assigned: bool,
+        wrappers: tuple[tuple[str, ...], ...] = (),
     ) -> None:
         nonlocal problem
         if strict:
@@ -880,21 +886,27 @@ def layered_commands(
             inner, inner_problem = layered_commands(inner_parsed, strict=strict, depth=depth + 1)
             problem = problem or inner_problem
             found.extend(
-                Layered((*layers, *item.layers), item.dynamic, assigned or item.assigned)
+                Layered(
+                    (*layers, *item.layers),
+                    item.dynamic,
+                    assigned or item.assigned,
+                    (*wrappers, *item.wrappers),
+                )
                 for item in inner
             )
             return
         peeled = _peel(argv, strict=strict)
         if peeled is None:
-            found.append(Layered(tuple(layers), dynamic, assigned))
+            found.append(Layered(tuple(layers), dynamic, assigned, wrappers))
             return
         candidates, set_variables, peel_problem = peeled
         problem = problem or peel_problem
+        wrapped = (*wrappers, tuple(argv))
         for rest in candidates:
             if rest:
-                resolve(rest, [*layers, tuple(rest)], dynamic, assigned or set_variables)
+                resolve(rest, [*layers, tuple(rest)], dynamic, assigned or set_variables, wrapped)
             else:
-                found.append(Layered(tuple(layers), dynamic, assigned or set_variables))
+                found.append(Layered(tuple(layers), dynamic, assigned or set_variables, wrapped))
 
     for words in parsed.commands:
         leading = 0
@@ -1065,6 +1077,12 @@ def decide(policy: dict[str, object], command: str) -> str | None:
                 f"{DENIAL_PREFIX}a shell that reads its commands from stdin cannot be checked. "
                 f"Attempted: {command}"
             )
+        # An allowlist runs a wrapper's program under the wrapper's authority, so the wrapper
+        # needs its own allow (`sudo *`), not just the command it runs.
+        for layer in item.wrappers if fail_closed else ():
+            winner = _verdict(rules, layer)
+            if winner is not None and winner.action == "deny":
+                return _denial(winner, command)
         winner = _verdict(rules, item.layers[-1])
         if winner is not None and winner.action == "deny":
             return _denial(winner, command)
