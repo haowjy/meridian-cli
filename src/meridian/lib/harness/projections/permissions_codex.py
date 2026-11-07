@@ -260,15 +260,16 @@ def _compile_codex_permission_values(
 
 
 _HOOK_NOTE = "PreToolUse hook (the launch is refused unless Codex lists it as intact and trusted)"
-# What the hook cannot stop whatever the policy: a hook sees the shell tool and runs the
-# launching interpreter.
+# What the hook is: wildcard rules on each command segment, a guard against accidents.
 _HOOK_LIMITS = (
-    "`apply_patch` and MCP calls do not reach it, and an agent that can replace the Python "
-    "interpreter or its standard library turns it off"
+    "it matches each `;`/`&&`/`||`/`|`/`&`/newline segment against the rules, so wrapped or "
+    "compound forms it does not see (`sudo git reset --hard`, `bash -c`, substitutions, "
+    "subshells, scripts, interpreters, `git -C <dir> reset --hard`), `apply_patch` and MCP "
+    "calls get past it, and an agent that can replace the Python interpreter turns it off"
 )
 
 
-def _hook_report_line(rule: ToolRule, hook: ExtensionPolicy) -> ReportLine:
+def _hook_report_line(rule: ToolRule) -> ReportLine:
     element = rule_element(rule)
     if rule.action == "allow":
         return ReportLine(element, "native", f"{_HOOK_NOTE}; a matching command may run")
@@ -282,25 +283,16 @@ def _hook_report_line(rule: ToolRule, hook: ExtensionPolicy) -> ReportLine:
         return ReportLine(
             element,
             "partial",
-            f"{_HOOK_NOTE} refuses every shell command no scoped allow matches.{asked} It "
-            "accepts only simple commands (expansion, redirection, compound commands, "
-            "assignments, and programs run by path outside the system bin directories are "
-            "refused), and a shell reading stdin. Reads are bound too: Codex reads files through "
-            "the shell, so allow the read commands the agent needs. Beyond the allowed commands "
-            f"themselves (a permitted interpreter can run anything): {_HOOK_LIMITS}.{agents}",
+            f"{_HOOK_NOTE} refuses every shell command segment no scoped allow matches, and "
+            f"shell syntax such as expansion and redirection.{asked} Reads are bound too: Codex "
+            "reads files through the shell, so allow the read commands the agent needs. Beyond "
+            f"the allowed commands themselves (a permitted interpreter can run anything): "
+            f"{_HOOK_LIMITS}.{agents}",
         )
-    reading = (
-        "a command outside the simple-command grammar is refused"
-        if hook.bash_fail_closed
-        else "a command it cannot read runs"
-    )
     return ReportLine(
         element,
         "partial",
-        f"{_HOOK_NOTE}; best effort: `sh script.sh`, interpreters (`python -c`, a REPL fed "
-        "through `write_stdin`), wrappers it does not know, `find -exec`, commands built at run "
-        "time, and options between a program and its subcommand (`git -C <dir> reset --hard`) "
-        f"get past it; {reading}; {_HOOK_LIMITS}",
+        f"{_HOOK_NOTE}; a guard against accidents, not a sandbox: {_HOOK_LIMITS}",
     )
 
 
@@ -336,7 +328,7 @@ def _codex_report(
                 or rule.action != "allow"
             )
         ):
-            lines.append(_hook_report_line(rule, permissions.tool_hook))
+            lines.append(_hook_report_line(rule))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
             lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
         elif switch is not None:

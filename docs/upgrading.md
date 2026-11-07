@@ -47,37 +47,26 @@ What changes for you:
   scoped rules from the profile. Profiles with no scoped `bash` rule launch as before.
 - **Anything that turns hooks off** (`-c hooks.PreToolUse=[]`, `--disable hooks`, a `hooks.state`
   override, a project `.codex/config.toml` with `hooks` off) stops those launches the same way.
-- **Allowlists accept only simple commands.** When a profile's rules refuse every shell command
-  that no scoped allow names (an allowlist, `"*": deny` beside scoped allows, or `bash: deny` or
-  `bash: ask` beside them), a command runs only if it is plain words and quoted strings joined by
-  `;`, `&&`, `||`, `|` and newlines, with at most `>/dev/null` and `2>&1` as redirection. Variables
-  and `$(...)`, double-quoted `$`, heredocs, `{ }` and `( )`, `if`/`for`, `NAME=value` prefixes,
-  and a program run by path outside `/usr/bin`, `/bin`, `/usr/local/bin`, `/usr/sbin`, `/sbin` are
-  refused, even when the command inside them would be allowed. Single-quote strings that need a
-  `$`. `bash -c '...'` (with at most `-e`, `-u`, `-x`), `sudo`, `env`, `timeout` and similar
-  wrappers are read, with their string held to the same grammar. Under an allowlist a wrapper
-  must be allowed too: `git *` permits `git status` but not `sudo git status` (add `sudo *`). A shell carrying any other option
-  (`-i`, `-l`, `--rcfile`, `--init-file`, `-O`, `--posix`) is refused, because an rc file runs
-  before the string, and `time -o` is refused because it writes a file.
+- **Rules are wildcard matches on each command segment.** The hook splits the command on `;`,
+  `&&`, `||`, `|`, `&` and newlines (outside quotes) and matches each segment against the rules
+  the way Pi does: deny wins, and a deny-list passes a segment no rule names. When a profile's
+  rules refuse every shell command that no scoped allow names (an allowlist, `"*": deny` beside
+  scoped allows, or `bash: deny` or `bash: ask` beside them), every segment must match an allow,
+  and a command with `$`, backticks, redirection, `( )`, `{ }`, `#` or a backslash outside quotes
+  is refused.
 - **`ask` is a deny.** A hook cannot ask, so an unscoped `bash: ask` or `*: ask` beside scoped allows
   refuses the other commands. A scoped `ask` is still not enforced.
 - **Allowlists bind file reads too.** Codex reads files through the shell, so a profile that lists
   `bash(git *)` and nothing else can no longer `cat` a file. Add the read commands the agent needs
   (`bash(rg *)`, `bash(cat *)`).
-- **A shell that reads stdin is refused** whenever a rule denies (`bash`, `sh -s`, `sh <<EOF`,
-  `x | sh`), because Codex's `write_stdin` would feed it commands the hook never sees.
-- **The hook script is pinned.** The hook command carries the SHA-256 of the enforcer and refuses
-  every shell call if the file no longer matches. Upgrading Meridian while a Codex launch is
-  running therefore blocks that launch's shell calls until you restart it.
-- **Gaps that remain.** The hook checks the command string. A scoped deny does not see
-  `sh script.sh`, an interpreter (`python -c`, or a REPL such as `python` typed into through
-  `write_stdin`), a wrapper it does not know, `find -exec`, commands built at run time, or an
-  option between a program and its subcommand (`git -C <dir> reset --hard`); an allowlist
-  inherits whatever its allowed commands can do (`bash(python *)` runs anything). `apply_patch`
-  and MCP calls never reach the hook, and an agent that can replace the Python interpreter or its
-  standard library turns the hook off. Codex lets a call run when a hook
-  times out (10 seconds), so the enforcer ends itself after 5 seconds with a denial: a command too
-  long or too nested to check in that time is refused, not run.
+- **Gaps that remain.** The hook is a guard against accidents such as a careless
+  `git reset --hard`, not a sandbox, and an agent that tries can get past it. A rule matches
+  the command segment as written, so `sudo git reset --hard`, `bash -c '...'`, `$(...)`,
+  subshells, `sh script.sh`, interpreters, `find -exec`, a shell fed through `write_stdin`, and
+  `git -C <dir> reset --hard` are caught only if a rule matches them; an allowlist inherits
+  whatever its allowed commands can do (`bash(python *)` runs anything). `apply_patch` and MCP
+  calls never reach the hook, and an agent that can replace the Python interpreter or its
+  standard library turns the hook off.
 
 ## Messages to a primary go through its launcher
 
