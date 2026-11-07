@@ -107,6 +107,9 @@ class HarnessCapabilities(BaseModel):
     # non-interactive print mode (Claude `--print`).
     captures_blackbox_output: bool = False
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
+    # Whether a running spawn takes a message sent to it. A sender on a harness
+    # that refuses messages is not offered a reply route.
+    accepts_messages: bool = True
 
 
 class HarnessContract(BaseModel):
