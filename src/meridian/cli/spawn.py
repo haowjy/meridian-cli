@@ -46,6 +46,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnCreateInput,
     SpawnForkInput,
     SpawnListInput,
+    SpawnRearmInput,
     SpawnShowInput,
     SpawnSignalInput,
     SpawnStatsInput,
@@ -174,31 +175,46 @@ def _emit_spawn_warnings(*results: SpawnActionOutput) -> None:
             sink.warning(result.warning)
 
 
-def _read_prompt_from_stdin() -> str:
+def _read_text_from_stdin(*, label: str) -> str:
     if sys.stdin.isatty():
-        raise ValueError("--prompt-file - requires stdin to be piped or redirected")
+        raise ValueError(f"--{label}-file - requires stdin to be piped or redirected")
     try:
-        prompt_text = sys.stdin.read()
+        text = sys.stdin.read()
     except UnicodeDecodeError as exc:
-        raise ValueError("prompt stdin is not valid UTF-8") from exc
-    if not prompt_text:
-        raise ValueError("prompt stdin is empty")
-    return prompt_text
+        raise ValueError(f"{label} stdin is not valid UTF-8") from exc
+    if not text:
+        raise ValueError(f"{label} stdin is empty")
+    return text
 
 
-def _read_prompt_from_file(prompt_file: str) -> str:
-    if not prompt_file.strip():
-        raise ValueError("prompt file path is empty")
-    prompt_path = Path(prompt_file)
+def _read_text_from_file(path: str, *, label: str) -> str:
+    if not path.strip():
+        raise ValueError(f"{label} file path is empty")
     try:
-        prompt_text = prompt_path.read_text(encoding="utf-8")
+        text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError as exc:
-        raise ValueError(f"prompt file not found: {prompt_file}") from exc
+        raise ValueError(f"{label} file not found: {path}") from exc
     except UnicodeDecodeError as exc:
-        raise ValueError(f"prompt file is not valid UTF-8: {prompt_file}") from exc
-    if not prompt_text:
-        raise ValueError(f"prompt file is empty: {prompt_file}")
-    return prompt_text
+        raise ValueError(f"{label} file is not valid UTF-8: {path}") from exc
+    if not text:
+        raise ValueError(f"{label} file is empty: {path}")
+    return text
+
+
+def _resolve_rearm_reason(reason: str | None, reason_file: str | None) -> str | None:
+    if reason is not None and reason_file is not None:
+        raise ValueError("cannot specify both --reason and --reason-file")
+    if reason_file is None:
+        text = reason
+    elif reason_file == "-":
+        text = _read_text_from_stdin(label="reason")
+    else:
+        text = _read_text_from_file(reason_file, label="reason")
+    if text is None:
+        return None
+    if not text.strip():
+        raise ValueError("reason is empty")
+    return text.strip()
 
 
 def _resolve_spawn_prompt(
@@ -214,8 +230,8 @@ def _resolve_spawn_prompt(
         return prompt
     if prompt_file is not None:
         if prompt_file == "-":
-            return _read_prompt_from_stdin()
-        return _read_prompt_from_file(prompt_file)
+            return _read_text_from_stdin(label="prompt")
+        return _read_text_from_file(prompt_file, label="prompt")
     if has_files or is_continue:
         return ""
     raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
@@ -1380,9 +1396,36 @@ def _spawn_rearm(
             )
         ),
     ] = None,
+    reason: Annotated[
+        str | None,
+        Parameter(
+            name="--reason",
+            help="Why this spawn stays. Stored with the rearm and shown in `spawn show`.",
+        ),
+    ] = None,
+    reason_file: Annotated[
+        str | None,
+        Parameter(
+            name="--reason-file",
+            help="Read the reason from a file; `-` reads stdin.",
+            allow_leading_hyphen=True,
+        ),
+    ] = None,
+    long: Annotated[
+        bool,
+        Parameter(
+            name="--long",
+            help=(
+                "Next check at the idle limit, not 270 s after going idle: for a wait "
+                "Meridian can't see, such as remote CI."
+            ),
+        ),
+    ] = False,
 ) -> None:
     result = spawn_rearm_sync(
-        SpawnSignalInput(spawn_id=spawn_id),
+        SpawnRearmInput(
+            spawn_id=spawn_id, reason=_resolve_rearm_reason(reason, reason_file), long=long
+        ),
         ctx=RuntimeContext.from_environment(),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
@@ -1480,7 +1523,7 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         partial(_spawn_rearm, emit),
         name="rearm",
-        help="Keep a resident spawn open: open another completion window.",
+        help="Keep a resident spawn open past its next check.",
     )
     registered.add("spawn.rearm")
     app.command(

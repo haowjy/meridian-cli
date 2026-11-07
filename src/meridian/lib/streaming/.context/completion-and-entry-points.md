@@ -17,7 +17,7 @@ still nudged and cleaned up. A single command that stays silent for a whole wind
 still idle. Descendant activity renews nothing.
 After a rearm, no nudge goes out while the blockers the rearm answered are unchanged. If
 no blocker was visible (OpenCode and Codex background shells), the next nudge waits
-`COMPLETION_NUDGE_INTERVAL_SECONDS` past the previous one. A Codex nudge sent mid-turn goes through `turn/steer` (`turn/start` when idle, and when the
+`COMPLETION_NUDGE_INTERVAL_SECONDS` past the last turn end, or the idle limit with `--long`. A Codex nudge sent mid-turn goes through `turn/steer` (`turn/start` when idle, and when the
 steer races a turn end). A nudge taken into a running turn starts no new turn, so its
 answer becomes the report; with no candidate kept, the wording says so. A refused expiry
 nudge is retried once at the next expiry, then the hold cleans up; on a dead backend, or
@@ -35,8 +35,8 @@ wall-clock bound. Child-wave windows are anchored to each wave, not slid by ordi
 activity; successive legitimate waves may establish new windows. This
 unbounded-while-descendants-live behavior is by design.
 
-Explicit done authorizes completion
-with leftover native tasks; managed-scope teardown stops them. A harness with a native task
+Explicit `done` closes over whatever runs: rows D3 and A4b take `cleanup`, which cancels
+descendants, and managed-scope teardown stops leftover native tasks. A harness with a native task
 source reports its own work, so a turn end needs no confirmation: nothing running closes on
 the first fresh assessment, and running work holds silently. Without one, a writable
 completion-signal channel gives a successful candidate one best-effort confirmation
@@ -44,10 +44,10 @@ turn: `done` accepts, `rearm` opens another window and waits for a genuinely new
 successful/idle candidate, and silence accepts only after evidence is ready. A rearm that
 saw blockers snapshots them: later turn ends are not nudged while the outstanding blockers
 are all in the snapshot (Claude's own `awaiting_followup_result` follow-up does not count
-as a change), and a new blocker or a clear nudges again. A rearm with no blockers
-follows the 270 s spacing above. Compare blockers, not `generation`: Claude bumps it on
-every `result`. At expiry a hold that accepts signals sends one nudge and waits
-`_IDLE_NUDGE_ANSWER_SECONDS` (300 s) for the child to work, then cleans up; a hold without
+as a change), and a new blocker or a clear nudges again. A rearm with no blockers takes the
+270 s spacing, or the idle limit with `--long`. Compare blockers, not `generation`: Claude
+bumps it on every `result`. At expiry a hold that accepts signals sends one nudge and waits
+`IDLE_NUDGE_ANSWER_SECONDS` (300 s) for the child to work, then cleans up; a hold without
 signals cleans up at expiry. A hold
 without that channel skips confirmation and reads no signals, but keeps the same
 evidence, blocker, and deadline policy. This no-signal path is live for read-only Codex
@@ -105,6 +105,33 @@ Publishing runs through the coordinator's existing `stabilizing` phase, and the
 otherwise a child that rearmed to stay for something invisible would close at its next turn
 end. So a rearm is followed by an ask on every harness.
 
+**The rearm's forms are leases.** `HeldLease` for what is visible, in both forms; with nothing
+visible `SpacedLease`, or `WindowLease` for `--long`, which is quiet until E1. Spacing anchors
+at the last turn end, not at the last ask, so `_run_spacing` restarts it at every turn end and
+never ends it during a turn. `next_wake` must stop asking for a wake then too, or a past-due
+lease spins the 1 ms floor until the turn ends. When spacing ends with blockers showing, they
+become a `HeldLease`: 270 s is for a wait Meridian cannot see, and a wait it can see ends itself.
+
+**A rearm with no candidate still gets its ask.** A rearm consumed at a turn end drops the
+candidate, and nothing brings one back without a turn. C1c asks once the lease stops being
+quiet, and it takes the expiry kind: with nothing to publish, a turn-end ask that went unanswered
+would fall through to C2 and sit to the idle limit. Where a candidate exists (a rearm consumed
+mid-turn, so the turn's end made one), E4 asks the turn-end kind, and a silent child publishes it.
+
+**A reply to the ask is a close.** `reply_closes` is set in `after_send`, not in the row, because
+only a send that landed with no turn running qualifies: `answer` can't carry it, since work in
+the answering turn closes `answer` first. It closes at D0, above `closing`, so on any evidence,
+and it sets `reply_replaces`, because the ask says the reply is the report on every harness. A
+mid-turn expiry sets nothing: its text keeps #886's wording, and that turn's end is an ordinary
+turn end. B2 sits above D0, so a `rearm` read at the same turn end wins, and the fresh state
+drops the pending close. `_close` goes through `cleanup` for both `done` and a reply, so nothing
+it leaves behind needs success validation, and a child started just before the close is cancelled too.
+
+**A failed reply keeps its failure.** The issue was whether a failed turn may replace a good
+candidate. It may: nothing vouches for a child whose last turn failed, and the retained report
+stays either way. So A5 stands, and A5a only adds the cleanup, because the ask told the child that
+closing cancels what runs. A turn-end ask's failed reply takes plain A5.
+
 **Signals need no candidate.** Round 3 of the child-completion review discarded them, because
 a signal file is a mailbox: a stale `done` could pre-accept the next candidate and a stale
 `rearm` could spend budget. That is now safe to drop. With no candidate and no rearm, nothing
@@ -141,11 +168,11 @@ and not published.
 
 `after_send` runs once on every outcome, including failures, and stamps `asked_at` when the
 attempt ends, so the grace starts when the send ends. Only cancellation skips it, and that
-stops the coordinator. A refused send still counts as an attempt for the 270 s spacing.
+stops the coordinator.
 
 | Outcome of `deliver` | Means | `ask` | `answer` | Then |
 |---|---|---|---|---|
-| Returned | Delivered | `SENT` | `retry_left = False` | |
+| Returned | Delivered | `SENT` | `retry_left = False` | With no turn running, `reply_closes` |
 | `DeliveryRefused` | Alive, nothing written | Expiry with nothing asked: `REFUSED`. Else `SETTLED` | unchanged | Raise |
 | `TransportDead`, or `backend_dead()` | Gone | `SETTLED` | `retry_left = False` | Raise |
 | Any other exception | May have arrived | As returned | As returned | Log |
@@ -154,7 +181,13 @@ The raise reaches the coordinator's `except` around `send_nudge`, which re-evalu
 once: that is how a ready tree publishes after a failed ask, and how B1 fires. An unknown
 send counts as sent because Claude's normal success is a write with no receipt, so "sent"
 already means "may have been dropped", and resending could put the same nudge in front of
-the child twice.
+the child twice. If it never arrived, no turn comes, and the answer window ends in cleanup.
+
+`hold.json` and `rearms.jsonl` sit beside `accepted-signals.json`, for the same reason: spawn
+rows forbid unknown keys. `hold.json` is advisory, for the `spawn wait` checkpoint, and is
+written only when what it says changes, so a work event costs a clock read and a turn end one
+write. It exists only between turns. `rearms.jsonl` is the record `spawn show` reads, appended
+when a rearm is charged, not when the CLI runs, so it holds only rearms that took effect.
 
 A dead transport reaches the hold as a close event, usually before B1 can see it. With no
 turn running and a ready tree, A2 publishes, even with an expiry ask out: a Codex child

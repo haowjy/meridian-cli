@@ -13,7 +13,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.report import extract_or_fallback_report
-from meridian.lib.ops.spawn.models import SpawnSignalInput
+from meridian.lib.ops.spawn.models import SpawnRearmInput
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
@@ -439,7 +439,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         await determinism.sleep(0.18)
 
         result = spawn_api.spawn_rearm_sync(
-            SpawnSignalInput(spawn_id=str(spawn_id)),
+            SpawnRearmInput(spawn_id=str(spawn_id), reason="p2 is still running"),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
         )

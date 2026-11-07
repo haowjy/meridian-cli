@@ -842,6 +842,11 @@ class SpawnSignalInput(BaseModel):
     project_root: str | None = None
 
 
+class SpawnRearmInput(SpawnSignalInput):
+    long: bool = False
+    reason: str | None = None
+
+
 class SpawnStatusInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -922,6 +927,35 @@ class DeniedRequestOutput(BaseModel):
         return f"{what} ({self.reason})" if self.reason else what
 
 
+class RearmOutput(BaseModel):
+    """One granted rearm of the latest run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    at: str
+    long: bool = False
+    reason: str | None = None
+
+
+class CheckpointHold(BaseModel):
+    """What a held child waits on, read from its advisory `hold.json`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    blockers: tuple[str, ...] = ()
+    last_work_at: str | None = None
+    idle_secs: float | None = None
+
+    def format_line(self) -> str:
+        waiting = ", ".join(self.blockers) or "nothing Meridian can see"
+        line = f"    turn ended, waiting on: {waiting}"
+        if self.idle_secs is None:
+            return line
+        if self.idle_secs >= 60:
+            return f"{line}; last work {self.idle_secs / 60:.0f}m ago"
+        return f"{line}; last work {self.idle_secs:.0f}s ago"
+
+
 class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -971,6 +1005,7 @@ class SpawnDetailOutput(BaseModel):
     session_config_dir: str | None = None
     session_log_available: bool = False
     denied_requests: tuple[DeniedRequestOutput, ...] = ()
+    rearms: tuple[RearmOutput, ...] = ()
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -1000,6 +1035,14 @@ class SpawnDetailOutput(BaseModel):
             f"Denied requests ({len(self.denied_requests)}):",
             *(f"  - {request.format_line()}" for request in self.denied_requests),
         ]
+
+    def _rearm_lines(self) -> list[str]:
+        if not self.rearms:
+            return []
+        last = self.rearms[-1]
+        form = " (--long)" if last.long else ""
+        times = "once" if len(self.rearms) == 1 else f"{len(self.rearms)} times"
+        return [f"Rearmed {times}; last{form}: {last.reason or 'no reason given'}"]
 
     def _report_suffix(self) -> str:
         report_text = self._normalized_report_body()
@@ -1102,6 +1145,8 @@ class SpawnDetailOutput(BaseModel):
             wire["report_body"] = self.report_body
         if self.session_config_dir is not None:
             wire["session_config_dir"] = self.session_config_dir
+        if self.rearms:
+            wire["rearms"] = [rearm.model_dump() for rearm in self.rearms]
         if self.denied_requests:
             wire["denied_requests"] = [
                 request.model_dump(mode="json", exclude_none=True)
@@ -1187,6 +1232,7 @@ class SpawnDetailOutput(BaseModel):
             label, value = failure_line
             lines.append(f"{label}: {value}")
         lines.extend(self._denied_requests_lines())
+        lines.extend(self._rearm_lines())
 
         report_text = self._normalized_report_body()
         if report_text is not None:
@@ -1449,6 +1495,7 @@ class SpawnWaitMultiOutput(BaseModel):
     checkpoint_discovery_pending: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
     checkpoint_descendants: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    checkpoint_holds: dict[str, CheckpointHold] = Field(default_factory=dict)
     checkpoint_chat_id: str | None = None
     checkpoint_elapsed_secs: float | None = None
     # Compatibility fields for single-run callers.
@@ -1551,6 +1598,9 @@ class SpawnWaitMultiOutput(BaseModel):
             descendants = self.checkpoint_descendants.get(sid, ())
             if descendants:
                 lines.append(f"    waiting for descendants: {', '.join(descendants)}")
+            hold = self.checkpoint_holds.get(sid)
+            if hold is not None:
+                lines.append(hold.format_line())
         lines.append("")
         if self.checkpoint_chat_id:
             lines.append("Run `meridian spawn wait` again to continue.")
@@ -1583,6 +1633,11 @@ class SpawnWaitMultiOutput(BaseModel):
                 wire["checkpoint_descendants"] = {
                     spawn_id: list(descendants)
                     for spawn_id, descendants in self.checkpoint_descendants.items()
+                }
+            if self.checkpoint_holds:
+                wire["checkpoint_holds"] = {
+                    spawn_id: hold.model_dump(exclude_none=True)
+                    for spawn_id, hold in self.checkpoint_holds.items()
                 }
             if self.checkpoint_elapsed_secs is not None:
                 wire["checkpoint_elapsed_secs"] = round(self.checkpoint_elapsed_secs, 2)

@@ -30,6 +30,7 @@ from meridian.lib.streaming.hold_state import (
     SendResult,
     SpacedLease,
     TurnEnd,
+    WindowLease,
     after_event,
     after_send,
     after_signals,
@@ -37,6 +38,7 @@ from meridian.lib.streaming.hold_state import (
     defers_close,
     next_deadline,
     next_wake,
+    nudge_text,
     outcome_at_close,
 )
 
@@ -83,6 +85,9 @@ ASK = ProfileDecision(action="wait", nudge=True)
 ASK_END = ProfileDecision(action="wait", emit_turn_boundary=True, nudge=True)
 EXPIRY_ASK = ProfileDecision(action="wait", nudge=True, reset_deadline=True)
 PUBLISH = ProfileDecision(action="complete", outcome=GOOD)
+CLOSE = ProfileDecision(action="cleanup", outcome=GOOD, cleanup_reason="closed_by_child")
+REPLY_FAILED = ProfileDecision(action="cleanup", outcome=BAD, cleanup_reason="reply_failed")
+REPLIED = HoldState(ask=AskPhase.SETTLED, asked_at=90.0, reply_closes=True, reply_replaces=True)
 CUT_OFF = ProfileDecision(
     action="cleanup", outcome=CLOSED, cleanup_reason="transport_closed_during_turn"
 )
@@ -97,6 +102,7 @@ def facts(**overrides: Any) -> HoldFacts:
         "candidate": GOOD,
         "assessment": READY,
         "rearm": False,
+        "rearm_long": False,
         "dead": False,
         "accepts_signals": True,
         "skips_ask": False,
@@ -168,6 +174,19 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         ProfileDecision(action="fail", outcome=CLOSED),
         RESET,
     ),
+    # A failed reply keeps its failure, but the ask said closing cancels what runs.
+    ("A5a", REPLIED, {"end": TurnEnd(BAD, TERMINATE), "assessment": BLOCKED}, REPLY_FAILED, RESET),
+    # #902: a `done` read at the close itself, over a task that dies with the harness.
+    (
+        "A4b",
+        HoldState(closing=True),
+        {
+            "end": CLOSED_END,
+            "assessment": WorkAssessment(disposition="blocked", blockers=(TASK,), generation=0),
+        },
+        CLOSE,
+        RESET,
+    ),
     ("B1", replace(SENT, answer=SPENT), {"dead": True}, TIMEOUT, RESET),
     # Delta 1: B1 sits above B2 and above a turn end's publish.
     ("B1", replace(SETTLED, answer=SPENT), {"end": GOOD_END, "dead": True}, TIMEOUT, RESET),
@@ -183,21 +202,44 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         SETTLED,
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
-        HoldState(asked_at=90.0, rearmed=True, stays=True, lease=SpacedLease(360.0)),
+        HoldState(rearmed=True, stays=True, lease=SpacedLease(370.0)),
     ),
     (
         "B2",
         SETTLED,
         {"rearm": True, "end": GOOD_END, "assessment": BLOCKED},
         ProfileDecision(action="abandon_candidate", emit_turn_boundary=True, reset_deadline=True),
-        HoldState(asked_at=90.0, rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD}))),
+        HoldState(rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD}))),
+    ),
+    # `--long` changes nothing while blockers show: only a change or the limit asks.
+    (
+        "B2",
+        SETTLED,
+        {"rearm": True, "rearm_long": True, "assessment": BLOCKED},
+        ProfileDecision(action="abandon_candidate", reset_deadline=True),
+        HoldState(rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD}))),
+    ),
+    (
+        "B2",
+        SETTLED,
+        {"rearm": True, "rearm_long": True},
+        ProfileDecision(action="abandon_candidate", reset_deadline=True),
+        HoldState(rearmed=True, stays=True, lease=WindowLease()),
+    ),
+    # A reply racing its own rearm: the rearm wins, and the pending close goes.
+    (
+        "B2",
+        REPLIED,
+        {"rearm": True, "end": GOOD_END},
+        ProfileDecision(action="abandon_candidate", emit_turn_boundary=True, reset_deadline=True),
+        HoldState(rearmed=True, stays=True, lease=SpacedLease(370.0)),
     ),
     (
         "B2",
         RESET,
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
-        HoldState(rearmed=True, stays=True),
+        HoldState(rearmed=True, stays=True, lease=SpacedLease(370.0)),
     ),
     (
         "C1",
@@ -206,7 +248,71 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         EXPIRY_ASK,
         HoldState(rearmed=True, answer=OPEN),
     ),
-    ("C2", HoldState(rearmed=True), {"candidate": None}, WAIT, None),
+    ("C2", HoldState(rearmed=True, lease=WindowLease()), {"candidate": None}, WAIT, None),
+    ("C2", HoldState(rearmed=True, lease=SpacedLease(200.0)), {"candidate": None}, WAIT, None),
+    (
+        "C2",
+        HoldState(rearmed=True, lease=HeldLease(frozenset({CHILD}))),
+        {"candidate": None, "assessment": BLOCKED},
+        WAIT,
+        None,
+    ),
+    # Unreadable evidence is not a clear.
+    (
+        "C2",
+        HoldState(rearmed=True, lease=HeldLease(frozenset({CHILD}))),
+        {"candidate": None, "assessment": UNKNOWN},
+        WAIT,
+        None,
+    ),
+    # A rearm's spacing runs out at no turn with nothing to publish: the ask with an answer
+    # window, because only a reply or a rearm can end this.
+    (
+        "C1c",
+        HoldState(rearmed=True, stays=True, lease=SpacedLease(100.0)),
+        {"candidate": None},
+        EXPIRY_ASK,
+        HoldState(rearmed=True, stays=True, answer=OPEN),
+    ),
+    (
+        "C1c",
+        HoldState(rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD}))),
+        {"candidate": None},
+        EXPIRY_ASK,
+        HoldState(rearmed=True, stays=True, lease=HeldLease(frozenset({CHILD})), answer=OPEN),
+    ),
+    (
+        "C2",
+        HoldState(rearmed=True, stays=True, ask=AskPhase.SENT, asked_at=99.0),
+        {"candidate": None},
+        WAIT,
+        None,
+    ),
+    # Spacing ends with no turn running, and what is visible by then takes over its lease.
+    (
+        "C2",
+        HoldState(rearmed=True, lease=SpacedLease(100.0)),
+        {"candidate": None, "active_turn": True},
+        WAIT,
+        None,
+    ),
+    (
+        "C2",
+        HoldState(rearmed=True, lease=SpacedLease(100.0)),
+        {"candidate": None, "assessment": BLOCKED},
+        WAIT,
+        HoldState(rearmed=True, lease=HeldLease(frozenset({CHILD}))),
+    ),
+    # A reply closes over anything, with evidence or without. `done` waits for evidence.
+    ("D0", REPLIED, {"end": GOOD_END}, CLOSE, RESET),
+    ("D0", REPLIED, {"end": GOOD_END, "assessment": BLOCKED}, CLOSE, RESET),
+    ("D0", REPLIED, {"end": GOOD_END, "assessment": UNKNOWN}, CLOSE, RESET),
+    ("D0", REPLIED, {"end": GOOD_END, "skips_ask": True, "wake_coming": True}, CLOSE, RESET),
+    # Work in the turn closes `answer`, not the pending close.
+    ("D0", replace(REPLIED, answer=None), {"end": GOOD_END, "expired": True}, CLOSE, RESET),
+    # Away from a turn end the reply has not come yet.
+    ("E6", replace(REPLIED, reply_replaces=False), {"assessment": BLOCKED}, WAIT, None),
+    ("E2", replace(REPLIED, reply_replaces=False), {"active_turn": True}, WAIT, None),
     (
         "D1",
         HoldState(closing=True),
@@ -222,7 +328,8 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         WAIT_END,
         None,
     ),
-    ("D3", HoldState(closing=True), {}, PUBLISH, None),
+    ("D3", HoldState(closing=True), {}, CLOSE, RESET),
+    ("D3", HoldState(closing=True), {"assessment": BLOCKED}, CLOSE, RESET),
     # A wedged `done` is asked, not published.
     (
         "E1",
@@ -283,7 +390,6 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
     # Delta 3: a turn end inside the grace waits and emits a boundary.
     ("E6", SENT, {"end": GOOD_END}, WAIT_END, None),
     ("E6", SETTLED, {"assessment": BLOCKED}, WAIT, None),
-    ("E6", HoldState(rearmed=True), {}, WAIT, None),
     (
         "E6",
         HoldState(lease=HeldLease(frozenset({CHILD}))),
@@ -332,7 +438,7 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
     ("E5a", RESET, {"skips_ask": True, "end": GOOD_END, "wake_coming": True}, SETTLE_END, None),
     ("E2", RESET, {"skips_ask": True, "wake_coming": True, "active_turn": True}, WAIT, None),
     ("E6", RESET, {"skips_ask": True, "wake_coming": True, "assessment": BLOCKED}, WAIT, None),
-    ("D3", HoldState(closing=True), {"skips_ask": True, "wake_coming": True}, PUBLISH, None),
+    ("D3", HoldState(closing=True), {"skips_ask": True, "wake_coming": True}, CLOSE, RESET),
     # The turn end that answers a wake uses the fact up, whatever it decides.
     (
         "E5",
@@ -347,7 +453,7 @@ ROWS: list[tuple[str, HoldState, dict[str, Any], ProfileDecision, HoldState | No
         HoldState(woken=frozenset({"p2:1"})),
         {"rearm": True},
         ProfileDecision(action="abandon_candidate", reset_deadline=True),
-        HoldState(rearmed=True, stays=True, woken=frozenset({"p2:1"})),
+        HoldState(rearmed=True, stays=True, lease=SpacedLease(370.0), woken=frozenset({"p2:1"})),
     ),
 ]
 
@@ -419,7 +525,7 @@ QUIET_PARENT: list[tuple[HoldState, dict[str, Any], ProfileDecision]] = [
     (RESET, {"assessment": UNKNOWN}, WAIT),
     (SENT, {}, WAIT),
     (RESET, {"accepts_signals": False}, PUBLISH),
-    (HoldState(closing=True), {}, PUBLISH),  # `done` is the child's own word
+    (HoldState(closing=True), {}, CLOSE),  # `done` is the child's own word
     (WOKEN_FIRST, {"skips_ask": True}, PUBLISH),  # woken and said nothing more
     (WOKEN_FIRST, {}, ASK),
 ]
@@ -436,7 +542,7 @@ def test_no_wake(before: HoldState, overrides: dict[str, Any], decision: Profile
 EXPIRY = HoldState(answer=OPEN)
 REFUSED_EXPIRY = HoldState(ask=AskPhase.REFUSED, answer=OPEN)
 SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
-    ("expiry delivered", EXPIRY, SendResult.SENT, HoldState(ask=AskPhase.SENT, answer=SPENT)),
+    ("mid-turn expiry", EXPIRY, SendResult.SENT, HoldState(ask=AskPhase.SENT, answer=SPENT)),
     (
         "expiry retry delivered",
         replace(REFUSED_EXPIRY, answer=SPENT),
@@ -461,11 +567,28 @@ SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
 @pytest.mark.parametrize(("kind", "before", "result", "after"), SENDS)
 def test_send(kind: str, before: HoldState, result: SendResult, after: HoldState) -> None:
     del kind
-    assert after_send(before, result, now=100.0) == replace(after, asked_at=100.0)
+    assert after_send(before, result, now=100.0, active_turn=True) == replace(after, asked_at=100.0)
+
+
+def test_only_an_expiry_ask_between_turns_closes_on_its_reply() -> None:
+    landed = HoldState(
+        ask=AskPhase.SENT, asked_at=100.0, answer=SPENT, reply_closes=True, reply_replaces=True
+    )
+    assert after_send(EXPIRY, SendResult.SENT, now=100.0, active_turn=False) == landed
+    assert after_send(EXPIRY, SendResult.REFUSED, now=100.0, active_turn=False) == replace(
+        REFUSED_EXPIRY, asked_at=100.0
+    )
+    assert after_send(RESET, SendResult.SENT, now=100.0, active_turn=False) == HoldState(
+        ask=AskPhase.SENT, asked_at=100.0
+    )
+    # A later mid-turn ask does not cancel a pending close.
+    assert after_send(
+        replace(landed, answer=OPEN), SendResult.SENT, now=101.0, active_turn=True
+    ) == (replace(landed, asked_at=101.0))
 
 
 def test_grace_starts_when_the_send_ends() -> None:
-    folded = after_send(RESET, SendResult.SENT, now=100.0)
+    folded = after_send(RESET, SendResult.SENT, now=100.0, active_turn=False)
     assert folded.asked_at == 100.0
     assert decide(folded, facts()).decision == WAIT
 
@@ -556,23 +679,74 @@ def test_signals(
     assert after_signals(before, done=done, rearm=rearm) == (after, stands)
 
 
-# state, has a candidate, wake. The grace is 5 s.
+# state, a turn running, wake. The grace is 5 s.
 WAKES: list[tuple[HoldState, bool, float | None]] = [
-    (RESET, True, None),
-    (SETTLED, True, None),
-    (SENT, True, 104.0),
+    (RESET, False, None),
+    (SETTLED, False, None),
     (SENT, False, 104.0),
-    (HoldState(lease=SpacedLease(200.0)), True, 200.0),
-    (HoldState(lease=SpacedLease(200.0)), False, None),
-    (replace(SENT, lease=SpacedLease(101.0)), True, 101.0),
-    (replace(SENT, lease=SpacedLease(200.0)), True, 104.0),
-    (HoldState(lease=HeldLease(frozenset({CHILD}))), True, None),
+    (SENT, True, 104.0),
+    (HoldState(lease=SpacedLease(200.0)), False, 200.0),
+    # Spacing restarts at the turn's end, so a due lease must not spin through the turn.
+    (HoldState(lease=SpacedLease(50.0)), True, None),
+    (replace(SENT, lease=SpacedLease(101.0)), False, 101.0),
+    (replace(SENT, lease=SpacedLease(200.0)), False, 104.0),
+    (HoldState(lease=HeldLease(frozenset({CHILD}))), False, None),
+    (HoldState(lease=WindowLease()), False, None),
 ]
 
 
-@pytest.mark.parametrize(("state", "has_candidate", "wake"), WAKES)
-def test_wake(state: HoldState, has_candidate: bool, wake: float | None) -> None:
-    assert next_wake(state, 5.0, has_candidate=has_candidate) == wake
+@pytest.mark.parametrize(("state", "active_turn", "wake"), WAKES)
+def test_wake(state: HoldState, active_turn: bool, wake: float | None) -> None:
+    assert next_wake(state, 5.0, active_turn=active_turn) == wake
+
+
+def test_spacing_restarts_at_each_turn_end() -> None:
+    state = HoldState(rearmed=True, stays=True, lease=SpacedLease(50.0))
+    assert decide(state, facts(end=GOOD_END)).state.lease == SpacedLease(370.0)
+
+
+# state, blockers, has a candidate, skips the ask, a turn running; what must and must not show
+ASK_TEXT: list[
+    tuple[
+        HoldState, tuple[DiagnosticBlocker, ...], bool, bool, bool, tuple[str, ...], tuple[str, ...]
+    ]
+] = [
+    # The ask between turns names what runs and what closing stops.
+    (
+        EXPIRY,
+        (CHILD, TASK),
+        True,
+        True,
+        False,
+        ("spawns p2", "background tasks t1", "cancels those spawns", "stops those background"),
+        ("spawn wait", "spawn done"),
+    ),
+    (EXPIRY, (), True, True, False, ("Nothing Meridian can see", "rearm --reason"), ("Closing",)),
+    (EXPIRY, (), False, False, False, ("your reply is this spawn's report", "--long"), ()),
+    # A mid-turn expiry keeps #886's nudge: the reply closes nothing there.
+    (EXPIRY, (CHILD,), True, True, True, ("spawn done", "Finishing cancels"), ("spawn wait",)),
+    # The turn-end ask keeps its report rule, and loses `spawn wait`.
+    (RESET, (CHILD,), True, False, False, ("is kept", "spawn done"), ("spawn wait",)),
+]
+
+
+@pytest.mark.parametrize(
+    ("state", "blockers", "candidate", "skips", "active", "shown", "hidden"), ASK_TEXT
+)
+def test_nudge_text(
+    state: HoldState,
+    blockers: tuple[DiagnosticBlocker, ...],
+    candidate: bool,
+    skips: bool,
+    active: bool,
+    shown: tuple[str, ...],
+    hidden: tuple[str, ...],
+) -> None:
+    text = nudge_text(
+        state, blockers, (), has_candidate=candidate, skips_ask=skips, active_turn=active
+    )
+    assert all(part in text for part in shown), text
+    assert not any(part in text for part in hidden), text
 
 
 # state, action, deadline: 300 s after now while `answer` is open, otherwise the window

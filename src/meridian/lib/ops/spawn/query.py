@@ -12,9 +12,10 @@ from meridian.lib.state import pi_lifecycle, session_store, spawn_store
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_signals import read_rearms
 from meridian.lib.state.spawn_status import read_derived
 
-from .models import DeniedRequestOutput, SpawnDetailOutput
+from .models import DeniedRequestOutput, RearmOutput, SpawnDetailOutput
 
 _RUNNING_LOG_MESSAGE_LIMIT = 120
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
@@ -222,6 +223,15 @@ def spawn_session_log_available(
     return record is not None and record.native_key() is not None
 
 
+def _rearms(launch: LaunchPaths | None) -> tuple[RearmOutput, ...]:
+    if launch is None:
+        return ()
+    return tuple(
+        RearmOutput(at=record.at, long=record.long, reason=record.reason)
+        for record in read_rearms(launch)
+    )
+
+
 def detail_from_row(
     *,
     project_root: Path,
@@ -285,6 +295,7 @@ def detail_from_row(
         last_message=last_message,
         last_attempt_exited_at=row.last_attempt_exited_at,
         last_attempt_exit_code=row.last_attempt_exit_code,
+        rearms=_rearms(launch),
         session_config_dir=row.claude_config_dir,
         session_log_available=(
             False

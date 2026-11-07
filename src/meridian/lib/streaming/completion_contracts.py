@@ -100,6 +100,7 @@ class CompletionDirectives:
 
     done: bool = False
     rearm: bool = False
+    rearm_long: bool = False
 
 
 @dataclass(frozen=True)

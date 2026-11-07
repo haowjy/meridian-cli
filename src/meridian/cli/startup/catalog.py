@@ -316,7 +316,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         default_output_mode="text",
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
-    _write_runtime(("spawn", "rearm"), "Reject completion and open a new child window."),
+    _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
     _write_runtime(
         ("spawn", "message"),
         "Send a message to a running spawn.",

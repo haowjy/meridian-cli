@@ -619,6 +619,14 @@ class LaunchPaths:
         return self.dir / "accepted-signals.json"
 
     @property
+    def hold_status(self) -> Path:
+        return self.dir / "hold.json"
+
+    @property
+    def rearm_log(self) -> Path:
+        return self.dir / "rearms.jsonl"
+
+    @property
     def done_signal(self) -> Path:
         return self.dir / "done.signal"
 
