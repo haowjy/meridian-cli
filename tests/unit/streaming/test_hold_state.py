@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     CompletionState,
@@ -476,7 +477,7 @@ def test_row(
 # state before, facts, children named, state after. Only a ready tree with no turn running
 # wakes, because anything else still has a turn to come.
 WOKEN_FIRST = HoldState(woken=frozenset({"p2:1"}))
-ANSWERING_FIRST = replace(WOKEN_FIRST, reply_replaces=True)
+ANSWERING_FIRST = HoldState(reply_replaces=True)
 WAKES_PARENT: list[tuple[HoldState, dict[str, Any], tuple[FinishedChild, ...], HoldState]] = [
     (RESET, {"unread": (FIRST,)}, (FIRST,), ANSWERING_FIRST),
     # On both kinds of harness, and with no candidate after a rearm.
@@ -485,37 +486,21 @@ WAKES_PARENT: list[tuple[HoldState, dict[str, Any], tuple[FinishedChild, ...], H
         HoldState(rearmed=True),
         {"unread": (FIRST,), "candidate": None},
         (FIRST,),
-        HoldState(rearmed=True, woken=frozenset({"p2:1"}), reply_replaces=True),
+        HoldState(rearmed=True, reply_replaces=True),
     ),
     # A rearm's quiet covers a turn end, not what the child has not read.
     (
         HoldState(lease=SpacedLease(200.0)),
         {"unread": (FIRST,)},
         (FIRST,),
-        HoldState(lease=SpacedLease(200.0), woken=frozenset({"p2:1"}), reply_replaces=True),
+        HoldState(lease=SpacedLease(200.0), reply_replaces=True),
     ),
     # Once each: a second child gets its own wake, naming only it.
     (
         WOKEN_FIRST,
         {"unread": (FIRST, SECOND)},
         (SECOND,),
-        HoldState(woken=frozenset({"p2:1", "p3:1"}), reply_replaces=True),
-    ),
-    # A refused ask marked nothing, so a ready tree still wakes rather than publishes.
-    (
-        HoldState(
-            ask=AskPhase.REFUSED,
-            answer=AnswerWindow(retry_left=True, owed=(FIRST,)),
-            reply_replaces=True,
-        ),
-        {"unread": (FIRST,)},
-        (FIRST,),
-        HoldState(
-            ask=AskPhase.REFUSED,
-            answer=AnswerWindow(retry_left=True, owed=(FIRST,)),
-            woken=frozenset({"p2:1"}),
-            reply_replaces=True,
-        ),
+        HoldState(woken=frozenset({"p2:1"}), reply_replaces=True),
     ),
 ]
 
@@ -534,7 +519,7 @@ def test_wake_parent(
 
 
 # The expiry ask names what no wake has, with blockers too, because a reply to it closes.
-NAMED = HoldState(answer=AnswerWindow(retry_left=True, owed=(SECOND,)), reply_replaces=True)
+NAMED = HoldState(answer=AnswerWindow(retry_left=True), reply_replaces=True)
 ASKS_NAME: list[tuple[str, HoldState, dict[str, Any], tuple[FinishedChild, ...], HoldState]] = [
     ("C1", RESET, {"candidate": None, "expired": True}, (SECOND,), NAMED),
     ("E1", RESET, {"expired": True, "assessment": BLOCKED}, (SECOND,), NAMED),
@@ -555,9 +540,17 @@ ASKS_NAME: list[tuple[str, HoldState, dict[str, Any], tuple[FinishedChild, ...],
         (SECOND,),
         HoldState(
             ask=AskPhase.REFUSED,
-            answer=AnswerWindow(retry_left=False, owed=(SECOND,)),
+            answer=SPENT,
             reply_replaces=True,
         ),
+    ),
+    # A refused wake marked nothing, so the expiry ask names the child.
+    (
+        "E1",
+        HoldState(ask=AskPhase.REFUSED, asked_at=90.0, reply_replaces=True),
+        {"expired": True},
+        (SECOND,),
+        HoldState(ask=AskPhase.REFUSED, asked_at=90.0, answer=OPEN, reply_replaces=True),
     ),
     # Woken before: the ask has nothing new to name.
     (
@@ -608,6 +601,51 @@ def test_no_wake(before: HoldState, overrides: dict[str, Any], decision: Profile
 # kind, before the send (as `decide` left it), result, after; every attempt stamps `asked_at`
 EXPIRY = HoldState(answer=OPEN)
 REFUSED_EXPIRY = HoldState(ask=AskPhase.REFUSED, answer=OPEN)
+# Sends that name SECOND: only delivery, or a dead backend, marks it `woken`.
+NAMING_SENDS: list[tuple[HoldState, SendResult, HoldState]] = [
+    (RESET, SendResult.SENT, HoldState(ask=AskPhase.SENT, woken=frozenset({"p3:1"}))),
+    (RESET, SendResult.REFUSED, HoldState(ask=AskPhase.REFUSED)),
+    (SETTLED, SendResult.REFUSED, HoldState(ask=AskPhase.REFUSED)),
+    (RESET, SendResult.DEAD, HoldState(ask=AskPhase.SETTLED, woken=frozenset({"p3:1"}))),
+    (
+        NAMED,
+        SendResult.SENT,
+        HoldState(ask=AskPhase.SENT, answer=SPENT, woken=frozenset({"p3:1"}), reply_replaces=True),
+    ),
+    (NAMED, SendResult.REFUSED, replace(NAMED, ask=AskPhase.REFUSED)),
+]
+
+
+@pytest.mark.parametrize(("before", "result", "after"), NAMING_SENDS)
+def test_a_send_marks_only_what_it_delivered(
+    before: HoldState, result: SendResult, after: HoldState
+) -> None:
+    folded = after_send(before, result, now=100.0, active_turn=True, wake=(SECOND,))
+    assert folded == replace(after, asked_at=100.0)
+
+
+def test_a_refused_wake_holds_quietly_until_the_expiry_ask() -> None:
+    owed = {"unread": (FIRST,)}
+    woke = decide(RESET, facts(**owed))
+    refused = after_send(
+        woke.state, SendResult.REFUSED, now=100.0, active_turn=False, wake=woke.wake
+    )
+
+    # The re-evaluation a failed send triggers neither repeats the wake nor publishes.
+    assert decide(refused, facts(**owed)).decision == WAIT
+    assert decide(refused, facts(**owed, candidate=None)).decision == WAIT
+    # With nothing left unread, a ready tree publishes as it would after any refused ask.
+    assert decide(refused, facts()).decision == PUBLISH
+
+    # A turn end is a new chance.
+    assert decide(refused, facts(**owed, end=GOOD_END)).decision == ASK_END
+    assert decide(refused, facts(**owed, end=GOOD_END)).wake == (FIRST,)
+
+    asked = decide(refused, facts(**owed, expired=True))
+    assert asked.decision == EXPIRY_ASK
+    assert asked.wake == (FIRST,)
+
+
 SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
     ("mid-turn expiry", EXPIRY, SendResult.SENT, HoldState(ask=AskPhase.SENT, answer=SPENT)),
     (
@@ -617,23 +655,6 @@ SENDS: list[tuple[str, HoldState, SendResult, HoldState]] = [
         HoldState(ask=AskPhase.SENT, answer=SPENT),
     ),
     ("turn end delivered", RESET, SendResult.SENT, HoldState(ask=AskPhase.SENT)),
-    (
-        "expiry naming a child delivered",
-        NAMED,
-        SendResult.SENT,
-        HoldState(
-            ask=AskPhase.SENT,
-            answer=SPENT,
-            woken=frozenset({"p3:1"}),
-            reply_replaces=True,
-        ),
-    ),
-    (
-        "expiry naming a child refused",
-        NAMED,
-        SendResult.REFUSED,
-        replace(NAMED, ask=AskPhase.REFUSED),
-    ),
     ("expiry refused, unasked", EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
     ("expiry refused again", REFUSED_EXPIRY, SendResult.REFUSED, REFUSED_EXPIRY),
     (
@@ -839,7 +860,7 @@ def test_nudge_text(
     shown: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
-    wake = state.answer.owed if state.answer is not None else ()
+    wake = (SECOND,) if state == NAMED else ()
     text = nudge_text(
         state, blockers, wake, has_candidate=candidate, skips_ask=skips, active_turn=active
     )
@@ -877,3 +898,14 @@ def test_events() -> None:
     assert after_event(REFUSED, turn_started=False, work_in_turn=True) == replace(
         REFUSED, ask=AskPhase.UNASKED, answer=None
     )
+
+
+def test_a_turn_with_no_text_keeps_the_report() -> None:
+    facts = AttemptFacts()
+    facts.set_text("first")
+    facts.capture_completion_candidate()
+
+    facts.final_text = None  # Codex: the answering turn only ran a command
+    facts.capture_completion_candidate()
+
+    assert facts.completion_text == "first"

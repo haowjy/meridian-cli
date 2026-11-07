@@ -42,7 +42,7 @@ BACKEND_DEAD_OUTCOME = TerminalEventOutcome(
 
 class AskPhase(StrEnum):
     UNASKED = "unasked"  # nothing asked since the last reset
-    REFUSED = "refused"  # an expiry ask was refused, so nothing reached the child; `answer` is open
+    REFUSED = "refused"  # an expiry ask or a wake was refused, so nothing reached the child
     SENT = "sent"  # sent; a turn should start within the grace
     SETTLED = "settled"  # a turn started, the grace passed, or the send failed
 
@@ -62,7 +62,6 @@ class AnswerWindow:
     """Open from an expiry ask until the child works."""
 
     retry_left: bool
-    owed: tuple[FinishedChild, ...] = ()  # what the ask names, `woken` once it is delivered
 
 
 @dataclass(frozen=True)
@@ -98,7 +97,7 @@ class HoldState:
     rearmed: bool = False  # the next good turn end is the next candidate
     closing: bool = False  # `done` latched
     stays: bool = False  # a rearm stands: only an ask can end it, even where turn ends skip one
-    woken: frozenset[str] = frozenset()  # owed launches a wake has named
+    woken: frozenset[str] = frozenset()  # owed launches a delivered ask or wake has named
     reply_replaces: bool = False  # a wake or an ask between turns: the answer is the report
     reply_closes: bool = False  # an expiry ask landed between turns: the next turn end closes
 
@@ -300,9 +299,19 @@ def after_event(state: HoldState, *, turn_started: bool, work_in_turn: bool) -> 
     return state
 
 
-def after_send(state: HoldState, result: SendResult, *, now: float, active_turn: bool) -> HoldState:
+def after_send(
+    state: HoldState,
+    result: SendResult,
+    *,
+    now: float,
+    active_turn: bool,
+    wake: tuple[FinishedChild, ...] = (),
+) -> HoldState:
     """Fold one send attempt at the time it ended. An open `answer` means expiry kind."""
     state = replace(state, asked_at=now)
+    if result is not SendResult.REFUSED:
+        # A dead backend has nobody left to tell, and an unmarked wake would repeat at once.
+        state = replace(state, woken=state.woken | {child.key for child in wake})
     if result is SendResult.SENT:
         if state.answer is None:
             return replace(state, ask=AskPhase.SENT)
@@ -313,13 +322,14 @@ def after_send(state: HoldState, result: SendResult, *, now: float, active_turn:
             state,
             ask=AskPhase.SENT,
             answer=AnswerWindow(retry_left=False),
-            woken=state.woken | {child.key for child in state.answer.owed},
             reply_closes=state.reply_closes or landed,
             reply_replaces=state.reply_replaces or landed,
         )
     if result is SendResult.DEAD and state.answer is not None:
         state = replace(state, answer=AnswerWindow(retry_left=False))
-    if result is SendResult.REFUSED and state.answer is not None and state.ask in _NOTHING_ASKED:
+    if result is SendResult.REFUSED and (
+        wake or (state.answer is not None and state.ask in _NOTHING_ASKED)
+    ):
         return replace(state, ask=AskPhase.REFUSED)
     return replace(state, ask=AskPhase.SETTLED)
 
@@ -363,10 +373,10 @@ def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
             reset_deadline=True,
         )
         # A reply closes with blockers too, so this ask can't leave what is owed to a wake.
-        wake = tuple(child for child in facts.unread if child.key not in state.woken)
+        wake = _owed(state, facts)
         held = replace(
             state,
-            answer=AnswerWindow(retry_left=state.answer is None, owed=wake),
+            answer=AnswerWindow(retry_left=state.answer is None),
             reply_replaces=state.reply_replaces or bool(wake),
         )
         return HoldStep(held, decision, wake=wake)
@@ -375,28 +385,33 @@ def _expiry(state: HoldState, facts: HoldFacts) -> HoldStep:
 
 def _wake(state: HoldState, facts: HoldFacts) -> HoldStep | None:
     """Name what the parent is owed, once each, when nothing runs and no turn will come."""
+    # A failed send re-evaluates at once, so a refusal waits for a turn end or the expiry ask.
     if (
         not facts.accepts_signals
         or facts.active_turn
         or state.ask is AskPhase.SENT
+        or (state.ask is AskPhase.REFUSED and facts.end is None)
         or facts.assessment.disposition != "ready"
     ):
         return None
-    wake = tuple(child for child in facts.unread if child.key not in state.woken)
+    wake = _owed(state, facts)
     if not wake:
         return None
-    # Marked here, whatever the send does: a failed send re-evaluates at once.
-    woken = state.woken | {child.key for child in wake}
-    step = _wait(replace(state, woken=woken, reply_replaces=True), facts, nudge=True)
+    step = _wait(replace(state, reply_replaces=True), facts, nudge=True)
     return replace(step, wake=wake)
 
 
+def _owed(state: HoldState, facts: HoldFacts) -> tuple[FinishedChild, ...]:
+    return tuple(child for child in facts.unread if child.key not in state.woken)
+
+
 def _settled(state: HoldState, facts: HoldFacts) -> bool:
-    # A refused expiry ask: a ready tree may still publish.
+    # A refused expiry ask: a ready tree may still publish, once nothing is left unnamed.
     return (
         not facts.accepts_signals
         or (facts.skips_ask and not state.stays and state.ask is AskPhase.UNASKED)
-        or state.ask in {AskPhase.SETTLED, AskPhase.REFUSED}
+        or state.ask is AskPhase.SETTLED
+        or (state.ask is AskPhase.REFUSED and not _owed(state, facts))
     )
 
 

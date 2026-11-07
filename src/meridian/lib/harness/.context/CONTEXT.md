@@ -133,7 +133,9 @@ a successful answer closes the idle stretch and re-arms it. Only permission wait
 tracked. Interrupted foreground work can end after the terminal event, so deletion and
 failure events must also end tracking.
 
-The event stream is live-only. On reconnect, the idle sensor reconciles the primary's
+The event stream is live-only, so a headless start subscribes before it posts the first
+prompt: a quick turn that ended before the drain attached would lose its text and, once
+`events()` returned, its hold. On reconnect, the idle sensor reconciles the primary's
 activity and known work; starts and complete turns lost in the gap cannot be recovered.
 A failed work reconciliation drops the hold rather than waiting forever. The shell
 listing is location-scoped: use the session location, not the ignored `directory` query.

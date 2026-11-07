@@ -44,6 +44,9 @@ class AttemptFacts:
 
     def capture_completion_candidate(self) -> None:
         """Preserve the report that preceded a completion-control turn."""
+        # Codex clears `final_text` at each command, so a `done`-only turn ends with none.
+        if self.final_text is None:
+            return
         self.completion_text = self.final_text
         self.completion_text_capped = self.text_capped
 

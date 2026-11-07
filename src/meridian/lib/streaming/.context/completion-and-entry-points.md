@@ -69,10 +69,12 @@ in one read, the later file timestamp wins (a tie favors `rearm`); `done` waits 
 Wake a parent for unread child results, not merely for a blocker clearing: a child can finish
 while the parent is in a turn and never appear as a blocker. Wake only on a ready tree and
 name each owed launch once. A `done` takes precedence over a wake. A wake requests new work,
-so its answer replaces the report. Every expiry ask also names unwoken owed results: its
-reply may close over remaining blockers before a later wake is possible. Mark those results
-woken only after the ask is delivered, so a refused ask cannot hide them. A regular wake is
-marked before sending, so a failed send cannot trigger an immediate retry loop.
+so its answer replaces the report; an answer with no text leaves it. Every expiry ask also names unwoken owed results: its
+reply may close over remaining blockers before a later wake is possible. Mark results woken
+only after the ask or wake is delivered, so a refusal cannot hide them. A failed send
+re-evaluates at once, so a refusal must not repeat there: the hold sends nothing more until a
+turn end or the next expiry, and does not publish while a result is unnamed. An expiry ask
+refused twice ends in the idle cleanup.
 
 The send grace (`ASK_GRACE_SECONDS`, 30 s for every harness, independent of the poll) starts when
 the attempt ends; a turn start ends it at once. OpenCode marks a turn active only at its first
@@ -84,7 +86,7 @@ after its 300 s answer window; work inside the turn closes that window.
 | Outcome of `deliver` | Means | `ask` | `answer` | Then |
 |---|---|---|---|---|
 | Returned | Send did not fail; without a receipt this is `posted`, not proof of delivery | `SENT` | If open, `retry_left = False` | With an open window and no turn running, `reply_closes` |
-| `DeliveryRefused` | Alive, nothing written | Expiry with nothing asked: `REFUSED`. Else `SETTLED` | unchanged | Raise |
+| `DeliveryRefused` | Alive, nothing written | A wake, or expiry with nothing asked: `REFUSED`. Else `SETTLED` | unchanged | Raise |
 | `TransportDead`, or `backend_dead()` | Gone | `SETTLED` | If open, `retry_left = False` | Raise |
 | Any other exception | May have arrived | `SENT` | If open, `retry_left = False` | Log; with no turn running and an open window, `reply_closes` |
 
