@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.connections.base import HarnessRequest
-from meridian.lib.harness.connections.opencode_http import permission_liveness_key
+from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.base import ConnectionConfig, HarnessRequest
+from meridian.lib.harness.connections.opencode_http import (
+    OpenCodeV1Connection,
+    permission_liveness_key,
+)
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from tests.support.launch_paths import launch_paths
 
 
 class _TestableOpenCodeV2Connection(OpenCodeV2Connection):
@@ -68,6 +74,48 @@ def _spec(
         model=model,
         continue_session_id=continue_session_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_v2_subscribes_before_the_first_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The stream is live-only: a quick first turn must not end before it is attached."""
+    order: list[str] = []
+    stream = object()
+
+    async def open_stream(_self: OpenCodeV1Connection) -> object:
+        order.append("subscribe")
+        return stream
+
+    class _Started(_TestableOpenCodeV2Connection):
+        async def _launch_process(self, config: object, spec: object) -> None:
+            pass
+
+        async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
+            pass
+
+        async def _create_session_with_retry(self, spec: object, *, timeout_seconds: float) -> str:
+            return "ses_1"
+
+        async def _post_session_message(self, *args: object, **kwargs: object) -> None:
+            order.append("prompt")
+
+    monkeypatch.setattr(OpenCodeV1Connection, "_open_event_stream", open_stream)
+    connection = _Started()
+    config = ConnectionConfig(
+        launch=launch_paths(tmp_path, SpawnId("p1")),
+        harness_id=HarnessId.OPENCODE,
+        prompt="hello",
+        control_root=tmp_path,
+        child_env={},
+    )
+
+    await connection.start(config, _spec())
+
+    assert order == ["subscribe", "prompt"]
+    assert await connection._open_event_stream() is stream  # pyright: ignore[reportPrivateUsage]
+    assert order == ["subscribe", "prompt"]
 
 
 @pytest.mark.asyncio

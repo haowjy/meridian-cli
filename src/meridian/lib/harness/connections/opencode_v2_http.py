@@ -152,6 +152,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         self._server_password: str | None = None
         self._stdout_drain_task: asyncio.Task[None] | None = None
         self._initial_prompt_posted_at: float | None = None
+        self._subscribed_stream: aiohttp.ClientResponse | None = None
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
@@ -478,13 +479,21 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             return
         super()._note_tui_session(event)
 
-    async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
-        """Synthesize a terminal the live ``/api/event`` stream may have missed.
+    async def _subscribe_before_prompt(self) -> None:
+        # ``/api/event`` is live-only: a turn that ends before the drain attaches
+        # would lose its text, and ``events()`` must stay open for a held child.
+        self._subscribed_stream = await self._open_event_stream()
 
-        ``start()`` posts the initial prompt before the drain loop attaches to
-        ``events()``. V2's stream is live-only, so a turn that finishes in that
-        gap loses its terminal frame. Read the durable session outcome and accept
-        it only when the session was updated at/after the prompt was posted.
+    async def _open_event_stream(self) -> aiohttp.ClientResponse:
+        stream, self._subscribed_stream = self._subscribed_stream, None
+        return stream if stream is not None else await super()._open_event_stream()
+
+    async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
+        """Read the durable outcome when the live stream goes silent.
+
+        The stream is live-only, so a terminal sent while it was dropped never
+        arrives, and the connection would otherwise declare a stall. Accept the
+        outcome only when the session went idle at/after the prompt was posted.
         """
 
         if self._initial_prompt_posted_at is None:
@@ -538,20 +547,6 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             raw_text=None,
         )
 
-    async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
-        """Re-poll the durable outcome when the live stream goes silent.
-
-        The pre-subscribe reconcile in ``events()`` reads the session once before
-        attaching to ``/api/event``. A turn that terminates in the gap between
-        that read and the subscribe leaves the live-only stream silent, so the
-        connection would otherwise wait out the liveness timeout and declare a
-        stall. Re-poll through the same guarded helper so the durable terminal
-        that landed in the gap is observed instead. The helper's strict
-        ``time.idle >= prompt-post`` guard still rejects prior-turn outcomes.
-        """
-
-        return await self._reconcile_initial_terminal()
-
     def _session_running_from_status(self, payload: object, session_id: str) -> bool:
         """Read the active-session listing: presence means the turn is executing."""
 
@@ -565,6 +560,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._server_password = None
+        self._subscribed_stream = None  # closed with the client
         await super()._cleanup_runtime()
 
 

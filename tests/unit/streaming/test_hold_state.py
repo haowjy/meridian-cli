@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     CompletionState,
@@ -877,3 +878,14 @@ def test_events() -> None:
     assert after_event(REFUSED, turn_started=False, work_in_turn=True) == replace(
         REFUSED, ask=AskPhase.UNASKED, answer=None
     )
+
+
+def test_a_turn_with_no_text_keeps_the_report() -> None:
+    facts = AttemptFacts()
+    facts.set_text("first")
+    facts.capture_completion_candidate()
+
+    facts.final_text = None  # Codex: the answering turn only ran a command
+    facts.capture_completion_candidate()
+
+    assert facts.completion_text == "first"

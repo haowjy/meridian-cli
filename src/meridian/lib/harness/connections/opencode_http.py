@@ -686,6 +686,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 and endpoint.attach_style == "server"
             )
             if not attach_owns_prompt:
+                await self._subscribe_before_prompt()
                 await self._post_session_message(
                     config.prompt,
                     fresh=not bool(spec.continue_session_id),
@@ -771,26 +772,19 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             raise
         self._cancel_requested = True
 
-    async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
-        """Return a terminal event missed by the prompt-before-subscribe window.
+    async def _subscribe_before_prompt(self) -> None:
+        """Attach to the event stream before the first prompt, if frames could be lost.
 
-        ``start()`` posts the initial prompt before the drain loop attaches to
-        ``events()``. A turn that fails (or succeeds) in that gap can lose its
-        terminal frame. The 1.x server replays pre-subscription frames on
-        ``/global/event``, so this hook is a no-op here; V2 overrides it because
-        its ``/api/event`` stream is live-only.
+        The 1.x server replays pre-subscription frames on ``/global/event``, so
+        ``events()`` may attach after the prompt. V2's stream is live-only.
         """
-
-        return None
 
     async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
         """Recover a terminal the live stream may have missed on a stall.
 
-        ``events()`` subscribes after the initial prompt in ``start()``. A turn
-        that finishes in that gap can lose its terminal frame. The 1.x server
-        replays pre-subscription frames, so the stream itself recovers it and
-        this hook is a no-op; V2 overrides it because ``/api/event`` is
-        live-only. Called once, right before a stall becomes terminal.
+        The 1.x server replays frames a dropped stream missed, so this hook is a
+        no-op; V2 overrides it because ``/api/event`` is live-only. Called once,
+        right before a stall becomes terminal.
         """
 
         return None
@@ -932,13 +926,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             return
         if self._session_id is None:
             return
-
-        if not self._primary_observer_mode:
-            reconciled = await self._reconcile_initial_terminal()
-            if reconciled is not None:
-                self._liveness.mark_activity()
-                yield reconciled
-                return
 
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []

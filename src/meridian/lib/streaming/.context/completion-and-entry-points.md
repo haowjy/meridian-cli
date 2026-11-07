@@ -69,7 +69,7 @@ in one read, the later file timestamp wins (a tie favors `rearm`); `done` waits 
 Wake a parent for unread child results, not merely for a blocker clearing: a child can finish
 while the parent is in a turn and never appear as a blocker. Wake only on a ready tree and
 name each owed launch once. A `done` takes precedence over a wake. A wake requests new work,
-so its answer replaces the report. Every expiry ask also names unwoken owed results: its
+so its answer replaces the report; an answer with no text leaves it. Every expiry ask also names unwoken owed results: its
 reply may close over remaining blockers before a later wake is possible. Mark those results
 woken only after the ask is delivered, so a refused ask cannot hide them. A regular wake is
 marked before sending, so a failed send cannot trigger an immediate retry loop.
