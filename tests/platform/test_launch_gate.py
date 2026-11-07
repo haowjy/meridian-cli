@@ -401,7 +401,8 @@ def test_native_cancel_leaves_one_term_to_scope_owner(tmp_path: Path) -> None:
 
     from meridian.lib.launch.process.native_launcher import NativeProcessLauncher
     from meridian.lib.launch.process.ports import TerminalFds
-    from meridian.lib.platform.process_scope import scope_from_identity, terminate_scope_sync
+    from meridian.lib.platform.process_scope.base import scope_from_identity
+    from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 
     signals = tmp_path / "signals"
     ready = tmp_path / "ready"

@@ -81,10 +81,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform.process_scope import (
-    ProcessScopeSnapshot,
-    ScopedProcessHandle,
-)
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, ScopedProcessHandle
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0

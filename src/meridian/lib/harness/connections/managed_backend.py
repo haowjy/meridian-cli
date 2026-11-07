@@ -13,10 +13,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import reap_on_ownership_transfer_failure
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
-from meridian.lib.platform.process_scope import (
-    ScopedProcessHandle,
-    scope_from_identity,
-)
+from meridian.lib.platform.process_scope.base import ScopedProcessHandle, scope_from_identity
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import record_scope
 

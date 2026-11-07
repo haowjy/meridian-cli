@@ -20,7 +20,7 @@ from meridian.lib.harness.connections.managed_backend import (
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.launch_gate import LaunchGate
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, ScopedProcessHandle
 
 STDIO_STDERR_TAIL_MAX_BYTES: Final[int] = 16 * 1024
 

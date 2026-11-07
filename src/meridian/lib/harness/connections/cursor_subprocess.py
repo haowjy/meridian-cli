@@ -32,7 +32,7 @@ from meridian.lib.harness.connections.managed_stdio import (
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 

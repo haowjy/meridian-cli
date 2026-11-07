@@ -47,8 +47,8 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
 )
-from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
+from meridian.lib.harness.passthrough.registry import get_passthrough
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.idle.service import close_on_launch
 from meridian.lib.launch.artifact_io import (
@@ -67,7 +67,7 @@ from meridian.lib.launch.signals import (
 )
 from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.platform.process_scope import scope_from_identity
+from meridian.lib.platform.process_scope.base import scope_from_identity
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths

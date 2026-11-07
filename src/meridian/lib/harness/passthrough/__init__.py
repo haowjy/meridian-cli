@@ -1,5 +1,5 @@
-"""TUI passthrough for managed primary sessions."""
+"""TUI passthrough for managed primary sessions.
 
-from meridian.lib.harness.passthrough.registry import get_passthrough
-
-__all__ = ["get_passthrough"]
+Import from the submodules: this ``__init__`` imports nothing, because a package that
+imports its own children deadlocks against threads importing a child directly.
+"""
