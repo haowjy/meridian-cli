@@ -30,7 +30,7 @@ A running turn outdates a candidate. A transport close during that turn fails an
 immediately: later evidence must not publish the old reply. A close with a ready tree and
 no active turn can publish the candidate. An idle `spawn cancel` normally reaches the
 runner's cancellation path first. If the drain reads a ready close first, it proposes
-success; whether that should remain success is an open owner call.
+success.
 
 A first turn end has unknown evidence until the refresh completes. When a native hold clears
 at a turn end, it settles briefly before publication: a queued native wake may start a turn
