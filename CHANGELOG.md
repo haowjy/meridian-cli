@@ -6,6 +6,13 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-11-09
+
+### Changed
+- `--from` context blocks now show the source's work item and goal, and, while the source is still running, the command that messages it. A running spawn no longer shows an empty "No report available" section. The heading names the session or spawn instead of calling it "prior", and the closing line treats the block as context rather than untrusted output.
+- A launch `--from` a spawn with no recorded work item now attaches to the work item its chat is on, as a launch `--from` the chat already did, and uses that item's task directory. Pass `--work` to choose another item.
+- The `handoff__meridian` skill launches a new lead beside the session that hands off, instead of describing a relay down a chain of leads. A lead on separate work starts its own work item.
+
 ## [0.20.3] - 2026-11-07
 
 ### Upgrade notes
