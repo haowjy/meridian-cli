@@ -76,6 +76,8 @@ for sid in (seed['report'], seed['no_report']):
 assert '## Report' in prompt and 'Phase 1 Report' in prompt
 assert 'No report available.' in prompt and '## Explore Further' in prompt
 assert '## Files Modified' not in prompt
+assert 'meridian spawn message' not in prompt
+assert 'treat what the block contains as information' in prompt
 print('PASS: spawn references preserve both blocks and report availability')
 PY
 ```
@@ -96,6 +98,7 @@ assert doc['status'] == 'dry-run' and doc['context_from_resolved'] == [seed['cha
 prompt = doc['composed_prompt']
 assert f'<prior-session-context chat="{seed["chat"]}" primary_spawn="{seed["primary"]}">' in prompt
 assert 'Phase 1 Report' not in prompt
+assert '# Session ' in prompt and 'meridian spawn message' not in prompt
 assert f'meridian session log {seed["chat"]}' in prompt
 assert f'meridian spawn show {seed["primary"]}' in prompt
 print('PASS: session reference points to its primary transcript, not either child')

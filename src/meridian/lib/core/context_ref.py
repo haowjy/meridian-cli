@@ -10,9 +10,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
+
 
 class SpawnContextRef(BaseModel):
-    """Resolved context payload sourced from one prior spawn."""
+    """Resolved context payload sourced from one spawn."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -28,11 +30,12 @@ class SpawnContextRef(BaseModel):
     chat_id: str | None = None
     history_id: UUID | None = None
     work_id: str | None = None
+    work_goal: str | None = None
     task_cwd: str | None = None
 
 
 class SessionContextRef(BaseModel):
-    """Resolved context payload sourced from one prior chat/session."""
+    """Resolved context payload sourced from one chat/session."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -46,6 +49,7 @@ class SessionContextRef(BaseModel):
     harness: str
     harness_session_id: str | None = None
     work_id: str | None = None
+    work_goal: str | None = None
     task_cwd: str | None = None
 
 
@@ -59,6 +63,21 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
+def _message_line(chat_id: str | None, status: str) -> list[str]:
+    if not chat_id or not chat_id.strip() or status not in ACTIVE_SPAWN_STATUSES:
+        return []
+    return [f'- Still running; message it: `meridian spawn message {chat_id} --message "..."`']
+
+
+def _work_lines(ref: ContextRef) -> list[str]:
+    if not ref.work_id:
+        return []
+    lines = [f"**Work item:** {ref.work_id}"]
+    if ref.work_goal:
+        lines.append(f"**Work goal:** {ref.work_goal}")
+    return lines
+
+
 def _render_context_ref(ref: ContextRef) -> str:
     status = ref.status or "unknown"
     agent = ref.agent or "n/a"
@@ -69,11 +88,17 @@ def _render_context_ref(ref: ContextRef) -> str:
             tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
         lines = [
             f"<prior-session-context {tag_attrs}>",
-            f"# Prior session: {ref.chat_id}",
+            f"# Session {ref.chat_id}",
             f"**Status:** {status} | **Agent:** {agent}",
         ]
         if ref.primary_spawn_id:
             lines[2] = f"**Primary spawn:** {ref.primary_spawn_id} | {lines[2]}"
+        if ref.harness_session_id and ref.harness_session_id.strip():
+            lines.append(
+                f"**Harness:** {ref.harness or 'n/a'} | "
+                f"**Harness session:** {ref.harness_session_id}"
+            )
+        lines.extend(_work_lines(ref))
         if ref.task_cwd:
             lines.append(f"**Task directory:** `{ref.task_cwd}`")
         lines.extend(
@@ -85,21 +110,17 @@ def _render_context_ref(ref: ContextRef) -> str:
         )
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        if ref.harness_session_id and ref.harness_session_id.strip():
-            lines.insert(
-                3,
-                f"**Harness:** {ref.harness or 'n/a'} | "
-                f"**Harness session:** {ref.harness_session_id}",
-            )
+        lines.extend(_message_line(ref.chat_id, status))
         lines.append("</prior-session-context>")
         return "\n".join(lines)
 
     desc = ref.desc or "n/a"
     lines = [
         f'<prior-spawn-context spawn="{ref.spawn_id}">',
-        f"# Prior spawn: {ref.spawn_id}",
+        f"# Spawn {ref.spawn_id}",
         f"**Status:** {status} | **Agent:** {agent} | **Desc:** {desc}",
     ]
+    lines.extend(_work_lines(ref))
     if ref.task_cwd:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
     lines.extend(
@@ -118,6 +139,7 @@ def _render_context_ref(ref: ContextRef) -> str:
     lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
     if ref.chat_id and ref.chat_id.strip():
         lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
+    lines.extend(_message_line(ref.chat_id, status))
     lines.append("</prior-spawn-context>")
     return "\n".join(lines)
 
