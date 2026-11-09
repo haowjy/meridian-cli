@@ -10,8 +10,8 @@ from meridian.lib.core.refs import RefNotFound
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.work_attachment import resolve_active_work_id
-from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .query import read_report, read_spawn_row
@@ -72,7 +72,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
-        return _spawn_context_ref(row, project_root)
+        return _spawn_context_ref(row, project_root, root)
 
     chat = located.chat
     owner = chat_spawn(located)
@@ -84,10 +84,22 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
             f"Session '{chat.chat_id}' exists but no transcript is available yet "
             "(no harness session id recorded)."
         )
-    return _session_context_ref_from_record(chat)
+    return _session_context_ref_from_record(chat, project_root)
 
 
-def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
+def _work_goal(project_root: Path, work_id: str | None) -> str | None:
+    if work_id is None:
+        return None
+    item = work_store.get_work_item(resolve_project_paths(project_root).root_dir, work_id)
+    if item is None:
+        return None
+    return (item.goal or item.description or "").strip() or None
+
+
+def _spawn_context_ref(row: SpawnRecord, project_root: Path, runtime_root: Path) -> SpawnContextRef:
+    work_id = (row.work_id or "").strip() or None
+    if work_id is None and row.continue_chat_id:
+        work_id = resolve_active_work_id(project_root, runtime_root, chat_id=row.continue_chat_id)
     return SpawnContextRef(
         spawn_id=row.id,
         status=row.status,
@@ -99,7 +111,8 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         harness_session_id=row.harness_session_id,
         chat_id=row.continue_chat_id,
         history_id=row.history_id,
-        work_id=(row.work_id or "").strip() or None,
+        work_id=work_id,
+        work_goal=_work_goal(project_root, work_id),
         task_cwd=(row.task_cwd or "").strip() or None,
     )
 
@@ -112,6 +125,7 @@ def _session_context_ref(
 ) -> SessionContextRef:
     """Name the session ``record`` as its owner ran it: a chat ID names its own session."""
 
+    work_id = resolve_active_work_id(project_root, runtime_root, chat_id=record.chat_id)
     return SessionContextRef(
         chat_id=record.chat_id,
         primary_spawn_id=primary_row.id,
@@ -121,15 +135,17 @@ def _session_context_ref(
         model=primary_row.model or "",
         harness=primary_row.harness or "",
         harness_session_id=(record.harness_session_id or "").strip() or None,
-        work_id=resolve_active_work_id(project_root, runtime_root, chat_id=record.chat_id),
+        work_id=work_id,
+        work_goal=_work_goal(project_root, work_id),
         task_cwd=(primary_row.task_cwd or "").strip() or None,
     )
 
 
 def _session_context_ref_from_record(
     session: session_store.SessionRecord,
+    project_root: Path,
 ) -> SessionContextRef:
-
+    work_id = (session.active_work_id or "").strip() or None
     return SessionContextRef(
         chat_id=session.chat_id,
         history_id=session.history_id,
@@ -138,7 +154,8 @@ def _session_context_ref_from_record(
         model=session.model,
         harness=session.harness,
         harness_session_id=(session.harness_session_id or "").strip() or None,
-        work_id=(session.active_work_id or "").strip() or None,
+        work_id=work_id,
+        work_goal=_work_goal(project_root, work_id),
         task_cwd=(session.task_cwd or session.execution_cwd or "").strip() or None,
     )
 
