@@ -109,6 +109,11 @@ Read the target repo's AGENTS.md before operating on it.
 - `../prompts/meridian-base`, `../prompts/meridian-dev-workflow` — prompt packages
 - `../mars-agents` — package manager (Rust)
 
+Make prompt changes (agents, skills) at their source in `../prompts/<package>`, on `main`
+in that checkout. Don't create branches or worktrees for them unless the user asks. Stage
+the change and leave it uncommitted; commit and push only once the user approves. The
+shared rules for every package are in `../prompts/AGENTS.md`.
+
 ## Downlinks
 
 - `src/meridian/AGENTS.md` — layered architecture, subpackage index
