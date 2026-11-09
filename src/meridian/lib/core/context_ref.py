@@ -63,11 +63,12 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
-def _message_line(target: str | None, status: str) -> list[str]:
+def _message_line(spawn_id: str | None, status: str) -> list[str]:
     # A spawn ID follows its session across /clear; a chat ID stops resolving there.
-    if not target or not target.strip() or status not in ACTIVE_SPAWN_STATUSES:
+    # Queued and finalizing spawns have no live control endpoint to take the message.
+    if not spawn_id or not spawn_id.strip() or status != "running":
         return []
-    return [f'- Still running; message it: `meridian spawn message {target} --message "..."`']
+    return [f'- Still running; message it: `meridian spawn message {spawn_id} --message "..."`']
 
 
 def _work_lines(ref: ContextRef) -> list[str]:
@@ -75,7 +76,8 @@ def _work_lines(ref: ContextRef) -> list[str]:
         return []
     lines = [f"**Work item:** {ref.work_id}"]
     if ref.work_goal:
-        lines.append(f"**Work goal:** {ref.work_goal}")
+        # One line, so a goal can't add headings or close the block's tags.
+        lines.append(f"**Work goal:** {' '.join(ref.work_goal.split())}")
     return lines
 
 
@@ -111,7 +113,7 @@ def _render_context_ref(ref: ContextRef) -> str:
         )
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        lines.extend(_message_line(ref.primary_spawn_id or ref.chat_id, status))
+        lines.extend(_message_line(ref.primary_spawn_id, status))
         lines.append("</prior-session-context>")
         return "\n".join(lines)
 

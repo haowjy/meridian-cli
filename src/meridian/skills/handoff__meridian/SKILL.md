@@ -33,6 +33,6 @@ Pass your spawn ID as `--from`: `meridian task-dir --json` prints it as `spawn_i
 restricted shell can't expand `$MERIDIAN_SPAWN_ID`). A chat ID would instead seed the new
 lead with that chat's transcript from before a `/clear`.
 
-`--from` attaches the new lead to this session's work item unless `--work` names another
-existing item. When the lead's work is separate from this item, the brief tells it to
-start its own with `meridian work start`.
+`--from` attaches the new lead to this session's work item; `--work` names another
+existing item instead. A lead on separate work has no item yet: leave `--work` out, and
+have the brief tell it to start its own with `meridian work start`.
