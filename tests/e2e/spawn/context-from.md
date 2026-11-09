@@ -34,11 +34,11 @@ from meridian.lib.state.paths import resolve_runtime_paths
 
 root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
 chat = session_store.start_session(root, harness='codex', harness_session_id='',
-    model=os.environ['CONTEXT_MODEL'], kind='primary')
+    model=os.environ['CONTEXT_MODEL'], kind='primary').chat_id
 ids = []
 for kind, status in (('primary', 'succeeded'), ('child', 'succeeded'), ('child', 'failed')):
     sid = str(spawn_store.start_spawn(root, chat_id=chat, model=os.environ['CONTEXT_MODEL'],
-        agent='coder', harness='codex', kind=kind, prompt='Context fixture'))
+        agent='coder', harness='codex', kind=kind, prompt='Context fixture').spawn_id)
     spawn_store.finalize_spawn(root, sid, status=status,
         exit_code=0 if status == 'succeeded' else 1, origin='runner')
     ids.append(sid)
