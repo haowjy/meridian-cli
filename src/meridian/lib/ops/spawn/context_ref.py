@@ -72,7 +72,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
-        return _spawn_context_ref(row, project_root)
+        return _spawn_context_ref(row, project_root, root)
 
     chat = located.chat
     owner = chat_spawn(located)
@@ -96,8 +96,10 @@ def _work_goal(project_root: Path, work_id: str | None) -> str | None:
     return (item.goal or item.description or "").strip() or None
 
 
-def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
+def _spawn_context_ref(row: SpawnRecord, project_root: Path, runtime_root: Path) -> SpawnContextRef:
     work_id = (row.work_id or "").strip() or None
+    if work_id is None and row.continue_chat_id:
+        work_id = resolve_active_work_id(project_root, runtime_root, chat_id=row.continue_chat_id)
     return SpawnContextRef(
         spawn_id=row.id,
         status=row.status,

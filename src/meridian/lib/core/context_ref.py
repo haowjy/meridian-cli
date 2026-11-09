@@ -63,10 +63,11 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
-def _message_line(chat_id: str | None, status: str) -> list[str]:
-    if not chat_id or not chat_id.strip() or status not in ACTIVE_SPAWN_STATUSES:
+def _message_line(target: str | None, status: str) -> list[str]:
+    # A spawn ID follows its session across /clear; a chat ID stops resolving there.
+    if not target or not target.strip() or status not in ACTIVE_SPAWN_STATUSES:
         return []
-    return [f'- Still running; message it: `meridian spawn message {chat_id} --message "..."`']
+    return [f'- Still running; message it: `meridian spawn message {target} --message "..."`']
 
 
 def _work_lines(ref: ContextRef) -> list[str]:
@@ -110,7 +111,7 @@ def _render_context_ref(ref: ContextRef) -> str:
         )
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        lines.extend(_message_line(ref.chat_id, status))
+        lines.extend(_message_line(ref.primary_spawn_id or ref.chat_id, status))
         lines.append("</prior-session-context>")
         return "\n".join(lines)
 
@@ -123,23 +124,17 @@ def _render_context_ref(ref: ContextRef) -> str:
     lines.extend(_work_lines(ref))
     if ref.task_cwd:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
-    lines.extend(
-        [
-            "",
-            "## Report",
-        ]
-    )
     if ref.report_text and ref.report_text.strip():
-        lines.append(ref.report_text.strip())
-    else:
-        lines.append("No report available.")
+        lines.extend(["", "## Report", ref.report_text.strip()])
+    elif status not in ACTIVE_SPAWN_STATUSES:
+        lines.extend(["", "## Report", "No report available."])
 
     lines.append("")
     lines.append("## Explore Further")
     lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
     if ref.chat_id and ref.chat_id.strip():
         lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
-    lines.extend(_message_line(ref.chat_id, status))
+    lines.extend(_message_line(ref.spawn_id, status))
     lines.append("</prior-spawn-context>")
     return "\n".join(lines)
 
