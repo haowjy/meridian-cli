@@ -107,7 +107,7 @@ def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease
         record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
     mark_scope_released(launch_paths(tmp_path, SpawnId(record.id)), released.release_id)
     monkeypatch.setattr(
-        process_cleanup.psutil,
+        _psutil,
         "Process",
         lambda pid: type("LiveProc", (), {"create_time": lambda self: 10.0})(),
     )
@@ -162,7 +162,7 @@ def test_session_lease_cleanup_uses_birth_checked_os_liveness(
         root_created_at_epoch=root_created_at_epoch,
     )
     record_scope(launch_paths(tmp_path, SpawnId(record.id)), scope)
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: process_factory())
+    monkeypatch.setattr(_psutil, "Process", lambda _pid: process_factory())
     terminated: list[str] = []
 
     def _terminate_scope_sync(

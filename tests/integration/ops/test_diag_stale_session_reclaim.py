@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import psutil
 
-from meridian.lib.core import process_cleanup
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops import diag
 from meridian.lib.platform.process_scope.base import (
@@ -148,7 +147,7 @@ def test_stale_session_repair_pid_reuse_result_does_not_kill_scope(
         "is_process_alive_with_birth",
         lambda _pid, _birth: False,
     )
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(999.0))
+    monkeypatch.setattr(psutil, "Process", lambda _pid: _FakeProcess(999.0))
     killed: list[int] = []
 
     def _terminate_scope_sync(
@@ -188,7 +187,7 @@ def test_stale_session_repair_unknown_birth_does_not_kill_live_scope(
         "is_process_alive_with_birth",
         lambda _pid, _birth: False,
     )
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(123.0))
+    monkeypatch.setattr(psutil, "Process", lambda _pid: _FakeProcess(123.0))
 
     def _terminate_scope_sync(
         _candidate: ProcessScopeSnapshot,
@@ -228,7 +227,7 @@ def test_live_session_repair_does_not_reclaim_session_owned_scope(
         lambda pid, birth: pid == 9003 and birth == 9003.0,
     )
     monkeypatch.setattr(
-        process_cleanup.psutil,
+        psutil,
         "Process",
         lambda _pid: (_ for _ in ()).throw(psutil.NoSuchProcess(_pid)),
     )
