@@ -19,6 +19,13 @@ What changes for you:
 - `--dry-run` prints `--settings <path>` for a file a real launch would write; the rules
   appear in the permission report.
 
+Pi launches get the same treatment for the system prompt: `--append-system-prompt` now names
+`system-prompt.md` in the launch directory instead of carrying the whole prompt, profile
+text included. `--dry-run` shows that path. Codex, OpenCode and Cursor launches are unchanged:
+OpenCode already kept its prompt and rules in the launch directory and its environment, Codex
+already sends its prompt over the app-server protocol and has no file form for the `-c`
+settings it still carries (workspace roots), and Cursor's CLI was not available to check.
+
 ## A scoped allow no longer restricts the rest of its tool
 
 A profile whose rules for a tool are all scoped allows, such as only `'bash(rg *)': allow`,
