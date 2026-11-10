@@ -21,8 +21,9 @@ the spawn row: older readers quarantine rows with unknown fields but ignore extr
 
 ## Report and publication
 
-Finalization prefers a child-written `report.md`, then captured completion text, then later
-assistant text. A native-task hold captures each successful turn so the report follows the
+Finalization prefers a child-written `report.md`, then a recorded execution failure
+(`facts.failure`), then captured completion text, then later assistant text.
+ A native-task hold captures each successful turn so the report follows the
 work, even if a brief wake replaces a fuller report. A hold without a native source keeps
 its candidate text through an ordinary confirmation, so “Done.” does not replace the
 report. A [wake or an expiry ask](completion-and-entry-points.md) sent between turns instead

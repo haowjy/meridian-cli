@@ -92,6 +92,12 @@ a workspace projection channel.
 
 ## Environment and lifetime
 
+`MERIDIAN_SECRET_*` values are stripped from every harness child, primaries included, so
+in-session notification can't read them; ordinary inherited values can reach
+transcripts. Each launch sets its own `_MERIDIAN_HARNESS` instead of inheriting an
+ancestor's, so `spawn wait` uses the caller's yield interval, not its child's.
+
+
 Ignoring direnv reverses its recorded diff before deriving overlays and propagates
 the decision to descendants. The reversal can run a bounded subprocess during bind;
 never expose its captured environment or stderr in errors or artifacts. It does not
