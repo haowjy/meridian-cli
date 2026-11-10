@@ -1,5 +1,8 @@
 # Configuration
 
+Precedence: CLI flags > env vars > YAML profile > project config > user config > harness
+default. A derived field takes the precedence of its source.
+
 Use `mutate_project_config()` for `meridian.toml`: it preserves comments and
 serializes the entire read-modify-write, including identity creation.
 

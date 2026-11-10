@@ -4,6 +4,11 @@ Translates harness-agnostic `SpawnParams` into a runnable process and extracts r
 back into Meridian's domain types. `ops/` and `launch/` work with domain types; harness
 specifics stay here.
 
+A restriction is lost when a harness can't express part of a profile. A lost
+restriction that changes what an agent can do is shown by default, in Mars's output and
+in `--dry-run`, not at launch; every other lost field shows under `--verbose`. Nothing is
+dropped without a record.
+
 OpenCode 1.x is legacy and frozen; new OpenCode work targets V2. Transcript and storage
 reads pick their dialect by DB schema, never by the installed binary or an env var.
 
