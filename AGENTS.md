@@ -3,7 +3,7 @@
 Multi-agent coordination CLI. Launches harness subprocesses, tracks state
 on disk, surfaces results. Coordinates agents — does not control them.
 
-Compatibility: one-release deprecation for config, CLI, hook names, and JSON output
+Compatibility: one-minor-release deprecation for config, CLI, hook names, and JSON output
 fields; new builds read state older builds wrote (`docs/releasing.md#compatibility-and-versioning`).
 
 ## Safety Rules
@@ -78,8 +78,8 @@ uv add <package>                               # Add dependency
 ## Design Constraints
 
 - **Harness-agnostic**: adapters bridge to Claude/Codex/OpenCode. Harness specifics stay in `lib/harness/`.
-- **Files as authority**: authoritative state is stored under `~/.meridian/`
-  (user) or `.meridian/` (project). Rebuildable SQLite projections may index
+- **Files as authority**: authoritative state is stored under `~/.meridian/`;
+  a project's repo-local `.meridian/` is never created. Rebuildable SQLite projections may index
   authoritative files, but must never become the only copy of state.
 - **Crash-only**: atomic writes (tmp+rename), truncation-tolerant reads. Recovery IS startup.
 - **Extend through seams**: new harness = one adapter + registration. New command = one module. 10-file edits = wrong abstraction.
