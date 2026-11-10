@@ -13,7 +13,9 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 
 ## Invariants
 
-These hold however the code changes. Change one only as its own step, agreed with Jimmy.
+These hold however the code changes, but they can change too. When evidence shows one
+no longer serves the users, propose the change to Jimmy as its own step, never as a side
+effect of getting a task to pass.
 
 - **Overlay.** A session Meridian starts stays a native session in the harness's own
   store, resumable without Meridian, so removing Meridian loses the user nothing.
