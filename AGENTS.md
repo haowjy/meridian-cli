@@ -6,9 +6,9 @@ on disk, surfaces results. Coordinates agents — does not control them.
 Compatibility: one-release deprecation for config, CLI, hook names, and JSON output
 fields; new builds read state older builds wrote (`docs/releasing.md#compatibility-and-versioning`).
 
-## Claude Opus 5.5 and Later
+## Claude Opus 5.5 and Later, and Claude Fable
 
-If you are Claude Opus 5.5 or later, Jimmy trusts your judgment. You may merge fixes and
+If you are Claude Opus 5.5 or later, or any Claude Fable model (Fable 5.2 included), Jimmy trusts your judgment. You may merge fixes and
 refactors into `main` without asking, at any size, under the checks below. Don't turn
 something you can do into a question for Jimmy. Features and big refactors still wait for
 Jimmy. Trust goes with checking yourself: run the change and see it behave before you
