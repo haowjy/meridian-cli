@@ -14,7 +14,8 @@ from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope.base import (
     POST_KILL_WAIT_SECS,
     CleanupResult,
-    birth_time_unverified,
+    RootIdentity,
+    check_root_identity,
 )
 
 
@@ -79,42 +80,32 @@ def terminate_pgid(
 
     import signal
 
-    # A reused PID forbids signalling; a dead root can still have live group members.
-    pid_reuse_detected = False
-    root_is_dead = False
-    if not birth_time_unverified(created_at_epoch):
-        try:
-            actual_create_time = psutil.Process(root_pid).create_time()
-            if abs(actual_create_time - created_at_epoch) > 1.0:
-                pid_reuse_detected = True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-            root_is_dead = True
-
-    if pid_reuse_detected:
-        return CleanupResult(
+    # Reuse or an unreadable birth forbids signalling; a dead root can still have
+    # live group members.
+    identity = check_root_identity(root_pid, created_at_epoch)
+    if identity in (RootIdentity.REUSED, RootIdentity.UNKNOWN):
+        return CleanupResult.skipped(
             scope_id=scope_id,
             root_pid=root_pid,
-            descendant_count=None,
             reason=reason,
             grace_seconds=grace_seconds,
-            kill_escalated=False,
             degraded_fallback=False,
-            skip_reason="pid_reuse_detected",
+            identity=identity,
         )
+    root_is_dead = identity is RootIdentity.MISSING
 
     root_proc: psutil.Process | None = None
     children: list[psutil.Process] = []
-    try:
-        root_proc = psutil.Process(root_pid)
-    except psutil.NoSuchProcess:
-        root_is_dead = True
-    except psutil.AccessDenied:
-        pass
+    if not root_is_dead:
+        try:
+            root_proc = psutil.Process(root_pid)
+        except psutil.NoSuchProcess:
+            root_is_dead = True
     if root_proc is not None:
         with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             children = root_proc.children(recursive=True)
 
-    # A missing or unverifiable leader may leave live group members that ignore
+    # A missing leader may leave live group members that ignore
     # SIGTERM; retain them for wait and escalation.
     orphans = _scan_by_pgid(pgid) if root_is_dead else []
 
@@ -139,7 +130,7 @@ def terminate_pgid(
 
     descendant_count = len(tree) if root_is_dead else len(children)
 
-    # The root disappeared or its identity could not be checked.
+    # The root disappeared.
     degraded_fallback = root_is_dead
 
     kill_escalated = False

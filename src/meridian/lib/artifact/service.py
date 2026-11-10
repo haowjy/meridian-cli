@@ -24,8 +24,9 @@ from meridian.lib.artifact.store import (
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
+from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 from meridian.lib.platform.python_module import module_argv
-from meridian.lib.platform.terminate import terminate_tree_sync
 
 DEFAULT_TTL_SECONDS = 2 * 60 * 60
 FUNNEL_PORT = 10000
@@ -170,7 +171,7 @@ def process_created_epoch(pid: int) -> float:
 def terminate_pid(pid: int, process_created_at: float | None = None) -> None:
     terminate_tree_sync(
         pid,
-        created_at_epoch=process_created_at or 0.0,
+        created_at_epoch=process_created_at or PROCESS_BIRTH_UNKNOWN_EPOCH,
         grace_secs=2.0,
         reason="artifact_stop",
     )

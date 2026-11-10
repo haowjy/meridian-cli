@@ -36,9 +36,12 @@ Details: [lib/state/AGENTS.md](../src/meridian/lib/state/AGENTS.md) and the KB's
 `tests/integration/state/test_jsonl_tail_repair.py`, `test_lock_gc.py` and
 `test_spawn_store_publication.py`.
 
-**Gaps.** Two `atomic_write_text` functions compete (`lib/platform/atomic.py`, and
-`lib/state/atomic.py`, which forces mode `0o600`). Read-only commands never run
-recovery.
+`lib/platform/atomic.py` holds the one `atomic_write_text`. It keeps an existing
+file's mode and gives a new one the umask default; state that may hold private
+content passes `permissions=PRIVATE_FILE_MODE` (`0o600`) at the call.
+
+**Gaps.** Read-only commands never run recovery. Nothing checks that a new
+state-file call passes `PRIVATE_FILE_MODE`.
 
 ## Compatible upgrades
 
@@ -67,12 +70,18 @@ be claimed, so cancel signals the runner instead of starting or claiming the wor
 `architecture/process-scope.md` and `architecture/sandbox-projection.md`.
 
 **Checked by** `tests/platform/test_launch_gate.py`, `test_launch_gate_review.py` and
-`test_posix_scope.py`.
+`test_posix_scope.py` and `test_process_scope_fallback.py`.
 
-**Gaps.** Two paths signal a process whose birth time is unknown, against the rule
-(`lib/platform/terminate.py`, `_validate_pid_birth`; `process_scope/posix.py`). Three
-termination implementations compete (`process_scope/.context/FUTURE`). Nothing checks
-that a sandboxed caller is refused.
+Every termination goes through `check_root_identity` (`process_scope/base.py`): a PID
+is signalled only when its live birth time matches the recorded one. An unset birth, an
+unreadable one or a different one is skipped (`birth_unknown`, `pid_reuse_detected`).
+Callers that hold an unreaped child read its birth at the call (`process_birth_epoch`).
+Rows that never recorded a birth, such as a legacy `worker_pid`, are therefore never
+signalled.
+
+**Gaps.** A POSIX scope whose root has exited still signals its process group, trusting
+that live members keep the group ID from being reused. Nothing checks that a sandboxed
+caller is refused.
 
 ## Private content stays put
 

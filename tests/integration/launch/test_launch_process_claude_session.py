@@ -660,7 +660,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
 
         original_write = repository.atomic_write_text
 
-        def fail_final_pointer(path, text):
+        def fail_final_pointer(path, text, **kwargs):
             nonlocal publication_failures
             current_id = json.loads(text).get("current_chat_id")
             current = (
@@ -670,7 +670,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             if sid == "unpersisted" and publication_failures == 0:
                 publication_failures += 1
                 raise OSError("injected pointer publication interruption")
-            original_write(path, text)
+            original_write(path, text, **kwargs)
             if sid and (not committed_switches or committed_switches[-1] != sid):
                 committed_switches.append(sid)
 

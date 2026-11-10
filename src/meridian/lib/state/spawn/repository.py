@@ -23,8 +23,8 @@ from pydantic import (
 )
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import LaunchPaths, launch_archive
 from meridian.lib.state.spawn.legacy import (
@@ -353,6 +353,7 @@ def _write_state(spawns_dir: Path, record: SpawnRecord) -> None:
     atomic_write_text(
         _state_path(spawns_dir, record.id),
         stored.model_dump_json(indent=2) + "\n",
+        permissions=PRIVATE_FILE_MODE,
     )
 
 

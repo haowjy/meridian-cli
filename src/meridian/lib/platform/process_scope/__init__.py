@@ -6,5 +6,6 @@ Platform-specific adapters live in:
 - dispatch.py     Sync termination dispatch by containment
 - posix.py        POSIX process-group termination
 - windows_job.py  Windows Job Object termination
-- fallback.py     Cross-platform psutil tree termination (degraded fallback)
+- fallback.py     The one psutil tree termination, sync and async; every path uses it
+- base.py         Snapshot types and check_root_identity, the birth-time gate for every signal
 """

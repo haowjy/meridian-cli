@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from enum import Enum
 from hashlib import sha256
 from typing import Any
 
+import psutil
 import structlog
 
 from meridian.lib.platform import IS_WINDOWS
@@ -29,6 +31,57 @@ def birth_time_unverified(created_at_epoch: float) -> bool:
     """
 
     return created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
+
+
+class RootIdentity(Enum):
+    """Whether a PID is still the process Meridian recorded."""
+
+    VERIFIED = "verified"
+    """Live, and its birth time matches the recorded one."""
+
+    MISSING = "missing"
+    """No process holds the PID."""
+
+    REUSED = "reused"
+    """A different process holds the PID."""
+
+    UNKNOWN = "unknown"
+    """No recorded birth, or the live birth time can't be read. Never signal."""
+
+
+def check_root_identity(pid: int, created_at_epoch: float) -> RootIdentity:
+    """Classify ``pid`` against its recorded birth time.
+
+    Every termination path gates its signals on this: only ``VERIFIED`` (or
+    ``MISSING`` where the caller then touches only group members) authorizes one.
+    The Windows job path is the exception: it skips only ``REUSED`` and lets
+    ``UNKNOWN`` through, because the job handle, not the PID, is its authority.
+    """
+
+    if birth_time_unverified(created_at_epoch):
+        return RootIdentity.UNKNOWN
+    try:
+        actual = psutil.Process(pid).create_time()
+    except psutil.NoSuchProcess:
+        return RootIdentity.MISSING
+    except (psutil.AccessDenied, OSError):
+        return RootIdentity.UNKNOWN
+    if abs(actual - created_at_epoch) > 1.0:
+        return RootIdentity.REUSED
+    return RootIdentity.VERIFIED
+
+
+def process_birth_epoch(pid: int) -> float:
+    """Read the birth time of a live child its caller holds and has not reaped.
+
+    An unreaped child's PID cannot have been reused, so reading it now is a
+    verified identity. Returns the unknown sentinel if it can't be read.
+    """
+
+    try:
+        return psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        return PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 @dataclass(frozen=True)
@@ -121,6 +174,9 @@ def process_scope_release_id(
     return f"{scope_id}:{sha256(seed.encode('utf-8')).hexdigest()[:16]}"
 
 
+_UNRESOLVED_SKIPS = frozenset({"birth_unknown", "termination_exception"})
+
+
 @dataclass(frozen=True)
 class CleanupResult:
     """Outcome record from a process-scope termination attempt."""
@@ -135,7 +191,41 @@ class CleanupResult:
     kill_escalated: bool
     degraded_fallback: bool
     skip_reason: str | None
-    """Set when cleanup was intentionally skipped (e.g. 'pid_reuse_detected')."""
+    """Set when cleanup was intentionally skipped: 'pid_reuse_detected' or 'birth_unknown'."""
+
+    @property
+    def resolved(self) -> bool:
+        """False when the scope may still hold live processes Meridian couldn't act on.
+
+        An unresolved scope stays tracked (unreleased, claim kept) so a later pass retries it.
+        New skip kinds that mean "could not verify" belong in ``_UNRESOLVED_SKIPS``.
+        """
+
+        return self.skip_reason not in _UNRESOLVED_SKIPS
+
+    @classmethod
+    def skipped(
+        cls,
+        *,
+        scope_id: str,
+        root_pid: int,
+        reason: str,
+        grace_seconds: float,
+        degraded_fallback: bool,
+        identity: RootIdentity,
+    ) -> CleanupResult:
+        return cls(
+            scope_id=scope_id,
+            root_pid=root_pid,
+            descendant_count=None,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason="pid_reuse_detected"
+            if identity is RootIdentity.REUSED
+            else "birth_unknown",
+        )
 
 
 class ScopedProcessHandle:
@@ -295,8 +385,11 @@ __all__ = [
     "PROCESS_BIRTH_UNKNOWN_EPOCH",
     "CleanupResult",
     "ProcessScopeSnapshot",
+    "RootIdentity",
     "ScopedProcessHandle",
     "birth_time_unverified",
+    "check_root_identity",
+    "process_birth_epoch",
     "process_scope_release_id",
     "scope_from_identity",
 ]

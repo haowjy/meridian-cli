@@ -23,8 +23,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.session_fold import SUPPORTED_SESSION_EVENT_VERSIONS
 
 # A schema bump creates a separate index and marker namespace, so older builds
@@ -101,7 +101,11 @@ class HistoryChanges:
                     raise HistoryCoordinationError("Mismatched pending history source")
                 return
             marker = DirtySource(source=source, token=uuid4())
-            atomic_write_text(self.directory / source.name, marker.model_dump_json() + "\n")
+            atomic_write_text(
+                self.directory / source.name,
+                marker.model_dump_json() + "\n",
+                permissions=PRIVATE_FILE_MODE,
+            )
 
     def read_generation(self) -> str | None:
         try:
@@ -117,7 +121,9 @@ class HistoryChanges:
         generation = self.read_generation()
         if generation is None:
             generation = str(uuid4())
-            atomic_write_text(self.directory / "GENERATION", generation + "\n")
+            atomic_write_text(
+                self.directory / "GENERATION", generation + "\n", permissions=PRIVATE_FILE_MODE
+            )
         return generation
 
     def _pending(self) -> tuple[DirtySource, ...]:

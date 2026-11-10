@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from meridian.lib.platform.atomic import atomic_replace, fsync_directory
+from meridian.lib.platform.atomic import fsync_directory
 
 
 def atomic_publish_dir(stage_dir: Path, dest_dir: Path) -> None:
@@ -12,12 +12,6 @@ def atomic_publish_dir(stage_dir: Path, dest_dir: Path) -> None:
         raise FileExistsError(f"Refusing to publish over existing destination: {dest_dir}")
     os.replace(stage_dir, dest_dir)
     fsync_directory(dest_dir.parent)
-
-
-def atomic_write_text(path: Path, content: str) -> None:
-
-    with atomic_replace(path, permissions=0o600) as handle:
-        handle.write(content)
 
 
 def append_text_line(path: Path, line: str) -> None:

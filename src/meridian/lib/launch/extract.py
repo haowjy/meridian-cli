@@ -16,7 +16,7 @@ from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
 
@@ -65,7 +65,7 @@ def _persist_report(
         if text_capped and extracted.source == "assistant_message":
             wrapped += "\n[Attempt text was truncated at 1 MiB before report extraction.]\n"
         wrapped += "".join(f"\n[Warning: {warning}]\n" for warning in warnings)
-        atomic_write_text(target, wrapped)
+        atomic_write_text(target, wrapped, permissions=PRIVATE_FILE_MODE)
         return target
 
     # The harness wrote report.md directly; its spawn-local path is authoritative.

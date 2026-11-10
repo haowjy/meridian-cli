@@ -9,13 +9,15 @@ from __future__ import annotations
 from collections.abc import Collection
 from pathlib import Path
 
-import psutil
 import structlog
 
 from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
     CleanupResult,
     ProcessScopeSnapshot,
+    RootIdentity,
     birth_time_unverified,
+    check_root_identity,
 )
 from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
@@ -182,7 +184,7 @@ def _terminate_recorded_spawn_scopes(
             continue
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
-        if result.skip_reason != "termination_exception":
+        if result.resolved:
             mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Terminated process scope.",
@@ -208,30 +210,18 @@ def should_skip_cleanup(
     if scope.owner_policy != "session_owned":
         return False
 
-    try:
-        actual = psutil.Process(scope.root_pid).create_time()
-        if abs(actual - scope.root_created_at_epoch) > 1.0:
-            # PID was recycled by another process after the scope's root died.
-            logger.debug(
-                "session_owned scope root PID reused — reclaiming.",
-                spawn_id=spawn_record.id,
-                scope_id=scope.scope_id,
-                root_pid=scope.root_pid,
-                skip_reason="session_owned_process_dead",
-            )
-            return False
-    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        # A missing or unverifiable root cannot justify preserving the scope.
-        logger.debug(
-            "session_owned scope root process dead — reclaiming.",
-            spawn_id=spawn_record.id,
-            scope_id=scope.scope_id,
-            root_pid=scope.root_pid,
-            skip_reason="session_owned_process_dead",
-        )
-        return False
-
-    return True
+    # Only a verified live root keeps the scope; anything else is reclaimed (or skipped
+    # by the terminate itself when the birth can't be verified).
+    if check_root_identity(scope.root_pid, scope.root_created_at_epoch) is RootIdentity.VERIFIED:
+        return True
+    logger.debug(
+        "session_owned scope root not verified live — reclaiming.",
+        spawn_id=spawn_record.id,
+        scope_id=scope.scope_id,
+        root_pid=scope.root_pid,
+        skip_reason="session_owned_process_dead",
+    )
+    return False
 
 
 def _terminate_legacy_worker_pid(
@@ -255,7 +245,8 @@ def _terminate_legacy_worker_pid(
 
     result = terminate_tree_sync(
         pid=worker_pid,
-        created_at_epoch=0.0,  # legacy: no birth time available
+        # Legacy rows record no birth, so this is skipped, never signalled.
+        created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
         grace_secs=grace_seconds,
         reason=reason,
         scope_id="legacy_worker",
@@ -504,7 +495,8 @@ def _reclaim_row_scopes(
                 results.append(result)
                 continue
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
-        mark_scope_released(launch, scope.release_id)
+        if result.resolved:
+            mark_scope_released(launch, scope.release_id)
         logger.debug(
             "Reclaimed session-owned scope at session exit.",
             spawn_id=record.id,
@@ -523,15 +515,14 @@ def _reclaim_row_scopes(
 
 
 def _live_root_skip_reason(scope: ProcessScopeSnapshot) -> str | None:
-    if birth_time_unverified(scope.root_created_at_epoch):
-        return "birth_time_unverified_skip_crash_reclaim_to_avoid_pid_reuse_kill"
-    try:
-        actual = psutil.Process(scope.root_pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        return "root_not_alive"
-    if abs(actual - scope.root_created_at_epoch) > 1.0:
-        return "pid_reuse_detected"
-    return None
+    identity = check_root_identity(scope.root_pid, scope.root_created_at_epoch)
+    if identity is RootIdentity.VERIFIED:
+        return None
+    return {
+        RootIdentity.MISSING: "root_not_alive",
+        RootIdentity.REUSED: "pid_reuse_detected",
+        RootIdentity.UNKNOWN: "birth_unknown",
+    }[identity]
 
 
 __all__ = [

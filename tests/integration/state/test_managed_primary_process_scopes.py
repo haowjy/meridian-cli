@@ -322,7 +322,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     )
     alive_proc = type("AliveProc", (), {"create_time": lambda self: 100.0})()
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.psutil.Process",
+        "psutil.Process",
         lambda _pid: alive_proc,
     )
 

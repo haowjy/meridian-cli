@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
 
 
@@ -117,7 +117,11 @@ def load_serves() -> list[Serve]:
 def save_serves(serves: list[Serve]) -> None:
     path = serves_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps([asdict(serve) for serve in serves], indent=2) + "\n")
+    atomic_write_text(
+        path,
+        json.dumps([asdict(serve) for serve in serves], indent=2) + "\n",
+        permissions=PRIVATE_FILE_MODE,
+    )
 
 
 __all__ = [

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
 
 
@@ -52,6 +52,7 @@ def _write_quarantined_row(
     atomic_write_text(
         state_path,
         json.dumps(payload) + "\n",
+        permissions=PRIVATE_FILE_MODE,
     )
 
 
@@ -86,7 +87,7 @@ def test_unparseable_row_still_blocks_resume(tmp_path: Path) -> None:
     chat_id = _stopped_chat(runtime_root)
     state_path = runtime_root / "spawns" / "p1" / "state.json"
     state_path.parent.mkdir(parents=True)
-    atomic_write_text(state_path, '{"v": 4,')
+    atomic_write_text(state_path, '{"v": 4,', permissions=PRIVATE_FILE_MODE)
 
     with pytest.raises(ValueError, match="Cannot establish current-chat ownership"):
         _resume(runtime_root, chat_id)

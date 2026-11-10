@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, TypeVar
 
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
 
 _INTERVAL_PATTERN = re.compile(r"^(\d+)([smhd])$")
@@ -76,7 +76,9 @@ class IntervalTracker:
 
             result = fn()
             if result.success and not result.skipped:
-                atomic_write_text(state_path, datetime.now(UTC).isoformat() + "\n")
+                atomic_write_text(
+                    state_path, datetime.now(UTC).isoformat() + "\n", permissions=PRIVATE_FILE_MODE
+                )
             return result
 
     @staticmethod

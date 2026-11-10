@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast, get_args
 
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -61,7 +61,7 @@ def write_accepted_signals(
     mutate_published_spawn_artifact(
         launch.runtime_root,
         launch.spawn_id,
-        lambda: atomic_write_text(launch.accepted_signals, payload),
+        lambda: atomic_write_text(launch.accepted_signals, payload, permissions=PRIVATE_FILE_MODE),
     )
 
 
@@ -92,7 +92,9 @@ def write_spawn_signal(
     return mutate_published_spawn_artifact(
         launch.runtime_root,
         launch.spawn_id,
-        lambda: atomic_write_text(spawn_signal_path(launch, kind), f"{body}\n"),
+        lambda: atomic_write_text(
+            spawn_signal_path(launch, kind), f"{body}\n", permissions=PRIVATE_FILE_MODE
+        ),
         can_mutate=can_write,
     )
 
@@ -194,7 +196,7 @@ def write_hold_status(launch: LaunchPaths, status: HoldStatus | None) -> None:
             launch.hold_status.unlink(missing_ok=True)
             return
         payload = {"blockers": list(status.blockers), "last_work_at": status.last_work_at}
-        atomic_write_text(launch.hold_status, json.dumps(payload))
+        atomic_write_text(launch.hold_status, json.dumps(payload), permissions=PRIVATE_FILE_MODE)
 
     mutate_published_spawn_artifact(launch.runtime_root, launch.spawn_id, replace_status)
 

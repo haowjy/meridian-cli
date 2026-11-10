@@ -15,7 +15,7 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryObservations,
     DeliveryReceipts,
 )
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.pi_work_ledger import (
@@ -114,7 +114,7 @@ class PiQuiescenceTracker:
         value = prior.model_copy(
             update={"observed_message_ids": sorted(set(prior.observed_message_ids) | {delivery_id})}
         )
-        atomic_write_text(file, value.model_dump_json() + "\n")
+        atomic_write_text(file, value.model_dump_json() + "\n", permissions=PRIVATE_FILE_MODE)
 
     async def refresh_disk_state(self) -> None:
         if self._disk_watcher is not None:

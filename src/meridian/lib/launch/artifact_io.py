@@ -17,7 +17,8 @@ from meridian.lib.launch.composition import (
     build_inline_file_contributions,
     build_reference_routing,
 )
-from meridian.lib.state.atomic import append_text_line, atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
+from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -168,6 +169,7 @@ def _write_inline_file_reference_byte_accounting(
     atomic_write_text(
         launch.inline_reference_bytes,
         json.dumps(payload, indent=2) + "\n",
+        permissions=PRIVATE_FILE_MODE,
     )
 
 
@@ -192,9 +194,9 @@ def write_projection_artifacts(
         starting_prompt = user_turn or run_params.prompt.strip()
 
     if system_prompt:
-        atomic_write_text(launch.system_prompt, system_prompt)
+        atomic_write_text(launch.system_prompt, system_prompt, permissions=PRIVATE_FILE_MODE)
     if starting_prompt:
-        atomic_write_text(launch.starting_prompt, starting_prompt)
+        atomic_write_text(launch.starting_prompt, starting_prompt, permissions=PRIVATE_FILE_MODE)
     with suppress(FileNotFoundError):
         launch.legacy_prompt.unlink()
     for path, content in launch_context.harness.launch_files(launch_context.binding.spec).items():
@@ -205,6 +207,7 @@ def write_projection_artifacts(
         atomic_write_text(
             launch.references,
             json.dumps([route.to_dict() for route in reference_routing], indent=2) + "\n",
+            permissions=PRIVATE_FILE_MODE,
         )
     _write_inline_file_reference_byte_accounting(
         launch=launch,
@@ -225,4 +228,5 @@ def write_projection_artifacts(
     atomic_write_text(
         launch.projection_manifest,
         json.dumps(manifest_payload, indent=2) + "\n",
+        permissions=PRIVATE_FILE_MODE,
     )

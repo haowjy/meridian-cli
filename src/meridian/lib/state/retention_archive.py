@@ -17,9 +17,13 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
-from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
+from meridian.lib.platform.atomic import (
+    PRIVATE_FILE_MODE,
+    atomic_write_text,
+    fsync_directory,
+    is_atomic_temp_name,
+)
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import TranscriptHeader
@@ -375,7 +379,11 @@ def archive_location_id(destination: Path) -> UUID:
         if path.exists():
             return _LocationMarker.model_validate_json(path.read_bytes()).location_id
         location_id = uuid4()
-        atomic_write_text(path, json.dumps({"version": 1, "location_id": str(location_id)}))
+        atomic_write_text(
+            path,
+            json.dumps({"version": 1, "location_id": str(location_id)}),
+            permissions=PRIVATE_FILE_MODE,
+        )
         return location_id
 
 

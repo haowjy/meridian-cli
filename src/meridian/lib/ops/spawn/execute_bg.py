@@ -16,9 +16,9 @@ from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.python_module import module_argv
 from meridian.lib.state import spawn_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot, adopt_handoff, take_handoff_fd
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
@@ -65,7 +65,11 @@ def _cleanup_background_runtime_artifacts(launch: LaunchPaths) -> None:
 
 def _persist_bg_worker_request(launch: LaunchPaths, payload: BackgroundWorkerLaunchRequest) -> None:
 
-    atomic_write_text(launch.bg_worker_request, payload.model_dump_json(indent=2) + "\n")
+    atomic_write_text(
+        launch.bg_worker_request,
+        payload.model_dump_json(indent=2) + "\n",
+        permissions=PRIVATE_FILE_MODE,
+    )
 
 
 def _load_bg_worker_request(launch: LaunchPaths) -> BackgroundWorkerLaunchRequest:
