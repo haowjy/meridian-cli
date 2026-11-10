@@ -1,8 +1,4 @@
-# lib/harness/ — Harness Adapters
-
-Translates harness-agnostic `SpawnParams` into a runnable process and extracts results
-back into Meridian's domain types. `ops/` and `launch/` work with domain types; harness
-specifics stay here.
+# Harness adapters
 
 A restriction is lost when a harness can't express part of a profile. A lost
 restriction that changes what an agent can do is shown by default, in Mars's output and
@@ -14,14 +10,10 @@ reads pick their dialect by DB schema, never by the installed binary or an env v
 
 ## Bootstrap
 
-`ensure_bootstrap()` runs once, on first call, never on package import, so no module may
-call it, `get_harness_bundle` or `get_bundle_registry` at module level (a lint enforces
-it). Importing a submodule must not load the adapters: a thread importing `adapter` while
-another loads `claude` can see a half-initialized module.
-
-Bootstrap fails startup if an adapter's `handled_fields` differ from the `SpawnParams`
-fields, or a spec field is in neither `_PROJECTED_FIELDS` nor `_DELEGATED_FIELDS`. Ignoring
-a field is a decision: list it in `explicitly_ignored_fields`.
+Importing a submodule must not load the adapters (a lint bars module-level bootstrap
+calls): a thread importing `adapter` while another loads `claude` can see a
+half-initialized module. A `SpawnParams` field an adapter ignores must be listed in
+`explicitly_ignored_fields`; bootstrap fails startup otherwise.
 
 ## Rules
 

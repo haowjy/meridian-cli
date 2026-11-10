@@ -1,13 +1,8 @@
-# lib/state/ — State Layer
+# State layer
 
-File-backed authority for all Meridian runtime state. No service or in-memory object
-survives process death. SQLite is only a rebuildable projection; authoritative state
-must stay recoverable from its source files.
-
-Writes go through `atomic_write_text` (tmp+rename); a JSONL file's torn last line is
-repaired before the next append (`append_durable_jsonl_lines`). State contracts: [.context/CONTEXT.md](.context/CONTEXT.md). `project_identity.py` is the only identity
-reader and writer. Resolve home with `get_user_home()` (`user_paths.py`), never
-`~/.meridian/`.
+File-backed authority for runtime state; SQLite is only a rebuildable projection.
+Contracts: [.context/CONTEXT.md](.context/CONTEXT.md). `project_identity.py` is the only
+identity reader and writer.
 
 ## Lock Order
 
@@ -92,8 +87,5 @@ The location says whether an item is active; `work_repository.move_work_dir()` i
 active↔archive move (refuses when both copies exist, never deletes one). All work mutations
 go through `work_repository` under `work-store.flock`.
 
-## Subpackage
-
-[spawn/AGENTS.md](spawn/AGENTS.md) — models, v3/v4 persistence, pure transitions.
-`../harness/AGENTS.md` (native evidence at finalization), `../launch/AGENTS.md` (writes
-spawn state during launch).
+Related: [spawn/AGENTS.md](spawn/AGENTS.md), [../harness/AGENTS.md](../harness/AGENTS.md),
+[../launch/AGENTS.md](../launch/AGENTS.md).

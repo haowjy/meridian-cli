@@ -1,6 +1,6 @@
 # Built-in hooks
 
-Use `meridian.plugin_api` for general capabilities. The tightly coupled
+Built-ins use `meridian.plugin_api` for general capabilities. The tightly coupled
 `autosync_store` and notification transports stay internal; notify imports its
 transport lazily because config loading imports built-ins for their schemas.
 

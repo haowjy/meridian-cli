@@ -1,13 +1,12 @@
-# ops/spawn/ — Spawn Policy Layer
+# Spawn policy
 
-Spawn policy and execution; argv and environment composition belongs to `launch/`.
 Contracts, wait scoping and delivery: [.context/CONTEXT.md](.context/CONTEXT.md).
 
 ## Rules
 
-- **Resolve before persist** (rule in [../AGENTS.md](../AGENTS.md)): in `api.py`,
-  runtime materialization waits until the resolved request's sandbox passes the caller
-  guardrail; creation, continuation, fork, top-level and nested callers share that path.
+- **Resolve before persist** ([../AGENTS.md](../AGENTS.md)): in `api.py`, runtime
+  materialization waits until the resolved request's sandbox passes the caller guardrail,
+  for every caller kind.
 - **Foreground and background converge at `launch_prepared_spawn()`**, which owns
   pre-run failure finalization (writes `launch_failure`, then re-raises; safe because
   `complete_spawn()` is idempotent).
@@ -15,8 +14,6 @@ Contracts, wait scoping and delivery: [.context/CONTEXT.md](.context/CONTEXT.md)
   and returns `depth_exceeded_output()` with no row; `launch/` does not enforce depth.
 - **Import execution entry points from `execute.py` only**, never `execute_*` from
   outside `ops/spawn/`.
-- Spawn preparation uses `LaunchArgvIntent.REQUIRED` for dry-run command output;
-  spawn execution uses `SPEC_ONLY`.
 - **Observation is opt-in for pure readers.** Result fetchers that don't consume a
   parent's completion notification use `observe=False` (`--no-observe`). Show, status,
   report-show, cancel, and cancel-all default false so internal, UI, and MCP callers stay

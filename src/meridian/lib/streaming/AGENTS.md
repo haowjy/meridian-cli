@@ -1,6 +1,5 @@
-# lib/streaming/
+# Streaming runtime
 
-The async runtime connects live harnesses to spawn lifecycle, hooks and subscribers.
 Keep harness completion policy behind the drain coordinator, not in `SpawnManager` or
 the generic drain loop. A native task source or resident backend selects the shared hold;
 otherwise Pi selects its own completion profile in `drain_plan_factory.py`. The plan factory injects delivery and descendant
