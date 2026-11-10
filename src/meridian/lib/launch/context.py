@@ -1773,6 +1773,8 @@ def bind_launch_context(
                 "settings_file_path": bindings.launch.claude_settings.as_posix(),
             }
         )
+    elif harness.id == HarnessId.PI:
+        spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
