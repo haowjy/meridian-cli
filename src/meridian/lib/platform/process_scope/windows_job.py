@@ -136,7 +136,8 @@ def terminate_job(
 
     kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # ctypes exposes windll only on Windows.
 
-    # A reused PID must not authorize termination; the job handle owns the group.
+    # A reused PID must not authorize termination. An unknown birth does not stop it:
+    # the job handle, not the PID, is the authority here.
     identity = check_root_identity(root_pid, created_at_epoch)
     if identity is RootIdentity.REUSED:
         return CleanupResult.skipped(

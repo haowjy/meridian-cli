@@ -18,7 +18,6 @@ from threading import Lock, Thread
 from types import MappingProxyType
 from typing import Any
 
-import psutil
 import structlog
 
 from meridian.lib.core.delivery import MessageRoute
@@ -45,6 +44,8 @@ from meridian.lib.launch.signals import (
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
+    birth_time_unverified,
+    process_birth_epoch,
     scope_from_identity,
 )
 from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
@@ -104,10 +105,8 @@ class PrimaryAttachError(Exception):
 
 
 def _process_birth_epoch(pid: int) -> float | None:
-    try:
-        return psutil.Process(pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        return None
+    epoch = process_birth_epoch(pid)
+    return None if birth_time_unverified(epoch) else epoch
 
 
 @dataclass

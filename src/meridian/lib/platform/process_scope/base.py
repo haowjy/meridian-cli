@@ -54,6 +54,8 @@ def check_root_identity(pid: int, created_at_epoch: float) -> RootIdentity:
 
     Every termination path gates its signals on this: only ``VERIFIED`` (or
     ``MISSING`` where the caller then touches only group members) authorizes one.
+    The Windows job path is the exception: it skips only ``REUSED`` and lets
+    ``UNKNOWN`` through, because the job handle, not the PID, is its authority.
     """
 
     if birth_time_unverified(created_at_epoch):
@@ -172,6 +174,9 @@ def process_scope_release_id(
     return f"{scope_id}:{sha256(seed.encode('utf-8')).hexdigest()[:16]}"
 
 
+_UNRESOLVED_SKIPS = frozenset({"birth_unknown", "termination_exception"})
+
+
 @dataclass(frozen=True)
 class CleanupResult:
     """Outcome record from a process-scope termination attempt."""
@@ -187,6 +192,16 @@ class CleanupResult:
     degraded_fallback: bool
     skip_reason: str | None
     """Set when cleanup was intentionally skipped: 'pid_reuse_detected' or 'birth_unknown'."""
+
+    @property
+    def resolved(self) -> bool:
+        """False when the scope may still hold live processes Meridian couldn't act on.
+
+        An unresolved scope stays tracked (unreleased, claim kept) so a later pass retries it.
+        New skip kinds that mean "could not verify" belong in ``_UNRESOLVED_SKIPS``.
+        """
+
+        return self.skip_reason not in _UNRESOLVED_SKIPS
 
     @classmethod
     def skipped(

@@ -124,17 +124,20 @@ def _sweep_scopes(launch: LaunchPaths, spawn_id: str) -> None:
                 )
         else:
             result = terminate_scope_sync(scope, grace_seconds=5.0, reason="continue_sweep")
-            if result.skip_reason == "pid_reuse_detected":
-                # A PID cannot be reused while it is still a process-group ID.
-                # Other groups need their own absence proof; never signal them.
-                if scope.pgid not in (None, scope.root_pid) and not _group_gone(scope.pgid):
-                    raise ValueError(
-                        f"Cannot safely sweep live group {scope.pgid}; use --fork {spawn_id}"
-                    )
-            elif result.skip_reason == "termination_exception":
+            if not result.resolved:
                 raise ValueError(
                     f"Cannot safely sweep PID {scope.root_pid}: {result.skip_reason}; "
                     f"use --fork {spawn_id}"
+                )
+            # A PID cannot be reused while it is still a process-group ID.
+            # Other groups need their own absence proof; never signal them.
+            if (
+                result.skip_reason == "pid_reuse_detected"
+                and scope.pgid not in (None, scope.root_pid)
+                and not _group_gone(scope.pgid)
+            ):
+                raise ValueError(
+                    f"Cannot safely sweep live group {scope.pgid}; use --fork {spawn_id}"
                 )
         mark_scope_released(launch, scope.release_id)
 

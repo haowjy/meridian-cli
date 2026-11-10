@@ -147,7 +147,7 @@ def resolve_cleanup_claim(runtime_root: Path, record: SpawnRecord) -> None:
         unresolved: list[ProcessScopeSnapshot] = []
         for scope in claimed:
             result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
-            if result.skip_reason == "termination_exception":
+            if not result.resolved:
                 unresolved.append(scope)
                 continue
             mark_scope_released(LaunchPaths.for_row(runtime_root, record), scope.release_id)

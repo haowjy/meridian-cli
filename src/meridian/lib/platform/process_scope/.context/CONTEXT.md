@@ -12,6 +12,10 @@ so the watcher can reap the child and disarm the guardian during the grace wait.
 
 Signals gate on `check_root_identity`: verified, missing, reused or unknown.
 Only verified (or a missing POSIX group leader, where just group members are
-touched) allows a signal; an unknown birth is skipped. `fallback.py` is the one
+touched) allows a signal; an unknown birth is skipped, except on Windows, where
+`terminate_job` skips only a reused PID and the job handle is the authority.
+A skipped scope is `resolved == False` for `birth_unknown` and
+`termination_exception`: every caller keeps such a scope tracked instead of
+releasing it, and `continue` refuses with the `--fork` hint. `fallback.py` is the one
 tree termination: the async form runs the sync one in a thread, and the POSIX
 adapter hands off to it when the root isn't the group leader.
