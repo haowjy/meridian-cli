@@ -1,15 +1,14 @@
 ---
 name: sessions__meridian
-description: When decisions or context must be recovered from past sessions.
+description: When what the human chose, or other context, must be recovered from past sessions.
 ---
 
 # Session Mining
 
-Design decisions, rejected alternatives, and discovered constraints often live in
-conversation instead of code. Compaction makes them expensive to recover later, so mine
-before the next implementation or documentation step starts. Skip mining when your
-brief already carries the rationale; otherwise skim current artifacts and mine only
-the gaps.
+What the human chose, and why, often lives only in conversation. Compaction makes it
+expensive to recover, so look before the next implementation or documentation step
+starts. Skip mining when your brief already carries the rationale; otherwise skim
+current artifacts and mine only the gaps.
 
 ## Start at Your Launcher
 
@@ -47,7 +46,9 @@ window. For interrupted or multi-day work, list all related sessions first with
 
 ## Delegate Bulk Reading
 
-For long histories or multiple sessions, delegate synthesis to a session-mining agent
-if one is listed, passing a prompt file with the question and scope. If you are that
-agent, mine directly rather than delegating recursively. Read narrowly first, widen
-only when the missing context requires it.
+For long histories or several sessions, have a session-mining agent find the passages,
+if one is listed: pass a prompt file with the question and scope, then open the passages
+it returns and read them yourself. You know the work and it sees only its brief, so the
+judgment of what was chosen stays with you. If you are that agent, search directly
+rather than delegating. Read narrowly first, widen only when the missing context
+requires it.
