@@ -6,6 +6,16 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-11-10
+
+### Changed
+- A scope whose birth can't be verified (`birth_unknown`, like `termination_exception`) now stays tracked: `CleanupResult.resolved` is false, so `continue`, the reaper and session-exit cleanup keep the scope or claim, and `continue` refuses with the `--fork` hint instead of starting a second harness beside a live process.
+- The remaining birth pre-checks (`should_skip_cleanup`, crash-reclaim, primary attach) now use `check_root_identity`. The Windows job path still lets an unknown birth through, with the job handle as authority; docs say so.
+- Rows that never recorded a process birth (legacy `worker_pid`, artifact serves from older builds) are no longer terminated by cancel/stop; they are skipped and not signalled. The skip shows only in debug logs (`skip_reason=birth_unknown`); `artifact stop` and `gc` still drop the serve entry, so such a server keeps running. Every build since v0.10.0 records a birth, so this affects only rows older than that.
+
+### Fixed
+- Cleanup no longer signals a process whose birth time Meridian could not verify: an unrecorded or unreadable birth is skipped (`birth_unknown`) instead of being treated as a match. Fixes #950.
+
 ## [0.20.6] - 2026-11-10
 
 ### Upgrade notes
