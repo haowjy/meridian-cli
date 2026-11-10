@@ -70,7 +70,7 @@ retargets the entire project/control root.
 Every session points `MERIDIAN_ACTIVE_WORK_DIR` and `MERIDIAN_TASK_DIR` at stable
 symlinks. Harnesses that match file-permission rules against literal paths (Claude
 Code) do not follow them: a profile's scoped `Edit` grant on the real work-item or
-checkout path does not authorize a write through the link. Meridian's `--add-dir`
+checkout path does not authorize a write through the link. Meridian's root
 projection grants the runtime root, which contains both links, so file access is
 covered; a scoped `Edit` rule needs the link's parent directory
 (`sessions/<chat>/`) instead of the real path.

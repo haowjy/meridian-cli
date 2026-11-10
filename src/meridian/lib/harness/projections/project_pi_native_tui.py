@@ -49,6 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "claude_runtime",
         "codex_runtime",
         "prompt_file_path",
+        "settings_file_path",
         "user_turn_content",
         "base_instructions",
         "developer_instructions",

@@ -197,6 +197,8 @@ def write_projection_artifacts(
         atomic_write_text(launch.starting_prompt, starting_prompt)
     with suppress(FileNotFoundError):
         launch.legacy_prompt.unlink()
+    for path, content in launch_context.harness.launch_files(launch_context.binding.spec).items():
+        atomic_write_text(path, content)
 
     reference_routing = _resolve_reference_routing(launch_context)
     if reference_routing:

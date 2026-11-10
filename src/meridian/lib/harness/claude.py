@@ -84,6 +84,7 @@ from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
 )
 from meridian.lib.harness.projections.project_claude import (
+    project_claude_settings_json,
     project_claude_spec_to_cli_args,
 )
 from meridian.lib.harness.semantics import (
@@ -170,23 +171,19 @@ def _delivers_first_turn_by_mod(
     return True
 
 
-def build_claude_adhoc_agent_json(
-    *,
-    name: str,
-    description: str,
-    prompt: str,
-) -> str:
+def build_claude_adhoc_agent_json(*, name: str) -> str:
+    """Define the agent as a stub so ``--agent <name>`` resolves; the body rides the prompt file.
+
+    A main-thread agent's ``prompt`` replaces Claude's default system prompt, and an empty
+    one restores the default, so the stub is one space: non-empty, and nothing but
+    whitespace before the appended file's text.
+    """
 
     normalized_name = name.strip()
     if not normalized_name:
         return ""
 
-    payload = {
-        normalized_name: {
-            "description": description.strip() or normalized_name,
-            "prompt": prompt,
-        }
-    }
+    payload = {normalized_name: {"description": "Meridian agent profile", "prompt": " "}}
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
@@ -294,6 +291,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_resume=True,
             supports_session_fork=True,
             supports_native_agents=True,
+            agent_body_in_system_prompt=True,
             supports_primary_launch=True,
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
@@ -326,7 +324,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
-        return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
+        _ = description, prompt
+        return build_claude_adhoc_agent_json(name=name)
+
+    def launch_files(self, spec: ResolvedLaunchSpec) -> dict[Path, str]:
+        content = project_claude_settings_json(spec)
+        if spec.settings_file_path is None or content is None:
+            return {}
+        return {Path(spec.settings_file_path): content}
 
     def native_store_for_launch(
         self,
@@ -626,7 +631,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
-        system_prompt = render_system_instruction_blocks(content)
+        # The profile body leads the file: Claude puts the stub agent prompt first and
+        # appends this file after it, which is where the inline agent prompt used to sit.
+        system_prompt = join_content_blocks(
+            content.agent_profile_body,
+            render_system_instruction_blocks(replace(content, agent_profile_body="")),
+        )
         reference_routing = build_reference_routing(content.reference_items)
         task_context = render_task_context(
             content.reference_items,

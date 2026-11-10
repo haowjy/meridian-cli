@@ -82,11 +82,18 @@ class ClaudeSettings:
     allow: tuple[str, ...] = ()
     deny: tuple[str, ...] = ()
     ask: tuple[str, ...] = ()
+    additional_directories: tuple[str, ...] = ()
     sandbox: ClaudeSandboxSettings | None = None
 
     @property
     def empty(self) -> bool:
-        return not (self.allow or self.deny or self.ask or self.sandbox is not None)
+        return not (
+            self.allow
+            or self.deny
+            or self.ask
+            or self.additional_directories
+            or self.sandbox is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -891,6 +898,7 @@ def compile_claude_permissions(
             allow=channels.allow,
             deny=channels.deny,
             ask=channels.ask,
+            additional_directories=tuple(root.as_posix() for root in spec.projected_roots),
             sandbox=sandbox,
         ),
         passthrough_args=passthrough.args,
@@ -920,6 +928,15 @@ def compile_claude_permissions(
             "--permission-mode auto Claude's classifier, not acceptEdits, decides them",
         )
     lines.append(network_line)
+    if permissions.settings.additional_directories:
+        lines.append(
+            ReportLine(
+                "workspace: projected roots",
+                "native",
+                "--settings permissions.additionalDirectories "
+                + ",".join(permissions.settings.additional_directories),
+            )
+        )
     if policy.approval != "default":
         lines.append(_approval_line(policy, passthrough, policy_mode=policy_mode))
     lines.extend(

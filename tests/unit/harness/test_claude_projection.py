@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -9,7 +10,10 @@ from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
     project_claude_network,
 )
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+from meridian.lib.harness.projections.project_claude import (
+    project_claude_settings_json,
+    project_claude_spec_to_cli_args,
+)
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
 from meridian.lib.safety.policy import (
@@ -32,7 +36,15 @@ _STRICT_OFFLINE_NETWORK = {
 
 
 def _spec(**values: object) -> ResolvedLaunchSpec:
+    values.setdefault("settings_file_path", "/launch/claude-settings.json")
     return ResolvedLaunchSpec.model_validate(values)
+
+
+def _settings(spec: ResolvedLaunchSpec) -> dict[str, Any]:
+    """The content of the file ``--settings`` names, which the launch writes."""
+    content = project_claude_settings_json(spec)
+    assert content is not None
+    return json.loads(content)
 
 
 def _effective_network(spec: ResolvedLaunchSpec) -> str:
@@ -57,12 +69,11 @@ def _flag_count(argv: list[str], flag: str) -> int:
     return sum(1 for token in argv if token == flag or token.startswith(f"{flag}="))
 
 
-def _settings_permission_entries(argv: list[str], action: str) -> tuple[str, ...]:
-    if "--settings" not in argv:
+def _settings_permission_entries(spec: ResolvedLaunchSpec, action: str) -> tuple[str, ...]:
+    content = project_claude_settings_json(spec)
+    if content is None:
         return ()
-    settings_index = max(index for index, token in enumerate(argv) if token == "--settings")
-    payload = json.loads(argv[settings_index + 1])
-    return tuple(payload.get("permissions", {}).get(action, ()))
+    return tuple(json.loads(content).get("permissions", {}).get(action, ()))
 
 
 def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled() -> None:
@@ -77,9 +88,7 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
         extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    assert _settings_permission_entries(command, "allow") == ("Bash(meridian spawn *)",)
+    assert _settings_permission_entries(spec, "allow") == ("Bash(meridian spawn *)",)
 
 
 def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() -> None:
@@ -90,9 +99,7 @@ def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() 
         extra_args=("--allowedTools", "Agent,Agent(custom),Bash(meridian spawn *)"),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    assert _settings_permission_entries(command, "allow") == (
+    assert _settings_permission_entries(spec, "allow") == (
         "Agent",
         "Agent(custom)",
         "Bash(meridian spawn *)",
@@ -113,7 +120,7 @@ def test_claude_projection_passthrough_allowed_tools_cannot_readd_denied_agent()
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    assert _settings_permission_entries(command, "allow") == (
+    assert _settings_permission_entries(spec, "allow") == (
         "Bash",
         "Bash(meridian spawn *)",
     )
@@ -134,14 +141,12 @@ def test_claude_projection_spells_exact_and_prefix_meridian_commands() -> None:
         permission_policy=PermissionPolicy(platform_rules=(platform,)),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    assert _settings_permission_entries(command, "allow") == (
+    assert _settings_permission_entries(spec, "allow") == (
         "Bash(meridian task-dir)",
         "Bash(meridian spawn list)",
         "Bash(meridian spawn list *)",
     )
-    assert "Bash(meridian task-dir *)" not in _settings_permission_entries(command, "allow")
+    assert "Bash(meridian task-dir *)" not in _settings_permission_entries(spec, "allow")
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
     assert "exact: meridian task-dir" in line.element
@@ -203,9 +208,7 @@ def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
     assert settings["sandbox"]["excludedCommands"] == ["meridian spawn *"]
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
@@ -235,8 +238,7 @@ def test_claude_network_report_stays_on_meridian_projected_policy(
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
 
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     _, report = compile_claude_permissions(spec)
@@ -258,7 +260,7 @@ def test_claude_network_deny_holds_for_allowlist_with_approval_never() -> None:
     )
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
 
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
     assert "--dangerously-skip-permissions" not in command
@@ -281,7 +283,7 @@ def test_claude_scoped_only_allow_pre_approves_and_leaves_approval_never_alone()
 
     assert "--dangerously-skip-permissions" in command
     assert "--permission-mode" not in command
-    assert "Bash(rg *)" in _settings_permission_entries(command, "allow")
+    assert "Bash(rg *)" in _settings_permission_entries(spec, "allow")
 
 
 def test_claude_typed_deny_policy_projects_network_settings() -> None:
@@ -294,8 +296,7 @@ def test_claude_typed_deny_policy_projects_network_settings() -> None:
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
     _, report = compile_claude_permissions(spec)
 
     assert settings["sandbox"]["network"] == _STRICT_OFFLINE_NETWORK
@@ -316,8 +317,7 @@ def test_claude_allowlist_translates_double_wildcards_and_gates_local_switches()
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
     network = settings["sandbox"]["network"]
     _, report = compile_claude_permissions(spec)
     line = next(item for item in report if item.element.startswith("network: allowlist"))
@@ -345,9 +345,7 @@ def test_claude_projection_does_not_escape_user_configured_default_sandbox() -> 
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
     assert "sandbox" not in settings
 
 
@@ -363,9 +361,7 @@ def test_claude_projection_does_not_exclude_spawn_when_sandbox_is_disabled() -> 
         ),
     )
 
-    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-
-    settings = json.loads(command[command.index("--settings") + 1])
+    settings = _settings(spec)
     assert settings["sandbox"] == {"enabled": False}
 
 
@@ -394,10 +390,10 @@ def test_claude_projection_strips_raw_tool_flags_from_passthrough() -> None:
 
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
-    allowed = _settings_permission_entries(command, "allow")
+    allowed = _settings_permission_entries(spec, "allow")
     disallowed = _tool_flag_entries(command, "--disallowedTools")
     assert allowed == ("Bash", "Bash(meridian spawn *)")
-    assert _settings_permission_entries(command, "ask") == ("WebSearch",)
+    assert _settings_permission_entries(spec, "ask") == ("WebSearch",)
     assert "WebSearch" not in allowed
     assert "Agent" in disallowed
     assert "Write" in disallowed
@@ -428,16 +424,14 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
     command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
 
     assert _tool_flag_entries(command, "--tools") == ("Agent",)
-    assert _settings_permission_entries(command, "allow") == ("Agent",)
+    assert _settings_permission_entries(spec, "allow") == ("Agent",)
     disallowed = _tool_flag_entries(command, "--disallowedTools")
     assert "Agent" not in disallowed
     assert "Agent(Explore)" in disallowed
     assert "Agent(Plan)" in disallowed
     assert "Agent(General-purpose)" in disallowed
     assert "Agent(general-purpose)" in disallowed
-    settings_index = max(index for index, token in enumerate(command) if token == "--settings")
-    settings = json.loads(command[settings_index + 1])
-    assert settings["sandbox"]["autoAllowBashIfSandboxed"] is False
+    assert _settings(spec)["sandbox"]["autoAllowBashIfSandboxed"] is False
 
 
 @pytest.mark.parametrize("continuation", [False, True])

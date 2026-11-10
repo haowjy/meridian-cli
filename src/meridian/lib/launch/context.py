@@ -1000,16 +1000,15 @@ def _resolve_spawn_prepare_projection(
     )
 
     agent_profile_body = ""
-    if (
-        profile is not None
-        and profile.body.strip()
-        and not harness.capabilities.supports_native_agents
-    ):
-        rendered_agent_body = substitute_template_variables(
-            profile.body.strip(),
-            resolved_template_variables,
-        )
-        agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
+    if profile is not None and profile.body.strip():
+        if not harness.capabilities.supports_native_agents:
+            rendered_agent_body = substitute_template_variables(
+                profile.body.strip(),
+                resolved_template_variables,
+            )
+            agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
+        elif harness.capabilities.agent_body_in_system_prompt:
+            agent_profile_body = profile.body.strip()
 
     # A spawn always has a user turn, so its completion contract travels with the
     # task and spawns with different goals share the cached prefix.
@@ -1078,7 +1077,10 @@ def _resolve_primary_projection(
     if (
         profile is not None
         and profile.body.strip()
-        and not harness.capabilities.supports_native_agents
+        and (
+            not harness.capabilities.supports_native_agents
+            or harness.capabilities.agent_body_in_system_prompt
+        )
     ):
         agent_profile_body = profile.body.strip()
 
@@ -1767,7 +1769,12 @@ def bind_launch_context(
             }
         )
     elif harness.id == HarnessId.CLAUDE:
-        spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
+        spec = spec.model_copy(
+            update={
+                "prompt_file_path": system_prompt_path.as_posix(),
+                "settings_file_path": bindings.launch.claude_settings.as_posix(),
+            }
+        )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value

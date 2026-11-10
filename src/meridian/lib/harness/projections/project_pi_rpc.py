@@ -49,6 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "codex_runtime",
         "prompt",
         "prompt_file_path",
+        "settings_file_path",
         "base_instructions",
         "developer_instructions",
         "report_output_path",

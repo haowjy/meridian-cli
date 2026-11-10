@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.projections.project_claude import project_claude_settings_json
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.launch_types import ResolvedLaunchBinding, ResolvedLaunchSpec
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from tests.support.fixtures import allow_headless_claude
@@ -65,13 +67,13 @@ def _runtime(tmp_path: Path, surface: LaunchCompositionSurface) -> LaunchRuntime
     )
 
 
-def _launch_argv(
+def _launch_binding(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     *,
     surface: LaunchCompositionSurface,
     tool_rules: tuple[ToolRule, ...] = (),
-) -> tuple[str, ...]:
+) -> ResolvedLaunchBinding:
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="haiku",
@@ -94,7 +96,7 @@ def _launch_argv(
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
-    return context.binding.argv
+    return context.binding
 
 
 def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
@@ -107,11 +109,11 @@ def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
     return tuple(filter(None, entries))
 
 
-def _settings_permission_entries(argv: tuple[str, ...], action: str) -> tuple[str, ...]:
-    if "--settings" not in argv:
+def _settings_permission_entries(spec: ResolvedLaunchSpec, action: str) -> tuple[str, ...]:
+    content = project_claude_settings_json(spec)
+    if content is None:
         return ()
-    payload = json.loads(argv[argv.index("--settings") + 1])
-    return tuple(payload.get("permissions", {}).get(action, ()))
+    return tuple(json.loads(content).get("permissions", {}).get(action, ()))
 
 
 @pytest.mark.parametrize(
@@ -127,7 +129,7 @@ def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     monkeypatch: MonkeyPatch,
     tool_rules: tuple[ToolRule, ...],
 ) -> None:
-    argv = _launch_argv(
+    binding = _launch_binding(
         tmp_path,
         monkeypatch,
         surface=LaunchCompositionSurface.SPAWN_PREPARE,
@@ -135,7 +137,7 @@ def test_spawn_prepare_denies_native_delegation_and_builtin_agents(
     )
 
     assert {"Agent", *_TASK_DENIES, *_BUILTIN_AGENT_DENIES}.issubset(
-        _tool_flag_entries(argv, "--disallowedTools")
+        _tool_flag_entries(binding.argv, "--disallowedTools")
     )
 
 
@@ -143,15 +145,15 @@ def test_primary_surface_denies_agent_but_not_task(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    argv = _launch_argv(
+    binding = _launch_binding(
         tmp_path,
         monkeypatch,
         surface=LaunchCompositionSurface.PRIMARY,
         tool_rules=(tool_rule("*", "allow"), tool_rule("bash", "deny", "Bash")),
     )
 
-    disallowed = _tool_flag_entries(argv, "--disallowedTools")
-    allowed = _settings_permission_entries(argv, "allow")
+    disallowed = _tool_flag_entries(binding.argv, "--disallowedTools")
+    allowed = _settings_permission_entries(binding.spec, "allow")
     assert {"Agent", *_BUILTIN_AGENT_DENIES}.issubset(disallowed)
     assert "Bash" not in disallowed
     assert "Bash(meridian task-dir)" in allowed
@@ -211,7 +213,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         dry_run=True,
     )
 
-    allowed = _settings_permission_entries(context.binding.argv, "allow")
+    allowed = _settings_permission_entries(context.binding.spec, "allow")
     disallowed = _tool_flag_entries(context.binding.argv, "--disallowedTools")
     assert "Agent" in allowed
     assert "Agent" not in disallowed
@@ -238,13 +240,13 @@ def test_allow_builtin_agents_claude_cross_module_contract(
         "[harness.claude]\nallow_builtin_agents = true\n", encoding="utf-8"
     )
 
-    argv = _launch_argv(
+    binding = _launch_binding(
         tmp_path,
         monkeypatch,
         surface=LaunchCompositionSurface.SPAWN_PREPARE,
     )
 
-    disallowed = set(_tool_flag_entries(argv, "--disallowedTools"))
+    disallowed = set(_tool_flag_entries(binding.argv, "--disallowedTools"))
     assert _BUILTIN_AGENT_DENIES.isdisjoint(disallowed)
     assert "Agent" not in disallowed
     assert _TASK_DENIES.issubset(disallowed)

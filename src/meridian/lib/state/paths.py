@@ -462,6 +462,10 @@ class LaunchPaths:
         return self.dir / "system-prompt.md"
 
     @property
+    def claude_settings(self) -> Path:
+        return self.dir / "claude-settings.json"
+
+    @property
     def legacy_prompt(self) -> Path:
         return self.dir / "prompt.md"
 

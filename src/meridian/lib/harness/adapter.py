@@ -92,6 +92,8 @@ class HarnessCapabilities(BaseModel):
     supports_session_resume: bool = False
     supports_session_fork: bool = False
     supports_native_agents: bool = False
+    # A native agent is only a stub: the profile body travels in the system prompt.
+    agent_body_in_system_prompt: bool = False
     supports_primary_launch: bool = False
     supports_named_primary_resume: bool = False
     # Whether primary launch needs a synthetic first user prompt to bootstrap
@@ -366,6 +368,8 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def resolve_launch_spec(self, run: SpawnParams) -> AdapterSpecT: ...
 
     def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]: ...
+
+    def launch_files(self, spec: ResolvedLaunchSpec) -> dict[Path, str]: ...
 
     def launch_environment_warnings(
         self,
@@ -745,6 +749,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
         _ = spec
         return ()
+
+    def launch_files(self, spec: ResolvedLaunchSpec) -> dict[Path, str]:
+        """Files the projected command reads, by path; written with the launch artifacts."""
+        _ = spec
+        return {}
 
     def launch_environment_warnings(
         self,
