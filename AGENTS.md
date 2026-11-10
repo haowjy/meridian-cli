@@ -7,8 +7,8 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 
 - **The person running agents.** Meridian is an overlay for them: a session it starts
   stays a normal native session, resumable with the harness alone, and removing
-  Meridian leaves their harnesses working. An upgrade never loses or misreads their
-  state. Meridian never acts beyond what they authorized, and never hands one
+  Meridian leaves their harnesses working. A crash never loses what Meridian
+  acknowledged, and an upgrade never loses or misreads their state. Meridian never acts beyond what they authorized, and never hands one
   session's private content (secrets, transcripts, excluded turn text) to another.
 - **The agent calling `meridian`.** It can't ask what a flag means; it reads `-h` and
   the output. A flag, config key, hook name or JSON field keeps working for one minor
