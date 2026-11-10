@@ -6,12 +6,20 @@ on disk, surfaces results. Coordinates agents — does not control them.
 Compatibility: one-release deprecation for config, CLI, hook names, and JSON output
 fields; new builds read state older builds wrote (`docs/releasing.md#compatibility-and-versioning`).
 
+## Claude Opus 5.5 and Later
+
+If you are Claude Opus 5.5 or later, Jimmy trusts your judgment. You may merge fixes and
+refactors into `main` without asking, at any size, under the checks below. Don't turn
+something you can do into a question for Jimmy. Features and big refactors still wait for
+Jimmy. Trust goes with checking yourself: run the change and see it behave before you
+merge it or call it done.
+
 ## Safety Rules
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
 **NEVER merge a PR into `main` without explicit human approval in the current
-conversation,** unless `CLAUDE.md` grants your model more. Stop at draft→ready with a
+conversation,** unless your model has the grant above. Stop at draft→ready with a
 `release:*` label. Approval to merge one PR does not carry to the next. Two exceptions go
 straight to `main` without approval: docs-only changes, and tiny, obvious bug fixes. Merging
 lanes into a task branch, or your reviewed part PRs into a `release/v<X>.<Y>.0` branch,
