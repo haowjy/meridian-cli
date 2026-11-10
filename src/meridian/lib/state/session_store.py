@@ -511,19 +511,6 @@ def _session_lock_key(runtime_root: Path, chat_id: str) -> tuple[Path, str]:
     return (runtime_root.resolve(), chat_id)
 
 
-def is_chat_free(runtime_root: Path, chat_id: str) -> bool:
-    """Whether the chat's lock can be taken within the wait ``start_session`` allows."""
-
-    lock_path = RuntimePaths.from_root_dir(runtime_root).sessions_dir / f"{chat_id}.lock"
-    try:
-        # Stale-lock repair holds a dead session's lock briefly, often from this same
-        # process's repair thread; refusing without the wait fails every continue it races.
-        with lock_file(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS, reentrant=False):
-            return True
-    except OSError:
-        return False
-
-
 def _release_session_lock(runtime_root: Path, chat_id: str) -> None:
     lock_data = _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
     if lock_data is None:
@@ -550,7 +537,38 @@ def _discard_expected_session_lock(
 
 
 class ChatBusyError(ValueError):
-    """A session start refused because a live run holds the chat."""
+    """A live run holds the chat."""
+
+
+def _acquire_chat_lock(paths: RuntimePaths, chat_id: str) -> IO[bytes]:
+    lock_path = paths.sessions_dir / f"{chat_id}.lock"
+    try:
+        # A live run keeps its entry chat's lock until it exits, so never wait on it;
+        # the short wait covers stale-lock repair's brief hold and an owner mid-exit.
+        return acquire_file_lock(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS)
+    except FileLockTimeout:
+        lease = _read_session_lease_data(paths, chat_id)
+        holder = (
+            f" by pid {lease.owner_pid}"
+            if lease
+            and lease.owner_pid
+            and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
+            else ""
+        )
+        raise ChatBusyError(
+            f"Chat {chat_id} is held{holder}; continue after it exits, or --fork {chat_id}"
+        ) from None
+
+
+@contextmanager
+def chat_lock(runtime_root: Path, chat_id: str) -> Generator[None]:
+    """Hold the chat's lock, or raise ``ChatBusyError`` when a live run keeps it."""
+
+    handle = _acquire_chat_lock(RuntimePaths.from_root_dir(runtime_root), chat_id)
+    try:
+        yield
+    finally:
+        release_file_lock(handle)
 
 
 def start_session(
@@ -595,24 +613,7 @@ def start_session(
         started_at = utc_now_iso()
         if not resolved_chat_id:
             resolved_chat_id = reserve_chat_id(runtime_root)
-        lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-        try:
-            # A live run keeps its entry chat's lock until it exits, so never wait on it;
-            # the short wait covers `doctor`'s brief hold and an owner mid-exit.
-            handle = acquire_file_lock(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS)
-        except FileLockTimeout:
-            lease = _read_session_lease_data(paths, resolved_chat_id)
-            holder = (
-                f" by pid {lease.owner_pid}"
-                if lease
-                and lease.owner_pid
-                and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
-                else ""
-            )
-            raise ChatBusyError(
-                f"Chat {resolved_chat_id} is held{holder}; continue after it exits, "
-                f"or --fork {resolved_chat_id}"
-            ) from None
+        handle = _acquire_chat_lock(paths, resolved_chat_id)
         event = SessionStartEvent(
             chat_id=ChatId(resolved_chat_id),
             kind=kind,
@@ -1248,94 +1249,104 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
     if not paths.sessions_dir.exists():
         return StaleSessionCleanup(cleaned_ids=(), materialized_scopes=())
 
-    with ExitStack() as lock_stack:
-        stale: list[tuple[str, Path, IO[bytes]]] = []
+    def unheld() -> list[Path]:
+        free: list[Path] = []
         for lock_path in paths.sessions_dir.glob("*.lock"):
-            chat_id = lock_path.stem
+            with try_lock_file(lock_path, reentrant=False) as handle:
+                if handle is not None:
+                    free.append(lock_path)
+        return free
+
+    candidates = unheld()
+    if not candidates:
+        return StaleSessionCleanup(cleaned_ids=(), materialized_scopes=())
+
+    cleaned_ids: list[str] = []
+    stale_cleanup_scopes: list[str] = []
+    # Read the log before taking the locks: a dead chat's lock held across this read makes
+    # every other taker see the chat as running. No session can start on a chat whose lock
+    # is taken below, because its start row needs the session log this holds.
+    with session_writes(runtime_root), ExitStack() as lock_stack:
+        records: dict[str, SessionRecord] = {
+            record.chat_id: record
+            for record in get_session_records(
+                runtime_root,
+                {lock_path.stem for lock_path in candidates},
+                require_supported=True,
+            )
+        }
+        stale: list[tuple[str, Path, IO[bytes]]] = []
+        for lock_path in candidates:
             try:
                 handle = lock_stack.enter_context(lock_file(lock_path, timeout=0, reentrant=False))
             except TimeoutError:
                 continue
-            stale.append((chat_id, lock_path, handle))
+            stale.append((lock_path.stem, lock_path, handle))
 
-        if not stale:
-            return StaleSessionCleanup(cleaned_ids=(), materialized_scopes=())
-
-        cleaned_ids: list[str] = []
-        stale_cleanup_scopes: list[str] = []
-        with session_writes(runtime_root):
-            records: dict[str, SessionRecord] = {
-                record.chat_id: record
-                for record in get_session_records(
-                    runtime_root,
-                    {chat for chat, _, _ in stale},
-                    require_supported=True,
+        stopped_at = utc_now_iso()
+        for chat_id, _lock_path, _ in stale:
+            existing = records.get(chat_id)
+            lease = _read_session_lease_data(paths, chat_id)
+            if (
+                existing is not None
+                and existing.kind == "primary"
+                and lease is not None
+                and lease.owner_pid is not None
+                and is_process_alive_with_birth(
+                    lease.owner_pid,
+                    lease.owner_created_at_epoch,
                 )
-            }
-            stopped_at = utc_now_iso()
-            for chat_id, _lock_path, _ in stale:
-                existing = records.get(chat_id)
-                lease = _read_session_lease_data(paths, chat_id)
-                if (
-                    existing is not None
-                    and existing.kind == "primary"
-                    and lease is not None
-                    and lease.owner_pid is not None
-                    and is_process_alive_with_birth(
-                        lease.owner_pid,
-                        lease.owner_created_at_epoch,
-                    )
-                ):
-                    continue
-                stop_session_instance_id = lease.session_instance_id if lease is not None else ""
-                if lease is None and existing is not None:
-                    stop_session_instance_id = existing.session_instance_id
-                if (
-                    existing is not None
-                    and existing.stopped_at is None
-                    and (
-                        lease is None
-                        or generation_matches(
-                            existing.session_instance_id,
-                            lease.session_instance_id,
-                        )
-                    )
-                ):
-                    append_chat_rows(
-                        runtime_root,
-                        {
-                            chat_id: [
-                                SessionStopEvent(
-                                    chat_id=ChatId(chat_id),
-                                    session_instance_id=stop_session_instance_id,
-                                    stopped_at=stopped_at,
-                                )
-                            ]
-                        },
-                    )
-                    records[chat_id] = existing.model_copy(update={"stopped_at": stopped_at})
-
-                should_clean = existing is None or existing.stopped_at is not None or lease is None
-                if existing is not None and existing.stopped_at is None:
-                    should_clean = lease is None or generation_matches(
+            ):
+                continue
+            stop_session_instance_id = lease.session_instance_id if lease is not None else ""
+            if lease is None and existing is not None:
+                stop_session_instance_id = existing.session_instance_id
+            if (
+                existing is not None
+                and existing.stopped_at is None
+                and (
+                    lease is None
+                    or generation_matches(
                         existing.session_instance_id,
                         lease.session_instance_id,
                     )
-                if not should_clean:
-                    continue
-
-                if existing is not None and existing.harness.strip():
-                    stale_cleanup_scopes.append(existing.harness.strip())
-                cleaned_ids.append(chat_id)
-                cleaned_generation = (
-                    lease.session_instance_id
-                    if lease is not None
-                    else existing.session_instance_id
-                    if existing is not None
-                    else ""
                 )
-                _discard_expected_session_lock(runtime_root, chat_id, cleaned_generation)
-                _session_lease_path(paths, chat_id).unlink(missing_ok=True)
+            ):
+                append_chat_rows(
+                    runtime_root,
+                    {
+                        chat_id: [
+                            SessionStopEvent(
+                                chat_id=ChatId(chat_id),
+                                session_instance_id=stop_session_instance_id,
+                                stopped_at=stopped_at,
+                            )
+                        ]
+                    },
+                )
+                records[chat_id] = existing.model_copy(update={"stopped_at": stopped_at})
+
+            should_clean = existing is None or existing.stopped_at is not None or lease is None
+            if existing is not None and existing.stopped_at is None:
+                should_clean = lease is None or generation_matches(
+                    existing.session_instance_id,
+                    lease.session_instance_id,
+                )
+            if not should_clean:
+                continue
+
+            if existing is not None and existing.harness.strip():
+                stale_cleanup_scopes.append(existing.harness.strip())
+            cleaned_ids.append(chat_id)
+            cleaned_generation = (
+                lease.session_instance_id
+                if lease is not None
+                else existing.session_instance_id
+                if existing is not None
+                else ""
+            )
+            _discard_expected_session_lock(runtime_root, chat_id, cleaned_generation)
+            _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
         cleaned_id_set = frozenset(cleaned_ids)
         for chat_id, lock_path, handle in stale:

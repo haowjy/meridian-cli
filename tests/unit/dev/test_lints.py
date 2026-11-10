@@ -6,6 +6,7 @@ from pathlib import Path
 
 from meridian.dev.lints import (
     RAW_WRITE_ALLOWLIST,
+    chat_lock_path_violations,
     harness_idle_import_violations,
     import_time_bootstrap_violations,
     launch_path_violations,
@@ -64,6 +65,11 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         "@deco(get_harness_bundle(1))\ndef f(x=get_harness_bundle(2)):\n    pass\n"
         "class C:\n    b = get_harness_bundle(3)\n",
     )
+    plant(
+        "meridian/core/chat_lock.py",
+        'a = paths.sessions_dir / f"{chat_id}.lock"\nb = paths.sessions_dir / "automatic.lock"\n',
+    )
+    plant("meridian/lib/state/session_store.py", 'a = paths.sessions_dir / f"{chat_id}.lock"\n')
     sources = read_sources(tmp_path)
 
     assert {v.path for v in raw_write_violations(sources)} == {
@@ -99,6 +105,9 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         ("meridian/lib/harness/adapter.py", 5),
         ("meridian/lib/harness/adapter.py", 6),
         ("meridian/lib/harness/adapter.py", 9),
+    ]
+    assert [(v.path, v.line) for v in chat_lock_path_violations(sources)] == [
+        ("meridian/core/chat_lock.py", 1)
     ]
     # None of the allowlisted writes exist here, so every entry is stale.
     assert {v.path for v in stale_raw_write_allowlist(sources)} == {

@@ -35,7 +35,7 @@ from meridian.lib.ops.relocate_gate import (
 )
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.platform.atomic import atomic_symlink
-from meridian.lib.platform.locking import FileLockTimeout, lock_file
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_repository
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import RuntimePaths, rebase_path
@@ -553,10 +553,8 @@ def _apply(
         busy: list[str] = []
         for chat_plan in plan.chats:
             try:
-                stack.enter_context(
-                    lock_file(paths.sessions_dir / f"{chat_plan.chat_id}.lock", timeout=0)
-                )
-            except FileLockTimeout:
+                stack.enter_context(session_store.chat_lock(runtime_root, chat_plan.chat_id))
+            except session_store.ChatBusyError:
                 busy.append(f"{chat_plan.chat_id} (locked by a run)")
         busy += _running_observers(runtime_root, [c.chat_id for c in plan.chats])
         if busy:

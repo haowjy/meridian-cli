@@ -564,6 +564,32 @@ def sys_executable_violations(sources: Sources) -> list[Violation]:
     ]
 
 
+_CHAT_LOCK_OWNER = "meridian/lib/state/session_store.py"
+
+
+def chat_lock_path_violations(sources: Sources) -> list[Violation]:
+    """Reject a chat's lock path built outside the session store.
+
+    A second taker makes its own attempt on the lock, and one that doesn't wait reports a
+    chat as running while stale-lock repair holds its dead session's lock for a moment.
+    """
+
+    return [
+        Violation(
+            module.path,
+            node.lineno,
+            "a chat's lock file named outside the session store: take it with "
+            "session_store.chat_lock.",
+        )
+        for module in sources.python_modules
+        if module.path != _CHAT_LOCK_OWNER
+        and not module.path.startswith(_DEV_PREFIX)
+        and module.mentions("sessions_dir")
+        for node, value in module.string_constants
+        if value == ".lock"
+    ]
+
+
 CHECKS: tuple[Check, ...] = (
     raw_write_violations,
     stale_raw_write_allowlist,
@@ -572,6 +598,7 @@ CHECKS: tuple[Check, ...] = (
     import_time_bootstrap_violations,
     launch_path_violations,
     sys_executable_violations,
+    chat_lock_path_violations,
 )
 
 
