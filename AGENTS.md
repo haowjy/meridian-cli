@@ -15,7 +15,8 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 
 These hold however the code changes, but they can change too. When evidence shows one
 no longer serves the users, propose the change to Jimmy as its own step, never as a side
-effect of getting a task to pass.
+effect of getting a task to pass. How the code keeps each one, what checks it and where
+it falls short: [.context/invariants.md](.context/invariants.md).
 
 - **Overlay.** A session Meridian starts stays a native session in the harness's own
   store, resumable without Meridian, so removing Meridian loses the user nothing.
@@ -38,8 +39,8 @@ effect of getting a task to pass.
   means the abstraction is wrong, so fix the abstraction.
 - State lives under `~/.meridian/` as files; SQLite may index them but is never the only
   copy. A project's repo-local `.meridian/` is never created.
-- Linux and macOS only; add no Windows-specific code. Resolve home with
-  `get_user_home()`.
+- Linux and macOS are supported; Windows isn't planned. Existing Windows branches may
+  stay, untested; add no new ones. Resolve home with `get_user_home()`.
 - Core operations work without git.
 - Comments only for what the code can't show and a wrong edit would break silently;
   no decision IDs.
