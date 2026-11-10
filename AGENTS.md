@@ -8,8 +8,9 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 - **The person running agents.** Meridian is an overlay for them: a session it starts
   stays a normal native session, resumable with the harness alone, and removing
   Meridian leaves their harnesses working. A crash never loses what Meridian
-  acknowledged, and an upgrade never loses or misreads their state. Meridian never acts beyond what they authorized, and never hands one
-  session's private content (secrets, transcripts, excluded turn text) to another.
+  acknowledged, and an upgrade never loses or misreads their state. Meridian never
+  acts beyond what they authorized, and never hands one session's private content
+  (secrets, transcripts, excluded turn text) to another.
 - **The agent calling `meridian`.** It can't ask what a flag means; it reads `-h` and
   the output. A flag, config key, hook name or JSON field keeps working for one minor
   release after it's deprecated.
@@ -24,7 +25,10 @@ one changes only as its own step, agreed with Jimmy.
   means the abstraction is wrong, so fix the abstraction.
 - State lives under `~/.meridian/` as files; SQLite may index them but is never the only
   copy. A project's repo-local `.meridian/` is never created.
-- Crash-only: atomic writes (tmp+rename), truncation-tolerant reads. Recovery is startup.
+- Crash-only, which keeps the crash promise: harnesses exit, users press Ctrl-C and
+  laptops sleep mid-write, so every write is atomic (tmp+rename), every read tolerates
+  a truncated file, and recovery happens at startup rather than in a cleanup path that
+  may never run. `lib/state/AGENTS.md` has the lock order and tail repair.
 - Linux and macOS only; add no Windows-specific code. Resolve home with
   `get_user_home()`.
 - Core operations work without git.
