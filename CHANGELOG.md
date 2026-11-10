@@ -6,6 +6,13 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-11-10
+
+### Fixed
+- `meridian --continue <chat>` and `meridian spawn --continue` no longer refuse with "Chat cN is held by another session" when no session holds the chat. The refusal came from Meridian's own stale-lock cleanup, and could repeat on every retry.
+- `meridian session relocate` no longer refuses such a chat as "locked by a run", and a finished chat no longer shows as active while cleanup runs.
+- A `--continue` refused because the chat really is running now names the holder: `Chat cN is held by pid 4242; continue after it exits, or --fork cN`.
+
 ## [0.20.4] - 2026-11-09
 
 ### Changed
