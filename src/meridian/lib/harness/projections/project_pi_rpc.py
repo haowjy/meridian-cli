@@ -33,6 +33,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "interactive",
         "projected_roots",
         "appended_system_prompt",
+        "prompt_file_path",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
     }
@@ -48,7 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "claude_runtime",
         "codex_runtime",
         "prompt",
-        "prompt_file_path",
+        "settings_file_path",
         "base_instructions",
         "developer_instructions",
         "report_output_path",
@@ -152,7 +153,11 @@ def project_pi_spec_to_cli_args(
         command.extend(("--thinking", thinking_level))
 
     if spec.appended_system_prompt:
-        command.extend(("--append-system-prompt", spec.appended_system_prompt))
+        # Pi reads the argument as a file when one exists and as literal text otherwise,
+        # so the file keeps the prompt off the command line.
+        if not spec.prompt_file_path:
+            raise ValueError("Pi launch has a system prompt but no prompt file path.")
+        command.extend(("--append-system-prompt", spec.prompt_file_path))
 
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)

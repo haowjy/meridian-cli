@@ -101,7 +101,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=False,
             supports_session_resume=True,
             supports_session_fork=False,
-            supports_native_agents=False,
             supports_primary_launch=False,
             supports_native_file_injection=False,
             accepts_messages=False,

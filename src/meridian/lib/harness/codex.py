@@ -327,7 +327,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_native_agents=True,
+            native_agent_carries_body=True,
             supports_primary_launch=True,
             supports_named_primary_resume=True,
             requires_initial_prompt=True,

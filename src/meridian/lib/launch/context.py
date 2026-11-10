@@ -1003,7 +1003,7 @@ def _resolve_spawn_prepare_projection(
     if (
         profile is not None
         and profile.body.strip()
-        and not harness.capabilities.supports_native_agents
+        and not harness.capabilities.native_agent_carries_body
     ):
         rendered_agent_body = substitute_template_variables(
             profile.body.strip(),
@@ -1078,7 +1078,7 @@ def _resolve_primary_projection(
     if (
         profile is not None
         and profile.body.strip()
-        and not harness.capabilities.supports_native_agents
+        and not harness.capabilities.native_agent_carries_body
     ):
         agent_profile_body = profile.body.strip()
 
@@ -1295,7 +1295,7 @@ def prepare_launch_surface(
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
     adhoc_agent_payload = ""
-    if profile is not None and harness.capabilities.supports_native_agents:
+    if profile is not None and harness.capabilities.native_agent_carries_body:
         adhoc_agent_payload = harness.build_adhoc_agent_payload(
             name=profile.name,
             description=profile.description,
@@ -1767,6 +1767,13 @@ def bind_launch_context(
             }
         )
     elif harness.id == HarnessId.CLAUDE:
+        spec = spec.model_copy(
+            update={
+                "prompt_file_path": system_prompt_path.as_posix(),
+                "settings_file_path": bindings.launch.claude_settings.as_posix(),
+            }
+        )
+    elif harness.id == HarnessId.PI:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.

@@ -10,10 +10,7 @@ from meridian.lib.harness.projections._guards import (
 from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.compaction import project_claude_autocompact_args
 from meridian.lib.harness.projections.effort import project_claude_effort_args
-from meridian.lib.harness.projections.permissions_claude import (
-    ClaudeSettings,
-    compile_claude_permissions,
-)
+from meridian.lib.harness.projections.permissions_claude import compile_claude_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -36,6 +33,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_policy",
         "prompt",
         "prompt_file_path",
+        "settings_file_path",
         "claude_runtime",
         "codex_runtime",
         "user_turn_content",
@@ -82,7 +80,12 @@ def _log_collision_if_needed(
     logger.debug(message, managed_flag)
 
 
-def _settings_json(settings: ClaudeSettings) -> str:
+def project_claude_settings_json(spec: ResolvedLaunchSpec) -> str | None:
+    """The managed settings file's content, or ``None`` when Meridian manages no setting."""
+
+    settings = compile_claude_permissions(spec)[0].settings
+    if settings.empty:
+        return None
     payload: dict[str, object] = {}
     permissions: dict[str, object] = {}
     if settings.allow:
@@ -91,6 +94,8 @@ def _settings_json(settings: ClaudeSettings) -> str:
         permissions["deny"] = list(settings.deny)
     if settings.ask:
         permissions["ask"] = list(settings.ask)
+    if settings.additional_directories:
+        permissions["additionalDirectories"] = list(settings.additional_directories)
     if permissions:
         payload["permissions"] = permissions
     if settings.sandbox is not None:
@@ -167,9 +172,6 @@ def project_claude_spec_to_cli_args(
         if spec.continue_fork:
             command.append("--fork-session")
 
-    for root in spec.projected_roots:
-        command.extend(("--add-dir", root.as_posix()))
-
     _log_collision_if_needed(
         managed_flag="--append-system-prompt",
         has_managed_value=bool(spec.appended_system_prompt),
@@ -178,12 +180,13 @@ def project_claude_spec_to_cli_args(
 
     command.extend(passthrough_tail)
 
-    # Permission projection comes after passthrough. Claude keeps only the last
-    # --settings (and --permission-mode), so the managed settings replace a raw one; the
-    # compile consumed raw tool allow/deny flags and omits its own mode when passthrough
-    # sets one. Passthrough can still widen the profile (--dangerously-skip-permissions,
-    # --permission-mode, --allow-dangerously-skip-permissions): those flags stay, and the
-    # report says so.
+    # Permission projection comes after passthrough. Rules and projected roots ride a file
+    # in the launch directory, not argv: `pkill -f` matches the whole command line. Claude
+    # keeps only the last --settings (and --permission-mode), so the managed settings
+    # replace a raw one; the compile consumed raw tool allow/deny flags and omits its own
+    # mode when passthrough sets one. Passthrough can still widen the profile
+    # (--dangerously-skip-permissions, --permission-mode,
+    # --allow-dangerously-skip-permissions): those flags stay, and the report says so.
     if permissions.skip_permission_prompts:
         command.append("--dangerously-skip-permissions")
     if permissions.permission_mode:
@@ -195,7 +198,9 @@ def project_claude_spec_to_cli_args(
     if permissions.disallowed_tools:
         command.extend(("--disallowedTools", ",".join(permissions.disallowed_tools)))
     if not permissions.settings.empty:
-        command.extend(("--settings", _settings_json(permissions.settings)))
+        if not spec.settings_file_path:
+            raise ValueError("Claude launch has managed settings but no settings file path.")
+        command.extend(("--settings", spec.settings_file_path))
 
     # The first-turn mod delivers the user turn when loaded; otherwise it is positional.
     if spec.interactive and spec.user_turn_content and not spec.claude_runtime.first_turn_by_mod:

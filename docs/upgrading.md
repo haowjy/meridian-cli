@@ -1,5 +1,31 @@
 # Upgrade notes
 
+## Claude launches read rules and roots from a file
+
+A Meridian-launched Claude session used to carry its permission rules (`--settings '{...}'`),
+its workspace roots (`--add-dir`) and the start of its profile on the command line. They now
+live in the launch directory: rules and roots in `claude-settings.json`, the profile in
+`system-prompt.md`. A `pkill -f <pattern>` or `pgrep -f` that matched a rule, a root path or
+profile text no longer matches the session, and `ps` no longer shows them.
+
+What changes for you:
+
+- **Skills in a workspace root are no longer loaded.** Claude loads `.claude/skills/` from
+  `--add-dir` paths and not from the `permissions.additionalDirectories` setting Meridian now
+  uses. Skills your profiles name are unaffected: Meridian delivers those itself. To load a
+  root's own skills, pass `--add-dir <path>` through to Claude yourself.
+- Claude's agent picker shows "Meridian agent profile" as the description of a launched
+  profile, not the profile's own description.
+- `--dry-run` prints `--settings <path>` for a file a real launch would write; the rules
+  appear in the permission report.
+
+Pi launches get the same treatment for the system prompt: `--append-system-prompt` now names
+`system-prompt.md` in the launch directory instead of carrying the whole prompt, profile
+text included. `--dry-run` shows that path. Codex, OpenCode and Cursor launches are unchanged:
+OpenCode already kept its prompt and rules in the launch directory and its environment, Codex
+already sends its prompt over the app-server protocol and has no file form for the `-c`
+settings it still carries (workspace roots), and Cursor's CLI was not available to check.
+
 ## A scoped allow no longer restricts the rest of its tool
 
 A profile whose rules for a tool are all scoped allows, such as only `'bash(rg *)': allow`,

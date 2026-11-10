@@ -89,6 +89,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "load_all_pi_extensions",
         "opencode_version",
         "prompt_file_path",
+        "settings_file_path",
         "reference_items",
         "skills",
         "task_cwd",

@@ -58,6 +58,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
         "prompt_file_path",
+        "settings_file_path",
         "report_output_path",
         "task_cwd",
         "user_turn_content",

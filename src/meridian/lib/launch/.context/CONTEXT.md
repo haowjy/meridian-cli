@@ -84,7 +84,8 @@ stored work state; callers must carry that warning into the request. `kb:` refer
 cannot escape the authority KB root.
 
 Workspace projection grants access to relevant roots, including an external task
-cwd, runtime, temporary and control socket directories. Claude and Codex use
+cwd, runtime, temporary and control socket directories. Claude reads roots from
+`permissions.additionalDirectories` in the launch's `claude-settings.json`, Codex uses
 `--add-dir`; OpenCode adds external-directory grants to its config. When projection
 is inactive, an external task cwd yields a warning but the launch continues; the
 harness may need separate access configuration. Do not use passthrough arguments as

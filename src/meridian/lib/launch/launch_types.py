@@ -120,6 +120,7 @@ class ResolvedLaunchSpec(BaseModel):
 
     agents_payload: str | None = None
     prompt_file_path: str | None = None
+    settings_file_path: str | None = None
     claude_runtime: ClaudeRuntimeResolution = ClaudeRuntimeResolution()
 
     user_turn_content: str | None = None
