@@ -197,7 +197,9 @@ def project_claude_spec_to_cli_args(
         command.extend(("--tools", ",".join(permissions.available_tools)))
     if permissions.disallowed_tools:
         command.extend(("--disallowedTools", ",".join(permissions.disallowed_tools)))
-    if spec.settings_file_path and not permissions.settings.empty:
+    if not permissions.settings.empty:
+        if not spec.settings_file_path:
+            raise ValueError("Claude launch has managed settings but no settings file path.")
         command.extend(("--settings", spec.settings_file_path))
 
     # The first-turn mod delivers the user turn when loaded; otherwise it is positional.

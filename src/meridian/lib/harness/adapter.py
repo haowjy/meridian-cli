@@ -91,9 +91,9 @@ class HarnessCapabilities(BaseModel):
     supports_stdin_prompt: bool = False
     supports_session_resume: bool = False
     supports_session_fork: bool = False
-    supports_native_agents: bool = False
-    # A native agent is only a stub: the profile body travels in the system prompt.
-    agent_body_in_system_prompt: bool = False
+    # The harness's native agent definition carries the profile body; otherwise the body
+    # goes in the system prompt.
+    native_agent_carries_body: bool = False
     supports_primary_launch: bool = False
     supports_named_primary_resume: bool = False
     # Whether primary launch needs a synthetic first user prompt to bootstrap

@@ -1000,15 +1000,16 @@ def _resolve_spawn_prepare_projection(
     )
 
     agent_profile_body = ""
-    if profile is not None and profile.body.strip():
-        if not harness.capabilities.supports_native_agents:
-            rendered_agent_body = substitute_template_variables(
-                profile.body.strip(),
-                resolved_template_variables,
-            )
-            agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
-        elif harness.capabilities.agent_body_in_system_prompt:
-            agent_profile_body = profile.body.strip()
+    if (
+        profile is not None
+        and profile.body.strip()
+        and not harness.capabilities.native_agent_carries_body
+    ):
+        rendered_agent_body = substitute_template_variables(
+            profile.body.strip(),
+            resolved_template_variables,
+        )
+        agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
     # A spawn always has a user turn, so its completion contract travels with the
     # task and spawns with different goals share the cached prefix.
@@ -1077,10 +1078,7 @@ def _resolve_primary_projection(
     if (
         profile is not None
         and profile.body.strip()
-        and (
-            not harness.capabilities.supports_native_agents
-            or harness.capabilities.agent_body_in_system_prompt
-        )
+        and not harness.capabilities.native_agent_carries_body
     ):
         agent_profile_body = profile.body.strip()
 
@@ -1297,7 +1295,7 @@ def prepare_launch_surface(
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
     adhoc_agent_payload = ""
-    if profile is not None and harness.capabilities.supports_native_agents:
+    if profile is not None and harness.capabilities.native_agent_carries_body:
         adhoc_agent_payload = harness.build_adhoc_agent_payload(
             name=profile.name,
             description=profile.description,

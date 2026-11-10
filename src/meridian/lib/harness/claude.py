@@ -175,15 +175,19 @@ def build_claude_adhoc_agent_json(*, name: str) -> str:
     """Define the agent as a stub so ``--agent <name>`` resolves; the body rides the prompt file.
 
     A main-thread agent's ``prompt`` replaces Claude's default system prompt, and an empty
-    one restores the default, so the stub is one space: non-empty, and nothing but
-    whitespace before the appended file's text.
+    one restores the default, so the stub prompt is a fixed non-empty line.
     """
 
     normalized_name = name.strip()
     if not normalized_name:
         return ""
 
-    payload = {normalized_name: {"description": "Meridian agent profile", "prompt": " "}}
+    payload = {
+        normalized_name: {
+            "description": "Meridian agent profile",
+            "prompt": "Follow the agent profile in the appended system prompt.",
+        }
+    }
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
@@ -290,8 +294,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_native_agents=True,
-            agent_body_in_system_prompt=True,
             supports_primary_launch=True,
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
@@ -323,14 +325,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "NO_PROXY (for curl: `curl --noproxy '' ...`)."
         )
 
-    def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
-        _ = description, prompt
-        return build_claude_adhoc_agent_json(name=name)
-
     def launch_files(self, spec: ResolvedLaunchSpec) -> dict[Path, str]:
         content = project_claude_settings_json(spec)
-        if spec.settings_file_path is None or content is None:
+        if content is None:
             return {}
+        if not spec.settings_file_path:
+            raise ValueError("Claude launch has managed settings but no settings file path.")
         return {Path(spec.settings_file_path): content}
 
     def native_store_for_launch(
@@ -510,7 +510,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             interactive=run.interactive,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            agents_payload=run.adhoc_agent_payload.strip() or None,
+            agents_payload=build_claude_adhoc_agent_json(name=run.agent or "") or None,
             agent_name=run.agent,
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
