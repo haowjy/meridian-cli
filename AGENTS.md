@@ -95,7 +95,7 @@ Read `docs/releasing.md` before releasing or opening a PR. The pre-push hook
 runs the fast gate: push after the last review fix. Put changelog entries in
 the PR body's `## Changelog`, not `CHANGELOG.md`; use the PR template and
 select a `release:*` label. Docs-only changes and tiny, obvious bug fixes need
-no PR. Pushing requires a request.
+no PR.
 
 ## Testing
 
