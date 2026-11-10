@@ -13,7 +13,11 @@ from typing import Any, cast
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
+from meridian.lib.platform.process_scope.base import (
+    CleanupResult,
+    RootIdentity,
+    check_root_identity,
+)
 
 # ---------------------------------------------------------------------------
 # Windows constants (defined inline so the module imports cleanly on POSIX)
@@ -132,24 +136,16 @@ def terminate_job(
 
     kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # ctypes exposes windll only on Windows.
 
-    # A reused PID must not authorize termination.
-    skip_reason: str | None = None
-    if not birth_time_unverified(created_at_epoch):
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-            actual_create_time = psutil.Process(root_pid).create_time()
-            if abs(actual_create_time - created_at_epoch) > 1.0:
-                skip_reason = "pid_reuse_detected"
-
-    if skip_reason is not None:
-        return CleanupResult(
+    # A reused PID must not authorize termination; the job handle owns the group.
+    identity = check_root_identity(root_pid, created_at_epoch)
+    if identity is RootIdentity.REUSED:
+        return CleanupResult.skipped(
             scope_id=scope_id,
             root_pid=root_pid,
-            descendant_count=None,
             reason=reason,
             grace_seconds=grace_seconds,
-            kill_escalated=False,
             degraded_fallback=False,
-            skip_reason=skip_reason,
+            identity=identity,
         )
 
     descendant_count: int | None = None

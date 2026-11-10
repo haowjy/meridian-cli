@@ -17,9 +17,9 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import ChatId
-from meridian.lib.platform.atomic import atomic_replace
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_replace, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
+from meridian.lib.state.atomic import atomic_publish_dir
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, resolve_spawn_dir, row_launch_subdir
 from meridian.lib.state.retention_archive import (
@@ -184,13 +184,13 @@ def _stage_record(
         stored = stored.model_copy(
             update={"prompt_length": len((stage / prompt_member).read_text())}
         )
-    atomic_write_text(stage / "state.json", stored.model_dump_json())
+    atomic_write_text(stage / "state.json", stored.model_dump_json(), permissions=PRIVATE_FILE_MODE)
     if (
         ArchivedRecord.model_validate_json(provenance) != record
         or stored_record_digest(json.loads(provenance)) != record.portable_digest
     ):
         raise ValueError("Archive changed during restore extraction")
-    atomic_write_text(stage / "record.json", provenance.decode())
+    atomic_write_text(stage / "record.json", provenance.decode(), permissions=PRIVATE_FILE_MODE)
     atomic_write_text(
         stage / "restored-from.json",
         json.dumps(
@@ -202,6 +202,7 @@ def _stage_record(
                 "provenance_sha256": digest((stage / "record.json").read_bytes()),
             }
         ),
+        permissions=PRIVATE_FILE_MODE,
     )
 
 
@@ -261,7 +262,9 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                         generation=generation,
                         session=_historical_session(record, chat_id, local_id, generation),
                     )
-                    atomic_write_text(plan_path, plan.model_dump_json())
+                    atomic_write_text(
+                        plan_path, plan.model_dump_json(), permissions=PRIVATE_FILE_MODE
+                    )
                 if plan is None:
                     assert existing is not None
                     local_id = existing.id

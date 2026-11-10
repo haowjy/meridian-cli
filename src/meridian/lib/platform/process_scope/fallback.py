@@ -1,3 +1,5 @@
+"""Tree termination: the one place Meridian signals a process and its descendants."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,28 +11,14 @@ from meridian.lib.platform.process_scope.base import (
     POST_KILL_WAIT_SECS,
     PROCESS_BIRTH_UNKNOWN_EPOCH,
     CleanupResult,
+    RootIdentity,
     birth_time_unverified,
+    check_root_identity,
+    process_birth_epoch,
 )
-
-_UNSET_EPOCH = PROCESS_BIRTH_UNKNOWN_EPOCH
-
-
-def _validate_pid_birth(root_pid: int, created_at_epoch: float) -> str | None:
-
-    if birth_time_unverified(created_at_epoch):
-        return None
-
-    # An unavailable birth time does not establish process identity.
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        actual = psutil.Process(root_pid).create_time()
-        if abs(actual - created_at_epoch) > 1.0:
-            return "pid_reuse_detected"
-
-    return None
 
 
 def _snapshot_tree(pid: int) -> tuple[psutil.Process | None, list[psutil.Process]]:
-
     try:
         root = psutil.Process(pid)
     except psutil.NoSuchProcess:
@@ -42,18 +30,75 @@ def _snapshot_tree(pid: int) -> tuple[psutil.Process | None, list[psutil.Process
     return root, children
 
 
+def terminate_tree_sync(
+    pid: int,
+    *,
+    created_at_epoch: float,
+    grace_secs: float = 5.0,
+    reason: str = "stop_called",
+    scope_id: str = "",
+    degraded_fallback: bool = False,
+) -> CleanupResult:
+    """Terminate ``pid`` and its descendants if ``created_at_epoch`` verifies it.
+
+    A recorded birth that is unset, unreadable or different means the PID is not
+    known to be the process Meridian started; nothing is signalled.
+    """
+
+    identity = check_root_identity(pid, created_at_epoch)
+    if identity in (RootIdentity.REUSED, RootIdentity.UNKNOWN):
+        return CleanupResult.skipped(
+            scope_id=scope_id,
+            root_pid=pid,
+            reason=reason,
+            grace_seconds=grace_secs,
+            degraded_fallback=degraded_fallback,
+            identity=identity,
+        )
+
+    root, children = _snapshot_tree(pid) if identity is RootIdentity.VERIFIED else (None, [])
+
+    descendant_count = len(children)
+    kill_escalated = False
+    if root is not None:
+        tree = [*children, root]
+        for proc in tree:
+            with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                proc.terminate()
+
+        _, alive = psutil.wait_procs(tree, timeout=grace_secs)
+        kill_escalated = bool(alive)
+        if alive:
+            for proc in alive:
+                with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                    proc.kill()
+            psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
+
+    return CleanupResult(
+        scope_id=scope_id,
+        root_pid=pid,
+        descendant_count=descendant_count,
+        reason=reason,
+        grace_seconds=grace_secs,
+        kill_escalated=kill_escalated,
+        degraded_fallback=degraded_fallback,
+        skip_reason=None,
+    )
+
+
 async def terminate_tree(
     process: asyncio.subprocess.Process,
     *,
     grace_secs: float = 5.0,
     reason: str = "stop_called",
     scope_id: str = "",
-    root_created_at_epoch: float = _UNSET_EPOCH,
+    root_created_at_epoch: float = PROCESS_BIRTH_UNKNOWN_EPOCH,
     degraded_fallback: bool = False,
 ) -> CleanupResult:
+    """Terminate a child the caller holds. An unreaped child's PID is its own, so
+    an unrecorded birth is read from the live process instead of skipping it."""
 
     pid = process.pid
-
     if process.returncode is not None:
         return CleanupResult(
             scope_id=scope_id,
@@ -65,121 +110,20 @@ async def terminate_tree(
             degraded_fallback=degraded_fallback,
             skip_reason=None,
         )
-
-    skip_reason = _validate_pid_birth(pid, root_created_at_epoch)
-    if skip_reason is not None:
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=None,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=skip_reason,
-        )
-
-    root, children = _snapshot_tree(pid)
-    if root is None:
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    descendant_count = len(children)
-    tree = [*children, root]
-
-    for proc in tree:
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-            proc.terminate()
-
-    _, alive = await asyncio.to_thread(psutil.wait_procs, tree, timeout=grace_secs)
-    kill_escalated = bool(alive)
-    if alive:
-        for proc in alive:
-            with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-                proc.kill()
-        await asyncio.to_thread(psutil.wait_procs, alive, timeout=POST_KILL_WAIT_SECS)
-
-    return CleanupResult(
-        scope_id=scope_id,
-        root_pid=pid,
-        descendant_count=descendant_count,
+    epoch = (
+        process_birth_epoch(pid)
+        if birth_time_unverified(root_created_at_epoch)
+        else root_created_at_epoch
+    )
+    return await asyncio.to_thread(
+        terminate_tree_sync,
+        pid,
+        created_at_epoch=epoch,
+        grace_secs=grace_secs,
         reason=reason,
-        grace_seconds=grace_secs,
-        kill_escalated=kill_escalated,
+        scope_id=scope_id,
         degraded_fallback=degraded_fallback,
-        skip_reason=None,
     )
 
 
-def terminate_tree_sync(
-    pid: int,
-    *,
-    created_at_epoch: float = _UNSET_EPOCH,
-    grace_secs: float = 5.0,
-    reason: str = "stop_called",
-    scope_id: str = "",
-    degraded_fallback: bool = False,
-) -> CleanupResult:
-
-    skip_reason = _validate_pid_birth(pid, created_at_epoch)
-    if skip_reason is not None:
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=None,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=skip_reason,
-        )
-
-    root, children = _snapshot_tree(pid)
-    if root is None:
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    descendant_count = len(children)
-    tree = [*children, root]
-
-    for proc in tree:
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-            proc.terminate()
-
-    _, alive = psutil.wait_procs(tree, timeout=grace_secs)
-    kill_escalated = bool(alive)
-    if alive:
-        for proc in alive:
-            with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-                proc.kill()
-        psutil.wait_procs(alive, timeout=POST_KILL_WAIT_SECS)
-
-    return CleanupResult(
-        scope_id=scope_id,
-        root_pid=pid,
-        descendant_count=descendant_count,
-        reason=reason,
-        grace_seconds=grace_secs,
-        kill_escalated=kill_escalated,
-        degraded_fallback=degraded_fallback,
-        skip_reason=None,
-    )
-
-
-__all__ = ["PROCESS_BIRTH_UNKNOWN_EPOCH", "terminate_tree", "terminate_tree_sync"]
+__all__ = ["terminate_tree", "terminate_tree_sync"]

@@ -20,10 +20,10 @@ from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
 )
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import (
     lock_file,
 )
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_line
@@ -144,7 +144,7 @@ def _append_session_event(
         changes.mark(HistorySource(kind="sessions"))
         # Inherited policy can include configured environment values and prompts.
         if not data_path.exists():
-            atomic_write_text(data_path, "")
+            atomic_write_text(data_path, "", permissions=PRIVATE_FILE_MODE)
         data_path.chmod(0o600)
         append_event(data_path, lock_path, event, exclude_none=exclude_none)
 

@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from meridian.lib.harness.legacy_native_stores import (
         NativeSessionEvidence,
     )
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
@@ -224,7 +224,7 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
                         del report.bindings[chat_id]
                         report.counts[original.harness]["imported"] -= 1
                         report.record(original, "ambiguous_id")
-        atomic_write_text(marker, report.to_json())
+        atomic_write_text(marker, report.to_json(), permissions=PRIVATE_FILE_MODE)
         deferral.unlink(missing_ok=True)
         imported = sum(counts["imported"] for counts in report.counts.values())
         total = sum(sum(counts.values()) for counts in report.counts.values())
@@ -304,7 +304,7 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
                 attempted.add(chat_id)
 
         prior.late_retries = sorted(attempted)
-        atomic_write_text(marker, prior.to_json())
+        atomic_write_text(marker, prior.to_json(), permissions=PRIVATE_FILE_MODE)
         return LateBinding(bound=bound, attempted=len(candidates))
 
 
@@ -633,7 +633,7 @@ def recover_legacy_pi_sessions(
                     prior.bindings[chat_id] = (evidence.session_id, store)
                     bound.add(chat_id)
         prior.pi_recovery_tried = sorted(tried | set(pending))
-        atomic_write_text(marker, prior.to_json())
+        atomic_write_text(marker, prior.to_json(), permissions=PRIVATE_FILE_MODE)
         return PiRecovery(
             bound=len(bound),
             unbound=tuple(chat_id for chat_id in pi_chats if chat_id not in bound),
@@ -655,6 +655,7 @@ def maybe_import_legacy_native_sessions(runtime_root: Path) -> None:
                     sort_keys=True,
                 )
                 + "\n",
+                permissions=PRIVATE_FILE_MODE,
             )
         print(f"Native session import deferred for {runtime_root}: {exc}", file=sys.stderr)
 

@@ -13,6 +13,7 @@ import psutil
 import structlog
 
 from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
     CleanupResult,
     ProcessScopeSnapshot,
     birth_time_unverified,
@@ -255,7 +256,8 @@ def _terminate_legacy_worker_pid(
 
     result = terminate_tree_sync(
         pid=worker_pid,
-        created_at_epoch=0.0,  # legacy: no birth time available
+        # Legacy rows record no birth, so this is skipped, never signalled.
+        created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
         grace_secs=grace_seconds,
         reason=reason,
         scope_id="legacy_worker",

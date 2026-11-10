@@ -42,9 +42,8 @@ from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.platform.atomic import fsync_directory
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text, fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import (
     SCHEMA_VERSION,
     DirtySource,
@@ -976,7 +975,9 @@ class HistoryIndex:
         if reset:
             # Full quiescent scan replaces unknown coordination; locks are never removed.
             with lock_file(changes.marker_lock, timeout=_remaining(deadline)):
-                atomic_write_text(changes.directory / "GENERATION", str(uuid4()))
+                atomic_write_text(
+                    changes.directory / "GENERATION", str(uuid4()), permissions=PRIVATE_FILE_MODE
+                )
                 for path in changes.directory.glob("*.json"):
                     path.unlink()
         generation, _ = changes.capture(timeout=_remaining(deadline))
@@ -1265,7 +1266,11 @@ class HistoryIndex:
                     failed_at=datetime.now(UTC).isoformat(),
                 )
                 try:
-                    atomic_write_text(self.failure_path, failure.model_dump_json() + "\n")
+                    atomic_write_text(
+                        self.failure_path,
+                        failure.model_dump_json() + "\n",
+                        permissions=PRIVATE_FILE_MODE,
+                    )
                 except OSError:
                     raise self._initialization_error(reason, persisted=False) from exc
                 raise self._initialization_error(reason) from exc

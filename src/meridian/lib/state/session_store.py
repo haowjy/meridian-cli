@@ -22,6 +22,7 @@ from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
 )
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import (
     FileLockTimeout,
     acquire_file_lock,
@@ -30,7 +31,6 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.json_doc import read_model, write_model
@@ -353,7 +353,7 @@ def _append_session_rows(data_path: Path, rows: Iterable[BaseModel]) -> None:
     HistoryChanges(data_path.parent).mark(HistorySource(kind="sessions"))
     # Inherited policy can include configured environment values and prompts.
     if not data_path.exists():
-        atomic_write_text(data_path, "")
+        atomic_write_text(data_path, "", permissions=PRIVATE_FILE_MODE)
     data_path.chmod(0o600)
     append_durable_jsonl_lines(data_path, lines)
 
@@ -457,7 +457,9 @@ def reserve_chat_id(runtime_root: Path) -> str:
     with lock_file(paths.session_id_counter_flock):
         current = _read_session_counter(paths)
         next_value = current + 1
-        atomic_write_text(paths.session_id_counter, f"{next_value}\n")
+        atomic_write_text(
+            paths.session_id_counter, f"{next_value}\n", permissions=PRIVATE_FILE_MODE
+        )
         return f"c{next_value}"
 
 

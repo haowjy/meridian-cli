@@ -818,8 +818,8 @@ def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str |
     """Maintain the completed aggregate; latest chat may already name another run."""
     import time
 
+    from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
     from meridian.lib.platform.locking import try_lock_file
-    from meridian.lib.state.atomic import atomic_write_text
 
     roots = resolve_roots_for_read(str(project_root))
     if roots is None:
@@ -868,7 +868,7 @@ def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str |
             )
             if result.errors:
                 return "History maintenance: " + "; ".join(result.errors)
-            atomic_write_text(marker, str(time.time()))
+            atomic_write_text(marker, str(time.time()), permissions=PRIVATE_FILE_MODE)
     except (ValueError, OSError, RuntimeError) as exc:
         return f"History maintenance: {exc}"
     return None

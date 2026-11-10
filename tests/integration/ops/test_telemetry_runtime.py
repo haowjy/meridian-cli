@@ -9,7 +9,7 @@ from pathlib import Path
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry.retention import run_retention_cleanup
 
@@ -108,7 +108,7 @@ def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_pat
         state_path = tmp_path / "spawns" / quarantined_id / "state.json"
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         payload["status"] = "zombie"
-        atomic_write_text(state_path, json.dumps(payload))
+        atomic_write_text(state_path, json.dumps(payload), permissions=PRIVATE_FILE_MODE)
 
         run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 

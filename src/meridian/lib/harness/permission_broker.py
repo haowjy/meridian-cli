@@ -12,7 +12,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     ServerRequestHandler,
 )
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import (
     REJECT_DECISION,
@@ -272,6 +272,7 @@ class PermissionBroker(ServerRequestHandler):
             lambda: atomic_write_text(
                 self._cursor_path,
                 json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                permissions=PRIVATE_FILE_MODE,
             ),
         )
 

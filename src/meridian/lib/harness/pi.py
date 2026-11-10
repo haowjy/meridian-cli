@@ -101,8 +101,8 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state import pi_lifecycle
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import HistoryIndexIncomplete
 from meridian.lib.state.paths import LaunchPaths
@@ -172,6 +172,7 @@ def _write_pi_runtime_metadata_sidecar(
         lambda: atomic_write_text(
             launch.pi_runtime_meta,
             json.dumps(payload, separators=(",", ":")) + "\n",
+            permissions=PRIVATE_FILE_MODE,
         ),
     )
 

@@ -9,8 +9,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.spawn.model import LegacyRunBoundaryOutcome, RunBoundaryOutcome
@@ -76,7 +76,11 @@ def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bo
             return False
         stored = StoredSpawnState.model_validate(_translate(raw))
         changes.mark(HistorySource(kind="spawn", key=spawn_id))
-        atomic_write_text(path, stored.model_dump_json(indent=2, exclude_unset=True) + "\n")
+        atomic_write_text(
+            path,
+            stored.model_dump_json(indent=2, exclude_unset=True) + "\n",
+            permissions=PRIVATE_FILE_MODE,
+        )
     return True
 
 

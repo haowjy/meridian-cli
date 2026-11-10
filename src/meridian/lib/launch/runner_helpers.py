@@ -14,7 +14,7 @@ from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
-from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
+from meridian.lib.platform.process_scope.fallback import terminate_tree as _terminate_tree
 from meridian.lib.safety.budget import BudgetBreach
 from meridian.lib.safety.guardrails import GuardrailFailure
 from meridian.lib.state import spawn_store

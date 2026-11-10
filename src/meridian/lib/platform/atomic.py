@@ -11,6 +11,7 @@ from typing import IO, Literal, overload
 
 from meridian.lib.platform import IS_WINDOWS
 
+PRIVATE_FILE_MODE = 0o600
 _ATOMIC_TEMP_SUFFIX = ".tmp"
 # A publisher that crashed left its staged link behind; younger ones may belong
 # to a live publisher, so leave those alone.
@@ -141,9 +142,20 @@ def atomic_replace(
         tmp_path.unlink(missing_ok=True)
 
 
-def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None:
+def atomic_write_text(
+    path: Path,
+    content: str,
+    *,
+    durable: bool = True,
+    permissions: int | Literal["preserve"] = "preserve",
+) -> None:
+    """Replace ``path`` with ``content`` atomically.
 
-    with atomic_replace(path, durable=durable) as handle:
+    A new file takes the umask default and a replaced one keeps its mode; pass
+    ``PRIVATE_FILE_MODE`` for state that may hold private content.
+    """
+
+    with atomic_replace(path, durable=durable, permissions=permissions) as handle:
         handle.write(content)
 
 
@@ -183,6 +195,7 @@ def atomic_symlink(link: Path, target: Path) -> Path | None:
 
 
 __all__ = [
+    "PRIVATE_FILE_MODE",
     "AtomicReplaceDurabilityError",
     "atomic_replace",
     "atomic_symlink",

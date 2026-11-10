@@ -9,8 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from meridian.lib.platform.atomic import fsync_directory
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text, fsync_directory
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ResultT = TypeVar("ResultT")
@@ -49,6 +48,7 @@ def write_model(
     atomic_write_text(
         path,
         model.model_dump_json(indent=indent, exclude_none=exclude_none) + "\n",
+        permissions=PRIVATE_FILE_MODE,
     )
 
 
@@ -66,6 +66,7 @@ def write_model_once(
         atomic_write_text(
             staged,
             model.model_dump_json(indent=indent, exclude_none=exclude_none) + "\n",
+            permissions=PRIVATE_FILE_MODE,
         )
         try:
             os.link(staged, path)

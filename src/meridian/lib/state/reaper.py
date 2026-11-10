@@ -17,10 +17,10 @@ from meridian.lib.core.spawn_lifecycle import (
     is_terminal_spawn_status,
 )
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.posix import is_pgid_reachable
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import LaunchPaths
@@ -253,7 +253,7 @@ def recover_crashed_launches(project_root: Path, runtime_root: Path) -> tuple[Sp
                         break
             finally:
                 if last is not None:
-                    atomic_write_text(cursor_path, last)
+                    atomic_write_text(cursor_path, last, permissions=PRIVATE_FILE_MODE)
                 if failed:
                     logger.warning("repair_rows_failed", count=len(failed), spawn_ids=failed[:10])
             return tuple(recovered)

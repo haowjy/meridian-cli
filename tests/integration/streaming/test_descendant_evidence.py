@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.ops.session_archive import archive_history
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
 from tests.support import legacy_rows
@@ -76,7 +76,7 @@ def test_reconciled_descendant_evidence_reports_invalid_rows_as_unknown(
     start_row(tmp_path, "p2", HarnessId.CODEX, "unrelated")
     invalid_state = tmp_path / "spawns" / "p3" / "state.json"
     invalid_state.parent.mkdir(parents=True)
-    atomic_write_text(invalid_state, "not json")
+    atomic_write_text(invalid_state, "not json", permissions=PRIVATE_FILE_MODE)
 
     assessment = ReconciledDescendantEvidence(
         runtime_root=tmp_path,

@@ -24,8 +24,8 @@ from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state import spawn_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (
     LaunchPaths,
@@ -390,7 +390,9 @@ def _write_params_json(
     params_path = launch.params
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = _params_payload(request_metadata, binding=binding)
-    atomic_write_text(params_path, json.dumps(params_payload, indent=2) + "\n")
+    atomic_write_text(
+        params_path, json.dumps(params_payload, indent=2) + "\n", permissions=PRIVATE_FILE_MODE
+    )
 
 
 __all__ = [

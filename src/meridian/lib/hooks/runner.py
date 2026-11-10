@@ -9,6 +9,7 @@ from pathlib import Path
 from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
 from meridian.lib.launch.cli_shim import pin_launching_build, write_pinned_shim
+from meridian.lib.platform.process_scope.base import process_birth_epoch
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
@@ -54,7 +55,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
 
     terminate_tree_sync(
         pid=pid,
-        created_at_epoch=0.0,
+        created_at_epoch=process_birth_epoch(pid),
         grace_secs=grace_secs,
         reason="hook_timeout",
         scope_id="hook_process",

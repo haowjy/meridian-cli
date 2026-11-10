@@ -25,8 +25,9 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
+from meridian.lib.state.atomic import atomic_publish_dir
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.launch_lock import LaunchHandle, LaunchSlot
 from meridian.lib.state.paths import (
@@ -118,7 +119,9 @@ def reserve_launch(
         if current == 0 and not _spawn_counter_path(paths).is_file():
             current = _seed_spawn_counter_from_dirs(paths)
         next_value = current + 1
-        atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
+        atomic_write_text(
+            _spawn_counter_path(paths), f"{next_value}\n", permissions=PRIVATE_FILE_MODE
+        )
         return LaunchPaths.reserved(runtime_root, SpawnId(f"p{next_value}"), FIRST_LAUNCH)
 
 
@@ -393,7 +396,9 @@ def start_spawn(
             if current == 0 and not _spawn_counter_path(paths).is_file():
                 current = _seed_spawn_counter_from_dirs(paths)
             next_value = current + 1
-            atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
+            atomic_write_text(
+                _spawn_counter_path(paths), f"{next_value}\n", permissions=PRIVATE_FILE_MODE
+            )
             resolved_spawn_id = SpawnId(f"p{next_value}")
         record = SpawnRecord(
             id=str(resolved_spawn_id),
@@ -431,11 +436,12 @@ def start_spawn(
         stage_dir.mkdir()
         staged_prompt = staged_starting_prompt(stage_dir, FIRST_LAUNCH)
         staged_prompt.parent.mkdir(parents=True)
-        atomic_write_text(staged_prompt, prompt)
+        atomic_write_text(staged_prompt, prompt, permissions=PRIVATE_FILE_MODE)
         stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
             stored_state.model_dump_json(indent=2) + "\n",
+            permissions=PRIVATE_FILE_MODE,
         )
         source = HistorySource(kind="spawn", key=str(resolved_spawn_id))
         with lock_file(source.lock_path(runtime_root)):
@@ -488,10 +494,11 @@ def reopen_spawn(
         atomic_write_text(
             launch_archive(runtime_root, handle.spawn_id, k),
             record_to_stored_state(current).model_dump_json(indent=2) + "\n",
+            permissions=PRIVATE_FILE_MODE,
         )
         following = LaunchPaths.reserved(runtime_root, handle.spawn_id, k + 1)
         following.dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(following.starting_prompt, launch.prompt)
+        atomic_write_text(following.starting_prompt, launch.prompt, permissions=PRIVATE_FILE_MODE)
         effective_goal = launch.goal if launch.goal is not None else current.goal
         effective_desc = desc if desc is not None else current.desc
         owed = current.owed_launches
