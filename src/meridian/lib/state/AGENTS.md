@@ -4,7 +4,8 @@ File-backed authority for all Meridian runtime state. No service or in-memory ob
 survives process death. SQLite is only a rebuildable projection; authoritative state
 must stay recoverable from its source files.
 
-State contracts: [.context/CONTEXT.md](.context/CONTEXT.md). `project_identity.py` is the only identity
+Writes go through `atomic_write_text` (tmp+rename); a JSONL file's torn last line is
+repaired before the next append (`append_durable_jsonl_lines`). State contracts: [.context/CONTEXT.md](.context/CONTEXT.md). `project_identity.py` is the only identity
 reader and writer. Resolve home with `get_user_home()` (`user_paths.py`), never
 `~/.meridian/`.
 

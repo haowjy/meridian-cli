@@ -5,18 +5,29 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 
 ## Who It's For
 
-- **The person running agents.** Meridian is an overlay for them: a session it starts
-  stays a normal native session, resumable with the harness alone, and removing
-  Meridian leaves their harnesses working. A crash never loses what Meridian
-  acknowledged, and an upgrade never loses or misreads their state. Meridian never
-  acts beyond what they authorized, and never hands one session's private content
-  (secrets, transcripts, excluded turn text) to another.
-- **The agent calling `meridian`.** It can't ask what a flag means; it reads `-h` and
-  the output. A flag, config key, hook name or JSON field keeps working for one minor
-  release after it's deprecated.
+- **The person running agents.** They use several harnesses, kill and restart things,
+  and come back to sessions days later. They must be able to drop Meridian at any time
+  and keep working in their harnesses.
+- **The agent calling `meridian`.** It can't ask what a flag means: it reads `-h` and
+  the output, and scripts parse the JSON.
 
-These promises are the project's invariants: they hold however the work is done, and
-one changes only as its own step, agreed with Jimmy.
+## Invariants
+
+These hold however the code changes. Change one only as its own step, agreed with Jimmy.
+
+- **Overlay.** A session Meridian starts stays a native session in the harness's own
+  store, resumable without Meridian, so removing Meridian loses the user nothing.
+- **Crash-only.** Every write is atomic, every read survives a half-written file, and
+  recovery runs at startup. Meridian gets killed mid-write all the time; whatever it
+  reported as saved must still be there afterwards.
+- **Compatible upgrades.** A new build reads what older builds wrote, and a flag,
+  config key, hook name or JSON field keeps working for one minor release after it's
+  deprecated, so an upgrade breaks neither the user's history nor their scripts.
+- **Only what was authorized.** Meridian signals only processes it verified as its own,
+  never starts cancelled work and never widens a workspace: it runs beside the user's
+  other sessions.
+- **Private content stays put.** Secrets, a session's transcript and turn text the user
+  excluded never reach a session that wasn't meant to see them.
 
 ## Design Constraints
 
@@ -25,10 +36,6 @@ one changes only as its own step, agreed with Jimmy.
   means the abstraction is wrong, so fix the abstraction.
 - State lives under `~/.meridian/` as files; SQLite may index them but is never the only
   copy. A project's repo-local `.meridian/` is never created.
-- Crash-only, which keeps the crash promise: harnesses exit, users press Ctrl-C and
-  laptops sleep mid-write, so every write is atomic (tmp+rename), every read tolerates
-  a truncated file, and recovery happens at startup rather than in a cleanup path that
-  may never run. `lib/state/AGENTS.md` has the lock order and tail repair.
 - Linux and macOS only; add no Windows-specific code. Resolve home with
   `get_user_home()`.
 - Core operations work without git.
