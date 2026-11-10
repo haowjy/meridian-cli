@@ -9,10 +9,16 @@ test_session_store.py.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store
 from tests.support.process_race import run_spawn_race_or_skip
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -38,3 +44,41 @@ def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     allocated = sorted(allocated)
     assert allocated == [f"c{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "session-id-counter").read_text(encoding="utf-8") == f"{process_count}\n"
+
+
+def test_chat_is_free_once_a_brief_holder_releases(tmp_path: Path) -> None:
+    """Stale-lock repair takes a dead chat's lock for a moment; a continue must outwait it."""
+    runtime_root = _state_root(tmp_path)
+    lock_path = runtime_root / "sessions" / "c1.lock"
+    lock_path.parent.mkdir()
+    lock_path.touch()
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with lock_file(lock_path, timeout=0, reentrant=False):
+            held.set()
+            release.wait()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert held.wait(5)
+        threading.Timer(0.1, release.set).start()
+        assert session_store.is_chat_free(runtime_root, "c1")
+    finally:
+        release.set()
+        holder.join()
+
+
+def test_chat_is_not_free_while_its_lock_stays_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    lock_path = runtime_root / "sessions" / "c1.lock"
+    lock_path.parent.mkdir()
+    lock_path.touch()
+    monkeypatch.setattr(session_store, "_CHAT_LOCK_WAIT_SECONDS", 0.05)
+
+    with lock_file(lock_path, timeout=0, reentrant=False):
+        assert not session_store.is_chat_free(runtime_root, "c1")
