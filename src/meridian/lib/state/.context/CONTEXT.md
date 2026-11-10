@@ -152,8 +152,8 @@ scan for a fallback, so a missing link leaves spawn commands unable to resolve t
 chat. A child that never started has no session of its own and cannot be continued;
 legacy placeholder rows need the same treatment. A generation belongs to a spawn
 only when its `spawn_id` matches and its `history_id` is absent or matches: `/clear`
-creates a chat with its own history. See the KB's `decisions/chat-spawn-ownership.md`
-for rejected lookup fallbacks.
+creates a chat with its own history. See the KB's `concepts/session-references.md`
+for why ownership starts with the session.
 
 ## Related .context/
 

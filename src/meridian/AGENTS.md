@@ -13,4 +13,4 @@ to where the warning belongs.
 
 Pyright suppressions name one rule and a reason. Shared decoded JSON shapes use
 `lib/utils/json_shapes.py`; fixed shapes use a Pydantic model or validated
-TypedDict. KB `decisions/static-typing.md` explains the typing policy.
+TypedDict. KB `codebase/guide.md` explains the typing policy.
