@@ -137,6 +137,33 @@ def test_cleanup_cannot_delete_concurrently_restarted_session(
         session_store.release_file_lock(restarted[0].project_lifetime)
 
 
+def test_cleanup_reads_the_log_without_holding_a_dead_chats_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead chat's lock held across the log read made a continue see it as running."""
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(runtime_root=runtime_root, chat_id="c10", session_instance_id="gen")
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / "c10.lock"
+    lock_path.touch()
+    read_records = session_store.get_session_records
+    free_during_read: list[bool] = []
+
+    def read_and_probe(*args: object, **kwargs: object) -> object:
+        with session_store.try_lock_file(lock_path, reentrant=False) as handle:
+            free_during_read.append(handle is not None)
+        return read_records(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(session_store, "get_session_records", read_and_probe)
+
+    cleanup = session_store.cleanup_stale_sessions(runtime_root)
+
+    assert free_during_read == [True]
+    assert cleanup.cleaned_ids == ("c10",)
+    assert not lock_path.exists()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
 def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)

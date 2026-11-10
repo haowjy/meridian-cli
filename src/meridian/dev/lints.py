@@ -579,7 +579,7 @@ def chat_lock_path_violations(sources: Sources) -> list[Violation]:
             module.path,
             node.lineno,
             "a chat's lock file named outside the session store: take it with "
-            "session_store.chat_lock or ask session_store.is_chat_free.",
+            "session_store.chat_lock.",
         )
         for module in sources.python_modules
         if module.path != _CHAT_LOCK_OWNER

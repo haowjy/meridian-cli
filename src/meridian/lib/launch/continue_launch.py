@@ -31,7 +31,7 @@ from meridian.lib.state.process_scope_projection import mark_scope_released, rea
 from meridian.lib.state.reaper import resolve_cleanup_claim
 from meridian.lib.state.reaper_cleanup_claim import read_cleanup_claim
 from meridian.lib.state.session_identity import chat_owner_spawn
-from meridian.lib.state.session_store import is_chat_free
+from meridian.lib.state.session_store import chat_lock
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     Applied,
@@ -244,15 +244,6 @@ def _require_managed_processes_gone(metadata: PrimaryMetadata | None, spawn_id: 
     )
 
 
-def _check_chat_free(runtime_root: Path, chat_id: str) -> None:
-    """Advisory: ``start_session``'s lock is the authority, so this releases at once."""
-    if not is_chat_free(runtime_root, chat_id):
-        raise ValueError(
-            f"Chat {chat_id} is held by another session; continue after it exits, "
-            f"or --fork {chat_id}"
-        )
-
-
 def begin_continue(
     *,
     project_root: Path,
@@ -287,7 +278,9 @@ def begin_continue(
                 RuntimePaths.from_root_dir(runtime_root).spawns_dir, spawn_id, parent_id
             )
         if chat_id:
-            _check_chat_free(runtime_root, chat_id)
+            # Refuse before the spawn's row is reopened; ``start_session`` takes it for real.
+            with chat_lock(runtime_root, chat_id):
+                pass
     except BaseException:
         slot.close()
         raise
