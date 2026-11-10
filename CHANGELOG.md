@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-11-10
+
+### Upgrade notes
+- Skills in a workspace root's `.claude/skills/` are no longer loaded into Meridian-launched Claude sessions; Claude's agent picker shows a fixed description for a launched profile. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#claude-launches-read-rules-and-roots-from-a-file).
+
+### Fixed
+- A `pkill -f` or `pgrep -f` on a tool name, a workspace path or a word from a profile no longer matches every Meridian-launched Claude session. Permission rules, workspace roots and profile text moved off the `claude` command line into files in the launch directory, and `ps` no longer shows them.
+- Pi launches pass the system prompt as a file, so the prompt and profile text are off the `pi` command line too.
+
 ## [0.20.5] - 2026-11-10
 
 ### Fixed
