@@ -116,7 +116,7 @@ shared rules for every package are in `../prompts/AGENTS.md`.
 
 ## Downlinks
 
-- `src/meridian/AGENTS.md` — layered architecture, subpackage index
+- `src/meridian/AGENTS.md` — plugin surface, launch entry points, typing rules
 - `tests/AGENTS.md` — test placement, fakes
 - `docs/releasing.md` — complete release workflow
 - `.context/CONTEXT.md` — cross-cutting design tensions
