@@ -12,8 +12,10 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 
 **NEVER merge a PR into `main` without explicit human approval in the current
 conversation,** unless the global grant covers your model. Stop at draft→ready with a
-`release:*` label. Approval to merge one PR does not carry to the next. Two exceptions go
-straight to `main` without approval: docs-only changes, and tiny, obvious bug fixes. Merging
+`release:*` label. Approval to merge one PR does not carry to the next. One exception goes
+straight to `main` with no PR: a change that doesn't affect what Meridian does when it runs
+(docs, comments, `AGENTS.md`). Anything that changes execution, however small, goes through a
+PR and the release process, so it reaches users. Merging
 lanes into a task branch, or your reviewed part PRs into a `release/v<X>.<Y>.0` branch,
 needs no approval.
 
@@ -94,8 +96,8 @@ Derived fields inherit the precedence level of their source.
 Read `docs/releasing.md` before releasing or opening a PR. The pre-push hook
 runs the fast gate: push after the last review fix. Put changelog entries in
 the PR body's `## Changelog`, not `CHANGELOG.md`; use the PR template and
-select a `release:*` label. Docs-only changes and tiny, obvious bug fixes need
-no PR.
+select a `release:*` label. Only a change that doesn't affect execution skips
+the PR.
 
 ## Testing
 
