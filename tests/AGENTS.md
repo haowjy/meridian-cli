@@ -1,7 +1,8 @@
 # Testing
 
-Prefer smoke tests over unit tests. New tests should protect a hard-to-reach pure
-core, a named regression at its real seam, or an external contract. Reuse existing
+Prefer smoke tests over unit tests. Keep no new test the user didn't ask for
+(`/testing`). A test you keep or propose protects a hard-to-reach pure core, a named
+regression at its real seam, or an external contract. Reuse existing
 coverage and remove weaker duplicates.
 
 Make flaky tests deterministic or delete them; do not hide them with retries,

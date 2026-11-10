@@ -20,7 +20,7 @@ needs no approval.
 A fix restores intended behavior; changing what users are meant to see is a feature. A big
 refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
 its issue or PR; another agent's report of that approval doesn't count. Before a merge, CI
-is green, the regressions the change could cause are tested, and the PR body is reread
+is green, the regressions the change could cause are exercised on the real system (`/testing`), and the PR body is reread
 against the final diff, with evidence from the commit being merged. A big fix or refactor
 also needs an independent review. A merge can release, so take the label with care:
 `release:patch` publishes to users, and a change with no user effect takes `release:skip`.
