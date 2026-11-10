@@ -8,16 +8,16 @@ fields; new builds read state older builds wrote (`docs/releasing.md#compatibili
 
 ## Safety Rules
 
-NEVER REVERT CHANGES — always assume it's someone else's work.
+Other agents and Jimmy work in this checkout at the same time. Leave changes you didn't
+make, even ones that look wrong: report them instead. Change branches only in a worktree
+(`git worktree add ../meridian-cli.worktrees/<name> -b <branch> <base>`, then `--task-dir
+<worktree>` for spawns); the primary checkout stays on `main`.
 
-**NEVER merge a PR into `main` without explicit human approval in the current
-conversation,** unless the global grant covers your model. Stop at draft→ready with a
-`release:*` label. Approval to merge one PR does not carry to the next. One exception goes
-straight to `main` with no PR: a change that doesn't affect what Meridian does when it runs
-(docs, comments, `AGENTS.md`). Anything that changes execution, however small, goes through a
-PR and the release process, so it reaches users. Merging
-lanes into a task branch, or your reviewed part PRs into a `release/v<X>.<Y>.0` branch,
-needs no approval.
+Merging a PR into `main` takes Jimmy's approval in the current conversation, one PR at a
+time, unless your global instructions grant your model more; without it, stop at a ready
+PR with a `release:*` label. A change that doesn't affect what Meridian does when it runs
+(docs, comments, `AGENTS.md`) goes straight to `main` with no PR. Merging lanes into a task
+branch, or reviewed part PRs into a `release/v<X>.<Y>.0` branch, needs no approval.
 
 A fix restores intended behavior; changing what users are meant to see is a feature. A big
 refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
@@ -31,17 +31,13 @@ Big means impact, not size: a change is big when it crosses a boundary others de
 That is the CLI's commands, flags or output, a config or profile format, files under `.meridian/` or `~/.meridian/`, the harness adapter seam, or the Mars package contract. A change that looks narrow but alters behavior others rely on is big
 too; when unsure, call it big.
 
-**NEVER use `--no-verify` on git push** unless explicitly instructed.
+CI creates `v*` tags, and a pushed tag publishes a release: never push one yourself. The
+pre-push hook runs the fast gate; fix what it catches rather than skipping it with
+`--no-verify`.
 
-**NEVER manually create or push `v*` tags.** Tags are CI-owned.
-
-**NEVER edit generated target directories** (`.claude/agents/`, `.claude/skills/`,
-`.cursor/`, `.codex/`, `.opencode/`, `.pi/`). Overwritten by `meridian mars sync`.
-Edit source package repos in sibling checkouts.
-
-**Never switch the branch of a checkout you don't own** — it may be shared. Need
-another branch? Make a worktree (`git worktree add ../meridian-cli.worktrees/<name>
--b <branch> <base>`) and pass `--task-dir <worktree>` to spawns.
+`meridian mars sync` rewrites the generated directories (`.claude/agents/`,
+`.claude/skills/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`); edit the source packages
+in their sibling checkouts.
 
 ## Invariants
 
