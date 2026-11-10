@@ -511,14 +511,23 @@ def _session_lock_key(runtime_root: Path, chat_id: str) -> tuple[Path, str]:
     return (runtime_root.resolve(), chat_id)
 
 
-def is_chat_free(runtime_root: Path, chat_id: str) -> bool:
-    """Whether the chat's lock can be taken within the wait ``start_session`` allows."""
+@contextmanager
+def chat_lock(runtime_root: Path, chat_id: str) -> Generator[None]:
+    """Hold the chat's lock, waiting as long as ``start_session`` does for it.
+
+    Raises ``FileLockTimeout`` when a live session keeps it.
+    """
 
     lock_path = RuntimePaths.from_root_dir(runtime_root).sessions_dir / f"{chat_id}.lock"
+    # Stale-lock repair holds a dead session's lock briefly, often from this same
+    # process's repair thread; one non-blocking attempt reports that chat as running.
+    with lock_file(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS, reentrant=False):
+        yield
+
+
+def is_chat_free(runtime_root: Path, chat_id: str) -> bool:
     try:
-        # Stale-lock repair holds a dead session's lock briefly, often from this same
-        # process's repair thread; refusing without the wait fails every continue it races.
-        with lock_file(lock_path, timeout=_CHAT_LOCK_WAIT_SECONDS, reentrant=False):
+        with chat_lock(runtime_root, chat_id):
             return True
     except OSError:
         return False

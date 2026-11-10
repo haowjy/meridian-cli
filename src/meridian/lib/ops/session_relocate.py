@@ -553,9 +553,7 @@ def _apply(
         busy: list[str] = []
         for chat_plan in plan.chats:
             try:
-                stack.enter_context(
-                    lock_file(paths.sessions_dir / f"{chat_plan.chat_id}.lock", timeout=0)
-                )
+                stack.enter_context(session_store.chat_lock(runtime_root, chat_plan.chat_id))
             except FileLockTimeout:
                 busy.append(f"{chat_plan.chat_id} (locked by a run)")
         busy += _running_observers(runtime_root, [c.chat_id for c in plan.chats])
