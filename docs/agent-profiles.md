@@ -607,12 +607,17 @@ in the Mars docs for the keys and merge order.
   still applies, as it does to a profile's `bash: deny`, and the dry run marks the rule
   `partial`. Under `approval: never` the tool is removed, so the spawn's own
   `meridian spawn done` command grant is blocked and reported, as for a profile `bash: deny`.
-- **Continued and forked sessions.** `--continue` and `--fork` pick up the project-wide
-  denies in force now, including one added after the session started, and drop one you have
-  removed since. The rest of a continued session's rules stay as it started; your
-  `[agents.<name>.tools]` exemptions still apply. If Mars cannot resolve the agent, the
-  project-wide rules apply without its exemptions, and if Mars cannot be asked at all the
-  session keeps the project rules it started with; both print a warning.
+- **Continued and forked sessions.** `--continue` and `--fork` need a working Mars. They
+  pick up the project-wide denies in force now, including one added after the session
+  started. Removing a deny lifts it on the next continue, but allows that were set aside
+  when the session started do not come back; a new session has them. The rest of a
+  continued session's rules stay as it started; your `[agents.<name>.tools]` exemptions
+  still apply. When the agent no longer resolves, a continue prints a warning and applies
+  the project-wide rules alone, and a fork fails.
+- **Known limit on Codex, OpenCode and Pi.** A continued session can keep a scoped allow
+  that a deny added later covers, when the agent's profile or overlay no longer has that
+  allow or the agent no longer resolves. Claude is not affected. The next release's
+  precedence change ends it.
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
   without a word; only `mars validate` checks `min_mars_version`.
 

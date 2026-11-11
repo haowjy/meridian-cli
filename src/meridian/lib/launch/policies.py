@@ -629,8 +629,8 @@ def _with_current_bundle_rules(
     launch, because a narrower allow would outrank the deny on some harnesses. Mars alone
     decides what a deny covers. When the
     agent no longer resolves, the project-wide rules alone apply. When Mars cannot be asked
-    at all, the snapshot's own project rules stay and a warning says so: a session must
-    stay resumable. The bundle also names platform denies an older snapshot did not persist.
+    at all, the error propagates. The bundle also names platform denies an older snapshot
+    did not persist.
     """
 
     harness = str(policy.harness)
@@ -658,33 +658,15 @@ def _with_current_bundle_rules(
     if bundle is None:
         bundle = agentless_bundle
     if bundle is None:
-        try:
-            bundle = bundle_adapter.request_and_resolve(
-                bundle_adapter.BundleRequest(
-                    agent=None,
-                    project_root=surface.catalog.project_root,
-                    harness_override=harness,
-                    no_refresh_models=True,
-                ),
-                harness_registry=surface.harness_registry,
-            )
-        except RuntimeError as exc:
-            return replace(
-                policy,
-                warnings=(
-                    *policy.warnings,
-                    CompositionWarning(
-                        code="project_tool_rules_stale",
-                        message=(
-                            "Could not ask Mars for the project-wide tool rules in force "
-                            "now; this session keeps the ones it started with, so a deny "
-                            f"added since is not applied. ({_first_line(exc)})"
-                        ),
-                    ),
-                ),
-            )
-    if bundle.harness != policy.harness:
-        return policy
+        bundle = bundle_adapter.request_and_resolve(
+            bundle_adapter.BundleRequest(
+                agent=None,
+                project_root=surface.catalog.project_root,
+                harness_override=harness,
+                no_refresh_models=True,
+            ),
+            harness_registry=surface.harness_registry,
+        )
     set_aside = {(r.capability, r.pattern, r.action) for r in bundle.tool_rules_set_aside}
     kept = tuple(
         rule
