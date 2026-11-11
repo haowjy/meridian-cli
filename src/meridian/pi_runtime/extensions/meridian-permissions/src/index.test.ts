@@ -1,382 +1,107 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, describe, expect, it } from "vitest";
 
-import meridianPermissionsExtension, {
-  decideToolCall,
-  type PermissionPolicy,
-  type PermissionRule,
-  splitShellCommands,
-} from "./index.js";
+import meridianPermissionsExtension from "./index.js";
 
-const HEADLESS_REASON = "Needs approval, and a headless spawn has no one to ask. Do not retry it.";
+// A stand-in evaluator: prints $FAKE_ANSWER, or exits with $FAKE_EXIT.
+const FAKE = [
+  "node",
+  "-e",
+  "process.stdin.resume();process.stdin.on('end',()=>{process.stderr.write('boom');" +
+    "if(process.env.FAKE_EXIT)process.exit(Number(process.env.FAKE_EXIT));" +
+    "process.stdout.write(process.env.FAKE_ANSWER)})",
+  "--",
+];
 
-function policy(
-  rules: PermissionRule[],
-  overrides: Partial<PermissionPolicy> = {},
-): PermissionPolicy {
-  return {
-    version: 2,
-    rules,
-    meridian_commands: [],
-    headless_reject_reason: HEADLESS_REASON,
-    bash_fail_closed: false,
-    ...overrides,
-  };
+function answer(action: string, reason = "why"): string {
+  return JSON.stringify({ action, detail: "echo hi", reason });
 }
 
-function rule(overrides: Partial<PermissionRule>): PermissionRule {
-  return {
-    capability: "bash",
-    tool: "bash",
-    pattern: null,
-    action: "allow",
-    label: "bash",
-    ...overrides,
-  };
+function load(env: Record<string, string>) {
+  Object.assign(process.env, {
+    _MERIDIAN_TOOL_POLICY: "{}",
+    _MERIDIAN_TOOL_EVALUATOR: JSON.stringify(FAKE),
+    ...env,
+  });
+  const handlers = new Map<string, (...args: any[]) => any>();
+  meridianPermissionsExtension({
+    on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
+  } as any);
+  return (ctx: object = { mode: "rpc", ui: {} }) =>
+    handlers.get("tool_call")?.(
+      { toolCallId: "call-1", toolName: "bash", input: { command: "echo hi" } },
+      ctx,
+    );
 }
 
 afterEach(() => {
-  delete process.env._MERIDIAN_TOOL_POLICY;
-  delete process.env.MERIDIAN_SESSION_ROLE;
+  for (const name of [
+    "_MERIDIAN_TOOL_POLICY",
+    "_MERIDIAN_TOOL_EVALUATOR",
+    "MERIDIAN_SESSION_ROLE",
+    "FAKE_ANSWER",
+    "FAKE_EXIT",
+  ]) {
+    delete process.env[name];
+  }
 });
 
-describe("permission precedence", () => {
-  it("chooses deny over ask over allow, however narrow the key", () => {
-    const actions = ["allow", "ask", "deny"] as const;
-    const decision = decideToolCall(
-      policy(actions.map((action) => rule({ pattern: "rg *", action, label: action }))),
-      "bash",
-      { command: "rg needle" },
-    );
-    expect(decision?.action).toBe("deny");
-
-    const narrowerAllow = decideToolCall(
-      policy([
-        rule({ pattern: "rg *", action: "ask", label: "bash(rg *)" }),
-        rule({ pattern: "rg src/*", action: "allow", label: "bash(rg src/*)" }),
-      ]),
-      "bash",
-      { command: "rg src/file.ts" },
-    );
-    expect(narrowerAllow?.action).toBe("ask");
+describe("tool_call", () => {
+  it("lets an allowed call run", async () => {
+    expect(await load({ FAKE_ANSWER: answer("allow") })()).toBeUndefined();
   });
 
-  it("lets `*` decide only when no rule of the tool matches", () => {
-    const rules = [
-      rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-      rule({ capability: "read", tool: "read", action: "allow", label: "read" }),
-    ];
-    expect(decideToolCall(policy(rules), "read", { path: "a.txt" })?.action).toBe("allow");
-    expect(decideToolCall(policy(rules), "grep", { path: "a" })?.action).toBe("deny");
+  it("blocks a denied call with the evaluator's reason", async () => {
+    expect(await load({ FAKE_ANSWER: answer("deny", "no") })()).toEqual({ block: true, reason: "no" });
   });
 
-  it("takes the strictest of write rules from different capabilities", () => {
-    const decision = decideToolCall(
-      policy([
-        rule({ capability: "edit", tool: "write", pattern: "src/*", action: "allow" }),
-        rule({ capability: "write", tool: "write", pattern: "src/*", action: "deny" }),
-      ]),
-      "write",
-      { path: "src/file.ts" },
-    );
-
-    expect(decision?.action).toBe("deny");
-  });
-});
-
-describe("shared case table", () => {
-  const fixture = JSON.parse(
-    readFileSync(new URL("../../../../../../tests/fixtures/tool_policy_cases.json", import.meta.url), "utf8"),
-  ) as {
-    policies: Record<string, Omit<PermissionPolicy, "version" | "headless_reject_reason">>;
-    cases: { policy: string; command: string; expected: "allow" | "deny" }[];
-  };
-
-  it.each(fixture.cases)("$policy: $command -> $expected", ({ policy: name, command, expected }) => {
-    const decision = decideToolCall(
-      { ...fixture.policies[name], version: 2, headless_reject_reason: HEADLESS_REASON },
-      "bash",
-      { command },
-    );
-    expect(decision?.action === "deny" ? "deny" : "allow").toBe(expected);
-  });
-});
-
-describe("bash command evaluation", () => {
-  const restrictive = policy(
-    [
-      rule({ pattern: "rg *", action: "allow", label: "bash(rg *)" }),
-      rule({ pattern: "touch *", action: "deny", label: "bash(touch *)" }),
-      rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-    ],
-    { bash_fail_closed: true },
-  );
-
-  it("checks every command in a compound expression", () => {
-    expect(decideToolCall(restrictive, "bash", { command: "rg x; touch y" })?.action).toBe("deny");
-    expect(decideToolCall(restrictive, "bash", { command: "echo $(touch y)" })?.action).toBe("deny");
+  it("blocks headless ask with the evaluator's reason", async () => {
+    const call = load({ FAKE_ANSWER: answer("ask", "nobody to ask"), MERIDIAN_SESSION_ROLE: "spawned" });
+    expect(await call({ mode: "rpc", ui: { confirm: async () => true } })).toEqual({
+      block: true,
+      reason: "nobody to ask",
+    });
   });
 
-  it("does not split separators inside quotes", () => {
-    expect(splitShellCommands("rg 'x; y'")).toEqual({ commands: ["rg 'x; y'"], complete: true });
+  it("routes primary ask through Pi's TUI confirmation", async () => {
+    const details: string[] = [];
+    const call = load({ FAKE_ANSWER: answer("ask"), MERIDIAN_SESSION_ROLE: "primary" });
+    const confirm = async (_title: string, detail: string) => (details.push(detail), true);
+    expect(await call({ mode: "tui", ui: { confirm } })).toBeUndefined();
+    expect(details).toEqual(["echo hi"]);
+  });
+
+  it("blocks when the user declines", async () => {
+    const call = load({ FAKE_ANSWER: answer("ask"), MERIDIAN_SESSION_ROLE: "primary" });
+    expect(await call({ mode: "tui", ui: { confirm: async () => false } })).toEqual({
+      block: true,
+      reason: "Denied by the user.",
+    });
   });
 
   it.each([
-    "rg $'x\\''; printf hidden; printf %s $'y\\''",
-    "rg $(printf hidden)",
-    "rg `printf hidden`",
-    "rg $HOME",
-    "rg x > output",
-    "rg x < input",
-    "rg x <<EOF\nhidden\nEOF",
-    "rg {x,y}",
-    "rg <(printf hidden)",
-    "rg x & printf hidden",
-  ])("refuses unsupported shell syntax: %s", (command) => {
-    expect(decideToolCall(restrictive, "bash", { command })).toMatchObject({
-      action: "deny",
-      reason: expect.stringContaining("run simple commands"),
+    ["the evaluator crashes", { FAKE_EXIT: "1" }],
+    ["it answers with something else", { FAKE_ANSWER: "not json" }],
+    ["it answers with an unknown action", { FAKE_ANSWER: answer("maybe") }],
+  ])("blocks when %s", async (_name, env) => {
+    expect(await load(env)()).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("could not be evaluated"),
     });
   });
 
-  it("accepts the modeled simple-command subset", () => {
-    expect(
-      decideToolCall(restrictive, "bash", {
-        command: "rg 'x; y' && rg \"z | q\"\nrg final",
-      })?.action,
-    ).toBe("allow");
-  });
-
-  it("is best effort when bash allows unmatched commands", () => {
-    // @coder's shape: an open shell with scoped denies.
-    const openShell = policy([
-      rule({ action: "allow", label: "bash" }),
-      rule({ pattern: "git revert *", action: "deny", label: "bash(git revert *)" }),
-    ]);
-
-    for (const command of [
-      "uv run pytest tests/ 2>&1 | tail -20",
-      "echo $HOME",
-      "ls > /tmp/out.txt",
-      "for f in *.py; do echo $f; done",
-      "cat <<EOF > f\nx\nEOF",
-    ]) {
-      expect(decideToolCall(openShell, "bash", { command })?.action).not.toBe("deny");
-    }
-    for (const command of ["git revert HEAD", "git log -1 && git revert HEAD"]) {
-      expect(decideToolCall(openShell, "bash", { command })?.action).toBe("deny");
-    }
-    expect(decideToolCall(openShell, "bash", {})).toBeUndefined();
-  });
-
-  it("keeps completion grants final but still checks profile-restrictable and compound commands", () => {
-    const withMeridianCommands = policy(
-      [
-        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-        rule({ pattern: "meridian spawn done private *", action: "deny", label: "private" }),
-        rule({ pattern: "meridian spawn rearm", action: "ask", label: "rearm" }),
-      ],
-      {
-        meridian_commands: [
-          { command: "meridian task-dir", match: "exact" },
-          { command: "meridian spawn done", match: "prefix" },
-          { command: "meridian spawn rearm", match: "prefix" },
-        ],
-        bash_fail_closed: true,
-      },
-    );
-    for (const command of [
-      "meridian task-dir",
-      "meridian spawn done",
-      "meridian spawn done p-1",
-      "meridian spawn done --flag=value",
-      "meridian spawn done 'p-1'",
-    ]) {
-      expect(decideToolCall(withMeridianCommands, "bash", { command })?.action).toBe("allow");
-    }
-    expect(
-      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn done private p-1" })?.action,
-    ).toBe("allow");
-    expect(
-      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm" })?.action,
-    ).toBe("allow");
-    expect(
-      decideToolCall(withMeridianCommands, "bash", { command: "meridian spawn rearm p-1" })?.action,
-    ).toBe("allow");
-    for (const command of [
-      "meridian task-dir set /tmp",
-      "meridian spawn donex",
-      "meridian spawn done p-1; touch y",
-      "meridian spawn done; meridian spawn rearm",
-      "meridian spawn done > output",
-    ]) {
-      expect(decideToolCall(withMeridianCommands, "bash", { command })?.action).toBe("deny");
-    }
-  });
-
-  it("does not restrict ordinary bash when Meridian commands are the only policy", () => {
-    const meridianOnly = policy([], {
-      meridian_commands: [
-        { command: "meridian spawn done", match: "prefix" },
-        { command: "meridian spawn rearm", match: "prefix" },
-      ],
-    });
-
-    expect(
-      decideToolCall(meridianOnly, "bash", { command: "printf ordinary > output" }),
-    ).toBeUndefined();
-    expect(
-      decideToolCall(meridianOnly, "bash", { command: "meridian spawn done > output" }),
-    ).toBeUndefined();
-  });
-
-  it("fails closed when a restricted tool's scope cannot be read", () => {
-    expect(decideToolCall(restrictive, "bash", {})?.action).toBe("deny");
-    expect(
-      decideToolCall(
-        policy([rule({ tool: "future", pattern: "safe/*", action: "allow" })]),
-        "future",
-        { path: "safe/file" },
-      )?.action,
-    ).toBe("deny");
+  it("blocks when the evaluator cannot start", async () => {
+    const call = load({ _MERIDIAN_TOOL_EVALUATOR: JSON.stringify(["/nonexistent/evaluator"]) });
+    expect(await call()).toMatchObject({ block: true, reason: expect.stringContaining("could not be evaluated") });
   });
 });
 
-describe("path scope evaluation", () => {
-  it("normalizes paths without changing OpenCode's recursive star semantics", () => {
-    const root = mkdtempSync(join(tmpdir(), "meridian-pi-path-"));
-    const project = join(root, "project");
-    const outside = join(root, "outside");
-    mkdirSync(join(project, "src", "nested"), { recursive: true });
-    mkdirSync(outside);
-    try {
-      const scoped = policy([
-        rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
-        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-      ]);
-
-      expect(
-        decideToolCall(scoped, "read", { path: "src/nested/file.ts" }, project)?.action,
-      ).toBe("allow");
-      expect(
-        decideToolCall(scoped, "read", { path: join(project, "src", "file.ts") }, project)?.action,
-      ).toBe("allow");
-      expect(
-        decideToolCall(scoped, "read", { path: "src/../../outside/secret" }, project)?.action,
-      ).toBe("deny");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+describe("loading", () => {
+  it.each([
+    ["no policy", { _MERIDIAN_TOOL_POLICY: "" }],
+    ["no evaluator", { _MERIDIAN_TOOL_EVALUATOR: "" }],
+    ["a malformed evaluator", { _MERIDIAN_TOOL_EVALUATOR: "{" }],
+    ["an empty evaluator command", { _MERIDIAN_TOOL_EVALUATOR: "[]" }],
+  ])("throws instead of loading with %s", (_name, env) => {
+    expect(() => load(env)).toThrow();
   });
-
-  it("does not let a symlink carry a scoped allow outside its canonical root", () => {
-    const root = mkdtempSync(join(tmpdir(), "meridian-pi-symlink-"));
-    const project = join(root, "project");
-    const outside = join(root, "outside");
-    mkdirSync(join(project, "src"), { recursive: true });
-    mkdirSync(outside);
-    symlinkSync(outside, join(project, "src", "link"));
-    symlinkSync(join(outside, "new-file"), join(project, "src", "link-file"));
-    try {
-      const scoped = policy([
-        rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
-        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-      ]);
-      const writeScoped = policy([
-        rule({ capability: "write", tool: "write", pattern: "src/*", action: "allow" }),
-        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
-      ]);
-
-      expect(
-        decideToolCall(scoped, "read", { path: "src/link/secret" }, project)?.action,
-      ).toBe("deny");
-      expect(
-        decideToolCall(scoped, "read", { path: "src/link/../secret" }, project)?.action,
-      ).toBe("deny");
-      expect(
-        decideToolCall(writeScoped, "write", { path: "src/link-file" }, project)?.action,
-      ).toBe("deny");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("policy loading", () => {
-  it("fails closed when the policy variable is absent", () => {
-    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
-      "Pi permission policy is missing",
-    );
-  });
-
-  it("fails closed when the policy variable is empty", () => {
-    process.env._MERIDIAN_TOOL_POLICY = "";
-    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
-      "Pi permission policy is empty",
-    );
-  });
-
-  it("fails closed when the policy is malformed JSON", () => {
-    process.env._MERIDIAN_TOOL_POLICY = "{";
-    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow();
-  });
-
-  it("refuses malformed Meridian command grants", () => {
-    process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
-      policy([], {
-        meridian_commands: [{ command: "printf hidden", match: "prefix" }],
-      }),
-    );
-    expect(() => meridianPermissionsExtension({ on: () => undefined } as any)).toThrow(
-      "Pi permission policy has an unsupported shape",
-    );
-  });
-});
-
-it("blocks headless ask with the exact reason", async () => {
-  process.env.MERIDIAN_SESSION_ROLE = "spawned";
-  process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
-    policy([rule({ action: "ask" })]),
-  );
-  const handlers = new Map<string, (...args: any[]) => any>();
-  meridianPermissionsExtension({
-    on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
-  } as any);
-
-  const blocked = await handlers.get("tool_call")?.(
-    { toolCallId: "call-1", toolName: "bash", input: { command: "echo hi" } },
-    { mode: "rpc", ui: { confirm: async () => true } },
-  );
-  expect(blocked).toEqual({ block: true, reason: HEADLESS_REASON });
-});
-
-it("routes primary ask through Pi's TUI confirmation", async () => {
-  process.env.MERIDIAN_SESSION_ROLE = "primary";
-  process.env._MERIDIAN_TOOL_POLICY = JSON.stringify(
-    policy([rule({ action: "ask" })]),
-  );
-  const handlers = new Map<string, (...args: any[]) => any>();
-  meridianPermissionsExtension({
-    on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
-  } as any);
-  const confirmations: string[] = [];
-
-  const result = await handlers.get("tool_call")?.(
-    { toolCallId: "call-1", toolName: "bash", input: { command: "echo hi" } },
-    {
-      mode: "tui",
-      ui: {
-        confirm: async (_title: string, detail: string) => {
-          confirmations.push(detail);
-          return true;
-        },
-      },
-    },
-  );
-
-  expect(result).toBeUndefined();
-  expect(confirmations).toEqual(["echo hi"]);
 });

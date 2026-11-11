@@ -68,9 +68,9 @@ and fails open on hook failures: the launcher verifies the enabled, trusted hook
 hash through `hooks/list` before starting the thread, and the hook converts execution
 failures to denial. No shared Codex config file is written for the hook.
 
-The hook matches command segments by wildcard and decides like Pi's permission extension:
-both run `tests/fixtures/tool_policy_cases.json`, and Pi's policy `version` is bumped
-whenever the decision changes, so a stale bundle refuses to load. It is an
+The hook is the tool-policy evaluator (`tool_policy_runtime/evaluate.py`), the same one
+Pi's permission extension asks per call; its decision table is
+`tests/fixtures/tool_policy_cases.json`. It is an
 accident guard, not a sandbox: wrappers, substitutions, scripts, interpreters and
 `apply_patch` or MCP calls can bypass it. `bash_fail_closed` adds a simple-command check;
 do not add a shell parser to close individual gaps. Hook enforcement is reported partial.

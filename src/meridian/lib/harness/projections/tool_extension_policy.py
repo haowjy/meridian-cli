@@ -1,10 +1,15 @@
 """The tool-rule compile shared by harnesses that enforce scoped rules in their own process.
 
-Pi's ``tool_call`` handler and Codex's ``PreToolUse`` hook take the same rules and the same
-fail-closed decision; each harness owns only how the policy reaches its enforcer.
+Pi's ``tool_call`` handler and Codex's ``PreToolUse`` hook both ask one evaluator
+(``tool_policy_runtime/evaluate.py``) and take the same rules; each harness owns only how the
+policy and the evaluator's command line reach it.
 """
 
 from __future__ import annotations
+
+import sys
+from functools import cache
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -15,11 +20,23 @@ from meridian.lib.tools import ToolAction, ToolRule, split_native, strictest
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
 # so a nested launch never inherits it (see ``child=False`` in env_registry).
 TOOL_POLICY_ENV = "_MERIDIAN_TOOL_POLICY"
+# Carries the evaluator's argv (a JSON list) to the Pi extension, which cannot name the
+# interpreter Meridian runs on.
+TOOL_EVALUATOR_ENV = "_MERIDIAN_TOOL_EVALUATOR"
+_EVALUATOR = Path(__file__).resolve().parents[3] / "tool_policy_runtime" / "evaluate.py"
 # What a Pi bundle built before the rename reads. Pi's adapter sets both for one release.
 # Delete this, its use in pi.py, and its entries in constants.py and env_registry.py once
 # no supported Pi bundle predates `_MERIDIAN_TOOL_POLICY` (the release after the one that
 # renamed it).
 LEGACY_PI_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
+
+
+@cache
+def evaluator_argv() -> tuple[str, ...]:
+    """Run the evaluator with the launching interpreter; ``-I`` keeps an agent-writable
+    environment from steering its imports."""
+
+    return (sys.executable, "-I", str(_EVALUATOR))
 
 
 class ExtensionRule(BaseModel):
@@ -35,8 +52,8 @@ class ExtensionRule(BaseModel):
 
 
 class ExtensionPolicy(BaseModel):
-    """Launch-local input for a harness-side permission enforcer: Pi's ``tool_call`` handler
-    and Codex's ``PreToolUse`` hook."""
+    """Launch-local input for the tool-policy evaluator, asked by Pi's ``tool_call`` handler and
+    Codex's ``PreToolUse`` hook."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -44,7 +61,7 @@ class ExtensionPolicy(BaseModel):
     rules: tuple[ExtensionRule, ...]
     meridian_commands: tuple[PlatformCommand, ...] = ()
     headless_reject_reason: str = HEADLESS_REJECT_REASON
-    # Whether the handler refuses a bash command it cannot split into simple commands.
+    # Whether the evaluator refuses a bash command it cannot split into simple commands.
     bash_fail_closed: bool = False
 
 
@@ -132,11 +149,13 @@ def needs_extension(
 
 __all__ = [
     "LEGACY_PI_POLICY_ENV",
+    "TOOL_EVALUATOR_ENV",
     "TOOL_POLICY_ENV",
     "ExtensionPolicy",
     "ExtensionRule",
     "bash_fails_closed",
     "command_grants",
+    "evaluator_argv",
     "extension_rules",
     "needs_extension",
 ]

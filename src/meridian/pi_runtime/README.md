@@ -23,16 +23,8 @@ retain native skill, context-file, and prompt-template discovery.
 Spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
-meridian-permissions splits Bash into simple commands: plain words, single quotes,
-non-expanding double quotes, and `&&`, `||`, `;`, `|`, or newline separators. When Bash
-is an allowlist or its unmatched commands are denied or asked, expansion, substitution,
-redirection, backgrounding, grouping, and other shell syntax are refused before rule
-matching. When Bash allows unmatched commands, scoped denies are best effort: a command
-with that syntax runs unchecked. Of the rules that match a call the strictest decides, and
-`*` only when none matches. Meridian's command grants are allowed before any rule is read,
-and cover only a whole command with simple arguments.
-Scoped file paths and rule roots are resolved against the working directory and
-existing symlinks before matching.
+meridian-permissions decides nothing itself: it asks the tool-policy evaluator about each tool
+call and blocks, prompts or lets it run on the answer (see `.context/CONTEXT.md`).
 
 Meridian-idle marks every core call `--interactive`. User input cancels timers
 synchronously and queues its return behind any in-flight arm without awaiting the

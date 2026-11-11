@@ -1,5 +1,5 @@
 {
- "_comment": "Shared by the Codex hook (tests/unit/harness/test_codex_tool_hook.py) and the Pi permissions extension (index.test.ts). Each case: the policy named in `policies`, one bash command, and whether the call is denied. `allow` also covers a call the policy has no opinion on. Rows only one of them runs live in that suite.",
+ "_comment": "The tool-policy evaluator's decision table (tests/unit/harness/test_tool_policy_evaluator.py). Each case: the policy named in `policies`, one bash command, and whether the call is denied. `allow` also covers a call the policy has no opinion on.",
  "policies": {
   "deny_list": {
    "rules": [

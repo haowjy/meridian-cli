@@ -11,17 +11,13 @@ const bundlePath = join(
 
 afterEach(() => {
   delete process.env._MERIDIAN_TOOL_POLICY;
+  delete process.env._MERIDIAN_TOOL_EVALUATOR;
 });
 
 describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", () => {
   it("registers only the policy hooks", async () => {
-    process.env._MERIDIAN_TOOL_POLICY = JSON.stringify({
-      version: 2,
-      rules: [],
-      meridian_commands: [],
-      headless_reject_reason: "headless",
-      bash_fail_closed: false,
-    });
+    process.env._MERIDIAN_TOOL_POLICY = "{}";
+    process.env._MERIDIAN_TOOL_EVALUATOR = JSON.stringify(["python3", "evaluate.py"]);
     const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
     const events: string[] = [];
 
@@ -30,12 +26,12 @@ describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", ()
     expect(events).toEqual(["tool_call"]);
   });
 
-  it("throws instead of loading without a usable policy", async () => {
+  it("throws instead of loading without a policy", async () => {
     process.env._MERIDIAN_TOOL_POLICY = "";
     const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
 
     expect(() => bundle.default({ on: () => undefined })).toThrow(
-      "Pi permission policy is empty",
+      "Pi permission policy is missing",
     );
   });
 });
