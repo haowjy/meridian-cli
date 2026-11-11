@@ -87,6 +87,8 @@ class BundleRequest:
     network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     extra_skills: tuple[str, ...] = ()
     no_refresh_models: bool = False
+    # A continued session's own agent rules, in place of the agent's current ones; sent on stdin.
+    agent_tool_rules: tuple[ToolRule, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -414,7 +416,24 @@ def _build_bundle_command(
         command.extend(["--network-deny", host])
     for skill in request.extra_skills:
         command.extend(["--skill", skill])
+    if request.agent_tool_rules is not None:
+        command.extend(["--agent-tool-rules", "-"])
     return command
+
+
+def _agent_tool_rules_json(rules: tuple[ToolRule, ...] | None) -> str | None:
+    if rules is None:
+        return None
+    entries = [
+        {
+            "capability": rule.capability,
+            "pattern": rule.pattern,
+            "action": rule.action,
+            "origin": rule.origin,
+        }
+        for rule in rules
+    ]
+    return json.dumps(entries)
 
 
 def _extract_error_message(*, stdout: str, stderr: str) -> str:
@@ -666,6 +685,7 @@ def request_and_resolve(
     try:
         result = subprocess.run(
             command,
+            input=_agent_tool_rules_json(request.agent_tool_rules),
             capture_output=True,
             text=True,
             timeout=60,

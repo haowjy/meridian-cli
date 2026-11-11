@@ -30,10 +30,12 @@ infer it from a missing `native` or a note. `complete_report` reports a covered 
 Mars's note on every harness, whatever a compile said, and marks a shell deny or ask `partial`
 where the harness decides Meridian's command grants first and one lies in its scope.
 
-Launch snapshots keep the profile's Mars rules; the policy is rebuilt at bind. On a
-continue or fork, `refresh_project_rules` (`launch/policies.py`) re-reads the project-origin
-rules: every project-wide deny refreshes, and a project-wide allow or ask refreshes only when
-the agent's `*` rule (and, under `*: deny`, its allows) still matches the snapshot's, so a
-refresh never opens a tool the snapshot closed. If Mars cannot be asked the replay fails.
+Launch snapshots keep the agent's Mars rules (origin `profile` and `overlay`); the policy
+is rebuilt at bind. On a continue or fork, `_with_current_bundle_rules` (`launch/policies.py`)
+sends those rules to Mars with `--agent-tool-rules` and takes the bundle's rules as the
+session's: Mars applies the current `[settings.tools]`, shapes project allows and asks by the
+snapshot's `*` rule, and keeps the agent's per-agent exemption. A snapshot rule with no
+`capability` (written by an older build) cannot be sent; such a snapshot keeps all its rules
+and gains the current project-wide denies. If Mars cannot be asked the replay fails.
 Only profile and overlay rules can opt a spawn out of the platform `task` deny. See
 `docs/agent-profiles.md` for harness limits.

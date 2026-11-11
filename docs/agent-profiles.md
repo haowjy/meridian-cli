@@ -616,14 +616,15 @@ loaded.
   applies. Under `approval: never` the tool is removed, so the spawn's own `meridian spawn
   done` command grant is blocked and the report says so.
 - **Continued and forked sessions.** `--continue` and `--fork` need a working Mars. They pick
-  up the project-wide denies in force now, including one added after the session started, and
-  your `[agents.<name>.tools]` exemptions still apply. A project-wide `allow` or `ask` is
-  refreshed only while the agent's `*` rule is what it was at launch; otherwise the session
-  keeps the ones it started with, so a continue never opens a tool the session closed. A
-  session started before this release keeps the native names Mars 0.29 gave its rules:
-  `edit: deny` beside `write: allow` keeps allowing writes until you start a new session.
-  When the agent no longer resolves, a continue prints a warning and applies the project-wide
-  rules alone, and a fork fails.
+  up the project-wide rules in force now: a deny added after the session started holds, one you
+  removed is gone, and an allow it covered works again. Your `[agents.<name>.tools]`
+  exemptions still apply. The agent's own rules stay as the session started, and a
+  project-wide `allow` or `ask` is shaped by the session's own `*` rule, as at a fresh launch.
+  A session started before this release keeps the native names Mars 0.29 gave its rules:
+  `edit: deny` beside `write: allow` keeps allowing writes until you start a new session. A
+  session an older build wrote with no rule names to send Mars keeps its rules and gains the
+  current project-wide denies. When the agent no longer resolves, a continue prints a warning
+  and applies the project-wide rules alone, and a fork fails.
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
   without a word; only `mars validate` checks `min_mars_version`.
 

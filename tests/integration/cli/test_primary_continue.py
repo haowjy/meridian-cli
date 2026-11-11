@@ -465,8 +465,11 @@ def test_primary_continue_replaces_project_rules_with_the_ones_in_force_now(
     def project(rule: Any) -> Any:
         return rule.model_copy(update={"origin": "project"})
 
+    def agent_rule(rule: Any) -> Any:
+        return rule.model_copy(update={"origin": "profile"})
+
     profile_rule = tool_rule("bash", "allow", "Bash")
-    stub_bundle_request_and_resolve(
+    requests = stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.3-codex",
         harness=HarnessId.CODEX,
@@ -482,8 +485,8 @@ def test_primary_continue_replaces_project_rules_with_the_ones_in_force_now(
             model="gpt-5.3-codex",
             harness="codex",
             tool_rules=(
-                tool_rule("edit", "allow", "Edit"),
-                tool_rule("write", "allow", "Write"),
+                agent_rule(tool_rule("edit", "allow", "Edit")),
+                agent_rule(tool_rule("write", "allow", "Write")),
                 project(tool_rule("read", "deny", "Read")),
             ),
         ),
@@ -500,15 +503,13 @@ def test_primary_continue_replaces_project_rules_with_the_ones_in_force_now(
 
     _run_primary_continue(project_root, "p48", dry_run=True)
 
+    sent = [request.agent_tool_rules for request in requests if request.agent_tool_rules]
+    assert [[rule.capability for rule in rules] for rules in sent] == [["edit", "write"]]
     rules = [
         (rule.capability, rule.action, rule.origin)
         for rule in contexts[0].resolved_request.tool_rules
     ]
-    assert rules == [
-        ("edit", "allow", None),
-        ("write", "allow", None),
-        ("web", "deny", "project"),
-    ]
+    assert rules == [("bash", "allow", None), ("web", "deny", "project")]
 
 
 @pytest.mark.parametrize(
