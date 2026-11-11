@@ -625,7 +625,9 @@ def _with_current_bundle_rules(
     current bundle's, so a project-wide deny added (or removed) after the session started
     holds on the continue or fork; a project deny only restricts, so this cannot widen the
     snapshot. The agent's bundle gives the rules, including any per-agent exemption, and
-    ``tools.set_aside`` for the dry run; Mars alone decides what a deny covers. When the
+    ``tools.set_aside``: the snapshot's rules on that list are dropped too, as on a fresh
+    launch, because a narrower allow would outrank the deny on some harnesses. Mars alone
+    decides what a deny covers. When the
     agent no longer resolves, the project-wide rules alone apply. When Mars cannot be asked
     at all, the snapshot's own project rules stay and a warning says so: a session must
     stay resumable. The bundle also names platform denies an older snapshot did not persist.
@@ -683,7 +685,13 @@ def _with_current_bundle_rules(
             )
     if bundle.harness != policy.harness:
         return policy
-    kept = tuple(rule for rule in policy.resolved_tool_rules if rule.origin != PROJECT_ORIGIN)
+    set_aside = {(r.capability, r.pattern, r.action) for r in bundle.tool_rules_set_aside}
+    kept = tuple(
+        rule
+        for rule in policy.resolved_tool_rules
+        if rule.origin != PROJECT_ORIGIN
+        and (rule.capability, rule.pattern, rule.action) not in set_aside
+    )
     current = tuple(rule for rule in bundle.tool_rules if rule.origin == PROJECT_ORIGIN)
     warnings = policy.warnings
     if warning is not None:

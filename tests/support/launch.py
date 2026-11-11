@@ -264,6 +264,7 @@ def stub_bundle_request_and_resolve(
     warnings: tuple[str, ...] = (),
     tool_rules: tuple[ToolRule, ...] = (),
     platform_tool_rules: tuple[ToolRule, ...] = (),
+    tool_rules_set_aside: tuple[SetAsideRule, ...] = (),
     skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> list[bundle_adapter.BundleRequest]:
     captured_requests: list[bundle_adapter.BundleRequest] = []
@@ -296,6 +297,7 @@ def stub_bundle_request_and_resolve(
             warnings=warnings,
             tool_rules=tool_rules,
             platform_tool_rules=platform_tool_rules,
+            tool_rules_set_aside=tool_rules_set_aside,
             skills_loaded=skills_loaded,
         )
 
