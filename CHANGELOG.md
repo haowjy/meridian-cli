@@ -6,6 +6,19 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.9] - 2026-11-11
+
+### Upgrade notes
+- `[settings.tools]` (project-wide tool denies) and the map form of `[agents.<name>.tools]` need Mars 0.29.0, which this release pins. A release after 0.29.0 changes three forms of profile rule when the strictest matching rule starts to win on every harness. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#project-wide-tool-denies-and-the-map-form-of-an-agents-tool-overlay).
+- Mars 0.29.0 stops loading two configs it used to accept: `tools.mcp = [...]` in an agent overlay (write `"mcp(server)"` in `tools.allowed`), and a stray string-valued key in `[agents.<name>.tools]`, which is now read as a tool rule. See [Mars 0.29.0](https://github.com/haowjy/mars-agents/releases/tag/v0.29.0).
+
+### Added
+- `meridian spawn --dry-run` names a project-wide tool rule `project: tools <key> = deny`, and lists under `Set aside:` (`tool_rules_set_aside` in `--format json`) each agent allow or ask that a project-wide deny covers.
+
+### Changed
+- `--continue` and `--fork` apply the project-wide denies in force now, including one added after the session started. Continuing needs a working Mars.
+- On Claude, a project-wide plain deny stays `--disallowedTools <Tool>` beside a scoped allow of the same tool.
+
 ## [0.20.8] - 2026-11-11
 
 ### Fixed
