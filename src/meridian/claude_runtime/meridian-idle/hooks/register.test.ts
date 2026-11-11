@@ -470,6 +470,24 @@ test('a turn already running when the warning fires is not mistaken for the ping
   expect(calls(h, 'arm')[2]).toContain('--assistant-text=built it')
 })
 
+for (const [session, expected] of [['sess-1', '--assistant-text=before reload'], ['other', undefined]] as const) {
+  test(`after a reload the ping turn arms with the stored last answer only if it is this session's (${session})`, async ($, on) => {
+    const h = keepwarmHost()
+    h.store.answer = { session, text: 'before reload' }
+    h.reply.status = [{ harness: 'claude', session: 'sess-1', stretch_open: true, stretch: 1, anchor: 1, schedule: { warn_at: START + 2000 + LEAD } }]
+    const clock = install(on, h)
+    await $.session.start(TUI)
+    await clock.advance(2000)
+    await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm on' })
+    await clock.advance(LEAD)
+    expect(h.submitted).toHaveLength(1)
+    await pingTurn($, h, 'p1', 'ok')
+    await clock.advance(0)
+    const args = calls(h, 'arm')[0] ?? []
+    expect(args.find(arg => arg.startsWith('--assistant-text'))).toBe(expected)
+  })
+}
+
 test('an aborted ping turn is logged failed and still counts', async ($, on) => {
   const h = keepwarmHost()
   const clock = install(on, h)

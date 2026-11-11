@@ -43,6 +43,8 @@ const LATE_PING_MS = 60_000
 /** How long a ping waits for a quiet box when core's lead is unknown. */
 const HOLD_FALLBACK_MS = 9 * 60_000
 const KEEPWARM_LOG = 'keepwarm'
+/** `$.store` key holding `{ session, text }`: the last non-ping main-loop answer, so a resume or reload keeps the notice's excerpt. */
+const LAST_ANSWER = 'answer'
 // The host lists the state a module touches, so the reference must be literal in this file.
 const IDLE_KEEPWARM = { plugin: 'meridian-idle', key: 'keepwarm' } as const
 
@@ -340,6 +342,29 @@ async function armTask(
   } catch (err) {
     note($, s, `arm error: ${describeError(err)}`)
   }
+}
+
+/** Keeps a real turn's answer (capped as the arm caps it) beside the keepwarm records; a store failure only costs the excerpt. */
+async function rememberAnswer($: EngineInterface, answer: string): Promise<string> {
+  const text = capExcerpt(answer) ?? ''
+  try {
+    await $.store.set(LAST_ANSWER, { session: await $.session.id(), text })
+  } catch {
+    // the excerpt is best effort
+  }
+  return text
+}
+
+/** The last real answer: from memory, else from the store when it belongs to this session. */
+async function lastAnswer($: EngineInterface, s: State): Promise<string | undefined> {
+  if (s.lastAnswer !== undefined) return s.lastAnswer
+  try {
+    const stored = await $.store.get(LAST_ANSWER)
+    if (isRecord(stored) && typeof stored.text === 'string' && stored.session === (await $.session.id())) return stored.text
+  } catch {
+    // no excerpt
+  }
+  return undefined
 }
 
 // -- keepwarm ---------------------------------------------------------------
@@ -659,7 +684,7 @@ export const register: Register = on => {
       void enqueue(s, async () => {
         if (ping !== undefined) await finishPing($, s, ping, e.reason, e.answer)
         // The ping's reply must not become the your-turn notice's excerpt.
-        await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
+        await armTask($, s, epoch, ping !== undefined ? await lastAnswer($, s) : await rememberAnswer($, e.answer), tasks)
       })
     }
     return next(e)

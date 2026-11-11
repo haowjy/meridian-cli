@@ -68,6 +68,8 @@ Pings send no notification.
   quotes or backticks) ends this stretch's pings; keepwarm stays on.
 - **Your-turn push.** The ping turn's arm sends the last answer from a
   non-ping turn as `--assistant-text`, so the next notice does not read "ok".
+  That answer is also kept in `$.store` key `answer` (with its session id), so
+  it survives a resume or hot reload; another session's value is ignored.
 
 Each submitted ping adds one record (time, session, stretch, ping number,
 `stopped`, `continued` or `failed`, denied tools, reply excerpt) to the plugin
