@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 from meridian.cli.invocation import get_global_options
-
-_CONTEXT_ALIASES: dict[str, str] = {
-    "kb": "MERIDIAN_CONTEXT_KB_DIR",
-    "strategy": "MERIDIAN_CONTEXT_STRATEGY_DIR",
-    "work": "MERIDIAN_ACTIVE_WORK_DIR",
-}
 
 
 def resolve_fmt(fmt: str) -> str:
@@ -21,27 +14,39 @@ def resolve_fmt(fmt: str) -> str:
 
 
 def resolve_context_alias(path: Path) -> Path:
-    """If *path* is a bare context alias (e.g. ``kb``), resolve it via env var.
+    """Return *path*, or the current context directory when it names a context.
 
-    A path qualifies as a bare alias when it has no directory-separator
-    components (i.e. ``path.parent == Path(".")``).  If the alias env var is
-    unset the command exits with a clear error message.  Unrecognised names
-    are returned unchanged so normal filesystem lookup takes over.
+    An existing directory is always itself. Otherwise a bare name that matches a
+    configured context (``kb``, ``work``, ``work.archive``, an extra context) resolves
+    the way ``meridian context <name>`` does, never from the launch-time env var.
+    Any other path is returned unchanged for normal filesystem lookup.
     """
-    if path.parent != Path("."):
+    if path.is_dir() or path.parent != Path("."):
         return path
-    alias_env = _CONTEXT_ALIASES.get(path.name)
-    if alias_env is None:
+
+    from meridian.lib.ops.context import ContextInput, context_sync
+
+    name = path.name
+    try:
+        value = context_sync(ContextInput()).resolve_name(name)
+    except KeyError:
         return path
-    value = os.environ.get(alias_env)
     if not value:
         print(
-            f"Error: context alias '{path.name}' requires ${alias_env} to be set"
+            f"Error: '{name}' is not a directory here, and context '{name}' is unresolved"
             " (run 'meridian context' to check)",
             file=sys.stderr,
         )
         raise SystemExit(2)
-    return Path(value)
+    resolved = Path(value)
+    if not resolved.is_dir():
+        print(
+            f"Error: '{name}' is not a directory here, and context '{name}' resolves to"
+            f" {value}, which does not exist",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return resolved
 
 
 __all__ = [
