@@ -61,8 +61,11 @@ Pings send no notification.
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that
   carries it names the ping's `turnId`, and only that turn's `turn.complete`
-  with reason `answer` is read. A turn already running when the warning fires
-  is not mistaken for it.
+  with reason `answer` is read.
+- **A running turn.** If the warning or a chained timer fires while a
+  main-loop turn is in flight, no ping is sent and no slot is spent: that turn
+  refreshes the cache, and its own arm sets the next chained timer one lead
+  later. A user return cancels it as usual.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
   touched. The denied tool names go in the log record.

@@ -96,6 +96,10 @@ type State = {
   /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
   stopTasks: BackgroundTask[] | undefined
   ping: Ping | undefined
+  /** A main-loop turn is in flight (from its `turn.start` to its `turn.complete`). */
+  running: boolean
+  /** A ping was skipped for a running turn; that turn's arm schedules the next one even though no slot was spent. */
+  owed: { session: string; stretch: number } | undefined
   /** The last main-loop answer that was not a ping's: a ping turn's arm sends it, so the your-turn notice never reads the ping's reply. */
   lastAnswer: string | undefined
   /** When the prompt box was last touched, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
@@ -116,6 +120,8 @@ function newState(): State {
     lastUserText: undefined,
     stopTasks: undefined,
     ping: undefined,
+    running: false,
+    owed: undefined,
     lastAnswer: undefined,
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
   }
@@ -425,6 +431,14 @@ function logFailed($: EngineInterface, s: State, ping: Ping, why: string): Promi
   return enqueue(s, () => appendRecord($, s, ping, 'failed', '', why))
 }
 
+/** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
+function skipForRunningTurn($: EngineInterface, s: State, armed: Armed): boolean {
+  if (!s.running) return false
+  s.owed = { session: armed.session, stretch: armed.stretch }
+  note($, s, 'ping skipped: a turn is running; its arm schedules the next one')
+  return true
+}
+
 /** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned or `limitMs` passed first. */
 async function holdForUser($: EngineInterface, s: State, epoch: number, limitMs: number): Promise<boolean> {
   const start = await $.clock.now()
@@ -449,6 +463,7 @@ async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: nu
   const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
   if (s.epoch !== epoch || !pingsOpen(kw)) return undefined
   await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
+  s.owed = undefined
   return kw.sent + 1
 }
 
@@ -460,6 +475,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
   try {
     const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
     if (!pingsOpen(kw)) return
+    if (skipForRunningTurn($, s, armed)) return
     // The warning and each chained timer fire `warn_minutes` before the cache expires; that is all the time there is.
     const limit = s.warnMs === undefined ? 0 : s.warnMs - EXPIRY_MARGIN_MS
     if (limit <= 0) {
@@ -470,6 +486,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       note($, s, 'ping skipped: user is at the keyboard until the cache would expire')
       return
     }
+    if (skipForRunningTurn($, s, armed)) return // a turn started while the ping waited
     const index = await enqueue(s, () => reserveSlot($, s, armed, epoch))
     if (typeof index !== 'number' || s.epoch !== epoch) return
     const lost = s.ping
@@ -504,7 +521,10 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
 /** Pings 2 and 3: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it. */
 async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
   const kw = await readKeepwarm($)
-  if (!pingsOpen(kw) || kw.sent < 1 || kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
+  const owed = s.owed?.session === armed.session && s.owed.stretch === armed.stretch
+  // Before ping 1 the warn timer sends it; with a warn timer pending it will, so no chained one then either.
+  if (!pingsOpen(kw) || (kw.sent < 1 && !owed) || armed.at.warn !== undefined) return
+  if (kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
   const due = (await $.clock.now()) + kw.lead
   if (s.epoch !== epoch || s.armed !== armed) return
   s.timers.push(
@@ -571,6 +591,7 @@ function userReturned($: EngineInterface, s: State): void {
   s.epoch += 1
   cancelTimers(s)
   s.armed = undefined
+  s.owed = undefined
   if (s.ping !== undefined) s.ping.userCame = true
   // Read the id now, not when the queued call runs: `/clear` changes it in between.
   const sessionId = $.session.id().catch(() => undefined)
@@ -666,6 +687,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       s.stopTasks = undefined
+      s.running = true
       // The ping may queue behind a running turn, so its turn is found by the nonce in its text, not by order.
       const ping = s.ping
       if (ping?.phase === 'submitted' && e.text.includes(ping.nonce)) {
@@ -684,6 +706,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     // A subagent's turn carries agentId; only the main loop's end is the user-visible idle.
+    if (e.agentId === undefined) s.running = false
     if (e.agentId === undefined && !s.inert) {
       const epoch = s.epoch
       const tasks = s.stopTasks

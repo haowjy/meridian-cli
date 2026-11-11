@@ -466,24 +466,41 @@ test('the ping waits until the box has been empty for ten seconds', async ($, on
   expect(h.submitted).toHaveLength(1)
 })
 
-test('a turn already running when the warning fires is not mistaken for the ping', async ($, on) => {
+test('a turn running when the warning fires skips the ping and spends no slot; its arm chains the ping a lead later', async ($, on) => {
   const h = keepwarmHost()
   const clock = install(on, h)
 
   await startKeepwarm($, clock)
   await $.turn.start({ text: 'task notification', turnId: 't2' }) // runs through the warning
   await clock.advance(LEAD)
-  expect(h.submitted).toHaveLength(1)
+  expect(h.submitted).toEqual([])
+  expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   await $.turn.complete({ ...MAIN_TURN, turnId: 't2', answer: 'built it' })
-  await clock.advance(0)
-  expect(pingRecords(h)).toEqual([])
-  expect((await $.tool.check({ tool: 'Edit', input: {}, tool_use_id: 'tu-1' } as never)).decision).toBe('allow')
+  await clock.advance(LEAD - 1)
+  expect(h.submitted).toEqual([]) // not before the lead has passed
+  await clock.advance(1)
+  expect(h.submitted).toHaveLength(1)
   expect(calls(h, 'arm')[1]).toContain('--assistant-text=built it')
 
   await pingTurn($, h, 'p1', 'ok')
   await clock.advance(0)
   expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'continued' }])
   expect(calls(h, 'arm')[2]).toContain('--assistant-text=built it')
+  const status = await $.command.run({ ...IDLE_COMMAND, args: '' })
+  expect(status.text).toContain('keepwarm: on, 1/3 pings')
+})
+
+test('a user message while a turn runs at the warning leaves no ping behind', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await $.turn.start({ text: 'task notification', turnId: 't2' })
+  await clock.advance(LEAD)
+  await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+  await $.turn.complete({ ...MAIN_TURN, turnId: 't2' })
+  await clock.advance(10 * LEAD)
+  expect(h.submitted).toEqual([])
 })
 
 for (const [session, expected] of [['sess-1', '--assistant-text=before reload'], ['other', undefined]] as const) {
