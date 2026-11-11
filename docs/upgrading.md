@@ -1,5 +1,38 @@
 # Upgrade notes
 
+## Project-wide tool denies, and the map form of an agent's tool overlay
+
+`[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for every
+agent in the project, and `[agents.<name>.tools]` now takes a map of tool key to action. Nothing
+changes until you write one. This release takes `deny` only in `[settings.tools]`; `allow`,
+`ask` and `'*'` fail the load. Set `min_mars_version = "0.29.0"` in `mars.toml`, because an
+older Mars ignores the table without a word. Details:
+[Project-wide tool rules](agent-profiles.md#project-wide-tool-rules) and
+[agent overlays](configuration/mars.md).
+
+- `meridian spawn --dry-run` names a project-wide rule `project: tools <key> = deny`, and lists
+  an agent allow or ask that one covers under `Set aside:` (`tool_rules_set_aside` in JSON).
+- The `allowed` and `disallowed` lists in `[agents.<name>.tools]` are deprecated, not removed.
+- A string-valued key in `[agents.<name>.tools]` that is not a tool name used to be ignored. It
+  is now read as a rule, and a malformed one fails the load.
+
+### Three forms will change in the next release
+
+The next release makes one precedence rule apply on every harness: a deny covers the allows
+that are narrower than it. If a profile or overlay of yours has one of these forms, write what
+you want explicitly now:
+
+| Today | Next release |
+|---|---|
+| `bash: deny` (or `ask`) beside scoped allows such as `'bash(rg *)': allow` confines Bash to those calls | The deny covers the allows, so Bash is off. On Claude the permission mode then follows `approval` again, so calls to other tools that need approval stop being refused in a spawn |
+| `edit: deny` with `write: allow` leaves writes allowed on Claude and Pi | Writes are denied |
+| A longer scoped allow beats a shorter scoped deny or ask on OpenCode, Pi and Codex | The deny or ask wins, as on Claude |
+
+If you rely on one of these, say which result you want in the profile now: a rule that
+denies what you mean to deny, and no deny beside an allow you mean to keep.
+
+None of the profiles installed from `meridian-base` and `meridian-dev-workflow` has these forms.
+
 ## Claude launches read rules and roots from a file
 
 A Meridian-launched Claude session used to carry its permission rules (`--settings '{...}'`),

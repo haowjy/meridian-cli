@@ -567,6 +567,52 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
   `mcp/<name>/mcp.toml` definitions are installed into harness config by
   `meridian mars sync`. The launch bundle does not carry those server definitions.
 
+### Project-wide tool rules
+
+`[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for
+every agent in the project and for a launch with no agent. In this release it takes `deny`
+only; `allow`, `ask` and `'*'` fail the load. See
+[Project-wide tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules)
+in the Mars docs for the keys and merge order.
+
+```toml
+[settings]
+min_mars_version = "0.29.0"
+
+[settings.tools]
+"bash(pkill -f *)" = "deny"
+```
+
+- **They restrict and never widen.** A project-wide deny joins the agent's own rules. An agent
+  `allow` or `ask` that the deny covers by key (`bash = "deny"` covers `bash(rg *): allow`;
+  `edit = "deny"` covers `write: allow`; `"bash(git *)" = "deny"` covers
+  `bash(git status *): allow`) is set aside, because some harnesses let a narrower allow beat
+  a broader deny. Where Mars cannot tell whether two keys overlap, both rules stay and
+  `mars sync` warns. `--dry-run` lists the set-aside rules under `Set aside:` (and as
+  `tool_rules_set_aside` in `--format json`), each with the deny that covers it. A set-aside
+  rule is not in the permission report, which keeps its four statuses.
+- **The report names them.** A project-wide rule appears as `project: tools <key> = deny`.
+  Where Mars cannot tell whether a deny and an agent rule overlap, both stay, and on every
+  harness but Claude the project-wide rule carries a note that the agent rule may override it.
+  Claude's own order holds.
+- **Exempting one agent.** An entry in `[agents.<name>.tools]` with the same key replaces
+  the project-wide deny for that agent, and `allow` also pre-approves the call:
+
+  | `[settings.tools]` | `[agents.prober.tools]` | `prober` |
+  |---|---|---|
+  | `"bash(pkill -f *)" = "deny"` | `"bash(pkill -f *)" = "allow"` | may run it, with no prompt |
+  | `bash = "deny"` | `bash = "allow"` | has Bash; project-wide scoped Bash denies still hold |
+
+  Only the exact key is replaced: `bash = "allow"` does not lift
+  `"bash(pkill -f *)" = "deny"`.
+- **Claude.** A project-wide plain deny is `--disallowedTools <Tool>` even when a scoped allow
+  of that tool sits beside it. Under `approval: default` or `confirm`, the completion gate
+  still applies, as it does to a profile's `bash: deny`, and the dry run marks the rule
+  `partial`. Under `approval: never` the tool is removed, so the spawn's own
+  `meridian spawn done` command grant is blocked and reported, as for a profile `bash: deny`.
+- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` without a word. Set
+  `min_mars_version = "0.29.0"` so it refuses the project instead.
+
 ### Your own settings stay in force
 
 Meridian does not strip a harness's own configuration to make a profile stricter.
