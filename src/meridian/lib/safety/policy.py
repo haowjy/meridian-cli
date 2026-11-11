@@ -397,9 +397,10 @@ def complete_report(
         rule = rules_by_element.get(default.element)
         if rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)
-        elif rule is not None and rule.note and line.status == "native":
+        elif rule is not None and rule.note and line.status in ("native", "partial"):
             # Mars notes a rule only when its native spelling does not carry the rule exactly
             # (a shared permission name, an overlap, a shadowed scope), so it is not native.
+            # A compile's own partial note says how it falls short, not what Mars saw.
             note = rule.note if not line.note else f"{line.note}; {rule.note}"
             line = ReportLine(line.element, "partial", note)
         if line.element in spilled and line.status == "native":
