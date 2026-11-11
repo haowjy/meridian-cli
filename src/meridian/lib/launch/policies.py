@@ -634,6 +634,9 @@ def _same_shape(snapshot_rules: tuple[ToolRule, ...], bundle_rules: tuple[ToolRu
     Mars decides them by the agent's ``*`` rule and, under ``*: deny``, by which scoped rules
     the agent allows. Rules are compared by what the author wrote: ``native`` and ``note`` change
     across a Mars upgrade.
+
+    A copy of Mars's shaping in ``effective_tools`` (compiler/effective_tools.rs): change it there
+    and here together, or a replayed launch shapes project rules differently from a fresh one.
     """
 
     def agent_rules(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:

@@ -30,11 +30,11 @@ from meridian.lib.safety.policy import (
     Allow,
     EnforcementReport,
     PermissionPolicy,
-    PlatformCommand,
     PlatformRule,
     PlatformRuleKind,
     ReportLine,
     ReportStatus,
+    command_in_scope,
     complete_report,
     platform_element,
     rule_element,
@@ -455,7 +455,10 @@ def _gate_note(
             else "and a spawn has no one to ask, so Claude refuses them"
         )
     if capability is None or capability in _READ_ONLY_CLASS_CAPABILITIES:
-        note += "; Claude still runs calls it classifies as read-only without asking"
+        note += (
+            "; this does not stop calls Claude classifies as read-only (for Bash: echo, cat, ls, "
+            "grep and the like): they run without asking"
+        )
     if mode == "acceptEdits" and capability == "bash":
         note += (
             "; acceptEdits also runs file commands (mkdir, cp, mv, rm, sed -i, output "
@@ -490,6 +493,11 @@ def _tool_rule_line(
             if "Skill" not in permissions.available_tools:
                 note += "; Skill is not in --tools, so on-demand skills cannot load"
             note += "; MCP tools stay listed and dontAsk refuses those not allowed"
+            if "Bash" in permissions.available_tools and "Bash" not in policy.allowed_tools:
+                note += (
+                    "; Bash is listed only for Meridian's commands, and dontAsk also lets it run "
+                    "calls Claude classifies as read-only (echo, cat, ls, grep and the like)"
+                )
             return ReportLine(element, "native", note)
         return ReportLine(element, "unsupported", "Claude has no native wildcard permission rule")
     if not rule.native:
@@ -553,14 +561,6 @@ def _tool_rule_line(
     return ReportLine(element, "partial" if partial else "native", note)
 
 
-def _inside_grant(command: PlatformCommand, pattern: str) -> bool:
-    """Whether a scoped Bash pattern lies wholly inside a command grant."""
-
-    if command.match == "exact":
-        return pattern == command.command
-    return pattern == command.command or pattern.startswith(f"{command.command} ")
-
-
 def _meridian_commands_line(
     policy: PermissionPolicy, platform: PlatformRule, permissions: ClaudePermissions
 ) -> ReportLine:
@@ -587,7 +587,7 @@ def _meridian_commands_line(
                 continue
             for native in rule.native:
                 base, pattern = split_native(native)
-                if base == "Bash" and pattern is not None and _inside_grant(command, pattern):
+                if base == "Bash" and pattern is not None and command_in_scope(command, pattern):
                     blocked.setdefault(native, []).append(
                         f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
                     )
@@ -864,6 +864,7 @@ def compile_claude_permissions(
         policy,
         lines,
         harness="Claude",
+        grants_first=False,
     )
 
 

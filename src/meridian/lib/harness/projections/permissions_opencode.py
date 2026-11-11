@@ -29,13 +29,12 @@ from meridian.lib.safety.policy import (
 )
 from meridian.lib.tools import (
     PLATFORM_ORIGIN,
+    STRICTNESS,
     ToolAction,
     ToolRule,
     split_native,
     unscoped_action,
 )
-
-_STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
 _V2_ACTION_ALIASES: dict[str, str] = {
     "bash": "shell",
@@ -94,12 +93,12 @@ def _order(rules: list[OpenCodePermissionRule]) -> tuple[OpenCodePermissionRule,
     for rule in rules:
         key = (rule.action, rule.resource)
         current = strongest.get(key)
-        if current is None or _STRICTNESS[rule.effect] > _STRICTNESS[current.effect]:
+        if current is None or STRICTNESS[rule.effect] > STRICTNESS[current.effect]:
             strongest[key] = rule
     return tuple(
         sorted(
             strongest.values(),
-            key=lambda rule: (rule.action != "*", _STRICTNESS[rule.effect]),
+            key=lambda rule: (rule.action != "*", STRICTNESS[rule.effect]),
         )
     )
 

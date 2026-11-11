@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand
-from meridian.lib.tools import ToolAction, ToolRule, split_native
+from meridian.lib.tools import STRICTNESS, ToolAction, ToolRule, split_native
 
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
 # so a nested launch never inherits it (see ``child=False`` in env_registry).
@@ -22,7 +22,6 @@ TOOL_POLICY_ENV = "_MERIDIAN_TOOL_POLICY"
 # no supported Pi bundle predates `_MERIDIAN_TOOL_POLICY` (the release after the one that
 # renamed it).
 LEGACY_PI_POLICY_ENV = "_MERIDIAN_PI_PERMISSION_POLICY"
-_STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 
 
 class ExtensionRule(BaseModel):
@@ -92,7 +91,7 @@ def command_grants(policy: PermissionPolicy) -> tuple[PlatformCommand, ...]:
 def strictest(rules: Iterable[ExtensionRule]) -> ToolAction | None:
     """The strictest action among ``rules``, as the extension ranks equally specific rules."""
 
-    return max((rule.action for rule in rules), key=_STRICTNESS.__getitem__, default=None)
+    return max((rule.action for rule in rules), key=STRICTNESS.__getitem__, default=None)
 
 
 def bash_fails_closed(rules: tuple[ExtensionRule, ...]) -> bool:

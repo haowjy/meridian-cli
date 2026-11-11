@@ -15,7 +15,9 @@ deny or ask still restricts a grant.
 A place that reads rules for something other than emitting them (a permission-mode gate, a
 Codex switch, tool availability) takes the strictest answer itself: a rule Mars covered
 keeps its place in the list, and a continued snapshot's rules never pass through Mars
-again.
+again. `complete_report` reports a covered rule (no native names, a Mars note) with Mars's
+note on every harness, whatever a compile said, and marks a shell deny or ask `partial` where
+the harness decides Meridian's command grants first and one lies in its scope.
 
 Launch snapshots keep the profile's Mars rules; the policy is rebuilt at bind. On a
 continue or fork, `refresh_project_rules` (`launch/policies.py`) re-reads the project-origin

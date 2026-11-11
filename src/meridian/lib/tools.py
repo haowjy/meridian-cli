@@ -6,6 +6,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 type ToolAction = Literal["allow", "deny", "ask"]
+# Strictest wins: deny over ask over allow. The one copy of the order in Meridian; Mars's
+# ``ToolAction::strictness()`` is its counterpart.
+STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 # The pre-rules shape of a profile's tools: native key -> action. Only old persisted
 # launch snapshots still hold it; ``legacy_tool_rules`` is the one reader.
 type ToolsField = dict[str, ToolAction]
