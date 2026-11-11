@@ -350,10 +350,6 @@ async function pingTurn($: Engine, h: Host, turnId: string, answer: string, reas
   await $.turn.complete({ ...MAIN_TURN, turnId, answer, reason, isAborted: reason === 'aborted' } as never)
 }
 
-function pingRecords(h: Host) {
-  return (h.store.keepwarm ?? []) as Array<{ ping: number; outcome: string; denied: string[]; reply: string; why?: string }>
-}
-
 test('keepwarm is off until asked: the warning sends no ping', async ($, on) => {
   const h = keepwarmHost()
   const clock = install(on, h)
@@ -389,7 +385,6 @@ test('ping 1 follows the warning; its turn is found by nonce, its tools are limi
   await clock.advance(0)
   expect((await deny({})).decision).toBe('allow') // after it
 
-  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'stopped', denied: ['Edit'], reply: '`stop-waiting`' }])
   // The ping's arm carries the real answer of the last working turn, not the ping's reply.
   expect(calls(h, 'arm')[1]).toContain('--assistant-text=done')
   await clock.advance(10 * LEAD)
@@ -412,7 +407,6 @@ test('a continued ping chains one more at the lead after its arm, three in all',
   await clock.advance(10 * LEAD)
 
   expect(h.submitted).toHaveLength(3)
-  expect((pingRecords(h)).map(r => [r.ping, r.outcome])).toEqual([[1, 'continued'], [2, 'continued'], [3, 'continued']])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
 })
 
@@ -443,7 +437,6 @@ test('a ping held by a draft gives up before the cache expires, however long the
   h.box = '' // the user clears the box at minute 70
   await clock.advance(10 * MINUTE)
   expect(h.submitted).toEqual([])
-  expect(pingRecords(h)).toEqual([])
 })
 
 test('a warning acted on 90 s late gets no ping once a draft holds the box to the expiry', async ($, on) => {
@@ -506,7 +499,6 @@ test('a turn running when the warning fires skips the ping and spends no slot; i
 
   await pingTurn($, h, 'p1', 'ok')
   await clock.advance(0)
-  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'continued' }])
   expect(calls(h, 'arm')[2]).toContain('--assistant-text=built it')
   const status = await $.command.run({ ...IDLE_COMMAND, args: '' })
   expect(status.text).toContain('keepwarm: on, 1/3 pings')
@@ -525,25 +517,7 @@ test('a user message while a turn runs at the warning leaves no ping behind', as
   expect(h.submitted).toEqual([])
 })
 
-for (const [session, expected] of [['sess-1', '--assistant-text=before reload'], ['other', undefined]] as const) {
-  test(`after a reload the ping turn arms with the stored last answer only if it is this session's (${session})`, async ($, on) => {
-    const h = keepwarmHost()
-    h.store.answer = { session, text: 'before reload' }
-    h.reply.status = [{ harness: 'claude', session: 'sess-1', stretch_open: true, stretch: 1, anchor: 1, schedule: { warn_at: START + 2000 + LEAD } }]
-    const clock = install(on, h)
-    await $.session.start(TUI)
-    await clock.advance(2000)
-    await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm on' })
-    await clock.advance(LEAD)
-    expect(h.submitted).toHaveLength(1)
-    await pingTurn($, h, 'p1', 'ok')
-    await clock.advance(0)
-    const args = calls(h, 'arm')[0] ?? []
-    expect(args.find(arg => arg.startsWith('--assistant-text'))).toBe(expected)
-  })
-}
-
-test('an aborted ping turn is logged failed and still counts', async ($, on) => {
+test('an aborted ping turn still counts', async ($, on) => {
   const h = keepwarmHost()
   const clock = install(on, h)
 
@@ -551,12 +525,11 @@ test('an aborted ping turn is logged failed and still counts', async ($, on) => 
   await clock.advance(LEAD)
   await pingTurn($, h, 'p1', '', 'aborted')
 
-  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'failed', why: 'turn aborted' }])
   await clock.advance(LEAD)
   expect(h.submitted).toHaveLength(2) // the cap counts pings, not outcomes
 })
 
-test('keepwarm off stops pings, and /meridian-idle prints the state and the tally', async ($, on) => {
+test('keepwarm off stops pings, and /meridian-idle prints the state', async ($, on) => {
   const h = keepwarmHost()
   const clock = install(on, h)
 
@@ -565,7 +538,6 @@ test('keepwarm off stops pings, and /meridian-idle prints the state and the tall
   await pingTurn($, h, 'p1', 'stop-waiting')
   const status = await $.command.run({ ...IDLE_COMMAND, args: '' })
   expect(status.text).toContain('keepwarm: on, 3/3 pings this stretch')
-  expect(status.text).toContain('pings logged: 1 stopped, 0 continued, 0 failed')
 
   const off = await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })
   expect(off.text).toContain('keepwarm: off')

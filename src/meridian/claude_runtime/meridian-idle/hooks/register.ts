@@ -3,13 +3,9 @@ import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude
 import {
   FRESH,
   PING_CAP,
-  appended,
-  excerpt,
   isStop,
   pingText,
-  recordLines,
   type Keepwarm,
-  type Outcome,
 } from './keepwarm'
 
 // Meridian's Claude idle sensor.
@@ -40,9 +36,7 @@ const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
 /** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
 const EXPIRY_MARGIN_MS = 60_000
-const KEEPWARM_LOG = 'keepwarm'
 /** `$.store` key holding `{ session, text }`: the last non-ping main-loop answer, so a resume or reload keeps the notice's excerpt. */
-const LAST_ANSWER = 'answer'
 // The host lists the state a module touches, so the reference must be literal in this file.
 const IDLE_KEEPWARM = { plugin: 'meridian-idle', key: 'keepwarm' } as const
 
@@ -68,7 +62,6 @@ type Ping = {
   /** `submitted`: no main-loop turn carrying the nonce has started yet. `running`: that turn is in flight (`turnId`). */
   phase: 'submitted' | 'running'
   turnId: string | undefined
-  denied: string[]
   /** The user typed during the ping turn: tools are theirs to steer again. */
   userCame: boolean
 }
@@ -350,30 +343,6 @@ async function armTask(
   }
 }
 
-/** Keeps a real turn's answer (capped as the arm caps it) beside the keepwarm records, only while keepwarm is on; a store failure only costs the excerpt. */
-async function rememberAnswer($: EngineInterface, answer: string): Promise<string> {
-  const text = capExcerpt(answer) ?? ''
-  try {
-    if (!(await readKeepwarm($)).on) return text
-    await $.store.set(LAST_ANSWER, { session: await $.session.id(), text })
-  } catch {
-    // the excerpt is best effort
-  }
-  return text
-}
-
-/** The last real answer: from memory, else from the store when it belongs to this session. */
-async function lastAnswer($: EngineInterface, s: State): Promise<string | undefined> {
-  if (s.lastAnswer !== undefined) return s.lastAnswer
-  try {
-    const stored = await $.store.get(LAST_ANSWER)
-    if (isRecord(stored) && typeof stored.text === 'string' && stored.session === (await $.session.id())) return stored.text
-  } catch {
-    // no excerpt
-  }
-  return undefined
-}
-
 // -- keepwarm ---------------------------------------------------------------
 
 async function readKeepwarm($: EngineInterface): Promise<Keepwarm> {
@@ -397,34 +366,6 @@ async function trackStretch($: EngineInterface, session: string, stretch: number
 
 function pingsOpen(kw: Keepwarm): boolean {
   return kw.on && kw.sent < PING_CAP
-}
-
-/** Appends the ping's record to the experiment log. Runs inside the queue; from outside it use `logFailed`. */
-async function appendRecord(
-  $: EngineInterface,
-  s: State,
-  ping: Ping,
-  outcome: Outcome,
-  reply: string,
-  why?: string,
-): Promise<void> {
-  const record = {
-    at: new Date().toISOString(),
-    session: ping.session,
-    stretch: ping.stretch,
-    ping: ping.index,
-    outcome,
-    denied: ping.denied,
-    reply: excerpt(reply),
-    ...(why !== undefined ? { why } : {}),
-  }
-  // Another session may append at once and one record can be lost; pings are tens of minutes apart.
-  await $.store.set(KEEPWARM_LOG, appended(await $.store.get(KEEPWARM_LOG), record))
-  note($, s, `ping ${ping.index} ${outcome}${why !== undefined ? ` (${why})` : ''}${ping.denied.length > 0 ? ` denied ${ping.denied.join(',')}` : ''}`)
-}
-
-function logFailed($: EngineInterface, s: State, ping: Ping, why: string): Promise<unknown> {
-  return enqueue(s, () => appendRecord($, s, ping, 'failed', '', why))
 }
 
 /** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
@@ -483,7 +424,6 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
     if (skipForRunningTurn($, s, armed)) return // a turn started while the ping waited
     const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline))
     if (typeof index !== 'number' || s.epoch !== epoch) return
-    const lost = s.ping
     const ping: Ping = {
       nonce: newNonce(),
       index,
@@ -491,21 +431,19 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       stretch: armed.stretch,
       phase: 'submitted',
       turnId: undefined,
-      denied: [],
       userCame: false,
     }
-    // A ping still unmatched never started (its queue was cleared); its slot stays spent.
-    if (lost !== undefined) void logFailed($, s, lost, 'turn never started')
+    // A ping still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
     s.ping = ping
     try {
       const result = await $.prompt.submit({ text: pingText(ping.nonce) })
       if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
         s.ping = undefined
-        await logFailed($, s, ping, `dropped: ${result.drop}`)
+        note($, s, `ping ${ping.index} dropped: ${result.drop}`)
       }
     } catch (err) {
       if (s.ping === ping && ping.phase === 'submitted') s.ping = undefined
-      await logFailed($, s, ping, describeError(err))
+      note($, s, `ping ${ping.index} failed: ${describeError(err)}`)
     }
   } catch (err) {
     note($, s, `ping error: ${describeError(err)}`)
@@ -539,11 +477,11 @@ async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: n
 
 /** The ping's own turn ended: record how it went and, on a stop, end this stretch's pings. */
 async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
-  if (reason !== 'answer') return appendRecord($, s, ping, 'failed', answer, `turn ${reason}`)
-  if (!isStop(answer)) return appendRecord($, s, ping, 'continued', answer)
+  if (reason !== 'answer') return note($, s, `ping ${ping.index} ended: ${reason}`)
+  if (!isStop(answer)) return note($, s, `ping ${ping.index} continued`)
   const kw = await readKeepwarm($)
   if (kw.session === ping.session && kw.stretch === ping.stretch) await $.state.set(IDLE_KEEPWARM, { ...kw, sent: PING_CAP })
-  return appendRecord($, s, ping, 'stopped', answer)
+  note($, s, `ping ${ping.index} stopped`)
 }
 
 // -- return ----------------------------------------------------------------
@@ -655,7 +593,6 @@ async function statusText($: EngineInterface, s: State): Promise<string> {
   const kw = await readKeepwarm($)
   const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
   lines.push(`keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`)
-  lines.push(...recordLines(await $.store.get(KEEPWARM_LOG)))
   if (s.log.length > 0) {
     lines.push('log:')
     for (const line of s.log.slice(-8)) lines.push(`  ${line}`)
@@ -714,7 +651,7 @@ export const register: Register = on => {
       void enqueue(s, async () => {
         if (ping !== undefined) await finishPing($, s, ping, e.reason, e.answer)
         // The ping's reply must not become the your-turn notice's excerpt.
-        await armTask($, s, epoch, ping !== undefined ? await lastAnswer($, s) : await rememberAnswer($, e.answer), tasks)
+        await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
       })
     }
     return next(e)
@@ -741,7 +678,6 @@ export const register: Register = on => {
     const ping = s.ping
     // Other plugins' permission queries carry no tool_use_id and are not calls to deny.
     if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
-    if (!ping.denied.includes(e.tool)) ping.denied.push(e.tool)
     return {
       decision: 'deny',
       reason: 'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing.',

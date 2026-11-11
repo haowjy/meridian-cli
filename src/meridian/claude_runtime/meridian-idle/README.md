@@ -37,7 +37,7 @@ Its own diagnostics live in the plugin's `$.store` under the key `log` (last
 ## `/meridian-idle`
 
 Prints the current stretch, anchor, time left on each timer, the keepwarm state
-and tally, and the last log lines. It does not count as a return.
+and pings sent this stretch, and the last log lines. It does not count as a return.
 
 `/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` set keepwarm.
 
@@ -74,20 +74,17 @@ Pings send no notification.
   later (the stretch is already `warned`). A user return cancels it as usual.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
-  touched. The denied tool names go in the log record.
+  touched.
 - **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
   quotes or backticks) ends this stretch's pings; keepwarm stays on.
 - **Your-turn push.** The ping turn's arm sends the last answer from a
   non-ping turn as `--assistant-text`, so the next notice does not read "ok".
-  While keepwarm is on, that answer is also kept in `$.store` key `answer` (with
-  its session id), so it survives a resume or hot reload; another session's
-  value is ignored.
+  The answer is held in memory only: after a hot reload the next ping turn's
+  arm has none, and that notice carries no assistant excerpt.
 
-Each submitted ping adds one record (time, session, stretch, ping number,
-`stopped`, `continued` or `failed`, denied tools, reply excerpt) to the plugin
-`$.store` key `keepwarm`, the last 200. Two sessions appending at once can lose
-a record. A `continued` reply that is just an acknowledgement means the model
-waited; denied tools or a reply that starts work mean it did not.
+The mod keeps no record of the pings beyond its diagnostic `log`. Each ping is
+in the session transcript, as a plugin prompt starting
+`[meridian-idle keepwarm <nonce>]`, with the model's reply after it.
 
 ## Where it runs
 
