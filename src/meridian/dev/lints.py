@@ -605,7 +605,7 @@ CONTEXT_ENV_ALLOWLIST: dict[tuple[str, str], str] = {
     ("meridian/lib/launch/context.py", "*"): "Composes the child env.",
     ("meridian/lib/launch/spawn_guidance.py", "*"): "Names the variables in the agent prompt.",
     ("meridian/lib/notify/label.py", "build_session_label"): (
-        "Launch-environment fallback when state is unreadable."
+        "Launch-environment fallback when no state can be read."
     ),
     ("meridian/lib/launch/env.py", "_normalize_meridian_env"): "Shapes the child env.",
     ("meridian/lib/ops/context.py", "render_context_lines"): "Names the variable for display.",

@@ -63,7 +63,8 @@ def build_session_label(
     project_root = Path(project_path) if project_path else working_directory
     agent = _clean(env.get("MERIDIAN_SESSION_AGENT"))
     harness = _clean(env.get("_MERIDIAN_HARNESS"))
-    work_id: str | None = None
+    # The launch value stands only where no state can be read; a readable state decides.
+    work_id = _clean(env.get("MERIDIAN_ACTIVE_WORK_ID"))
     child_spawn_id: str | None = None
     child_agent: str | None = None
     child_harness: str | None = None
@@ -88,7 +89,7 @@ def build_session_label(
             else:
                 work_id = resolve_active_work_id(project_root, runtime_root, environ=env)
     except (OSError, ValueError, HistoryIndexIncomplete, sqlite3.Error):
-        work_id = _clean(env.get("MERIDIAN_ACTIVE_WORK_ID"))
+        pass
     return SessionLabel(
         tmux_session=tmux_session,
         project=_clean(project_root.name),
