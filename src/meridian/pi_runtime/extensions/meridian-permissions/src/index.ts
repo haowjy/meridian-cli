@@ -45,11 +45,7 @@ export type PermissionRule = {
 export type PermissionPolicy = {
   version: 1;
   rules: PermissionRule[];
-  meridian_commands: {
-    command: string;
-    match: "exact" | "prefix";
-    role: "completion" | "read" | "launch";
-  }[];
+  meridian_commands: { command: string; match: "exact" | "prefix" }[];
   headless_reject_reason: string;
   // Refuse a bash command that does not split into simple commands. Meridian sets it when
   // such a command could be refused without matching a scoped rule (an allowlist, or an
@@ -73,17 +69,12 @@ type ShellWord = { value: string; quoted: boolean };
 
 function isMeridianCommandGrant(
   value: unknown,
-): value is {
-  command: string;
-  match: "exact" | "prefix";
-  role: "completion" | "read" | "launch";
-} {
+): value is PermissionPolicy["meridian_commands"][number] {
   if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { command?: unknown; match?: unknown; role?: unknown };
+  const candidate = value as { command?: unknown; match?: unknown };
   return typeof candidate.command === "string"
     && candidate.command.startsWith("meridian ")
-    && ["exact", "prefix"].includes(String(candidate.match))
-    && ["completion", "read", "launch"].includes(String(candidate.role));
+    && ["exact", "prefix"].includes(String(candidate.match));
 }
 
 function parsePolicy(raw: string | undefined): PermissionPolicy {
@@ -378,22 +369,6 @@ function meridianCommandGrant(
     : command === candidate.command || command.startsWith(`${candidate.command} `));
 }
 
-function withMeridianCommandAllows(policy: PermissionPolicy): PermissionPolicy {
-  return {
-    ...policy,
-    rules: [
-      ...policy.rules,
-      ...policy.meridian_commands.map((candidate) => ({
-        capability: "bash",
-        tool: "bash",
-        pattern: candidate.match === "exact" ? candidate.command : `${candidate.command} *`,
-        action: "allow" as const,
-        label: "Meridian platform command",
-      })),
-    ],
-  };
-}
-
 export function decideToolCall(
   policy: PermissionPolicy,
   tool: string,
@@ -417,24 +392,9 @@ export function decideToolCall(
       : undefined;
   }
 
-  const grant = split.commands.length === 1
-    ? meridianCommandGrant(policy, split.commands[0])
-    : undefined;
-  if (grant?.role === "completion") {
-    return {
-      action: "allow",
-      detail,
-      reason: "Meridian completion command",
-    };
-  }
-  if (grant !== undefined) {
-    return policyDecision(
-      withMeridianCommandAllows(policy),
-      "bash",
-      scope,
-      detail,
-      workingDirectory,
-    );
+  // Meridian's own commands are granted only as a whole command, before any rule is read.
+  if (split.commands.length === 1 && meridianCommandGrant(policy, split.commands[0]) !== undefined) {
+    return { action: "allow", detail, reason: "Meridian command" };
   }
   const decisions = split.commands.map(
     (command) => policyDecision(policy, tool, command, detail, workingDirectory),

@@ -116,7 +116,6 @@ _LOCAL_SERVICE_HOSTS = frozenset((Host("localhost"), Host("127.0.0.1")))
 
 type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
 type CommandMatch = Literal["exact", "prefix"]
-type PlatformCommandRole = Literal["completion", "read", "launch"]
 
 
 class PlatformCommand(BaseModel):
@@ -126,14 +125,7 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
-    role: PlatformCommandRole = "read"
     runs_outside_sandbox: bool = False
-
-    @property
-    def profile_restrictable(self) -> bool:
-        """Whether a narrower profile rule may keep this command restricted."""
-
-        return self.role != "completion"
 
 
 class PlatformRule(BaseModel):
@@ -142,8 +134,10 @@ class PlatformRule(BaseModel):
     Ordinary agent/task denies are ``ToolRule`` values named by Mars. ``builtin-agents``
     controls harness mechanisms that cannot be expressed as such a rule. The
     ``meridian-commands`` carries the shell commands Meridian itself makes available under
-    any profile allowlist: completion signals, read operations, and child launch commands
-    when the profile can spawn. A harness spells exact and prefix matches in its own syntax.
+    any profile rule: completion signals, read operations, and child launch commands when
+    the profile can spawn. A harness that decides them itself (Pi, Codex, OpenCode) allows
+    them before it reads a rule; Claude checks its denies and asks first. A harness spells exact and
+    prefix matches in its own syntax.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -210,8 +204,7 @@ class PermissionPolicy(BaseModel):
         """Whether this policy carries the canonical child-launch command grant."""
 
         return any(
-            command.role == "launch"
-            and command.command == "meridian spawn"
+            command.command == "meridian spawn"
             and command.match == "prefix"
             and command.runs_outside_sandbox
             for rule in self.platform_rules
@@ -285,14 +278,6 @@ def platform_element(rule: PlatformRule) -> str:
         commands = ", ".join(f"{command.match}: {command.command}" for command in rule.commands)
         return f"platform: allow Meridian commands ({commands})"
     return "platform: deny built-in agents"
-
-
-def command_grant_covers_pattern(command: PlatformCommand, pattern: str) -> bool:
-    """Whether a scoped shell pattern is wholly inside a platform command grant."""
-
-    if command.match == "exact":
-        return pattern == command.command
-    return pattern == command.command or pattern.startswith(f"{command.command} ")
 
 
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
@@ -607,7 +592,6 @@ __all__ = [
     "NetworkProjection",
     "PermissionPolicy",
     "PlatformCommand",
-    "PlatformCommandRole",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",

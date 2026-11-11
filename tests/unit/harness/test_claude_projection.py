@@ -198,12 +198,8 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     platform = PlatformRule(
         kind="meridian-commands",
         commands=(
-            PlatformCommand(command="meridian spawn", match="prefix", role="launch"),
-            PlatformCommand(
-                command="meridian spawn done",
-                match="prefix",
-                role="completion",
-            ),
+            PlatformCommand(command="meridian spawn", match="prefix"),
+            PlatformCommand(command="meridian spawn done", match="prefix"),
         ),
     )
     spec = _spec(
@@ -234,7 +230,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
     assert line.status == "partial"
     assert "Bash(meridian spawn cancel-all *)" in line.note
-    assert "cannot keep the completion grant final" in line.note
+    assert "the grant does not hold" in line.note
 
 
 def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:

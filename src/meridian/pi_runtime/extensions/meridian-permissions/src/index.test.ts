@@ -158,9 +158,9 @@ describe("bash command evaluation", () => {
       ],
       {
         meridian_commands: [
-          { command: "meridian task-dir", match: "exact", role: "read" },
-          { command: "meridian spawn done", match: "prefix", role: "completion" },
-          { command: "meridian spawn rearm", match: "prefix", role: "completion" },
+          { command: "meridian task-dir", match: "exact" },
+          { command: "meridian spawn done", match: "prefix" },
+          { command: "meridian spawn rearm", match: "prefix" },
         ],
         bash_fail_closed: true,
       },
@@ -197,8 +197,8 @@ describe("bash command evaluation", () => {
   it("does not restrict ordinary bash when Meridian commands are the only policy", () => {
     const meridianOnly = policy([], {
       meridian_commands: [
-        { command: "meridian spawn done", match: "prefix", role: "completion" },
-        { command: "meridian spawn rearm", match: "prefix", role: "completion" },
+        { command: "meridian spawn done", match: "prefix" },
+        { command: "meridian spawn rearm", match: "prefix" },
       ],
     });
 

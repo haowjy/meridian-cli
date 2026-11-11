@@ -22,7 +22,6 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     PlatformCommand,
     ReportLine,
-    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
@@ -178,27 +177,11 @@ def _report(
     ]
     for platform in policy.platform_rules:
         if platform.kind == "meridian-commands":
-            stricter = any(
-                rule.tool in {"bash", "*"}
-                and rule.pattern is not None
-                and rule.action != "allow"
-                and any(
-                    command.profile_restrictable
-                    and command_grant_covers_pattern(command, rule.pattern)
-                    for command in platform.commands
-                )
-                for rule in extension_rules
-            )
             lines.append(
                 ReportLine(
                     platform_element(platform),
-                    "partial" if stricter else "platform",
-                    (
-                        "--tools bash plus fixed tool_call grants; narrower profile rules "
-                        "remain stricter"
-                        if stricter
-                        else "--tools bash plus fixed tool_call grants"
-                    )
+                    "platform",
+                    "--tools bash plus fixed tool_call grants, decided before any rule"
                     if permissions.extension_policy is not None
                     else "no rule restricts bash, so they run",
                 )

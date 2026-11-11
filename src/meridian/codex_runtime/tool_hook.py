@@ -158,22 +158,13 @@ def decide(policy: dict[str, object], command: str) -> str | None:
             f"{DENIAL_PREFIX}restricted bash accepts only simple commands; run simple commands "
             "without expansion, redirection, or backgrounding."
         )
-    rules = _rules(policy)
-    # Meridian's own commands are granted only as a whole command, as Pi grants them.
+    # Meridian's own commands are granted only as a whole command, before any rule is read,
+    # as Pi grants them.
     if len(segments) == 1:
         grants = cast("list[dict[str, object]]", policy["meridian_commands"])
-        if any(grant["role"] == "completion" and _granted(grant, segments[0]) for grant in grants):
-            return None
         if any(_granted(grant, segments[0]) for grant in grants):
-            rules += [
-                Rule(
-                    "bash",
-                    str(grant["command"]) if grant["match"] == "exact" else f"{grant['command']} *",
-                    "allow",
-                    "Meridian platform command",
-                )
-                for grant in grants
-            ]
+            return None
+    rules = _rules(policy)
     for segment in segments:
         winner = _winner(rules, segment)
         if winner is not None and winner.action == "deny":

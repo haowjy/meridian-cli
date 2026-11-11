@@ -43,8 +43,8 @@ _DENY_LIST = {
 _ALLOWLIST = {
     "rules": [_rule(None, "deny"), *(_rule(p, "allow") for p in ("git *", "rg *"))],
     "meridian_commands": [
-        {"command": "meridian spawn done", "match": "prefix", "role": "completion"},
-        {"command": "meridian work show", "match": "prefix", "role": "read"},
+        {"command": "meridian spawn done", "match": "prefix"},
+        {"command": "meridian work show", "match": "prefix"},
     ],
     "bash_fail_closed": True,
 }

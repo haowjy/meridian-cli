@@ -446,50 +446,26 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             "edit": "deny",
         }
     else:
+        shell = "shell"
         assert agent[permission_key] == [
             {"action": "*", "resource": "*", "effect": "deny"},
+            {"action": shell, "resource": "git *", "effect": "allow"},
+            {"action": "edit", "resource": "/tmp/**", "effect": "allow"},
+            {"action": shell, "resource": "git push *", "effect": "deny"},
+            {"action": shell, "resource": "meridian spawn *", "effect": "deny"},
             {"action": "edit", "resource": "*", "effect": "deny"},
-            {"action": "shell", "resource": "git *", "effect": "allow"},
-            {"action": "shell", "resource": "git push *", "effect": "deny"},
-            {
-                "action": "shell",
-                "resource": "meridian spawn *",
-                "effect": "deny",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian task-dir",
-                "effect": "allow",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian spawn done",
-                "effect": "allow",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian spawn done *",
-                "effect": "allow",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian spawn rearm",
-                "effect": "allow",
-            },
-            {
-                "action": "shell",
-                "resource": "meridian spawn rearm *",
-                "effect": "allow",
-            },
+            {"action": shell, "resource": "meridian spawn done", "effect": "allow"},
+            {"action": shell, "resource": "meridian spawn done *", "effect": "allow"},
+            {"action": shell, "resource": "meridian spawn rearm", "effect": "allow"},
+            {"action": shell, "resource": "meridian spawn rearm *", "effect": "allow"},
+            {"action": shell, "resource": "meridian task-dir", "effect": "allow"},
             {"action": "external_directory", "resource": "/repo/**", "effect": "allow"},
         ]
         write_line = next(
             line for line in report if line.element == "tools: write(/tmp/**) = allow"
         )
         assert write_line.status == "partial"
-        assert (
-            "conflicting semantics conservatively use permission edit(*): deny" in write_line.note
-        )
+        assert "V2 conflates write/patch as edit" in write_line.note
     completion_line = next(
         line for line in report if line.element.startswith("platform: allow Meridian commands")
     )
