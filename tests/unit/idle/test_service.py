@@ -309,4 +309,4 @@ def test_held_push_stays_owed_until_the_turn_the_work_wakes() -> None:
     clock.value = 3_000_000
     woken = idle.arm(harness="example", session="s1", ttl_seconds=3600)
     assert (woken.stretch, woken.anchor) == (held.stretch, held.anchor + 1)
-    assert (woken.push_at, woken.warn_at) == (3_060_000, 3_000_000 + 45 * 60_000)
+    assert (woken.push_at, woken.warn_at) == (3_060_000, 3_000_000 + 50 * 60_000)

@@ -398,7 +398,7 @@ silence only the permission notice.
 | `push_seconds` | `60` | `MERIDIAN_IDLE_PUSH_SECONDS` | Seconds after a long wait before the waiting push |
 | `long_turn_seconds` | `120` | `MERIDIAN_IDLE_LONG_TURN_SECONDS` | Minimum wait that uses `push_seconds` |
 | `quick_turn_push_seconds` | `600` | `MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS` | Seconds after a quick or unknown-length turn before the waiting push |
-| `warn_minutes` | `15` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
+| `warn_minutes` | `10` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 
