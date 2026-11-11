@@ -231,8 +231,6 @@ def _decide(
 
     strict = bool(policy["bash_fail_closed"])
     if scope is None:
-        if not strict:
-            return None
         return Decision("deny", detail, f"{DENIAL_PREFIX}the bash command could not be evaluated.")
     segments = split_segments(scope, strict=strict)
     if segments is None or not segments:

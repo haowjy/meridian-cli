@@ -68,6 +68,7 @@ _MARS_BUNDLE_MIN_VERSION = "0.18.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
+_MARS_AGENT_TOOL_RULES_MIN_VERSION = "0.30.0"
 
 
 @dataclass(frozen=True)
@@ -472,6 +473,10 @@ def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
     )
 
 
+class MarsAgentToolRulesUnsupportedError(RuntimeError):
+    """The installed Mars does not know ``--agent-tool-rules``."""
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
@@ -558,6 +563,14 @@ def _raise_bundle_error(
                 f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
                 note,
             )
+        )
+    if "--agent-tool-rules" in normalized and (
+        "unexpected argument" in normalized or "unrecognized" in normalized
+    ):
+        raise MarsAgentToolRulesUnsupportedError(
+            "The installed Mars does not accept --agent-tool-rules, which continuing or forking "
+            f"a session needs. Install mars >= {_MARS_AGENT_TOOL_RULES_MIN_VERSION}. "
+            f"Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:

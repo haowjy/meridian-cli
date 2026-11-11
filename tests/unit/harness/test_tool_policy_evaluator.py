@@ -146,7 +146,7 @@ def test_open_shell_scoped_denies_are_best_effort() -> None:
     for command in ["echo $HOME", "ls > /tmp/out", "for f in *.py; do echo $f; done"]:
         assert _action(policy, command) != "deny"
     assert _action(policy, "git log -1 && git revert HEAD") == "deny"
-    assert _action(policy, "", "bash") is None
+    assert _action(policy, "", "bash") == "deny"
 
 
 def test_unreadable_scope_of_a_scoped_tool_is_refused() -> None:

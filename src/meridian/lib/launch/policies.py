@@ -692,6 +692,8 @@ def _with_current_bundle_rules(
                     model=policy.model,
                     agent_rules=agent_rules,
                 )
+            except bundle_adapter.MarsAgentToolRulesUnsupportedError:
+                raise
             except RuntimeError as exc:
                 warning = (
                     f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "

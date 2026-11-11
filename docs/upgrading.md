@@ -52,9 +52,9 @@ has this form: its Claude and Pi files gain `Write` in `disallowed-tools`.
   [Project-wide tool rules](agent-profiles.md#project-wide-tool-rules).
 - `mars validate` prints `tool-rule-covered` instead of `tool-rule-set-aside` and
   `tool-rule-form-changes`.
-- A continued or forked session reads its saved rules under the new precedence, but keeps the
-  native names Mars 0.29 gave them: `edit: deny` beside `write: allow` keeps allowing writes
-  until you start a new session.
+- A continued or forked session sends its saved rules back to Mars, which applies the new
+  precedence and recomputes native names: `edit: deny` beside `write: allow` now refuses
+  writes. This needs Mars 0.30.0.
 
 None of the profiles installed from `meridian-base` and `meridian-dev-workflow` changes result
 except `prompt-tester` above.

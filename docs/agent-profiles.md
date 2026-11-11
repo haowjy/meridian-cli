@@ -620,11 +620,13 @@ loaded.
   removed is gone, and an allow it covered works again. Your `[agents.<name>.tools]`
   exemptions still apply. The agent's own rules stay as the session started, and a
   project-wide `allow` or `ask` is shaped by the session's own `*` rule, as at a fresh launch.
-  A session started before this release keeps the native names Mars 0.29 gave its rules:
-  `edit: deny` beside `write: allow` keeps allowing writes until you start a new session. A
-  session an older build wrote with no rule names to send Mars keeps its rules and gains the
+  Meridian sends the session's own rules back to Mars, which recomputes native names and
+  covering, so an older session gets the current precedence too: `edit: deny` beside
+  `write: allow` now refuses writes. A session an older build wrote with no rule names to send
+  Mars keeps its rules and gains the
   current project-wide denies. When the agent no longer resolves, a continue prints a warning
-  and applies the project-wide rules alone, and a fork fails.
+  and applies the project-wide rules alone, and a fork fails. A Mars before 0.30.0 does not
+  accept `--agent-tool-rules`, so a continue or fork stops and names the Mars it needs.
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
   without a word; only `mars validate` checks `min_mars_version`.
 
