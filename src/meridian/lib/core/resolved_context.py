@@ -240,7 +240,10 @@ class ResolvedContext:
             )
             resolved_builtins = tuple((name, path) for name, path in builtins if path is not None)
             context_dirs = resolved_builtins + tuple(
-                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
+                sorted(
+                    (name.strip().lower(), path)
+                    for name, (path, _) in resolved_context_paths.extra.items()
+                )
             )
 
         return cls(

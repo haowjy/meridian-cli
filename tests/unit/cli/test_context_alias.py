@@ -64,3 +64,17 @@ def test_context_ignores_stale_active_work_env(
     text = context_sync(ContextInput()).format_text()
     assert "oldwork" not in text
     assert "work: (no active work item" in text
+
+
+def test_extra_context_with_capitals_resolves_by_any_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from meridian.lib.ops.context import context_dir_sync
+
+    root = _docs_repo(tmp_path, monkeypatch)
+    (root / "notes").mkdir()
+    (root / "meridian.toml").write_text('[context.MyNotes]\npath = "notes"\n')
+    assert context_dir_sync("mynotes") == (root / "notes").as_posix()
+    assert context_dir_sync("MyNotes") == (root / "notes").as_posix()
+    with pytest.raises(Exception, match="mynotes"):
+        context_dir_sync("bogus")
