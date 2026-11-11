@@ -182,18 +182,40 @@ def _has_platform_agent_deny(policy: PermissionPolicy) -> bool:
     )
 
 
-def _projected_natives(policy: PermissionPolicy, rule: ToolRule) -> tuple[str, ...]:
-    """Keep Claude's one platform-rule quirk local to its native projection."""
+def _claude_policy(policy: PermissionPolicy) -> PermissionPolicy:
+    """Apply Claude's one platform-rule quirk to the policy every reader below sees.
 
-    if (
-        rule.origin == PLATFORM_ORIGIN
-        and rule.capability == "agent"
-        and _platform_rule(policy, "builtin-agents") is None
-    ):
-        # Claude's generic Agent permission covers its built-in agents too. Keep those usable
-        # when explicitly enabled while still denying Mars's separate messaging/listing tools.
-        return tuple(native for native in rule.native if split_native(native)[0] != "Agent")
-    return rule.native
+    Claude's generic ``Agent`` permission covers its built-in agents too. When they are
+    enabled, the platform ``agent`` deny drops ``Agent`` (names and tools) and keeps Mars's
+    separate messaging and listing tools, so the emitter, ``--tools`` and the report agree.
+    """
+
+    if _platform_rule(policy, "builtin-agents") is not None:
+        return policy
+
+    def adjusted(rule: ToolRule) -> ToolRule:
+        if (
+            rule.origin != PLATFORM_ORIGIN
+            or rule.capability != "agent"
+            or not any(
+                split_native(n)[0] == "Agent" for n in (*rule.native, *(rule.native_tools or ()))
+            )
+        ):
+            return rule
+        return rule.model_copy(
+            update={
+                "native": tuple(n for n in rule.native if split_native(n)[0] != "Agent"),
+                "native_tools": tuple(
+                    t for t in rule.native_tools or () if split_native(t)[0] != "Agent"
+                )
+                if rule.native_tools is not None
+                else None,
+                "note": "generic Agent omitted: it cannot be denied without also disabling "
+                "allowed built-in agents",
+            }
+        )
+
+    return policy.model_copy(update={"rules": tuple(adjusted(rule) for rule in policy.rules)})
 
 
 def _take_variadic_tool_values(args: tuple[str, ...], start: int) -> tuple[list[str], int]:
@@ -290,7 +312,7 @@ def _compile_channels(policy: PermissionPolicy, passthrough: _Passthrough) -> _C
     for rule in policy.rules:
         if rule.is_wildcard or rule.native_status != "known":
             continue
-        for native in _projected_natives(policy, rule):
+        for native in rule.native:
             if rule.action == "allow":
                 allow.append(native)
             elif split_native(native)[1] is not None:
@@ -311,8 +333,9 @@ def _compile_channels(policy: PermissionPolicy, passthrough: _Passthrough) -> _C
         if native in meridian_bases and completion_gates_free:
             key = (rule.capability, native)
             earlier = gates.get(key)
-            action = strictest((rule.action, earlier.action if earlier else rule.action))
-            gates[key] = _Gate(rule.capability, native, action or rule.action)
+            action = strictest(a for a in (rule.action, earlier and earlier.action) if a)
+            assert action is not None
+            gates[key] = _Gate(rule.capability, native, action)
         elif rule.action == "deny":
             disallowed.append(native)
         else:
@@ -528,16 +551,10 @@ def _tool_rule_line(
                 permissions, capability=rule.capability, bases=gated, interactive=interactive
             )
         )
-    projected = _projected_natives(policy, rule)
+    # ``_claude_policy`` noted the dropped Agent; ``complete_report`` renders the note.
+    partial = partial or (rule.origin == PLATFORM_ORIGIN and bool(rule.note))
     for native in rule.native:
         if native in gated:
-            continue
-        if native not in projected:
-            notes.append(
-                f"{native} omitted: generic Agent cannot be denied without also disabling "
-                "allowed built-in agents"
-            )
-            partial = True
             continue
         channel = _channel_of(native, permissions)
         blocker = _shadow(native, permissions) if rule.action == "allow" else None
@@ -796,7 +813,7 @@ def compile_claude_permissions(
 ) -> tuple[ClaudePermissions, EnforcementReport]:
     """Compile one spec without deriving a Claude name from a capability."""
 
-    policy = spec.permission_policy
+    policy = _claude_policy(spec.permission_policy)
     passthrough = _read_passthrough(spec.extra_args)
     channels = _compile_channels(policy, passthrough)
     network = project_claude_network(policy, native_config=spec.native_config)

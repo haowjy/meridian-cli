@@ -52,7 +52,8 @@ class ToolRule(BaseModel):
     ``native`` or ``note``.
 
     A reader that is not a rule (a mode gate, a switch, tool availability) asks the functions
-    below this class, which apply ``STRICTNESS``; none walks the list for a decision.
+    below this class, which apply ``STRICTNESS``; none walks the list for a decision (the
+    shell enforcer's ``ExtensionRule`` view is the exception).
 
     ``capability`` is ``None`` only for rules read from a launch snapshot an older build
     wrote: those carry native keys alone, so a harness can emit them but not interpret them.

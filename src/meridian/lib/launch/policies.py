@@ -621,11 +621,61 @@ def refresh_project_rules(
     snapshot_project = tuple(rule for rule in snapshot_rules if rule.origin == PROJECT_ORIGIN)
     current_project = tuple(rule for rule in bundle_rules if rule.origin == PROJECT_ORIGIN)
     shaped = current_project if _same_shape(kept, bundle_rules) else snapshot_project
-    return (
-        *kept,
+    project = (
         *(rule for rule in current_project if rule.action == "deny"),
         *(rule for rule in shaped if rule.action != "deny"),
     )
+    return (*_uncover_orphans(kept, project, bundle_rules), *project)
+
+
+def _rule_key(rule: ToolRule) -> str:
+    return (
+        rule.capability + (f"({rule.pattern})" if rule.pattern else "") if rule.capability else ""
+    )
+
+
+def _uncover_orphans(
+    kept: tuple[ToolRule, ...], project: tuple[ToolRule, ...], bundle_rules: tuple[ToolRule, ...]
+) -> tuple[ToolRule, ...]:
+    """The kept rules, with each one whose covering rule left the policy given its names back.
+
+    Mars sent a covered rule with no ``native`` names; the snapshot holds none to restore. The
+    current bundle's copy of the same rule (capability, pattern, action, origin) has them, so
+    the rule takes its names and coverage from there and keeps its own action. A rule the
+    bundle no longer has stays as the session started with it.
+    """
+
+    present = {(rule.action, _rule_key(rule)) for rule in (*kept, *project)}
+
+    def orphaned(rule: ToolRule) -> bool:
+        cover = rule.covered_by
+        return cover is not None and (cover.action, cover.key) not in present
+
+    def restored(rule: ToolRule) -> ToolRule:
+        if not orphaned(rule):
+            return rule
+        for current in bundle_rules:
+            if (current.capability, current.pattern, current.action, current.origin) == (
+                rule.capability,
+                rule.pattern,
+                rule.action,
+                rule.origin,
+            ) and not orphaned(current):
+                return rule.model_copy(
+                    update={
+                        field: getattr(current, field)
+                        for field in (
+                            "native",
+                            "native_tools",
+                            "native_status",
+                            "note",
+                            "covered_by",
+                        )
+                    }
+                )
+        return rule
+
+    return tuple(restored(rule) for rule in kept)
 
 
 def _same_shape(snapshot_rules: tuple[ToolRule, ...], bundle_rules: tuple[ToolRule, ...]) -> bool:

@@ -19,7 +19,9 @@ for `*` or a feature's spellings), `could_refuse(rules, capability)` (whether an
 keeps), and `strictest(actions)`. A place that reads rules for something other than emitting
 them (a permission-mode gate, a Codex switch or hook, tool availability, the platform `task`
 opt-out) calls these and never walks the list for a decision; add the question there if it
-is missing. A rule Mars covered keeps its place in the list, and a continued snapshot's rules
+is missing. The exception is the enforcer's own view: `needs_extension` and
+`bash_fails_closed` (`harness/projections/tool_extension_policy.py`) read `ExtensionRule`s,
+not `ToolRule`s, and apply `strictest` themselves. A rule Mars covered keeps its place in the list, and a continued snapshot's rules
 never pass through Mars again.
 
 Coverage is Mars's `covered_by` field (`{action, key}`) on the rule, carried on `ToolRule`

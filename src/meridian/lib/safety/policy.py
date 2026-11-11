@@ -271,7 +271,7 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
 
     element = rule_element(rule)
     satisfied_status: ReportStatus = "platform" if rule.origin == PLATFORM_ORIGIN else "native"
-    if rule.covered_by is not None:
+    if rule.covered_by is not None and rule.native_status == "known":
         covering = f"{rule.covered_by.action} {rule.covered_by.key} covers it"
         return ReportLine(element, satisfied_status, rule.note or covering)
     if rule.native_status == "unknown":
@@ -409,7 +409,7 @@ def complete_report(
     for default in defaults:
         line = by_element.get(default.element, default)
         rule = rules_by_element.get(default.element)
-        if rule is not None and rule.covered_by is not None:
+        if rule is not None and rule.covered_by is not None and rule.native_status == "known":
             line = default
         elif rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)
