@@ -1,14 +1,14 @@
 # Harness projection contracts
 
 A permission compile maps the transport-neutral policy to a native value and an
-enforcement report. Platform agent and task denies override profile rules; their native
-names come from Mars, not a second table. A project-wide deny (`[settings.tools]`) is a
-rule with `origin == "project"`: every compile spells it like any other deny, and a rule Mars
-attached a `note` to (an unsettled pair) is at best `partial`, the note appended to whatever
-the compile already said. Completion grants for `meridian spawn done`
-and `meridian spawn rearm` cannot be restricted by profile rules; read and launch
-grants allow an equally or more specific profile restriction. Harness limitations
-can make a grant partial or unsupported.
+enforcement report. Platform agent and task denies are ordinary deny rules whose native names
+come from Mars, not a second table. A project-wide rule (`[settings.tools]`) is a rule with
+`origin == "project"`: every compile spells it like any other rule, and a rule Mars attached a
+`note` to is at best `partial`, the note appended to whatever the compile already said.
+Every harness applies one precedence: of the rules that match a call, the strictest decides.
+Meridian's command grants (`meridian spawn done` and the rest) are decided before any rule on
+Pi, Codex and OpenCode; on Claude a deny or ask that matches one still wins, and the report
+says so. Harness limitations can make a grant partial or unsupported.
 
 | Report status | Meaning |
 |---|---|
@@ -24,16 +24,17 @@ are treated as unrestricted. Shell network policy is separate from built-in web 
 
 ## Claude
 
-Claude evaluates deny, then ask, then allow. A plain deny or ask shadows scoped allows
-for the same native tool or permission spelling, including `Write` or `Edit` beside a
-scoped write allow expressed as `Edit(path)`. The compile gates unmatched calls through
-permission mode instead, except for a project-wide deny (`origin == "project"`): Mars already
-set aside the allows it covers by key, and a scoped allow Mars could not see must not turn
-the deny into a mode. Headless spawns refuse calls requiring approval. `auto` cannot
-serve as that gate because its classifier approves unmatched calls; `acceptEdits` can
-also run file commands, so edit gates need `manual`. `dontAsk` is reserved for a whole
-policy allowlist because it refuses every other tool. Ask rules hold even in bypass mode;
-plain deny and ask also hold under `auto` on Claude Haiku 5.5.
+Claude evaluates deny, then ask, then allow, which is Meridian's precedence, so rules go
+out as written. The one exception: a plain `Bash` deny or ask would also block Meridian's
+completion grants, so under `approval: default` and `confirm` it becomes a gate: the compile
+drops the rule, sets a mode in which unmatched calls need approval, and emits no allow for
+the gated tool except the grants. Under `auto`, `never` and `yolo` the rule stays and
+blocks the grants (reported partial). Headless spawns refuse calls requiring approval.
+`auto` cannot serve as the gate because its classifier approves unmatched calls;
+`acceptEdits` can also run file commands, so the gate needs `manual`. `dontAsk` is
+reserved for a whole policy allowlist because it refuses every other tool. Ask rules hold
+even in bypass mode; plain deny and ask also hold under `auto` on Claude Haiku 5.5. An
+unscoped `'*': ask` under `approval: auto` runs as `acceptEdits`, so edits do not ask.
 
 Passthrough permission modes can override the profile and are reported. Claude merges
 user, project and local settings; their allows are reported when a gate or allowlist is
@@ -54,7 +55,8 @@ and remains visible in the report.
 
 ## Codex
 
-Unscoped web and image rules use process switches. Shell rules (every `bash` deny or ask,
+Unscoped web and image rules use process switches; the strictest unscoped rule that
+concerns a switch decides it (`web: deny` beside `web_search: allow` turns search off). Shell rules (every `bash` deny or ask,
 and scoped rules beside them) use a Meridian `PreToolUse` hook, not `shell_tool=false`, which
 would also disable Meridian's own commands; a `bash` allow needs nothing. Scoped ask and
 other scoped capabilities have no carrier.
@@ -63,7 +65,9 @@ and fails open on hook failures: the launcher verifies the enabled, trusted hook
 hash through `hooks/list` before starting the thread, and the hook converts execution
 failures to denial. No shared Codex config file is written for the hook.
 
-The hook matches command segments by wildcard, like Pi's permission extension. It is an
+The hook matches command segments by wildcard and decides like Pi's permission extension:
+both run `tests/fixtures/tool_policy_cases.json`, and Pi's policy `version` is bumped
+whenever the decision changes, so a stale bundle refuses to load. It is an
 accident guard, not a sandbox: wrappers, substitutions, scripts, interpreters and
 `apply_patch` or MCP calls can bypass it. `bash_fail_closed` adds a simple-command check;
 do not add a shell parser to close individual gaps. Hook enforcement is reported partial.
@@ -82,12 +86,12 @@ using that Codex home; a write failure is reported without blocking launch.
 
 ## OpenCode
 
-OpenCode applies the last matching rule. Order wildcard defaults, unscoped rules, then
-scoped rules by specificity, with stricter equal matches last. Platform denies follow
-profile rules; completion grants follow profile restrictions, and workspace grants come
-last. With headless `approval: default` and no wildcard rule, Meridian emits `*: allow`
-only when the profile names no OpenCode tool; otherwise native defaults and user config
-remain in charge.
+OpenCode applies the last matching rule. Meridian orders the list: the wildcard default,
+then every allow, ask and deny (platform denies included), then Meridian's command grants,
+so the strictest rule wins and a grant is final. A repeated key keeps its strictest effect,
+because V1 renders a map. With headless `approval: default` and no wildcard rule, Meridian
+emits `*: allow` only when the profile names no OpenCode tool; otherwise native defaults
+and user config remain in charge.
 
 ## Effort and cursor
 

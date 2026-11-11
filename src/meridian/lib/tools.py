@@ -78,42 +78,6 @@ class ToolRule(BaseModel):
         return tuple(dict.fromkeys(split_native(native)[0] for native in self.native))
 
 
-class RuleRef(BaseModel):
-    """A tool rule named by what the profile or config wrote, without its native spellings."""
-
-    model_config = ConfigDict(frozen=True)
-
-    capability: str
-    pattern: str | None = None
-    action: ToolAction
-    origin: str | None = None
-
-    @property
-    def label(self) -> str:
-        key = self.capability if self.pattern is None else f"{self.capability}({self.pattern})"
-        return f"{key} = {self.action}"
-
-
-class SetAsideRule(RuleRef):
-    """An agent allow or ask that Mars dropped because a project-wide deny covers it.
-
-    Dry-run display only: it is absent from ``tools.rules``, so no harness sees it, and it is
-    not persisted in a launch snapshot.
-    """
-
-    by: RuleRef
-
-
-def format_set_aside_lines(rules: Iterable[SetAsideRule]) -> list[str]:
-    """Render set-aside rules as indented text lines for dry-run output."""
-
-    return [
-        f"  {rule.origin or 'profile'}: {rule.label} -> covered by "
-        f"{rule.by.origin or 'project'}: {rule.by.label}"
-        for rule in rules
-    ]
-
-
 def split_native(name: str) -> tuple[str, str | None]:
     """Split a native ``tool(scope)`` name into the tool and its scope (``None`` if unscoped).
 

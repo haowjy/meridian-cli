@@ -28,8 +28,9 @@ non-expanding double quotes, and `&&`, `||`, `;`, `|`, or newline separators. Wh
 is an allowlist or its unmatched commands are denied or asked, expansion, substitution,
 redirection, backgrounding, grouping, and other shell syntax are refused before rule
 matching. When Bash allows unmatched commands, scoped denies are best effort: a command
-with that syntax runs unchecked. Completion grants cover only a whole
-`meridian spawn done` or `meridian spawn rearm` command with simple arguments.
+with that syntax runs unchecked. Of the rules that match a call the strictest decides, and
+`*` only when none matches. Meridian's command grants are allowed before any rule is read,
+and cover only a whole command with simple arguments.
 Scoped file paths and rule roots are resolved against the working directory and
 existing symlinks before matching.
 

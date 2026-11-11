@@ -25,7 +25,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     resolve_network_policy,
 )
-from meridian.lib.tools import PROJECT_ORIGIN, SetAsideRule, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule, unscoped_action
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -157,7 +157,6 @@ class ResolvedLaunchPolicy:
     execution_policy: ResolvedExecutionPolicy
     resolved_tool_rules: tuple[ToolRule, ...] = ()
     platform_tool_rules: tuple[ToolRule, ...] = ()
-    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     matched_policy_rule: str | None = None
@@ -613,6 +612,48 @@ def _first_line(exc: Exception) -> str:
     return lines[0] if lines else type(exc).__name__
 
 
+def refresh_project_rules(
+    snapshot_rules: tuple[ToolRule, ...], bundle_rules: tuple[ToolRule, ...]
+) -> tuple[ToolRule, ...]:
+    """The snapshot's rules with its project-origin ones brought up to date (see below)."""
+
+    kept = tuple(rule for rule in snapshot_rules if rule.origin != PROJECT_ORIGIN)
+    snapshot_project = tuple(rule for rule in snapshot_rules if rule.origin == PROJECT_ORIGIN)
+    current_project = tuple(rule for rule in bundle_rules if rule.origin == PROJECT_ORIGIN)
+    shaped = current_project if _same_shape(kept, bundle_rules) else snapshot_project
+    return (
+        *kept,
+        *(rule for rule in current_project if rule.action == "deny"),
+        *(rule for rule in shaped if rule.action != "deny"),
+    )
+
+
+def _same_shape(snapshot_rules: tuple[ToolRule, ...], bundle_rules: tuple[ToolRule, ...]) -> bool:
+    """Whether Mars shaped the bundle's project-wide allows and asks for the snapshot's agent.
+
+    Mars decides them by the agent's ``*`` rule and, under ``*: deny``, by which scoped rules
+    the agent allows. Rules are compared by what the author wrote: ``native`` and ``note`` change
+    across a Mars upgrade.
+    """
+
+    def agent_rules(rules: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
+        return tuple(rule for rule in rules if rule.origin not in (PROJECT_ORIGIN, PLATFORM_ORIGIN))
+
+    snapshot_agent, bundle_agent = agent_rules(snapshot_rules), agent_rules(bundle_rules)
+    wildcard = unscoped_action(snapshot_agent, "*")
+    if wildcard != unscoped_action(bundle_agent, "*"):
+        return False
+    if wildcard != "deny":
+        return True
+
+    def allows(rules: tuple[ToolRule, ...]) -> set[tuple[str | None, str | None, str | None]]:
+        return {
+            (rule.capability, rule.pattern, rule.origin) for rule in rules if rule.action == "allow"
+        }
+
+    return allows(snapshot_agent) == allows(bundle_agent)
+
+
 def _with_current_bundle_rules(
     policy: ResolvedLaunchPolicy,
     surface: SurfacePolicyInput,
@@ -621,16 +662,16 @@ def _with_current_bundle_rules(
 ) -> ResolvedLaunchPolicy:
     """Bring a replayed snapshot's rules up to date with what Mars says is in force now.
 
-    The snapshot keeps its profile rules. Its project-origin rules are replaced by the
-    current bundle's, so a project-wide deny added (or removed) after the session started
-    holds on the continue or fork; a project deny only restricts, so this cannot widen the
-    snapshot. The agent's bundle gives the rules, including any per-agent exemption, and
-    ``tools.set_aside``: the snapshot's rules on that list are dropped too, as on a fresh
-    launch, because a narrower allow would outrank the deny on some harnesses. Mars alone
-    decides what a deny covers. When the
-    agent no longer resolves, the project-wide rules alone apply. When Mars cannot be asked
-    at all, the error propagates. The bundle also names platform denies an older snapshot
-    did not persist.
+    The snapshot keeps its own rules. A project-wide deny only restricts, so every
+    project-origin deny of the current bundle replaces the snapshot's: one added after the
+    session started holds on the continue or fork, and one removed is gone. A project-wide
+    allow or ask is shaped by the agent's ``*`` rule, and the bundle shaped it for the agent as
+    it is now. They are refreshed only when that shape is the snapshot's (``_same_shape``);
+    otherwise the snapshot keeps the ones it was launched with, so a refresh never opens a tool
+    the snapshot closed. The agent's bundle gives the rules, including any per-agent
+    exemption; when the agent no longer resolves, the agent-less bundle's project-wide rules
+    fit a snapshot with no ``*`` rule. When Mars cannot be asked at all, the error propagates.
+    The bundle also names platform denies an older snapshot did not persist.
     """
 
     harness = str(policy.harness)
@@ -667,22 +708,13 @@ def _with_current_bundle_rules(
             ),
             harness_registry=surface.harness_registry,
         )
-    set_aside = {(r.capability, r.pattern, r.action) for r in bundle.tool_rules_set_aside}
-    kept = tuple(
-        rule
-        for rule in policy.resolved_tool_rules
-        if rule.origin != PROJECT_ORIGIN
-        and (rule.capability, rule.pattern, rule.action) not in set_aside
-    )
-    current = tuple(rule for rule in bundle.tool_rules if rule.origin == PROJECT_ORIGIN)
     warnings = policy.warnings
     if warning is not None:
         warnings = (*warnings, CompositionWarning(code="project_tool_rules_agent", message=warning))
     return replace(
         policy,
-        resolved_tool_rules=(*kept, *current),
+        resolved_tool_rules=refresh_project_rules(policy.resolved_tool_rules, bundle.tool_rules),
         platform_tool_rules=policy.platform_tool_rules or bundle.platform_tool_rules,
-        tool_rules_set_aside=bundle.tool_rules_set_aside,
         warnings=warnings,
     )
 

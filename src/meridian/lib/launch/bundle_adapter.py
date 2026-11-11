@@ -51,7 +51,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     canonical_host,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, SetAsideRule, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
@@ -114,7 +114,6 @@ class BundleResult:
     warnings: tuple[str, ...]
     tool_rules: tuple[ToolRule, ...]
     platform_tool_rules: tuple[ToolRule, ...]
-    tool_rules_set_aside: tuple[SetAsideRule, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
@@ -297,22 +296,6 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
             raise _bundle_schema_error(f"invalid 'tools.rules' entry: {exc}") from exc
         rules.append(rule)
     return tuple(rules)
-
-
-def _parse_set_aside(tools: dict[str, object]) -> tuple[SetAsideRule, ...]:
-    """Read ``tools.set_aside``, which Mars sends only when a project-wide deny set a rule aside."""
-
-    raw_set_aside = tools.get("set_aside")
-    if raw_set_aside is None:
-        return ()
-    if not isinstance(raw_set_aside, list):
-        raise _bundle_schema_error("'tools.set_aside' must be a list")
-    try:
-        return tuple(
-            SetAsideRule.model_validate(entry) for entry in cast("list[object]", raw_set_aside)
-        )
-    except ValidationError as exc:
-        raise _bundle_schema_error(f"invalid 'tools.set_aside' entry: {exc}") from exc
 
 
 def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
@@ -662,7 +645,6 @@ def _parse_bundle_payload(
         warnings=_as_str_tuple(payload.get("warnings")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),
-        tool_rules_set_aside=_parse_set_aside(tools),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
         skills_missing=_as_str_tuple(skills_obj.get("missing")),
@@ -814,7 +796,6 @@ def bundle_to_resolved_policy(
         execution_policy=execution_policy,
         resolved_tool_rules=bundle.tool_rules,
         platform_tool_rules=bundle.platform_tool_rules,
-        tool_rules_set_aside=bundle.tool_rules_set_aside,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),
