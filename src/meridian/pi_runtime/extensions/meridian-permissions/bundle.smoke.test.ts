@@ -16,7 +16,7 @@ afterEach(() => {
 describe.skipIf(!existsSync(bundlePath))("meridian-permissions bundle smoke", () => {
   it("registers only the policy hooks", async () => {
     process.env._MERIDIAN_TOOL_POLICY = JSON.stringify({
-      version: 1,
+      version: 2,
       rules: [],
       meridian_commands: [],
       headless_reject_reason: "headless",
