@@ -370,12 +370,13 @@ test('ping 1 follows the warning; its turn is found by nonce, its tools are limi
   expect(h.submitted).toHaveLength(1)
   expect(h.submitted[0]).toMatch(/^\[meridian-idle keepwarm [a-z0-9]+\]\n\nWaiting for the user, keeping warm\./)
 
-  const deny = (input: object) => $.tool.check({ tool: 'Edit', input: {}, ...input } as never)
+  const deny = (input: object) => $.tool.check({ tool: 'Edit', input: {}, tool_use_id: 'tu-1', ...input } as never)
   expect((await deny({})).decision).toBe('allow') // before the ping turn starts
   await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
   expect((await deny({})).decision).toBe('deny')
   expect((await deny({ isReadOnly: true })).decision).toBe('allow')
   expect((await deny({ agentId: 'sub-1' })).decision).toBe('allow')
+  expect((await deny({ tool_use_id: undefined })).decision).toBe('allow') // another plugin's permission query
   await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: '`stop-waiting`' })
   await clock.advance(0)
   expect((await deny({})).decision).toBe('allow') // after it
@@ -460,7 +461,7 @@ test('a turn already running when the warning fires is not mistaken for the ping
   await $.turn.complete({ ...MAIN_TURN, turnId: 't2', answer: 'built it' })
   await clock.advance(0)
   expect(pingRecords(h)).toEqual([])
-  expect((await $.tool.check({ tool: 'Edit', input: {} } as never)).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'Edit', input: {}, tool_use_id: 'tu-1' } as never)).decision).toBe('allow')
   expect(calls(h, 'arm')[1]).toContain('--assistant-text=built it')
 
   await pingTurn($, h, 'p1', 'ok')

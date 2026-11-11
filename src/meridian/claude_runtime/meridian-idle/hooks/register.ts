@@ -684,7 +684,8 @@ export const register: Register = on => {
   // While the ping's turn runs the user is away and only asked to keep the cache warm, not to resume work.
   on('tool.check', async ($, e, next) => {
     const ping = s.ping
-    if (e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
+    // Other plugins' permission queries carry no tool_use_id and are not calls to deny.
+    if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
     if (!ping.denied.includes(e.tool)) ping.denied.push(e.tool)
     return {
       decision: 'deny',
