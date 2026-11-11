@@ -36,6 +36,7 @@ from meridian.lib.launch.continue_replay import (
     continue_replay_source_from_reference,
     reject_continue_policy_overrides,
 )
+from meridian.lib.launch.fork import require_replayed_agent
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -56,7 +57,6 @@ from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.tools import SetAsideRule, format_set_aside_lines
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -67,7 +67,8 @@ class PrimaryLaunchOutput(BaseModel):
     exit_code: int
     command: tuple[str, ...] = ()
     permission_report: EnforcementReport = ()
-    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
+    # Always empty: kept for scripts that read it, removed after 0.22.
+    tool_rules_set_aside: tuple[str, ...] = ()
     launch_plan: ManagedPrimaryPreview | None = None
     continue_ref: str | None = None
     continue_chat_id: str | None = None
@@ -127,9 +128,6 @@ class PrimaryLaunchOutput(BaseModel):
         if self.permission_report:
             lines.append("Permissions:")
             lines.extend(format_report_lines(self.permission_report))
-        if self.tool_rules_set_aside:
-            lines.append("Set aside:")
-            lines.extend(format_set_aside_lines(self.tool_rules_set_aside))
         if self.launcher_diagnostics_path is not None:
             lines.append(format_launcher_diagnostics_pointer(self.launcher_diagnostics_path))
         return "\n".join(lines)
@@ -474,6 +472,12 @@ def run_primary_launch(
         if not model.strip() and resolved_fork.source_model is not None:
             requested_model = resolved_fork.source_model
         if agent is None and not agent_opt_out and resolved_fork.source_agent is not None:
+            require_replayed_agent(
+                project_root=project_root,
+                agent=resolved_fork.source_agent,
+                source_ref=selected_fork_target,
+                command="meridian",
+            )
             requested_agent = resolved_fork.source_agent
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
@@ -596,7 +600,6 @@ def run_primary_launch(
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
         permission_report=launch_result.permission_report if dry_run else (),
-        tool_rules_set_aside=launch_result.tool_rules_set_aside if dry_run else (),
         launch_plan=launch_result.launch_plan if dry_run else None,
         continue_ref=launch_result.continue_ref,
         continue_chat_id=continue_chat_id,

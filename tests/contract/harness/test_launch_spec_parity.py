@@ -52,11 +52,7 @@ def test_codex_unscoped_shell_deny_keeps_completion_grants_runnable() -> None:
         platform_rules=(
             PlatformRule(
                 kind="meridian-commands",
-                commands=(
-                    PlatformCommand(
-                        command="meridian spawn done", match="prefix", role="completion"
-                    ),
-                ),
+                commands=(PlatformCommand(command="meridian spawn done", match="prefix"),),
             ),
         ),
         sandbox=None,

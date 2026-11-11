@@ -12,23 +12,14 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
 
-The permissions extension never tries to understand arbitrary shell. It splits a command
-into simple words, single quotes, double quotes without expansion/escaping, and the
-separators `&&`, `||`, `;`, `|`, and newline, and matches each simple command. What it does
-with other syntax is the policy's `bash_fail_closed`, which the Python compile sets: it
-refuses that syntax before rule matching when the rule deciding unmatched commands (bash's
-unscoped rule, else `*`'s) is `deny` or `ask` — every allowlist, including an explicit
-`bash: deny` beside scoped allows — or when a scoped `ask` exists. Under an
-unscoped `allow` (or no rule) only scoped denies can refuse, so they are best effort: an
-unsplittable command runs, and the report marks those denies `partial`. Refusing there
-would break ordinary shell use (`2>&1 | tail`, `$VAR`, redirects) for every profile with
-`bash: allow` and a few scoped denies. A completion
-backstop applies only when the entire input is one `meridian spawn done` or `meridian
-spawn rearm` command whose optional arguments contain only letters, digits, `_`, `.`,
-or `-`. File-tool scopes canonicalize the requested path and the rule's non-wildcard
-root against the process cwd, resolving existing symlinks. Pi follows OpenCode's
-wildcard meaning — `*` can cross `/` — but canonical absolute roots prevent it from
-matching a traversal or symlink escape outside the scoped root.
+The permissions extension holds no rules. For each `tool_call` it runs the tool-policy
+evaluator (`tool_policy_runtime/evaluate.py`, see the [evaluator contract](../../tool_policy_runtime/.context/CONTEXT.md))
+as a child process, with the argv Meridian put in `_MERIDIAN_TOOL_EVALUATOR` (the interpreter
+Meridian ran on, not `python3` from PATH) and the policy in the environment, and acts on its
+answer: allow, ask through Pi's TUI confirm (a headless or spawned session gets the policy's
+reject reason), or block with the reason. A crash, timeout, bad output or unknown action blocks.
+Loading without the policy or the evaluator variable throws. Rule semantics, shell splitting and
+path scopes live in the evaluator only; do not rebuild any of it here.
 
 The managed Bash owner is launch-scoped in `globalThis`, keyed by its record
 path, so extension reload preserves live process handles and rebinds current

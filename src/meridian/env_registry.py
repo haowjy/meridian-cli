@@ -342,7 +342,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."),
     _internal_handle(
         "_MERIDIAN_TOOL_POLICY",
-        "Launch-local scoped-tool policy for the harness-side enforcer (Pi extension, Codex hook).",
+        "Launch-local scoped-tool policy read by the tool-policy evaluator.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_TOOL_EVALUATOR",
+        "JSON argv of the tool-policy evaluator, run by the Pi permissions extension per call.",
         child=False,
     ),
     _internal_handle(

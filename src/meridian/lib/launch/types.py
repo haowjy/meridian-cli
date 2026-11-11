@@ -11,7 +11,6 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.safety.policy import EnforcementReport
-from meridian.lib.tools import SetAsideRule
 
 _CONTINUATION_GUIDANCE = (
     "You are resuming an existing Meridian session. Continue from the current state, "
@@ -82,7 +81,6 @@ class LaunchResult(BaseModel):
     launch_plan: ManagedPrimaryPreview | None = None
     command: tuple[str, ...]
     permission_report: EnforcementReport = ()
-    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     exit_code: int
     continue_ref: str | None = None
     continue_chat_id: str | None = None
