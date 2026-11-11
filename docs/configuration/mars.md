@@ -208,8 +208,10 @@ Duplicate matches are valid; the earlier rule in the combined list wins.
 `approval`, `sandbox`, and `network` overlays take effect, with the per-harness limits in
 [Permissions by harness](../agent-profiles.md#permissions-by-harness). A
 `[agents.<name>.tools]` table merges into the profile's tool policy. The rule form is a map
-of tool key to `allow`, `deny` or `ask`; an entry replaces the same key in the profile and in
-the project-wide `[settings.tools]` rules, for that agent only:
+of tool key to `allow`, `deny` or `ask`; an entry replaces the same key in the profile, in the
+project-wide `[settings.tools]` rules and in the package's `[package.tools]`, for that agent
+only. Rules with different keys follow the strictest-wins precedence
+([details](../agent-profiles.md#allowlists-and-scoped-rules)):
 
 ```toml
 [agents.coder.tools]
@@ -225,7 +227,8 @@ string-valued key that is not a tool name.
 The merged rules reach both native agent files and the launch bundle, so Meridian launches
 with them. A list-valued `tools` key under `[agents.<name>]` is a parse error.
 
-Project-wide denies live in `[settings.tools]`; see
+Project-wide `deny`, `ask` and `allow` rules live in `[settings.tools]`, and a package's own in
+`[package.tools]`; see
 [Project-wide tool rules](../agent-profiles.md#project-wide-tool-rules).
 
 ### Three-state model-policy semantics

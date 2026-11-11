@@ -92,9 +92,12 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
     assert _settings_permission_entries(spec, "allow") == ("Bash(meridian spawn *)",)
 
 
-def _read_deny_beside_scoped_grep(origin: str | None) -> ResolvedLaunchSpec:
-    # Claude spells a scoped grep allow as Read(path), which shadows a plain Read deny.
-    return _spec(
+@pytest.mark.parametrize("origin", [None, PROJECT_ORIGIN])
+def test_claude_projection_emits_a_plain_deny_beside_a_scoped_allow_as_written(
+    origin: str | None,
+) -> None:
+    # Claude spells a scoped grep allow as Read(path); its plain Read deny covers it.
+    spec = _spec(
         harness=HarnessId.CLAUDE,
         prompt="test",
         permission_policy=PermissionPolicy(
@@ -105,22 +108,43 @@ def _read_deny_beside_scoped_grep(origin: str | None) -> ResolvedLaunchSpec:
         ),
     )
 
-
-def test_claude_projection_never_gates_a_project_deny_for_a_scoped_allow() -> None:
-    spec = _read_deny_beside_scoped_grep(PROJECT_ORIGIN)
-
     argv = project_claude_spec_to_cli_args(spec, base_command=("claude",))
     assert "Read" in _tool_flag_entries(argv, "--disallowedTools")
     assert "Read(src/**)" not in _settings_permission_entries(spec, "allow")
     assert "--permission-mode" not in argv
 
 
-def test_claude_projection_still_gates_a_profile_deny_for_a_scoped_allow() -> None:
-    spec = _read_deny_beside_scoped_grep(None)
+@pytest.mark.parametrize("approval", ["default", "confirm", "auto", "never", "yolo"])
+def test_claude_bash_deny_beside_a_scoped_allow_never_lets_the_allow_through(
+    approval: str,
+) -> None:
+    spec = _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=build_permission_policy(
+            rules=(
+                tool_rule("bash", "deny", "Bash"),
+                tool_rule("bash", "allow", "Bash(rg *)", pattern="rg *", tools=("Bash",)),
+            ),
+            sandbox=None,
+            network=Allow(),
+            approval=approval,
+            platform_rules=(
+                PlatformRule(
+                    kind="meridian-commands",
+                    commands=(PlatformCommand(command="meridian spawn done", match="prefix"),),
+                ),
+            ),
+        ),
+    )
 
     argv = project_claude_spec_to_cli_args(spec, base_command=("claude",))
-    assert "Read" not in _tool_flag_entries(argv, "--disallowedTools")
-    assert "--permission-mode" in argv
+    assert "Bash(rg *)" not in _settings_permission_entries(spec, "allow")
+    if approval in ("never", "yolo"):
+        assert "--permission-mode" not in argv
+        assert "Bash" in _tool_flag_entries(argv, "--disallowedTools")
+    elif approval in ("default", "confirm"):
+        assert "Bash(meridian spawn done *)" in _settings_permission_entries(spec, "allow")
 
 
 def test_project_rule_is_named_by_origin() -> None:
@@ -198,12 +222,8 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     platform = PlatformRule(
         kind="meridian-commands",
         commands=(
-            PlatformCommand(command="meridian spawn", match="prefix", role="launch"),
-            PlatformCommand(
-                command="meridian spawn done",
-                match="prefix",
-                role="completion",
-            ),
+            PlatformCommand(command="meridian spawn", match="prefix"),
+            PlatformCommand(command="meridian spawn done", match="prefix"),
         ),
     )
     spec = _spec(
@@ -234,7 +254,7 @@ def test_claude_meridian_report_distinguishes_command_precedence() -> None:
     line = next(item for item in report if item.element.startswith("platform: allow Meridian"))
     assert line.status == "partial"
     assert "Bash(meridian spawn cancel-all *)" in line.note
-    assert "cannot keep the completion grant final" in line.note
+    assert "the grant does not hold" in line.note
 
 
 def test_claude_projection_defaults_sandboxed_network_to_deny() -> None:

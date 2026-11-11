@@ -51,7 +51,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     canonical_host,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, SetAsideRule, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
@@ -62,9 +62,9 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release whose launch bundle carries ``execution_policy.network`` and
-# ``provenance.network_source``.
-_MARS_BUNDLE_MIN_VERSION = "0.18.0"
+# First Mars release with project-wide tool denies, the map form of agent tool
+# overlays and ``launch-bundle --agent-tool-rules`` (a continued session needs it).
+_MARS_BUNDLE_MIN_VERSION = "0.30.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -87,6 +87,8 @@ class BundleRequest:
     network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     extra_skills: tuple[str, ...] = ()
     no_refresh_models: bool = False
+    # A continued session's own agent rules, in place of the agent's current ones; sent on stdin.
+    agent_tool_rules: tuple[ToolRule, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -114,7 +116,6 @@ class BundleResult:
     warnings: tuple[str, ...]
     tool_rules: tuple[ToolRule, ...]
     platform_tool_rules: tuple[ToolRule, ...]
-    tool_rules_set_aside: tuple[SetAsideRule, ...]
     skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
@@ -299,22 +300,6 @@ def _parse_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
     return tuple(rules)
 
 
-def _parse_set_aside(tools: dict[str, object]) -> tuple[SetAsideRule, ...]:
-    """Read ``tools.set_aside``, which Mars sends only when a project-wide deny set a rule aside."""
-
-    raw_set_aside = tools.get("set_aside")
-    if raw_set_aside is None:
-        return ()
-    if not isinstance(raw_set_aside, list):
-        raise _bundle_schema_error("'tools.set_aside' must be a list")
-    try:
-        return tuple(
-            SetAsideRule.model_validate(entry) for entry in cast("list[object]", raw_set_aside)
-        )
-    except ValidationError as exc:
-        raise _bundle_schema_error(f"invalid 'tools.set_aside' entry: {exc}") from exc
-
-
 def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]:
 
     raw_capabilities = tools.get("capability_natives")
@@ -431,7 +416,24 @@ def _build_bundle_command(
         command.extend(["--network-deny", host])
     for skill in request.extra_skills:
         command.extend(["--skill", skill])
+    if request.agent_tool_rules is not None:
+        command.extend(["--agent-tool-rules", "-"])
     return command
+
+
+def _agent_tool_rules_json(rules: tuple[ToolRule, ...] | None) -> str | None:
+    if rules is None:
+        return None
+    entries = [
+        {
+            "capability": rule.capability,
+            "pattern": rule.pattern,
+            "action": rule.action,
+            "origin": rule.origin,
+        }
+        for rule in rules
+    ]
+    return json.dumps(entries)
 
 
 def _extract_error_message(*, stdout: str, stderr: str) -> str:
@@ -468,6 +470,10 @@ def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
         "--no-refresh-models was passed",
         "Model resolution is read-only",
     )
+
+
+class MarsAgentToolRulesUnsupportedError(RuntimeError):
+    """The installed Mars does not know ``--agent-tool-rules``."""
 
 
 class MarsSelectionError(RuntimeError):
@@ -556,6 +562,14 @@ def _raise_bundle_error(
                 f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
                 note,
             )
+        )
+    if "--agent-tool-rules" in normalized and (
+        "unexpected argument" in normalized or "unrecognized" in normalized
+    ):
+        raise MarsAgentToolRulesUnsupportedError(
+            "The installed Mars does not accept --agent-tool-rules, which continuing or forking "
+            f"a session needs. Install mars >= {_MARS_BUNDLE_MIN_VERSION}. "
+            f"Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
@@ -662,7 +676,6 @@ def _parse_bundle_payload(
         warnings=_as_str_tuple(payload.get("warnings")),
         tool_rules=_parse_tool_rules(tools),
         platform_tool_rules=_parse_platform_tool_rules(tools),
-        tool_rules_set_aside=_parse_set_aside(tools),
         skills_loaded=skills_loaded,
         skills_available=skills_available,
         skills_missing=_as_str_tuple(skills_obj.get("missing")),
@@ -684,6 +697,7 @@ def request_and_resolve(
     try:
         result = subprocess.run(
             command,
+            input=_agent_tool_rules_json(request.agent_tool_rules),
             capture_output=True,
             text=True,
             timeout=60,
@@ -814,7 +828,6 @@ def bundle_to_resolved_policy(
         execution_policy=execution_policy,
         resolved_tool_rules=bundle.tool_rules,
         platform_tool_rules=bundle.platform_tool_rules,
-        tool_rules_set_aside=bundle.tool_rules_set_aside,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),

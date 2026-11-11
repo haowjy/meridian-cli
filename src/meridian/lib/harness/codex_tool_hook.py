@@ -17,15 +17,13 @@ from __future__ import annotations
 import hashlib
 import json
 import shlex
-import sys
 from collections.abc import Mapping
 from functools import cache
-from pathlib import Path
 from typing import cast
 
 from meridian.lib.harness.projections.native_config import codex_toml_literal
+from meridian.lib.harness.projections.tool_extension_policy import evaluator_argv
 
-_ENFORCER = Path(__file__).resolve().parents[2] / "codex_runtime" / "tool_hook.py"
 # Where Codex files a hook that arrived as a `-c` flag.
 _HOOK_KEY = "/<session-flags>/config.toml:pre_tool_use:0:0"
 _MATCHER = "Bash"
@@ -43,7 +41,7 @@ def hook_command() -> str:
     gets a message here, because Codex otherwise lets the call run.
     """
 
-    run = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(_ENFORCER))}"
+    run = shlex.join(evaluator_argv())
     message = "Blocked by Meridian policy: the shell policy hook failed to run; restart the launch."
     return f"{run} || {{ [ $? -eq 2 ] || echo {shlex.quote(message)} >&2; exit 2; }}"
 

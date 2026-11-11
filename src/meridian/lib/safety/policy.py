@@ -8,6 +8,7 @@ platform rules natively; nothing here knows a harness.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Generic, Literal, NewType, TypeVar, cast
@@ -116,7 +117,6 @@ _LOCAL_SERVICE_HOSTS = frozenset((Host("localhost"), Host("127.0.0.1")))
 
 type PlatformRuleKind = Literal["builtin-agents", "meridian-commands"]
 type CommandMatch = Literal["exact", "prefix"]
-type PlatformCommandRole = Literal["completion", "read", "launch"]
 
 
 class PlatformCommand(BaseModel):
@@ -126,14 +126,7 @@ class PlatformCommand(BaseModel):
 
     command: str
     match: CommandMatch
-    role: PlatformCommandRole = "read"
     runs_outside_sandbox: bool = False
-
-    @property
-    def profile_restrictable(self) -> bool:
-        """Whether a narrower profile rule may keep this command restricted."""
-
-        return self.role != "completion"
 
 
 class PlatformRule(BaseModel):
@@ -142,8 +135,10 @@ class PlatformRule(BaseModel):
     Ordinary agent/task denies are ``ToolRule`` values named by Mars. ``builtin-agents``
     controls harness mechanisms that cannot be expressed as such a rule. The
     ``meridian-commands`` carries the shell commands Meridian itself makes available under
-    any profile allowlist: completion signals, read operations, and child launch commands
-    when the profile can spawn. A harness spells exact and prefix matches in its own syntax.
+    any profile rule: completion signals, read operations, and child launch commands when
+    the profile can spawn. A harness that decides them itself (Pi, Codex, OpenCode) allows
+    them before it reads a rule; Claude checks its denies and asks first. A harness spells exact and
+    prefix matches in its own syntax.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -210,8 +205,7 @@ class PermissionPolicy(BaseModel):
         """Whether this policy carries the canonical child-launch command grant."""
 
         return any(
-            command.role == "launch"
-            and command.command == "meridian spawn"
+            command.command == "meridian spawn"
             and command.match == "prefix"
             and command.runs_outside_sandbox
             for rule in self.platform_rules
@@ -224,21 +218,6 @@ class PermissionPolicy(BaseModel):
         """Whether a ``*: deny`` rule makes every tool the rules do not allow unavailable."""
 
         return unscoped_action(self.rules, "*") == "deny"
-
-    @property
-    def allowed_tools(self) -> tuple[str, ...]:
-        """The harness tools some rule leaves callable (``allow``, ``ask``), unscoped.
-
-        Policy order, deduplicated, from each rule's ``tools``. Under ``is_allowlist`` these
-        are the tools that remain; ``ask`` stays on the list because the harness, not the
-        rule, decides that call.
-        """
-
-        return tuple(
-            dict.fromkeys(
-                tool for rule in self.rules if rule.action != "deny" for tool in rule.tools
-            )
-        )
 
 
 type ReportStatus = Literal["native", "partial", "unsupported", "platform"]
@@ -287,19 +266,14 @@ def platform_element(rule: PlatformRule) -> str:
     return "platform: deny built-in agents"
 
 
-def command_grant_covers_pattern(command: PlatformCommand, pattern: str) -> bool:
-    """Whether a scoped shell pattern is wholly inside a platform command grant."""
-
-    if command.match == "exact":
-        return pattern == command.command
-    return pattern == command.command or pattern.startswith(f"{command.command} ")
-
-
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 
     element = rule_element(rule)
     satisfied_status: ReportStatus = "platform" if rule.origin == PLATFORM_ORIGIN else "native"
+    if rule.covered_by is not None and rule.native_status == "known":
+        covering = f"{rule.covered_by.action} {rule.covered_by.key} covers it"
+        return ReportLine(element, satisfied_status, rule.note or covering)
     if rule.native_status == "unknown":
         return ReportLine(
             element,
@@ -317,6 +291,41 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
             )
         return ReportLine(element, "unsupported", f"{harness} lacks this tool")
     return ReportLine(element, "unsupported", f"not projected for {harness}")
+
+
+def command_in_scope(command: PlatformCommand, pattern: str | None) -> bool:
+    """Whether a shell rule's ``pattern`` (``None``: every command) reaches a command grant.
+
+    Reaches means the rule matches the grant's command, or lies wholly inside it.
+    """
+
+    if pattern is None or pattern == command.command:
+        return True
+    if command.match == "prefix" and pattern.startswith(f"{command.command} "):
+        return True
+    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command.command) is not None
+
+
+def _overridden_grants(rule: ToolRule, platforms: Iterable[PlatformRule]) -> list[str]:
+    """The Meridian command grants a deny or ask of ``rule`` does not stop."""
+
+    if (
+        rule.origin == PLATFORM_ORIGIN
+        or rule.action == "allow"
+        or rule.capability
+        not in {
+            "bash",
+            "*",
+        }
+    ):
+        return []
+    return [
+        command.command
+        for platform in platforms
+        if platform.kind == "meridian-commands"
+        for command in platform.commands
+        if command_in_scope(command, rule.pattern)
+    ]
 
 
 def _spilled_permissions(rules: Iterable[ToolRule]) -> dict[str, str]:
@@ -351,6 +360,7 @@ def complete_report(
     reported: Iterable[ReportLine],
     *,
     harness: str,
+    grants_first: bool = True,
 ) -> EnforcementReport:
     """Give every policy element exactly one line, in policy order.
 
@@ -360,7 +370,11 @@ def complete_report(
     A compile reports only what it enforces or has something specific to say about; any
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
     a gap, a deny of a tool ``harness`` lacks is satisfied, and anything else is
-    ``unsupported``. A rule Mars attached a note to is at best ``partial``, with the note. Lines
+    ``unsupported``. A rule Mars attached a note to is at best ``partial``, with the note. A rule
+    Mars covered (its ``covered_by`` names the stricter rule that decides every call it names) is
+    reported as Mars noted it, whatever the compile said. A deny or ask of shell commands is
+    ``partial`` when ``grants_first`` (the harness allows Meridian's command grants before it reads
+    a rule) and a grant lies in its scope. Lines
     for things that are not policy elements (a deny the harness
     applies on its own) follow the elements.
     """
@@ -395,7 +409,9 @@ def complete_report(
     for default in defaults:
         line = by_element.get(default.element, default)
         rule = rules_by_element.get(default.element)
-        if rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
+        if rule is not None and rule.covered_by is not None and rule.native_status == "known":
+            line = default
+        elif rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)
         elif rule is not None and rule.note and line.status in ("native", "partial"):
             # Mars notes a rule only when its native spelling does not carry the rule exactly
@@ -403,6 +419,17 @@ def complete_report(
             # A compile's own partial note says how it falls short, not what Mars saw.
             note = rule.note if not line.note else f"{line.note}; {rule.note}"
             line = ReportLine(line.element, "partial", note)
+        if rule is not None and grants_first and line.status in ("native", "platform", "partial"):
+            grants = _overridden_grants(rule, policy.platform_rules)
+            if grants:
+                shown = ", ".join(f"`{grant}`" for grant in grants[:3])
+                more = f" and {len(grants) - 3} more" if len(grants) > 3 else ""
+                line = ReportLine(
+                    line.element,
+                    "partial",
+                    f"{line.note}; {harness} allows Meridian's own commands first, so {shown}"
+                    f"{more} still run",
+                )
         if line.element in spilled and line.status == "native":
             line = ReportLine(line.element, "partial", f"{line.note}; {spilled[line.element]}")
         lines.append(line)
@@ -607,7 +634,6 @@ __all__ = [
     "NetworkProjection",
     "PermissionPolicy",
     "PlatformCommand",
-    "PlatformCommandRole",
     "PlatformRule",
     "ReportLine",
     "ReportStatus",

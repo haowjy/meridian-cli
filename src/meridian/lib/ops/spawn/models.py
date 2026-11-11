@@ -11,7 +11,6 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
-from meridian.lib.tools import SetAsideRule, format_set_aside_lines
 
 
 def task_dir_line(task_cwd: str | None, work_id: str | None) -> str:
@@ -294,7 +293,8 @@ class SpawnActionOutput(BaseModel):
     task_cwd_work_item: str | None = None
     cli_command: tuple[str, ...] = ()
     permission_report: EnforcementReport = ()
-    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
+    # Always empty: kept for scripts that read it, removed after 0.22.
+    tool_rules_set_aside: tuple[str, ...] = ()
     exit_code: int | None = None
     duration_secs: float | None = None
     background: bool = False
@@ -422,10 +422,7 @@ class SpawnActionOutput(BaseModel):
                 wire["cli_command"] = list(self.cli_command)
             if self.permission_report:
                 wire["permission_report"] = [line.to_wire() for line in self.permission_report]
-            if self.tool_rules_set_aside:
-                wire["tool_rules_set_aside"] = [
-                    rule.model_dump(mode="json") for rule in self.tool_rules_set_aside
-                ]
+            wire["tool_rules_set_aside"] = list(self.tool_rules_set_aside)
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:
@@ -571,9 +568,6 @@ class SpawnActionOutput(BaseModel):
         if self.permission_report:
             lines.append("Permissions:")
             lines.extend(format_report_lines(self.permission_report))
-        if self.tool_rules_set_aside:
-            lines.append("Set aside:")
-            lines.extend(format_set_aside_lines(self.tool_rules_set_aside))
         if self.exit_code is not None:
             lines.append(f"Exit code: {self.exit_code}")
         transcript_command = self._transcript_command()

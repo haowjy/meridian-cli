@@ -1,38 +1,86 @@
 # Upgrade notes
 
+## The strictest tool rule wins on every harness
+
+Needs Mars 0.30.0 or newer; this release pins 0.30.1, the first published 0.30 build. Of the rules that match a tool call, the
+strictest wins (`deny`, then `ask`, then `allow`), however narrow a key is. A deny is never
+overridden by an allow beside it. Before, Claude worked this way and OpenCode, Pi and Codex
+let a narrower allow win, so one profile gave different answers. If a profile or overlay of
+yours has one of these forms, the result changes:
+
+| You wrote | Before | Now | Write instead |
+|---|---|---|---|
+| `bash: deny` beside `'bash(rg *)': allow` | Bash ran only `rg` | Bash is off | `'*': deny` beside the allows (on Claude also `skill: allow`), or scoped denies |
+| `bash: ask` beside scoped allows | only unmatched calls asked | every Bash call asks | `'*': ask` beside the allows |
+| `edit: deny` beside `write: allow` | writes allowed on Claude and Pi | writes denied | drop `edit: deny` and deny what you mean |
+| `web: deny` beside `web_fetch: allow` | fetch allowed; on Codex search stayed on | both denied | `web: deny` alone, or `web_search: deny` to leave fetch |
+| a longer scoped allow inside a shorter scoped deny or ask | the allow won on OpenCode, Pi, Codex | the deny or ask wins | narrow the deny |
+| `mcp(server/tool): allow` under `mcp(server): deny` on OpenCode | the allow won | the deny wins | `mcp(server/other): deny` per tool |
+| a scoped overlay allow beside the profile's plain deny of the tool | confined the tool to the allow | the deny covers it; tool off | replace the profile's key in the overlay |
+| a scoped deny or ask on a Meridian command (`bash(meridian spawn *): deny`) | restricted it on every harness | runs on Pi, Codex and OpenCode; still restricted on Claude | nothing: a Meridian command grant is not restrictable outside Claude |
+
+Meridian's own command grants (completion, read commands, `meridian spawn`) are now decided
+before any tool rule on Pi, Codex and OpenCode. Claude checks every deny and ask before any
+allow, so there a deny or ask that matches one of those commands still wins, and
+`bash: deny` under `approval: auto` or `never` removes Bash along with the grants. The
+`--dry-run` report marks the grant `partial` or names the rule that blocks it.
+
+On Claude the permission mode now follows `approval`; before, `bash: deny` beside scoped
+allows ran the launch in `manual` or `acceptEdits`. Under `approval: never`, calls to other
+tools that were refused in a spawn now run.
+
+"Only these Bash commands, every other tool open" can no longer be written. `'*': deny` closes
+every tool no rule names.
+
+**`edit` and `write`.** `edit: deny` with `write: allow` now denies writes. A profile
+that wants no edits but writes allowed needs `edit` and `write` rules that do not clash: drop
+`edit: deny` and deny `notebook` and the others by name. The shipped `prompt-tester` profile
+has this form: its Claude and Pi files gain `Write` in `disallowed-tools`.
+
+### Also in this release
+
+- A covered allow or ask stays in the rules with an empty native name and a note naming the
+  stricter rule; Mars no longer drops it. `meridian spawn --dry-run` no longer prints a
+  `Set aside:` block, and `tool_rules_set_aside` in `--format json` is deprecated and always
+  `[]`. Scripts that read it keep working; stop reading it.
+- `[settings.tools]` accepts `allow` and `ask` beside `deny` (`'*'` still fails the load). A
+  project-wide `allow` never opens a tool an agent's `'*': deny` closes. A Mars 0.29 fails the
+  load on them: set `min_mars_version = "0.30.0"` in a project that uses them.
+- `[package.tools]` in a package's `mars.toml` states tool rules once for every agent the
+  package ships. A Mars before 0.30.0 ignores it with a warning and exit 0, so a package that
+  uses it sets `requires-mars = ">=0.30.0"`. Details:
+  [Project-wide tool rules](agent-profiles.md#project-wide-tool-rules).
+- `mars validate` prints `tool-rule-covered` instead of `tool-rule-set-aside` and
+  `tool-rule-form-changes`.
+- A continued or forked session sends its saved rules back to Mars, which applies the new
+  precedence and recomputes native names: `edit: deny` beside `write: allow` now refuses
+  writes. This needs Mars 0.30.0.
+- Pi and Codex decide a tool call with one evaluator, so a rule means the same on both. On Pi,
+  a command ending or joined with a lone `&` is now split and each part checked, and a command
+  is no longer refused only for containing `if`, `then` or `for`: each part must still match
+  an allow under an allowlist. On Codex, a lone `&` under an allowlist is refused. A shell
+  call with no command string is refused.
+- `--fork` of a session whose agent profile was removed says to run
+  `--fork-fresh <id> -a <agent>`.
+
+None of the profiles installed from `meridian-base` and `meridian-dev-workflow` changes result
+except `prompt-tester` above.
+
 ## Project-wide tool denies, and the map form of an agent's tool overlay
 
 `[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for every
 agent in the project, and `[agents.<name>.tools]` now takes a map of tool key to action. These
 need Mars 0.29.0: a Mars before it ignores the table and these overlay keys without a word.
 Nothing here changes until you write one of them, except the three profile forms below, which
-change for profiles you already have. This release takes `deny` only in `[settings.tools]`;
-`allow`, `ask` and `'*'` fail the load. Continued and forked sessions pick up the project-wide denies in force now. Details:
+change for profiles you already have (see above). Continued and forked sessions pick up the
+project-wide denies in force now. Details:
 [Project-wide tool rules](agent-profiles.md#project-wide-tool-rules) and
 [agent overlays](configuration/mars.md).
 
-- `meridian spawn --dry-run` names a project-wide rule `project: tools <key> = deny`, and lists
-  an agent allow or ask that one covers under `Set aside:` (`tool_rules_set_aside` in JSON).
+- `meridian spawn --dry-run` names a project-wide rule `project: tools <key> = deny`.
 - The `allowed` and `disallowed` lists in `[agents.<name>.tools]` are deprecated, not removed.
 - A string-valued key in `[agents.<name>.tools]` that is not a tool name used to be ignored. It
   is now read as a rule, and a malformed one fails the load.
-
-### Three forms will change in a release after 0.29.0
-
-A release after 0.29.0 makes one precedence rule apply on every harness: the strictest matching
-rule wins (deny, then `ask`, then `allow`), so a deny covers the allows that are narrower than it. If a profile or overlay of yours has one of these forms, write what
-you want explicitly now:
-
-| Today | After that release |
-|---|---|
-| `bash: deny` (or `ask`) beside scoped allows such as `'bash(rg *)': allow` confines Bash to those calls | The deny covers the allows, so Bash is off. On Claude, calls to other tools that need approval are no longer refused outright in a spawn; they follow your `approval` setting |
-| `edit: deny` with `write: allow` leaves writes allowed on Claude and Pi | Writes are denied |
-| A longer scoped allow beats a shorter scoped deny or ask on OpenCode, Pi and Codex | The deny or ask wins, as on Claude |
-
-If you rely on one of these, say which result you want in the profile now: a rule that
-denies what you mean to deny, and no deny beside an allow you mean to keep.
-
-None of the profiles installed from `meridian-base` and `meridian-dev-workflow` has these forms.
 
 ## Claude launches read rules and roots from a file
 
@@ -69,13 +117,11 @@ other rules and `approval`, as if the scoped allows were absent. On Claude, `app
 now launches with `--dangerously-skip-permissions` instead of `--permission-mode manual`, with
 the allows still in `permissions.allow`.
 
-To keep the old restriction, write `bash: deny` beside the scoped allows. On Claude that deny
-is carried by the permission mode (`manual`) instead of `--disallowedTools Bash`, so Claude
-still runs Bash calls it classifies as read-only, and the spawn's own `meridian spawn done`
-grant stays usable. A whole-policy `'*': deny` allowlist is unchanged.
+To keep the old restriction, write `'*': deny` beside the scoped allows: a `bash: deny` there
+now turns Bash off ([above](#the-strictest-tool-rule-wins-on-every-harness)).
 
 The same holds across capabilities. `edit: allow` with `'write(src/*)': allow` used to confine
-writes to `src/`; now writes run anywhere. Add `write: deny` to keep the confinement.
+writes to `src/`; now writes run anywhere. A `write: deny` beside it would deny `src/` too; use `sandbox` to confine writes.
 
 On Codex, `bash: deny` and `bash: ask` now go through the shell hook instead of turning the
 shell off or running every command

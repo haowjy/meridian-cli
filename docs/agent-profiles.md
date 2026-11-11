@@ -486,9 +486,9 @@ form exposes the same lines as `permission_report`.
 
 | Harness | `tools` | `sandbox` | `network` | `approval` | Meridian platform rules |
 |---|---|---|---|---|---|
-| **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for a plain `bash: deny` beside scoped allows, and for a spawn's plain `bash: deny` under `approval: default` or `confirm`: Meridian carries it in Claude's `manual` mode so the platform grants can run, and that mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. A spawn-capable profile's standalone `meridian spawn ...` command is excluded from the sandbox and runs fully outside it. | In an enabled sandbox, **Native** for external host filtering with `strictAllowlist`, `allowedDomains`, and `deniedDomains`; denies win. `**.x` becomes Claude's equivalent pair `x` plus `*.x`. A finite allowlist explicitly disables local binding and Unix sockets from ordinary user settings unless it contains `localhost` or `127.0.0.1`; either entry enables Claude's coarse switches for all local binding and all Unix sockets, so that case is **Partial**. On Linux, host localhost is also **Partial**: it is reachable only through Claude's proxy, and clients honoring `NO_PROXY` bypass that proxy (`curl --noproxy '' ...` uses it). Strict deny is **Partial** on Linux because processes inside the same sandbox can still connect over its private TCP loopback. In the user settings root selected by `CLAUDE_CONFIG_DIR`, a non-empty `sandbox.network.allowedDomains` or either proxy-port key produces an attributed warning because the setting can widen access beyond Meridian's projection. The warning does not change the permission report or child guardrail, which compare only Meridian's projected policy. `deniedDomains` is narrowing and is not modelled; project `.claude/settings*.json` did not widen the launch-local strict allowlist. An excluded `meridian spawn ...` command runs outside the sandbox and can connect. Under `danger-full-access`, restrictions are **Not enforced**. | **Native** without an allowlist or `ask`: `auto` uses Claude's own `--permission-mode auto`, where a classifier approves or refuses unmatched calls (it can refuse), `confirm` uses `manual`, and `never` bypass prompts. `deny` and `ask` rules hold under `auto`. Claude falls back to `manual` when the model or the account does not offer `auto`; a spawn's report then carries a warning. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed: a profile that gates a tool through the mode (a plain `deny` or `ask` beside scoped allows of the same tool, or an unscoped `*: ask`) runs `auto` as `acceptEdits` or `manual`, and `dontAsk` for an allowlist, because the classifier would approve the gated calls. Under `auto`, a confined `sandbox` does not cover Edit/Write outside the working directories and `network: deny` does not cover WebFetch/WebSearch; the classifier decides those, where `acceptEdits` refused them. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Exact and prefix Meridian-command grants are native unless a stricter profile rule blocks them; adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
-| **Codex** | **Partial**. Exact unscoped `web`, `web_search`, and `image` allow/deny rules use native switches; a `bash` allow needs none, since Codex's shell is on by default. A whole-policy allowlist turns off web search and image viewing but leaves the shell on because Codex reads files through it. Every `bash: deny` and `bash: ask`, scoped `bash` rules beside something that restricts (scoped allows alone need no hook and are reported `unsupported`; they pre-approve nothing on Codex), and `*` rules beside scoped rules are enforced by a Meridian-owned `PreToolUse` hook on the app-server, **Partial** throughout. The hook splits a command on `;`, `&&`, `||`, `|`, `&` and newlines and wildcard-matches each segment, as Pi does. An allowlist (or any rule that denies unmatched shell commands) needs every segment to match an allow and refuses `$`, backticks, redirection and other shell syntax, so it binds file reads too: allow the read commands the agent needs. It is a guard against accidents, not a sandbox: wrapped, full-path or compound forms it does not see (`/usr/bin/uname -a`, `sh -c 'uname -a'`, `sudo git reset --hard`, `bash -c`, substitutions, subshells, scripts, interpreters, `git -C <dir> reset --hard`) get past a deny. The hook cannot ask, so an unscoped `ask` is a deny. An agent that can replace the Python interpreter turns the hook off, and `apply_patch` and MCP calls never reach it. A Codex without `hooks/list`, or one that does not list the hook as trusted and intact, refuses the launch. Scoped `ask`, scoped rules on other capabilities, and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | `workspace-write` is **Native** for `allow` without denies (`network_access=true`) and for `deny` or an empty allowlist (`false`). Host sets use Codex's network proxy and one inline domain map: finite allows are `"host"="allow"`; `allow` plus denies adds `"*"="allow"`; denies are `"host"="deny"`. Any `allow` entry under `features.network_proxy.domains` in the child-selected `$CODEX_HOME/config.toml` or `.codex/config.toml` in the child cwd or an ancestor produces an attributed warning because it can widen access beyond Meridian's projection. A boolean `features.network_proxy` declares no domains and does not warn. Warnings do not change the permission report or child guardrail, which compare only Meridian's projected policy. Domain `deny` entries are narrowing and are not modelled. Host-map cases are **Partial** because Codex always leaves local services reachable. `read-only` stays offline in Meridian's projection and reports any `allow` or non-empty allowlist **Not enforced**. Under `danger-full-access`, restrictions are **Not enforced**. The user-wide `meridian spawn` rule runs matching commands outside constrained modes with network access. | **Native** for `auto` (`approval_policy=on-request` plus `approvals_reviewer=auto_review`, Codex's own auto, set on every launch so `~/.codex/config.toml` does not decide it) and `never` (`never`). A reviewer-approved request can escape the sandbox. Meridian does not use `--approve-for-me`: it refuses `--sandbox`. **Partial** for `confirm`, which is `on-request` with `approvals_reviewer=user` because Codex has no stricter mode: the user is asked, and a spawn refuses every request. Meridian sets the reviewer on every launch that can escalate, so neither `~/.codex/config.toml` nor a forked thread decides it. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
-| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the stricter conflicting effect wins. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Completion and read-only command grants remain authoritative over overlapping profile rules; a stricter rule may still restrict the spawn-launch grant. |
+| **Claude** | **Native**, with caveats. Plain and scoped `allow`/`deny`/`ask` use native permissions; a whole-policy allowlist also limits `--tools`. Claude checks file paths only through `Edit(path)` and `Read(path)`, so scoped `write`/`edit`/`notebook` rules become `Edit(path)` and scoped `read`/`glob`/`grep` rules become `Read(path)`: a scoped deny also refuses Claude's other file edits (or reads) at that path, and `--tools` still lists the tool itself (`Write`, `Grep`). **Partial** for a spawn's plain `bash: deny` under `approval: default` or `confirm`: Meridian carries it in Claude's `manual` mode so the platform grants can run, and that mode still auto-approves Read/Grep/Glob and Bash calls it classifies as read-only. Only a whole-policy `*: deny` allowlist uses `dontAsk`. | **Partial** for `read-only` and `workspace-write`: the native sandbox confines Bash subprocesses, not Edit/Write. **Native** for `danger-full-access`, which disables it. A spawn-capable profile's standalone `meridian spawn ...` command is excluded from the sandbox and runs fully outside it. | In an enabled sandbox, **Native** for external host filtering with `strictAllowlist`, `allowedDomains`, and `deniedDomains`; denies win. `**.x` becomes Claude's equivalent pair `x` plus `*.x`. A finite allowlist explicitly disables local binding and Unix sockets from ordinary user settings unless it contains `localhost` or `127.0.0.1`; either entry enables Claude's coarse switches for all local binding and all Unix sockets, so that case is **Partial**. On Linux, host localhost is also **Partial**: it is reachable only through Claude's proxy, and clients honoring `NO_PROXY` bypass that proxy (`curl --noproxy '' ...` uses it). Strict deny is **Partial** on Linux because processes inside the same sandbox can still connect over its private TCP loopback. In the user settings root selected by `CLAUDE_CONFIG_DIR`, a non-empty `sandbox.network.allowedDomains` or either proxy-port key produces an attributed warning because the setting can widen access beyond Meridian's projection. The warning does not change the permission report or child guardrail, which compare only Meridian's projected policy. `deniedDomains` is narrowing and is not modelled; project `.claude/settings*.json` did not widen the launch-local strict allowlist. An excluded `meridian spawn ...` command runs outside the sandbox and can connect. Under `danger-full-access`, restrictions are **Not enforced**. | **Native** without an allowlist or `ask`: `auto` uses Claude's own `--permission-mode auto`, where a classifier approves or refuses unmatched calls (it can refuse), `confirm` uses `manual`, and `never` bypass prompts. `deny` and `ask` rules hold under `auto`. Claude falls back to `manual` when the model or the account does not offer `auto`; a spawn's report then carries a warning. **Partial** with an allowlist or `ask`, which stays authoritative instead of being bypassed: a profile that gates a tool through the mode (a plain `deny` or `ask` of Bash, or an unscoped `*: ask`) runs `auto` as `acceptEdits` or `manual`, and `dontAsk` for an allowlist, because the classifier would approve the gated calls. Under `auto`, a confined `sandbox` does not cover Edit/Write outside the working directories and `network: deny` does not cover WebFetch/WebSearch; the classifier decides those, where `acceptEdits` refused them. | **Native** sub-agent and built-in-agent denies. **Partial** when built-in agents are enabled, because Claude cannot deny generic `Agent` while retaining them. Exact and prefix Meridian-command grants are native unless a profile `deny` or `ask` matching the command blocks them (Claude checks denies and asks first); adding Bash to a whole allowlist also exposes Claude's auto-approved read-only Bash class. |
+| **Codex** | **Partial**. Exact unscoped `web`, `web_search`, and `image` allow/deny rules use native switches; a `bash` allow needs none, since Codex's shell is on by default. A whole-policy allowlist turns off web search and image viewing, and so does an `ask` of either (Codex cannot ask, so the stricter result is off). Meridian installs a Meridian-owned `PreToolUse` hook on the app-server whenever any shell rule could refuse a command: a `bash` or `*` deny, or an `ask`, scoped or not. A rule Mars reports as covered by a stricter one is not carried; the stricter one is. The hook is **Partial** throughout. The hook splits a command on `;`, `&&`, `||`, `|`, `&` and newlines and wildcard-matches each segment, as Pi does. An allowlist (`*: deny`, or any rule that denies unmatched shell commands) needs every segment to match an allow or a Meridian command grant and refuses `$`, backticks, redirection and other shell syntax, so it binds file reads too: allow the read commands the agent needs. It is a guard against accidents, not a sandbox: wrapped, full-path or compound forms it does not see (`/usr/bin/uname -a`, `sh -c 'uname -a'`, `sudo git reset --hard`, `bash -c`, substitutions, subshells, scripts, interpreters, `git -C <dir> reset --hard`) get past a deny. The hook cannot ask, so an `ask`, scoped or not, is a deny. An agent that can replace the Python interpreter turns the hook off, and `apply_patch` and MCP calls never reach it. A Codex without `hooks/list`, or one that does not list the hook as trusted and intact, refuses the launch. Scoped rules on other capabilities and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | `workspace-write` is **Native** for `allow` without denies (`network_access=true`) and for `deny` or an empty allowlist (`false`). Host sets use Codex's network proxy and one inline domain map: finite allows are `"host"="allow"`; `allow` plus denies adds `"*"="allow"`; denies are `"host"="deny"`. Any `allow` entry under `features.network_proxy.domains` in the child-selected `$CODEX_HOME/config.toml` or `.codex/config.toml` in the child cwd or an ancestor produces an attributed warning because it can widen access beyond Meridian's projection. A boolean `features.network_proxy` declares no domains and does not warn. Warnings do not change the permission report or child guardrail, which compare only Meridian's projected policy. Domain `deny` entries are narrowing and are not modelled. Host-map cases are **Partial** because Codex always leaves local services reachable. `read-only` stays offline in Meridian's projection and reports any `allow` or non-empty allowlist **Not enforced**. Under `danger-full-access`, restrictions are **Not enforced**. The user-wide `meridian spawn` rule runs matching commands outside constrained modes with network access. | **Native** for `auto` (`approval_policy=on-request` plus `approvals_reviewer=auto_review`, Codex's own auto, set on every launch so `~/.codex/config.toml` does not decide it) and `never` (`never`). A reviewer-approved request can escape the sandbox. Meridian does not use `--approve-for-me`: it refuses `--sandbox`. **Partial** for `confirm`, which is `on-request` with `approvals_reviewer=user` because Codex has no stricter mode: the user is asked, and a spawn refuses every request. Meridian sets the reviewer on every launch that can escalate, so neither `~/.codex/config.toml` nor a forked thread decides it. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
+| **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the strictest conflicting effect wins. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** unless a `*` tool rule already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never` allow unmatched calls without prompting. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Meridian-command grants are decided before profile rules. |
 | **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A `*: deny` allowlist, a `bash: deny`/`ask` beside scoped Bash rules, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
 | **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `danger-full-access` disables Cursor's binary sandbox. **Partial**: `read-only` enables it, which still allows workspace writes, so it runs as `workspace-write`; `workspace-write` disables it because Cursor has no middle setting. Unset uses Cursor's default. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** for `auto` (`--force`) and `never` (`--yolo`). `confirm` is **Not enforced**. | **Not enforced**. |
 
@@ -540,15 +540,22 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
 - A map containing `'*': deny` is a whole-policy allowlist: only the tools it allows
   exist. The list form `tools: [read, grep]` was removed in schema v1; `meridian mars migrate`
   rewrites it to `read: allow` and `grep: allow`, which restricts nothing.
-- A scoped allow such as `'bash(rg *)': allow` only pre-approves the calls it matches and
-  restricts nothing. With no unscoped `bash` rule, other Bash calls follow the remaining
-  rules (a `*` rule, if any) and `approval`, as if the scoped allow were absent. To restrict
-  the rest, write `bash: deny` beside the scoped allows. On Claude that deny is carried by
-  the permission mode (`manual`) rather than `--disallowedTools Bash`; see below.
-- Narrower capabilities win where they overlap. `edit` covers writes too: `edit: deny` with
-  `write: allow` leaves writes allowed. A scoped `'write(src/*)': allow` only pre-approves
-  writes under `src/`, even beside `edit: allow`; to confine writes to `src/`, write
-  `write: deny` beside it.
+- **The strictest matching rule wins, on every harness:** `deny`, then `ask`, then `allow`,
+  however narrow a key is. A scoped allow such as `'bash(rg *)': allow` pre-approves the calls
+  it matches and restricts nothing; `bash: deny` beside it turns Bash off. To allow only
+  `rg`, write `'*': deny` beside the allow (on Claude also `skill: allow`), or deny what you
+  mean to block by scoped key:
+
+  ```yaml
+  tools:
+    '*': deny
+    'bash(rg *)': allow     # Bash runs only rg; every other tool is off
+  ```
+
+- The same holds across overlapping capabilities. `edit` covers writes, so `edit: deny` with
+  `write: allow` denies writes. `web` covers `web_search` and `web_fetch` the same way. A
+  scoped `'write(src/*)': allow` pre-approves writes under `src/` and does not confine
+  the rest. `write: deny` beside it denies `src/` too; to confine writes, use `sandbox`.
 - `approval: never` means "do not prompt"; it does not mean "ignore `tools`."
 - On a Claude spawn under `approval: default` or `confirm`, a plain `bash: deny` is not
   emitted as `--disallowedTools Bash`, which would also block the spawn's
@@ -569,31 +576,28 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
 
 ### Project-wide tool rules
 
-`[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for
-every agent in the project and for a launch with no agent. In this release it takes `deny`
-only; `allow`, `ask` and `'*'` fail the load. A release after 0.29.0 is expected to accept
-`allow` and `ask`. See
+`[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config adds `deny`, `ask` or
+`allow` rules for every agent in the project and for a launch with no agent. `'*'` fails the
+load. See
 [Project-wide tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules)
-in the Mars docs for the keys and merge order.
+in the Mars docs for the keys and merge order. This needs Mars 0.30.0; earlier, only `deny`
+loaded.
 
 ```toml
 [settings.tools]
 "bash(pkill -f *)" = "deny"
 ```
 
-- **They restrict and never widen.** A project-wide deny joins the agent's own rules. An agent
-  `allow` or `ask` that the deny covers by key (`bash = "deny"` covers `bash(rg *): allow`) is
-  set aside, because some harnesses let a narrower allow beat a broader deny. Where Mars cannot
-  tell whether two keys overlap, both rules stay and `mars sync` warns. Mars's docs define
-  [set-aside rules and unsettled pairs](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#set-aside-rules-and-unsettled-pairs). `meridian spawn --dry-run` lists set-aside
-  rules under `Set aside:` (`tool_rules_set_aside` in `--format json`), each with the deny that
-  covers it; they are not in the permission report.
-- **The permission report names them.** The `Permissions:` block of `meridian spawn --dry-run`
-  shows a project-wide rule as `project: tools <key> = deny`. For an unsettled pair, on every
-  harness but Claude the project-wide rule carries a note that the agent rule may override it.
-  Claude checks every deny first, so its order holds.
+- **They restrict and never widen.** A project-wide rule goes through the same strictest-wins
+  precedence as the agent's own. A project-wide `allow` never gives an agent a tool its `'*'`
+  rule closes, and a project-wide `ask` on an allowlist agent asks only where the agent allows.
+- **A covered rule stays listed.** An agent allow or ask that a stricter rule covers is kept
+  in the rules with a note naming that rule, and has no effect. `meridian spawn --dry-run`
+  shows it in the `Permissions:` block; it no longer prints a `Set aside:` block, and
+  `tool_rules_set_aside` in `--format json` is deprecated and always `[]`.
+- **The permission report names project rules** as `project: tools <key> = deny`.
 - **Exempting one agent.** An entry in `[agents.<name>.tools]` with the same key replaces
-  the project-wide deny for that agent, and `allow` also pre-approves the call:
+  the project-wide rule for that agent, and `allow` also pre-approves the call:
 
   | `[settings.tools]` | `[agents.prober.tools]` | `prober` |
   |---|---|---|
@@ -602,24 +606,27 @@ in the Mars docs for the keys and merge order.
 
   Only the exact key is replaced: `bash = "allow"` does not lift
   `"bash(pkill -f *)" = "deny"`.
-- **Claude.** A project-wide plain deny is enforced as `--disallowedTools <Tool>` even when a
-  scoped allow of that tool sits beside it, so the denied tool is never available. Under
-  `approval: default` or `confirm` the dry run marks the rule `partial`, as it does for a
-  profile's `bash: deny`, because the completion gate still applies. Under `approval: never`
-  the tool is removed, so the spawn's own `meridian spawn done` command grant is blocked and
-  the report says so, as for a profile `bash: deny`.
+- **Package rules.** A package's `[package.tools]` in its `mars.toml` acts as if each entry
+  were in the `tools:` map of every agent the package ships; the agent's own key wins. Use it
+  to state a deny once (`"bash(pkill -f *)" = "deny"`). Values are `allow`, `deny` or `ask`.
+  A Mars before 0.30.0 ignores it with a warning, so set `requires-mars = ">=0.30.0"`.
+- **Claude.** A project-wide plain deny is enforced as `--disallowedTools <Tool>`, so the denied
+  tool is never available. Under `approval: default` or `confirm` the dry run marks the rule
+  `partial`, as it does for a profile's `bash: deny`, because the completion gate still
+  applies. Under `approval: never` the tool is removed, so the spawn's own `meridian spawn
+  done` command grant is blocked and the report says so.
 - **Continued and forked sessions.** `--continue` and `--fork` need a working Mars. They pick
-  up the project-wide denies in force now, including one added after the session started, and
-  your `[agents.<name>.tools]` exemptions still apply. The rest of a continued session's rules
-  stay as it started. Removing a deny lifts it on the next continue, but allows that were set
-  aside when the session started do not come back: start a new session to get them back.
-  When the agent no longer resolves, a continue prints a warning and applies the project-wide
-  rules alone, and a fork fails.
-- **Known limit on Codex, OpenCode and Pi.** A continued session can keep a scoped allow that a
-  deny added later covers, in two cases: the agent's profile or overlay no longer has that
-  allow, or the agent no longer resolves. Claude is not affected. A release after 0.29.0 makes
-  the strictest matching rule win on every harness (deny, then `ask`, then `allow`), which ends
-  this.
+  up the project-wide rules in force now: a deny added after the session started holds, one you
+  removed is gone, and an allow it covered works again. Your `[agents.<name>.tools]`
+  exemptions still apply. The agent's own rules stay as the session started, and a
+  project-wide `allow` or `ask` is shaped by the session's own `*` rule, as at a fresh launch.
+  Meridian sends the session's own rules back to Mars, which recomputes native names and
+  covering, so an older session gets the current precedence too: `edit: deny` beside
+  `write: allow` now refuses writes. A session an older build wrote with no rule names to send
+  Mars keeps its rules and gains the
+  current project-wide denies. When the agent no longer resolves, a continue prints a warning
+  and applies the project-wide rules alone, and a fork fails. A Mars before 0.30.0 does not
+  accept `--agent-tool-rules`, so a continue or fork stops and names the Mars it needs.
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
   without a word; only `mars validate` checks `min_mars_version`.
 
@@ -638,7 +645,7 @@ tool, OpenCode's defaults and your OpenCode config decide the rest.
 ### `ask` and headless spawns
 
 A primary can put a human in the loop: Claude, OpenCode, and Pi present a native prompt
-for a mapped `ask` rule. Codex and Cursor do not enforce tool-level `ask`.
+for a mapped `ask` rule. Codex cannot ask: its hook refuses an `ask` of shell commands and its web and image switches turn off. Cursor does not enforce tool-level `ask`.
 
 A spawn has no human to answer, so a supported `ask` is refused immediately and never
 routed to the parent agent. Claude disables permission prompts, OpenCode lowers the rule
@@ -679,9 +686,10 @@ them:
 - **Meridian commands.** Meridian adds completion and read-command grants to every launch;
   a profile that can spawn also gets the `meridian spawn ...` launch commands. Completion
   (`spawn done` / `rearm`) is control-plane liveness and a profile cannot restrict it.
-  Read and launch commands remain profile-restrictable: a narrower or equal scoped
-  profile `deny`/`ask` stays stricter. Each grant is exact or prefix-matched in the target
-  harness's syntax; a harness that cannot honor the precedence reports it as partial. Run
+  Pi, Codex and OpenCode decide these grants before any profile rule, so no profile rule
+  restricts them; the report marks a deny or ask that reaches a grant `partial` and names the grants that still run. Claude checks every deny and ask before any allow, so there a profile
+  `deny`/`ask` that matches a grant still wins, and the report marks the grant `partial`.
+  Each grant is exact or prefix-matched in the target harness's syntax. Run
   `meridian spawn -a NAME --dry-run` to see the exact command list and which grants that
   harness can enforce.
 - **Child-spawn escape.** Claude excludes a spawn-capable profile's standalone

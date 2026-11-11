@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.catalog.agent import load_agent_profile
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.launch.request import SessionRequest
@@ -24,6 +25,25 @@ def fork_usage_seed(runtime_root: Path, session: SessionRequest) -> dict[str, Js
         return None
     terminal_total = source.terminal.harness_cumulative if source.terminal is not None else None
     return terminal_total or source.prior_usage.harness_cumulative
+
+
+def require_replayed_agent(
+    *, project_root: Path, agent: str, source_ref: str, command: str
+) -> None:
+    """Refuse a fork whose session's agent profile is gone, naming the fork that works.
+
+    ``--fork`` replays the session's agent; ``--fork-fresh`` with ``-a`` picks another.
+    """
+    try:
+        load_agent_profile(agent, project_root=project_root)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"Session '{source_ref}' ran as agent '{agent}', which no longer exists, "
+            "and --fork keeps the session's agent.\n"
+            f"Fork it with another agent: {command} --fork-fresh {source_ref} "
+            "-a <agent>\n"
+            f"If '{agent}' was removed by mistake, `meridian mars sync` restores it."
+        ) from exc
 
 
 def materialize_fork(
@@ -57,4 +77,4 @@ def materialize_fork(
     return forked_session_id
 
 
-__all__ = ["fork_usage_seed", "materialize_fork"]
+__all__ = ["fork_usage_seed", "materialize_fork", "require_replayed_agent"]
