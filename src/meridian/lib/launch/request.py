@@ -12,7 +12,7 @@ from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import SetAsideRule, ToolRule
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -152,6 +152,7 @@ class SpawnRequest(BaseModel):
     cli_command: tuple[str, ...] = ()
     # Dry-run display only, like ``cli_command``: what the harness enforces from the policy.
     permission_report: EnforcementReport = ()
+    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     authority_root: str | None = None
     task_cwd: str | None = None
     reference_anchor: str | None = None

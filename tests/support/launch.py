@@ -35,7 +35,7 @@ from meridian.lib.safety.policy import (
     resolve_network_policy,
 )
 from meridian.lib.state.paths import resolve_kb_dir
-from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
+from meridian.lib.tools import NativeStatus, SetAsideRule, ToolAction, ToolRule, split_native
 from tests.support.launch_paths import launch_paths
 
 
@@ -87,6 +87,7 @@ class FakeBundleResult:
     warnings: tuple[str, ...] = ()
     tool_rules: tuple[ToolRule, ...] = ()
     platform_tool_rules: tuple[ToolRule, ...] = ()
+    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     skills_loaded: tuple[LoadedSkillEntry, ...] = ()
     skills_available: tuple[AvailableSkillEntry, ...] = ()
     skills_missing: tuple[str, ...] = ()

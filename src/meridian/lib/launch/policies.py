@@ -25,7 +25,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     resolve_network_policy,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import SetAsideRule, ToolRule
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -157,6 +157,7 @@ class ResolvedLaunchPolicy:
     execution_policy: ResolvedExecutionPolicy
     resolved_tool_rules: tuple[ToolRule, ...] = ()
     platform_tool_rules: tuple[ToolRule, ...] = ()
+    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     matched_policy_rule: str | None = None

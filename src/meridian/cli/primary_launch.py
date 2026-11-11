@@ -56,6 +56,7 @@ from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.tools import SetAsideRule, format_set_aside_lines
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -66,6 +67,7 @@ class PrimaryLaunchOutput(BaseModel):
     exit_code: int
     command: tuple[str, ...] = ()
     permission_report: EnforcementReport = ()
+    tool_rules_set_aside: tuple[SetAsideRule, ...] = ()
     launch_plan: ManagedPrimaryPreview | None = None
     continue_ref: str | None = None
     continue_chat_id: str | None = None
@@ -125,6 +127,9 @@ class PrimaryLaunchOutput(BaseModel):
         if self.permission_report:
             lines.append("Permissions:")
             lines.extend(format_report_lines(self.permission_report))
+        if self.tool_rules_set_aside:
+            lines.append("Set aside:")
+            lines.extend(format_set_aside_lines(self.tool_rules_set_aside))
         if self.launcher_diagnostics_path is not None:
             lines.append(format_launcher_diagnostics_pointer(self.launcher_diagnostics_path))
         return "\n".join(lines)
@@ -591,6 +596,7 @@ def run_primary_launch(
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
         permission_report=launch_result.permission_report if dry_run else (),
+        tool_rules_set_aside=launch_result.tool_rules_set_aside if dry_run else (),
         launch_plan=launch_result.launch_plan if dry_run else None,
         continue_ref=launch_result.continue_ref,
         continue_chat_id=continue_chat_id,
