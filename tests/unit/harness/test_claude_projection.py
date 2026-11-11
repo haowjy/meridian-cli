@@ -24,8 +24,9 @@ from meridian.lib.safety.policy import (
     PlatformRule,
     build_permission_policy,
     network_policy_name,
+    rule_element,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN
+from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN
 from tests.support.launch import tool_rule
 
 _STRICT_OFFLINE_NETWORK = {
@@ -89,6 +90,46 @@ def test_claude_projection_drops_passthrough_agent_when_native_agents_disabled()
     )
 
     assert _settings_permission_entries(spec, "allow") == ("Bash(meridian spawn *)",)
+
+
+def _read_deny_beside_scoped_grep(origin: str | None) -> ResolvedLaunchSpec:
+    # Claude spells a scoped grep allow as Read(path), which shadows a plain Read deny.
+    return _spec(
+        harness=HarnessId.CLAUDE,
+        prompt="test",
+        permission_policy=PermissionPolicy(
+            rules=(
+                tool_rule("grep", "allow", "Read(src/**)", pattern="src/**", tools=("Grep",)),
+                tool_rule("read", "deny", "Read").model_copy(update={"origin": origin}),
+            )
+        ),
+    )
+
+
+def test_claude_projection_never_gates_a_project_deny_for_a_scoped_allow() -> None:
+    spec = _read_deny_beside_scoped_grep(PROJECT_ORIGIN)
+
+    argv = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    assert "Read" in _tool_flag_entries(argv, "--disallowedTools")
+    assert "Read(src/**)" not in _settings_permission_entries(spec, "allow")
+    assert "--permission-mode" not in argv
+
+
+def test_claude_projection_still_gates_a_profile_deny_for_a_scoped_allow() -> None:
+    spec = _read_deny_beside_scoped_grep(None)
+
+    argv = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    assert "Read" not in _tool_flag_entries(argv, "--disallowedTools")
+    assert "--permission-mode" in argv
+
+
+def test_project_rule_is_named_by_origin() -> None:
+    rule = tool_rule("bash", "deny", "Bash(pkill *)", pattern="pkill *")
+
+    assert (
+        rule_element(rule.model_copy(update={"origin": PROJECT_ORIGIN}))
+        == "project: tools bash(pkill *) = deny"
+    )
 
 
 def test_claude_projection_keeps_passthrough_agent_when_native_agents_enabled() -> None:

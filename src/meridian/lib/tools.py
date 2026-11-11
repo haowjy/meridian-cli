@@ -13,6 +13,7 @@ type NativeStatus = Literal["known", "absent", "unknown"]
 
 LEGACY_SNAPSHOT_ORIGIN = "legacy-snapshot"
 PLATFORM_ORIGIN = "platform"
+PROJECT_ORIGIN = "project"
 
 
 class ToolRule(BaseModel):

@@ -39,7 +39,7 @@ from meridian.lib.safety.policy import (
     rule_element,
     unscoped_action,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
+from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolAction, ToolRule, split_native
 
 type PermissionMode = Literal["acceptEdits", "auto", "manual", "dontAsk"]
 
@@ -354,11 +354,14 @@ def _compile_channels(
 
     # A plain deny or ask beside scoped allows of the same tool would shadow them. Platform
     # denies are not gated: `_effective_rules` already turned their capability's profile rules
-    # into denies, so none of them is a profile scoped allow.
+    # into denies, so none of them is a profile scoped allow. A project deny is not gated
+    # either: Mars set aside the allows it covers by key, and a scoped allow it could not see
+    # (Claude spells a grep or glob allow as Read(path)) must not turn the deny into a mode.
     gates: dict[tuple[str | None, str], _Gate] = {
         (entry.rule.capability, native): _Gate(entry.rule.capability, native, entry.action)
         for entry, native in plain
         if native in profile_scoped
+        and not (entry.rule.origin == PROJECT_ORIGIN and entry.action == "deny")
     }
     # The completion allows alone never change the profile's mode: they gate a plain rule
     # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
