@@ -590,51 +590,97 @@ def chat_lock_path_violations(sources: Sources) -> list[Violation]:
     ]
 
 
-# `ResolvedContext` recomputes these from config and state on every call; the variables
-# are its output for child processes, so reading one elsewhere returns a stale launch copy.
+# `ResolvedContext` recomputes context paths from config and state on every call; the
+# variables are its output for child processes, so reading one elsewhere returns a stale
+# launch copy. A name found in this tree outside these modules and functions ("*" is the
+# whole module) is either a read of that copy or a new place that must be listed here.
 _CONTEXT_ENV_NAME = re.compile(r"MERIDIAN_(?:CONTEXT|ACTIVE_WORK)_[A-Z0-9_]+")
-_CONTEXT_ENV_READERS = frozenset(
-    {
-        "meridian/lib/core/resolved_context.py",  # the resolver
-        "meridian/lib/notify/label.py",  # launch-environment fallback when state is unreadable
-        "meridian/lib/ops/spawn/execute_init.py",  # logs the child env the resolver just built
-    }
-)
+CONTEXT_ENV_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("meridian/env_registry.py", "*"): "Declares the variables.",
+    (
+        "meridian/lib/core/resolved_context.py",
+        "*",
+    ): "The resolver: reads launch input, writes child env.",
+    ("meridian/lib/launch/constants.py", "*"): "Names the variables a child env keeps or drops.",
+    ("meridian/lib/launch/context.py", "*"): "Composes the child env.",
+    ("meridian/lib/launch/spawn_guidance.py", "*"): "Names the variables in the agent prompt.",
+    ("meridian/lib/notify/label.py", "build_session_label"): (
+        "Launch-environment fallback when state is unreadable."
+    ),
+    ("meridian/lib/launch/env.py", "_normalize_meridian_env"): "Shapes the child env.",
+    ("meridian/lib/ops/context.py", "render_context_lines"): "Names the variable for display.",
+    ("meridian/lib/ops/spawn/execute_init.py", "_params_payload"): (
+        "Reads the child env the resolver just built, not os.environ."
+    ),
+}
 
 
-def _context_env_read_line(node: ast.Call | ast.Subscript) -> int | None:
-    """The line of an env lookup keyed by a context variable name, or None."""
+class _ContextEnvVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.function = "<module>"
+        self.hits: list[tuple[str, int]] = []
 
-    key: ast.expr | None = None
-    if isinstance(node, ast.Call) and node.args:
-        if _call_name(node.func) in {"get", "getenv"}:
-            key = node.args[0]
-    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
-        key = node.slice
-    if (
-        isinstance(key, ast.Constant)
-        and isinstance(key.value, str)
-        and _CONTEXT_ENV_NAME.fullmatch(key.value)
-    ):
-        return node.lineno
-    return None
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _call_name(node.func) == "context_env_key":
+            self.hits.append((self.function, node.lineno))
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and _CONTEXT_ENV_NAME.fullmatch(node.value):
+            self.hits.append((self.function, node.lineno))
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        previous = self.function
+        self.function = node.name
+        self.generic_visit(node)
+        self.function = previous
+
+
+def _context_env_hits(module: PythonSource) -> list[tuple[str, int]]:
+    visitor = _ContextEnvVisitor()
+    visitor.visit(module.tree)
+    return visitor.hits
+
+
+def _context_env_allowed(path: str, function: str) -> bool:
+    return (path, "*") in CONTEXT_ENV_ALLOWLIST or (path, function) in CONTEXT_ENV_ALLOWLIST
 
 
 def context_env_read_violations(sources: Sources) -> list[Violation]:
-    """Reject reading `MERIDIAN_CONTEXT_*` and `MERIDIAN_ACTIVE_WORK_*` outside the resolver."""
+    """Reject naming a context env variable outside `CONTEXT_ENV_ALLOWLIST`."""
 
     return [
         Violation(
             module.path,
             line,
             "context env vars are a launch-time copy: resolve through ResolvedContext "
-            "or context_sync, never read them here.",
+            "or context_dir_sync, never read them here; list a module or function in "
+            "CONTEXT_ENV_ALLOWLIST only if it writes or documents the variable.",
         )
         for module in sources.python_modules
-        if module.path not in _CONTEXT_ENV_READERS and not module.path.startswith(_DEV_PREFIX)
-        for node in ast.walk(module.tree)
-        if isinstance(node, (ast.Call, ast.Subscript))
-        and (line := _context_env_read_line(node)) is not None
+        if not module.path.startswith(_DEV_PREFIX)
+        for function, line in _context_env_hits(module)
+        if not _context_env_allowed(module.path, function)
+    ]
+
+
+def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
+    """Reject allowlist entries that no longer excuse a context variable name."""
+
+    used = {
+        (module.path, function)
+        for module in sources.python_modules
+        for function, _line in _context_env_hits(module)
+    } | {(module.path, "*") for module in sources.python_modules if _context_env_hits(module)}
+    return [
+        Violation(path, 0, f"stale context-env allowlist entry {function}: delete it")
+        for path, function in sorted(CONTEXT_ENV_ALLOWLIST.keys() - used)
     ]
 
 
@@ -648,6 +694,7 @@ CHECKS: tuple[Check, ...] = (
     sys_executable_violations,
     chat_lock_path_violations,
     context_env_read_violations,
+    stale_context_env_allowlist,
 )
 
 

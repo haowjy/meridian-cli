@@ -16,19 +16,19 @@ def resolve_fmt(fmt: str) -> str:
 def resolve_context_alias(path: Path) -> Path:
     """Return *path*, or the current context directory when it names a context.
 
-    An existing directory is always itself. Otherwise a bare name that matches a
+    Anything that exists is always itself. Otherwise a bare name that matches a
     configured context (``kb``, ``work``, ``work.archive``, an extra context) resolves
     the way ``meridian context <name>`` does, never from the launch-time env var.
     Any other path is returned unchanged for normal filesystem lookup.
     """
-    if path.is_dir() or path.parent != Path("."):
+    if path.exists() or path.parent != Path("."):
         return path
 
-    from meridian.lib.ops.context import ContextInput, context_sync
+    from meridian.lib.ops.context import context_dir_sync
 
     name = path.name
     try:
-        value = context_sync(ContextInput()).resolve_name(name)
+        value = context_dir_sync(name)
     except KeyError:
         return path
     if not value:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, cast
 
@@ -10,11 +11,12 @@ from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
+    context_env_key,
     resolve_context_paths,
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time
-from meridian.lib.core.resolved_context import ResolvedContext, render_context_lines
+from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
@@ -46,6 +48,43 @@ class ContextEntryOutput(BaseModel):
     resolved: str
 
 
+def _display_path(env_key: str, path: Path) -> str:
+    """The `$VAR` name when that variable still holds this resolved path, else the path."""
+
+    value = path.as_posix()
+    return f"${env_key}" if os.environ.get(env_key) == value else value
+
+
+def render_context_lines(
+    resolved: ResolvedContextPaths,
+    *,
+    active_work_dir: Path | None,
+) -> list[str]:
+    """Render context paths for CLI display; a variable is named only if it matches."""
+
+    lines: list[str] = []
+    if active_work_dir is not None:
+        lines.append(f"work: {_display_path('MERIDIAN_ACTIVE_WORK_DIR', active_work_dir)}")
+    else:
+        lines.append("work: (no active work item — run 'meridian work start')")
+
+    if resolved.work_archive is not None:
+        lines.append(
+            f"  archive: {_display_path(context_env_key('work_archive'), resolved.work_archive)}"
+        )
+
+    if resolved.kb_root is not None:
+        lines.append(f"kb: {_display_path(context_env_key('kb'), resolved.kb_root)}")
+    else:
+        lines.append("kb: (unresolved — project state is not materialized)")
+
+    for name in sorted(resolved.extra):
+        path, _ = resolved.extra[name]
+        lines.append(f"{name}: {_display_path(context_env_key(name), path)}")
+
+    return lines
+
+
 class ContextOutput(BaseModel):
     """Output for context query operation."""
 
@@ -70,9 +109,6 @@ class ContextOutput(BaseModel):
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
     sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
-
-    def _available_names(self) -> tuple[str, ...]:
-        return ("work", "kb", "work.archive", *sorted(self.extra_contexts))
 
     def _to_resolved_paths(self) -> ResolvedContextPaths:
 
@@ -151,21 +187,6 @@ class ContextOutput(BaseModel):
                     lines.append(status_line)
 
         return "\n".join(lines)
-
-    def resolve_name(self, name: str) -> str:
-
-        normalized = name.strip().lower()
-        if normalized == "work":
-            return self.active_work_dir or ""
-        if normalized == "kb":
-            return self.kb_resolved or ""
-        if normalized in {"work.archive", "archive", "archive.work"}:
-            return self.work_archive_resolved or ""
-        if normalized in self.extra_contexts:
-            return self.extra_contexts[normalized].resolved
-        raise KeyError(
-            f"Unknown context '{name}'. Expected one of: {', '.join(self._available_names())}."
-        )
 
 
 class WorkCurrentInput(BaseModel):
@@ -552,6 +573,18 @@ def context_sync(input: ContextInput) -> ContextOutput:
         sync_status=sync_status,
         render_verbose=input.verbose,
     )
+
+
+def context_dir_sync(name: str) -> str:
+    """The directory *name* resolves to, or "" when it is unresolved; KeyError if unknown."""
+
+    authority = resolve_runtime_authority_for_read()
+    resolved = ResolvedContext.from_environment(
+        explicit_project_root=authority.project_root,
+        explicit_runtime_root=authority.runtime_root,
+    )
+    path = resolved.context_dir(name)
+    return path.as_posix() if path is not None else ""
 
 
 async def context(input: ContextInput) -> ContextOutput:

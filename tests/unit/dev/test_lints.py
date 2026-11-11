@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.dev.lints import (
+    CONTEXT_ENV_ALLOWLIST,
     RAW_WRITE_ALLOWLIST,
     chat_lock_path_violations,
     context_env_read_violations,
@@ -13,6 +14,7 @@ from meridian.dev.lints import (
     launch_path_violations,
     raw_write_violations,
     read_sources,
+    stale_context_env_allowlist,
     stale_raw_write_allowlist,
     unregistered_env_violations,
 )
@@ -77,7 +79,8 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         'b = env.get("MERIDIAN_ACTIVE_WORK_DIR", "")\n'
         'c = os.environ["MERIDIAN_CONTEXT_KB_DIR"]\n'
         'd = os.getenv("MERIDIAN_PROJECT_DIR")\n'
-        'e = overrides["MERIDIAN_ACTIVE_WORK_ID"] = 1\n',
+        'e = overrides["MERIDIAN_ACTIVE_WORK_ID"] = 1\n'
+        "f = os.environ.get(context_env_key(name))\n",
     )
     sources = read_sources(tmp_path)
 
@@ -122,7 +125,12 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         ("meridian/core/ctx_env.py", 1),
         ("meridian/core/ctx_env.py", 2),
         ("meridian/core/ctx_env.py", 3),
+        ("meridian/core/ctx_env.py", 5),
+        ("meridian/core/ctx_env.py", 6),
     ]
+    assert {v.path for v in stale_context_env_allowlist(sources)} == {
+        path for path, _ in CONTEXT_ENV_ALLOWLIST
+    }
     # None of the allowlisted writes exist here, so every entry is stale.
     assert {v.path for v in stale_raw_write_allowlist(sources)} == {
         path for path, _, _ in RAW_WRITE_ALLOWLIST

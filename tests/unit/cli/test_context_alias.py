@@ -26,6 +26,15 @@ def test_existing_directory_beats_alias(tmp_path: Path, monkeypatch: pytest.Monk
     assert resolve_context_alias(Path("./kb")) == Path("kb")
 
 
+def test_existing_file_is_never_looked_up_as_a_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _docs_repo(tmp_path, monkeypatch)
+    (root / "meridian.toml").write_text("[context.kb]\npath = 5\n")
+    (root / "note.md").write_text("# a\n")
+    assert resolve_context_alias(Path("note.md")) == Path("note.md")
+
+
 def test_alias_reads_current_config_not_launch_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
