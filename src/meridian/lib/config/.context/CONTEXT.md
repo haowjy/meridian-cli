@@ -7,5 +7,5 @@ section is empty. Workspace configuration is owned and merged separately.
 Claude resolves its spawn-watch option from the control root; native agent
 routing follows Mars-installed agents rather than project config.
 
-KB `concepts/config-precedence.md` describes the config layers and the distinction
-between project config and per-spawn overrides.
+KB `mars/model-resolution.md` ("Policies and fallback") explains how routing
+and per-launch policy layer over project config.

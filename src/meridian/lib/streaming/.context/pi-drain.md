@@ -22,5 +22,5 @@ There is no default total wall-clock ceiling across successive child waves;
 `--timeout` provides one when needed.
 
 The [delivery contract](../../../pi_runtime/.context/delivery-contract.md)
-describes the private disk records. KB `architecture/completion-drain.md`
+describes the private disk records. KB `spawns/completion-hold.md`
 describes the shared completion coordinator.

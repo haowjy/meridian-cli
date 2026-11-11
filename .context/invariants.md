@@ -13,7 +13,7 @@ read-only. The places Meridian does write into a native store are relocations
 (`lib/harness/pi_relocate.py`, `opencode_relocate.py`) and Claude's cross-project copy
 (`claude_sessions.py`, `ensure_claude_session_accessible`). Details:
 [lib/harness/AGENTS.md](../src/meridian/lib/harness/AGENTS.md) and the KB's
-`architecture/native-session-binding.md`.
+`state/native-session-binding.md`.
 
 **Checked by** per-harness identity and store tests in `tests/integration/harness/`
 (`test_recorded_source_store.py`, `test_codex_owned_identity.py`,
@@ -30,7 +30,7 @@ JSONL appends repair a torn last line first (`lib/state/jsonl.py`). Spawn direct
 are staged, then published. Lock files keep their inode. Recovery runs in the
 background on a primary launch (`cli/main.py`, `_maybe_schedule_background_repairs`).
 Details: [lib/state/AGENTS.md](../src/meridian/lib/state/AGENTS.md) and the KB's
-`architecture/state-system/durability-and-locking.md`.
+`state/durability-and-locking.md`.
 
 **Checked by** `tests/platform/test_atomic.py`,
 `tests/integration/state/test_jsonl_tail_repair.py`, `test_lock_gc.py` and
@@ -50,7 +50,7 @@ session events (`lib/state/session_fold.py` skips an unknown version with a warn
 work items (a newer version is shown and refused for mutation). The history index is
 rebuilt, never migrated. Deprecated config and flags warn for one minor release. The
 rules: [docs/releasing.md](../docs/releasing.md#compatibility-and-versioning); the
-reasons: the KB's `concepts/compatibility.md`.
+reasons: the KB's `state/compatibility.md`.
 
 **Checked by** `tests/unit/state/test_spawn_legacy_upgrade.py`,
 `tests/integration/state/test_work_store_safety.py`, and the older row shapes in
@@ -67,7 +67,7 @@ until its scope is recorded (`lib/platform/launch_gate.py`). A held launch lock 
 be claimed, so cancel signals the runner instead of starting or claiming the work
 (`lib/core/spawn_service.py`). A sandboxed caller can't launch a less-confined child
 (`lib/core/caller_boundary.py`). Details: `lib/core/.context/cancel.md`, the KB's
-`architecture/process-scope.md` and `architecture/sandbox-projection.md`.
+`launch/process-scope.md` and `permissions/sandbox-projection.md`.
 
 **Checked by** `tests/platform/test_launch_gate.py`, `test_launch_gate_review.py` and
 `test_posix_scope.py` and `test_process_scope_fallback.py`.

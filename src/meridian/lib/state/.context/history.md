@@ -34,4 +34,4 @@ at append, not replay: an older accepted restore must remain readable. A live
 binding whose native transcript is missing does not fall back to a retained
 snapshot. Imported or restored records can read their own sealed snapshot.
 
-KB `architecture/state-system/portable-history.md` covers the full design.
+KB `state/portable-history.md` covers the full design.

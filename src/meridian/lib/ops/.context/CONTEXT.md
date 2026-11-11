@@ -11,4 +11,4 @@ Only offer a runnable relocate command when both endpoints are known.
 
 A chat transcript uses its recorded native binding. A missing binding or source
 is unavailable, not permission to substitute a different transcript or runner
-output. KB `architecture/native-session-binding.md` explains the identity choice.
+output. KB `state/native-session-binding.md` explains the identity choice.
