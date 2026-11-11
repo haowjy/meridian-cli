@@ -6,6 +6,9 @@ come from Mars, not a second table. A project-wide rule (`[settings.tools]`) is 
 `origin == "project"`: every compile spells it like any other rule, and a rule Mars attached a
 `note` to is at best `partial`, the note appended to whatever the compile already said.
 Every harness applies one precedence: of the rules that match a call, the strictest decides.
+A compile never decides that itself: it asks the helpers in `lib/tools.py` (`unscoped_action`,
+`could_refuse`, `callable_tools`, `removed_tools`), described in `lib/safety/.context`. Coverage
+is the rule's `covered_by`, not a missing `native`.
 Meridian's command grants (`meridian spawn done` and the rest) are decided before any rule on
 Pi, Codex and OpenCode; on Claude a deny or ask that matches one still wins, and the report
 says so. Harness limitations can make a grant partial or unsupported.

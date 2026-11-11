@@ -13,7 +13,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
     command_grants,
     extension_rules,
     needs_extension,
-    strictest,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
@@ -26,7 +25,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import ToolRule, callable_tools, removed_tools, unscoped_action
 
 # Pi's tool-selection flags and their short forms; under a bound policy the compile owns them.
 _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
@@ -53,33 +52,20 @@ class PiPermissions:
 
 def _compile_flags(
     policy: PermissionPolicy,
-    rules: tuple[ExtensionRule, ...],
     meridian_commands: tuple[PlatformCommand, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
-    named = tuple(
-        rule for rule in policy.rules if rule.native_status == "known" and not rule.is_wildcard
-    )
     # A plain deny covers every scoped rule of its tool, so it removes the tool, except bash
     # while Meridian's commands need it: the extension then refuses all but those.
     meridian_tools = frozenset({"bash"} if meridian_commands else ())
-
-    exclude = tuple(
-        dedupe_nonempty(
-            tool
-            for rule in named
-            if rule.action == "deny" and not rule.is_scoped
-            for tool in rule.tools
-            if tool not in meridian_tools
-        )
-    )
-    callable_tools = tuple(tool for tool in policy.allowed_tools if tool not in exclude)
-    wildcard = strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
+    exclude = tuple(tool for tool in removed_tools(policy.rules) if tool not in meridian_tools)
+    keep = callable_tools(policy.rules)
+    wildcard = unscoped_action(policy.rules, "*")
     if wildcard == "deny":
-        allowed = tuple(dedupe_nonempty((*callable_tools, *meridian_tools)))
+        allowed = tuple(dedupe_nonempty((*keep, *meridian_tools)))
         return allowed, exclude
     if wildcard in {"allow", "ask"}:
         return ("*",), exclude
-    additions = tuple(f"+{tool}" for tool in callable_tools)
+    additions = tuple(f"+{tool}" for tool in keep)
     return (additions or None), exclude
 
 
@@ -208,7 +194,7 @@ def compile_pi_permissions(
     policy = spec.permission_policy
     rules = extension_rules(policy.rules)
     meridian_commands = command_grants(policy)
-    tools, exclude_tools = _compile_flags(policy, rules, meridian_commands)
+    tools, exclude_tools = _compile_flags(policy, meridian_commands)
     extension_policy = (
         ExtensionPolicy(
             rules=rules,

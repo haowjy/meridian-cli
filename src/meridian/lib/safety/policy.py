@@ -219,21 +219,6 @@ class PermissionPolicy(BaseModel):
 
         return unscoped_action(self.rules, "*") == "deny"
 
-    @property
-    def allowed_tools(self) -> tuple[str, ...]:
-        """The harness tools some rule leaves callable (``allow``, ``ask``), unscoped.
-
-        Policy order, deduplicated, from each rule's ``tools``. Under ``is_allowlist`` these
-        are the tools that remain; ``ask`` stays on the list because the harness, not the
-        rule, decides that call.
-        """
-
-        return tuple(
-            dict.fromkeys(
-                tool for rule in self.rules if rule.action != "deny" for tool in rule.tools
-            )
-        )
-
 
 type ReportStatus = Literal["native", "partial", "unsupported", "platform"]
 
@@ -281,25 +266,14 @@ def platform_element(rule: PlatformRule) -> str:
     return "platform: deny built-in agents"
 
 
-def _is_covered(rule: ToolRule) -> bool:
-    """Whether Mars kept the rule with a note but no native names: a stricter rule covers it."""
-
-    return (
-        rule.native_status == "known"
-        and not rule.native
-        and not rule.is_wildcard
-        and bool(rule.note)
-    )
-
-
 def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
     """What the report says about a rule the compile left unreported."""
 
     element = rule_element(rule)
     satisfied_status: ReportStatus = "platform" if rule.origin == PLATFORM_ORIGIN else "native"
-    if _is_covered(rule):
-        assert rule.note is not None
-        return ReportLine(element, satisfied_status, rule.note)
+    if rule.covered_by is not None:
+        covering = f"{rule.covered_by.action} {rule.covered_by.key} covers it"
+        return ReportLine(element, satisfied_status, rule.note or covering)
     if rule.native_status == "unknown":
         return ReportLine(
             element,
@@ -397,7 +371,7 @@ def complete_report(
     element it left out gets the default line: a rule Mars could not name for ``harness`` is
     a gap, a deny of a tool ``harness`` lacks is satisfied, and anything else is
     ``unsupported``. A rule Mars attached a note to is at best ``partial``, with the note. A rule
-    Mars covered (a stricter rule decides every call it names, so it has no native names) is
+    Mars covered (its ``covered_by`` names the stricter rule that decides every call it names) is
     reported as Mars noted it, whatever the compile said. A deny or ask of shell commands is
     ``partial`` when ``grants_first`` (the harness allows Meridian's command grants before it reads
     a rule) and a grant lies in its scope. Lines
@@ -435,7 +409,7 @@ def complete_report(
     for default in defaults:
         line = by_element.get(default.element, default)
         rule = rules_by_element.get(default.element)
-        if rule is not None and _is_covered(rule):
+        if rule is not None and rule.covered_by is not None:
             line = default
         elif rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)

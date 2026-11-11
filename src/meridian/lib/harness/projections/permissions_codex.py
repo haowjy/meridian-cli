@@ -43,7 +43,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, STRICTNESS, ToolAction, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule, could_refuse, unscoped_action
 
 _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
@@ -102,7 +102,12 @@ class CodexPermissions:
     tool_hook: ExtensionPolicy | None
 
 
-_SWITCH_BY_CAPABILITY = {"web": "web_search", "web_search": "web_search", "image": "view_image"}
+_SWITCH_CAPABILITIES = {"web_search": ("web", "web_search"), "view_image": ("image",)}
+_SWITCH_BY_CAPABILITY = {
+    capability: switch
+    for switch, capabilities in _SWITCH_CAPABILITIES.items()
+    for capability in capabilities
+}
 
 
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
@@ -132,16 +137,10 @@ def _switch_values(policy: PermissionPolicy) -> dict[str, bool | None]:
     # Under an allowlist, search and image viewing are off unless a rule allows them. The
     # shell stays on because Codex reads files through it.
     off = False if policy.is_allowlist else None
-    values: dict[str, bool | None] = {"web_search": off, "view_image": off}
-    decisive: dict[str, ToolAction] = {}
-    for rule in policy.rules:
-        switch = _SWITCH_BY_CAPABILITY.get(rule.capability or "")
-        if switch is None or rule.pattern is not None:
-            continue
-        if switch not in decisive or STRICTNESS[rule.action] > STRICTNESS[decisive[switch]]:
-            decisive[switch] = rule.action
-    for switch, action in decisive.items():
-        values[switch] = action == "allow"
+    values: dict[str, bool | None] = {}
+    for switch, capabilities in _SWITCH_CAPABILITIES.items():
+        action = unscoped_action(policy.rules, *capabilities)
+        values[switch] = off if action is None else action == "allow"
     return values
 
 
@@ -225,9 +224,9 @@ def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
     covers it is.
     """
 
-    carried = [rule for rule in extension_rules(policy.rules) if _hook_carries(rule)]
-    if all(rule.action == "allow" for rule in carried):
+    if not could_refuse(policy.rules, "bash"):
         return None
+    carried = [rule for rule in extension_rules(policy.rules) if _hook_carries(rule)]
     commands = command_grants(policy)
     rules: list[ExtensionRule] = []
     for rule in carried:

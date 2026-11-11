@@ -6,13 +6,11 @@ fail-closed decision; each harness owns only how the policy reaches its enforcer
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand
-from meridian.lib.tools import STRICTNESS, ToolAction, ToolRule, split_native
+from meridian.lib.tools import ToolAction, ToolRule, split_native, strictest
 
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
 # so a nested launch never inherits it (see ``child=False`` in env_registry).
@@ -88,12 +86,6 @@ def command_grants(policy: PermissionPolicy) -> tuple[PlatformCommand, ...]:
     )
 
 
-def strictest(rules: Iterable[ExtensionRule]) -> ToolAction | None:
-    """The strictest action among ``rules``, as the extension ranks equally specific rules."""
-
-    return max((rule.action for rule in rules), key=STRICTNESS.__getitem__, default=None)
-
-
 def bash_fails_closed(rules: tuple[ExtensionRule, ...]) -> bool:
     """Whether a bash command the handler cannot split must be refused.
 
@@ -108,7 +100,9 @@ def bash_fails_closed(rules: tuple[ExtensionRule, ...]) -> bool:
     if any(rule.pattern is not None and rule.action == "ask" for rule in shell):
         return True
     for tool in ("bash", "*"):
-        unmatched = strictest(rule for rule in shell if rule.tool == tool and rule.pattern is None)
+        unmatched = strictest(
+            rule.action for rule in shell if rule.tool == tool and rule.pattern is None
+        )
         if unmatched is not None:
             return unmatched != "allow"
     return False
@@ -145,5 +139,4 @@ __all__ = [
     "command_grants",
     "extension_rules",
     "needs_extension",
-    "strictest",
 ]

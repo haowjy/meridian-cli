@@ -40,7 +40,14 @@ from meridian.lib.safety.policy import (
     rule_element,
     unscoped_action,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
+from meridian.lib.tools import (
+    PLATFORM_ORIGIN,
+    ToolAction,
+    ToolRule,
+    callable_tools,
+    split_native,
+    strictest,
+)
 
 type PermissionMode = Literal["acceptEdits", "auto", "manual", "dontAsk"]
 
@@ -302,7 +309,10 @@ def _compile_channels(policy: PermissionPolicy, passthrough: _Passthrough) -> _C
     disallowed: list[str] = []
     for rule, native in plain:
         if native in meridian_bases and completion_gates_free:
-            gates[(rule.capability, native)] = _Gate(rule.capability, native, rule.action)
+            key = (rule.capability, native)
+            earlier = gates.get(key)
+            action = strictest((rule.action, earlier.action if earlier else rule.action))
+            gates[key] = _Gate(rule.capability, native, action or rule.action)
         elif rule.action == "deny":
             disallowed.append(native)
         else:
@@ -341,7 +351,7 @@ def _available_tools(policy: PermissionPolicy) -> tuple[str, ...]:
     if not policy.is_allowlist:
         return ()
     meridian_tools = (split_native(native)[0] for native in _meridian_tools(policy))
-    return tuple(dedupe_nonempty((*policy.allowed_tools, *meridian_tools)))
+    return tuple(dedupe_nonempty((*callable_tools(policy.rules), *meridian_tools)))
 
 
 def _outside_sandbox_commands(policy: PermissionPolicy) -> tuple[str, ...]:
@@ -493,7 +503,7 @@ def _tool_rule_line(
             if "Skill" not in permissions.available_tools:
                 note += "; Skill is not in --tools, so on-demand skills cannot load"
             note += "; MCP tools stay listed and dontAsk refuses those not allowed"
-            if "Bash" in permissions.available_tools and "Bash" not in policy.allowed_tools:
+            if "Bash" in permissions.available_tools and "Bash" not in callable_tools(policy.rules):
                 note += (
                     "; Bash is listed only for Meridian's commands, and dontAsk also lets it run "
                     "calls Claude classifies as read-only (echo, cat, ls, grep and the like)"
@@ -600,7 +610,7 @@ def _meridian_commands_line(
         ]
         return ReportLine(platform_element(platform), "partial", "; ".join(problems))
     note = "--settings permissions.allow " + ",".join(emitted)
-    if permissions.restrict_tools and "Bash" not in policy.allowed_tools:
+    if permissions.restrict_tools and "Bash" not in callable_tools(policy.rules):
         return ReportLine(
             platform_element(platform),
             "partial",
