@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.10] - 2026-11-11
+
+### Added
+- Claude interactive sessions can keep the prompt cache warm while you are away. `/meridian-idle keepwarm on` sends up to three short prompts, the first when the cache warning fires; a reply of exactly `stop-waiting` ends them for that absence. During a ping the model gets read-only tools only. Off until you turn it on, and off again after `/clear`.
+
+### Changed
+- `idle.warn_minutes` defaults to 10 (was 15), for every harness. The cache warning now arrives 10 minutes before expiry: 50 minutes after the turn on a 1-hour cache. Set `idle.warn_minutes = 15` to keep the old lead.
+
 ## [0.20.9] - 2026-11-11
 
 ### Upgrade notes
