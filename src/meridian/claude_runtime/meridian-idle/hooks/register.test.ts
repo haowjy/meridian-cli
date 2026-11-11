@@ -27,7 +27,7 @@ function host(): Host {
     box: '',
     store: {},
     reply: {
-      config: { enabled: true },
+      config: { enabled: true, warn_minutes: 10 },
       arm: {
         stretch: 1,
         anchor: 1,
@@ -318,12 +318,12 @@ const IDLE_COMMAND = { command: 'meridian-idle', origin: COMPOSER, presentation:
 const LEAD = 20_000
 
 /** A fake core: the first arm of a stretch places the warning LEAD ahead, later arms of it place nothing. */
-function keepwarmHost(): Host {
+function keepwarmHost(lead = LEAD): Host {
   const h = host()
   let armed = 0
   h.reply.arm = () => {
     armed += 1
-    return armed === 1 ? { stretch: 1, anchor: armed, warn_at: START + 2000 + LEAD } : { stretch: 1, anchor: armed }
+    return armed === 1 ? { stretch: 1, anchor: armed, warn_at: START + 2000 + lead } : { stretch: 1, anchor: armed }
   }
   return h
 }
@@ -420,6 +420,22 @@ test('a user return cancels a ping that waits for the box and the chained ping',
   h.box = ''
   await clock.advance(60_000)
   expect(h.submitted).toEqual([]) // the user came back while the ping waited
+})
+
+test('a ping held by a draft gives up before the cache expires, however long the lead', async ($, on) => {
+  const MINUTE = 60_000
+  const h = keepwarmHost(50 * MINUTE) // a 1-hour cache: the warning comes 50 minutes after the turn, 10 before expiry
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'a draft'
+  await clock.advance(50 * MINUTE + 5 * MINUTE)
+  expect(h.submitted).toEqual([])
+  await clock.advance(5 * MINUTE) // minute 60: expired
+  h.box = '' // the user clears the box at minute 70
+  await clock.advance(10 * MINUTE)
+  expect(h.submitted).toEqual([])
+  expect(pingRecords(h)).toEqual([])
 })
 
 test('a user return after ping 1 cancels the chained ping', async ($, on) => {

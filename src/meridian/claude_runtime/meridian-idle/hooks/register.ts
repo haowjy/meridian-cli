@@ -40,8 +40,8 @@ const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
 /** A chained ping this late means the machine slept and the cache may be cold: skip it. */
 const LATE_PING_MS = 60_000
-/** How long a ping waits for a quiet box when core's lead is unknown. */
-const HOLD_FALLBACK_MS = 9 * 60_000
+/** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
+const EXPIRY_MARGIN_MS = 60_000
 const KEEPWARM_LOG = 'keepwarm'
 /** `$.store` key holding `{ session, text }`: the last non-ping main-loop answer, so a resume or reload keeps the notice's excerpt. */
 const LAST_ANSWER = 'answer'
@@ -80,6 +80,8 @@ type State = {
   inert: boolean
   /** Memoised `idle config --interactive` verdict. */
   gate: Promise<boolean> | undefined
+  /** `warn_minutes` from the `idle config` reply, in ms: the time left on the cache when the warning fires. */
+  warnMs: number | undefined
   armed: Armed | undefined
   timers: Timer[]
   /** Bumped by every user return. Async work compares it to detect that the user came back meanwhile. */
@@ -104,6 +106,7 @@ function newState(): State {
   return {
     inert: false,
     gate: undefined,
+    warnMs: undefined,
     armed: undefined,
     timers: [],
     epoch: 0,
@@ -201,6 +204,8 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
     note($, s, `inert: idle disabled (${typeof reply.reason === 'string' ? reply.reason : 'no reason given'})`)
     return false
   }
+  const warnMinutes = asNumber(reply.warn_minutes)
+  s.warnMs = warnMinutes === undefined ? undefined : warnMinutes * 60_000
   note($, s, 'active: idle enabled')
   return true
 }
@@ -455,9 +460,14 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
   try {
     const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
     if (!pingsOpen(kw)) return
-    const limit = kw.lead > LATE_PING_MS ? kw.lead - LATE_PING_MS : HOLD_FALLBACK_MS
+    // The warning and each chained timer fire `warn_minutes` before the cache expires; that is all the time there is.
+    const limit = s.warnMs === undefined ? 0 : s.warnMs - EXPIRY_MARGIN_MS
+    if (limit <= 0) {
+      note($, s, 'ping skipped: no usable warn_minutes from core')
+      return
+    }
     if (!(await holdForUser($, s, epoch, limit))) {
-      note($, s, 'ping skipped: user is at the keyboard')
+      note($, s, 'ping skipped: user is at the keyboard until the cache would expire')
       return
     }
     const index = await enqueue(s, () => reserveSlot($, s, armed, epoch))

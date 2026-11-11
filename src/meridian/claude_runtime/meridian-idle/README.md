@@ -54,7 +54,9 @@ because the cache may be cold. The count is kept per core stretch, in
 Pings send no notification.
 
 - **Quiet box.** A ping is submitted only after the prompt box has been empty
-  and untouched for 10 s. It gives up when about one lead has passed.
+  and untouched for 10 s. It gives up 1 minute before the cache would expire:
+  `warn_minutes` from `idle config` after the warning or chained timer fired,
+  not the lead. A skipped ping spends no slot.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that
