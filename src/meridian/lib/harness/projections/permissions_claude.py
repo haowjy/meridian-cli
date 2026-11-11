@@ -1,11 +1,12 @@
 """Compile Meridian's permission policy to Claude's native launch controls.
 
-Claude checks deny rules, then ask rules, then allow rules, whatever their specificity, so a
-broad deny or ask shadows every narrower allow. A plain deny or ask beside scoped allows of
-the same tool is therefore
-gated by the permission mode instead of emitted: a mode in which unmatched calls need
-approval, which a headless spawn cannot give. Every report line is read back from the emitted
-channels, so a rule that order shadows, or that the compile left out, says so.
+Claude checks deny rules, then ask rules, then allow rules, whatever their specificity: its
+order is Meridian's, so rules are emitted as written and a call's strictest match wins. One
+exception is made: a plain ``Bash`` deny or ask would also block Meridian's completion
+grants, so where the permission mode can stand in for it (``approval: default`` and
+``confirm``) the rule becomes a gate, and the gated tool keeps no allow but the grants.
+Every report line is read back from the emitted channels, so a rule that order shadows, or
+that the compile left out, says so.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from meridian.lib.safety.policy import (
     rule_element,
     unscoped_action,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolAction, ToolRule, split_native
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule, split_native
 
 type PermissionMode = Literal["acceptEdits", "auto", "manual", "dontAsk"]
 
@@ -49,9 +50,6 @@ _BUILTIN_AGENT_PATTERNS: tuple[str, ...] = (
     "General-purpose",
     "general-purpose",
 )
-# acceptEdits approves unmatched calls of these on its own (edits, and file commands such as
-# touch, rm and redirects inside the working directories), so it cannot gate them.
-_ACCEPT_EDITS_CAPABILITIES = frozenset(("bash", "edit", "write", "notebook"))
 # Claude runs a read-only class of these without asking in every permission mode.
 _READ_ONLY_CLASS_CAPABILITIES = frozenset(("bash", "read", "glob", "grep", "list"))
 _ALLOWED_TOOL_FLAGS = frozenset(("--allowedTools", "--allowed-tools"))
@@ -108,16 +106,6 @@ class ClaudePermissions:
     disallowed_tools: tuple[str, ...] = ()
     settings: ClaudeSettings = ClaudeSettings()
     passthrough_args: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class _Effective:
-    rule: ToolRule
-    action: ToolAction
-
-    @property
-    def overridden(self) -> bool:
-        return self.action != self.rule.action
 
 
 @dataclass(frozen=True)
@@ -199,38 +187,6 @@ def _projected_natives(policy: PermissionPolicy, rule: ToolRule) -> tuple[str, .
         # when explicitly enabled while still denying Mars's separate messaging/listing tools.
         return tuple(native for native in rule.native if split_native(native)[0] != "Agent")
     return rule.native
-
-
-def _effective_rules(policy: PermissionPolicy) -> tuple[_Effective, ...]:
-    """Apply the platform rules that override profile rules.
-
-    A platform deny holds whatever the profile says, scoped allows included, so every profile
-    rule of its capability becomes a deny; otherwise Claude would read the platform's plain
-    deny beside a profile's scoped allow as an allowlist and gate it. The one exception is
-    ``agent`` with built-in agents allowed: generic ``Agent`` cannot be denied without them,
-    so the platform deny leaves it out and the profile's agent rules stand.
-    """
-
-    deny_builtins = _platform_rule(policy, "builtin-agents") is not None
-    platform_denied = {
-        rule.capability
-        for rule in policy.rules
-        if rule.origin == PLATFORM_ORIGIN and (rule.capability != "agent" or deny_builtins)
-    }
-    effective: list[_Effective] = []
-    for rule in policy.rules:
-        action = rule.action
-        if rule.origin != PLATFORM_ORIGIN and (
-            rule.capability in platform_denied
-            or (
-                rule.capability == "agent"
-                and rule.pattern in _BUILTIN_AGENT_PATTERNS
-                and deny_builtins
-            )
-        ):
-            action = "deny"
-        effective.append(_Effective(rule, action))
-    return tuple(effective)
 
 
 def _take_variadic_tool_values(args: tuple[str, ...], start: int) -> tuple[list[str], int]:
@@ -318,66 +274,36 @@ def _filter_passthrough_allows(
     return tuple(dedupe_nonempty(kept)), tuple(dedupe_nonempty(dropped))
 
 
-def _compile_channels(
-    policy: PermissionPolicy,
-    effective: tuple[_Effective, ...],
-    passthrough: _Passthrough,
-) -> _Channels:
+def _compile_channels(policy: PermissionPolicy, passthrough: _Passthrough) -> _Channels:
     meridian_tools = _meridian_tools(policy)
-    # A plain rule shadows a scoped allow when Claude checks it for the calls the allow lets
-    # through: it names a tool the allow concerns, or the permission the allow is spelled
-    # with. A scoped write allow is Edit(src/*), so both a plain Write and a plain Edit do.
-    profile_scoped = {
-        name
-        for entry in effective
-        if entry.action == "allow" and entry.rule.native_status == "known"
-        for base, scope in map(split_native, entry.rule.native)
-        if scope is not None
-        for name in (base, *entry.rule.tools)
-    }
-
     allow: list[str] = []
     deny: list[str] = []
     ask: list[str] = []
-    plain: list[tuple[_Effective, str]] = []
-    for entry in effective:
-        rule = entry.rule
+    plain: list[tuple[ToolRule, str]] = []
+    for rule in policy.rules:
         if rule.is_wildcard or rule.native_status != "known":
             continue
         for native in _projected_natives(policy, rule):
-            if entry.action == "allow":
+            if rule.action == "allow":
                 allow.append(native)
             elif split_native(native)[1] is not None:
-                (deny if entry.action == "deny" else ask).append(native)
+                (deny if rule.action == "deny" else ask).append(native)
             else:
-                plain.append((entry, native))
+                plain.append((rule, native))
 
-    # A plain deny or ask beside scoped allows of the same tool would shadow them. Platform
-    # denies are not gated: `_effective_rules` already turned their capability's profile rules
-    # into denies, so none of them is a profile scoped allow. A project deny is not gated
-    # either: Mars set aside the allows it covers by key, and a scoped allow it could not see
-    # (Claude spells a grep or glob allow as Read(path)) must not turn the deny into a mode.
-    gates: dict[tuple[str | None, str], _Gate] = {
-        (entry.rule.capability, native): _Gate(entry.rule.capability, native, entry.action)
-        for entry, native in plain
-        if native in profile_scoped
-        and not (entry.rule.origin == PROJECT_ORIGIN and entry.action == "deny")
-    }
-    # The completion allows alone never change the profile's mode: they gate a plain rule
-    # only where the mode already makes unmatched calls ask. Elsewhere the plain rule
-    # stays and shadows them, and the completion line says so.
-    skip_prompts, profile_mode = _policy_mode(policy, tuple(gates.values()))
+    # A plain deny or ask on a tool Meridian grants commands for would shadow the grants, which
+    # Claude checks after it. Where the mode already makes unmatched calls ask or refuses
+    # them, the mode stands in for the rule; elsewhere the rule stays and shadows the grants,
+    # and the grant line says so.
+    skip_prompts, profile_mode = _policy_mode(policy, ())
     completion_gates_free = not skip_prompts and profile_mode in (None, "manual", "dontAsk")
     meridian_bases = {split_native(native)[0] for native in meridian_tools}
+    gates: dict[tuple[str | None, str], _Gate] = {}
     disallowed: list[str] = []
-    for entry, native in plain:
-        if (entry.rule.capability, native) in gates:
-            continue
+    for rule, native in plain:
         if native in meridian_bases and completion_gates_free:
-            gates[(entry.rule.capability, native)] = _Gate(
-                entry.rule.capability, native, entry.action
-            )
-        elif entry.action == "deny":
+            gates[(rule.capability, native)] = _Gate(rule.capability, native, rule.action)
+        elif rule.action == "deny":
             disallowed.append(native)
         else:
             ask.append(native)
@@ -386,10 +312,12 @@ def _compile_channels(
         disallowed.extend(f"Agent({pattern})" for pattern in _BUILTIN_AGENT_PATTERNS)
 
     gate_tuple = tuple(gates.values())
+    gated_bases = frozenset(gate.base for gate in gate_tuple)
+    # The mode refuses a gated tool's unmatched calls, so an allow for the tool would open
+    # them: only the grants stay.
+    allow = [native for native in allow if split_native(native)[0] not in gated_bases]
     allow.extend(meridian_tools)
-    kept, _ = _filter_passthrough_allows(
-        policy, passthrough, frozenset(gate.base for gate in gate_tuple)
-    )
+    kept, _ = _filter_passthrough_allows(policy, passthrough, gated_bases)
     allow.extend(kept)
     disallowed.extend(passthrough.disallowed)
     denied = tuple(dedupe_nonempty(disallowed))
@@ -455,23 +383,6 @@ def _approval_mode(policy: PermissionPolicy) -> tuple[bool, PermissionMode | Non
     return False, None
 
 
-def _gate_mode(policy: PermissionPolicy, gates: tuple[_Gate, ...]) -> PermissionMode | None:
-    """The mode that keeps every gate authoritative without a whole-policy allowlist.
-
-    dontAsk would refuse every other tool too. acceptEdits keeps edits running, so it is used
-    when ``approval`` would approve them and no gated capability is one it approves itself.
-    """
-
-    if not gates:
-        return None
-    if policy.approval in ("auto", "never", "yolo") and all(
-        gate.capability is not None and gate.capability not in _ACCEPT_EDITS_CAPABILITIES
-        for gate in gates
-    ):
-        return "acceptEdits"
-    return "manual"
-
-
 def _policy_mode(
     policy: PermissionPolicy, gates: tuple[_Gate, ...]
 ) -> tuple[bool, PermissionMode | None]:
@@ -479,7 +390,8 @@ def _policy_mode(
 
     if policy.is_allowlist:
         return False, "dontAsk"
-    mode = _gate_mode(policy, gates)
+    # Gated unmatched calls need approval; acceptEdits would run file commands.
+    mode: PermissionMode | None = "manual" if gates else None
     if mode is None and policy.approval == "auto" and unscoped_action(policy.rules, "*") == "ask":
         # An unscoped ``*: ask`` decides every unmatched call; auto's classifier would.
         mode = "acceptEdits"
@@ -563,18 +475,15 @@ def _gate_is_exact(gate: _Gate, permissions: ClaudePermissions, *, interactive: 
 
 def _tool_rule_line(
     policy: PermissionPolicy,
-    entry: _Effective,
+    rule: ToolRule,
     permissions: ClaudePermissions,
     channels: _Channels,
     *,
     interactive: bool,
 ) -> ReportLine | None:
-    rule = entry.rule
     if rule.native_status != "known":
         return None
     element = rule_element(rule)
-    if entry.overridden:
-        return ReportLine(element, "platform", f"overridden to {entry.action} by a platform rule")
     if rule.is_wildcard:
         if rule.action == "deny" and permissions.restrict_tools:
             note = f"--tools {','.join(permissions.available_tools)} and dontAsk"
@@ -589,14 +498,14 @@ def _tool_rule_line(
     placed: list[tuple[str, str]] = []
     notes: list[str] = []
     gates = {gate.base: gate for gate in channels.gates}
-    gated = [native for native in rule.native if entry.action != "allow" and native in gates]
+    gated = [native for native in rule.native if rule.action != "allow" and native in gates]
     partial = not all(
         _gate_is_exact(gates[native], permissions, interactive=interactive) for native in gated
     )
     if gated:
         notes.append(
-            f"no plain {', '.join(gated)} {entry.action} rule, since Claude checks it before "
-            "the scoped allows; "
+            f"no plain {', '.join(gated)} {rule.action} rule, since Claude checks it before "
+            "Meridian's command grants, and no other allow for the tool; "
             + _gate_note(
                 permissions, capability=rule.capability, bases=gated, interactive=interactive
             )
@@ -613,7 +522,7 @@ def _tool_rule_line(
             partial = True
             continue
         channel = _channel_of(native, permissions)
-        blocker = _shadow(native, permissions) if entry.action == "allow" else None
+        blocker = _shadow(native, permissions) if rule.action == "allow" else None
         if channel is None:
             notes.append(
                 f"{native} omitted: Claude checks {blocker} first"
@@ -626,13 +535,13 @@ def _tool_rule_line(
         if blocker is not None:
             notes.append(f"Claude checks {blocker} first, so {native} never applies")
             partial = True
-        if entry.action == "ask" and permissions.permission_mode == "dontAsk" and interactive:
+        if rule.action == "ask" and permissions.permission_mode == "dontAsk" and interactive:
             notes.append("dontAsk refuses it instead of asking the human")
             partial = True
     if rule.capability is None:
         notes.append("emitted as an older build wrote it")
         partial = True
-    elif rule.native_tools is None and entry.action != "deny" and rule.is_scoped:
+    elif rule.native_tools is None and rule.action != "deny" and rule.is_scoped:
         # Claude scopes some tools through another's permission (Write through Edit(path)),
         # so the fallback can name the wrong tool for --tools and gating.
         notes.append(
@@ -878,9 +787,8 @@ def compile_claude_permissions(
     """Compile one spec without deriving a Claude name from a capability."""
 
     policy = spec.permission_policy
-    effective = _effective_rules(policy)
     passthrough = _read_passthrough(spec.extra_args)
-    channels = _compile_channels(policy, effective, passthrough)
+    channels = _compile_channels(policy, passthrough)
     network = project_claude_network(policy, native_config=spec.native_config)
     policy_mode = _policy_mode(policy, channels.gates)
     sandbox = _compile_sandbox(policy, channels, policy_mode[1], network.native)
@@ -907,8 +815,8 @@ def compile_claude_permissions(
     interactive = spec.interactive
     lines = [
         line
-        for entry in effective
-        if (line := _tool_rule_line(policy, entry, permissions, channels, interactive=interactive))
+        for rule in policy.rules
+        if (line := _tool_rule_line(policy, rule, permissions, channels, interactive=interactive))
         is not None
     ]
     lines.extend(_platform_lines(policy, permissions))
