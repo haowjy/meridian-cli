@@ -1,11 +1,24 @@
 import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
+import {
+  FRESH,
+  PING_CAP,
+  appended,
+  excerpt,
+  isStop,
+  pingText,
+  recordLines,
+  type Keepwarm,
+  type Outcome,
+} from './keepwarm'
+
 // Meridian's Claude idle sensor.
 //
 // This module senses three things and hands every decision to `meridian idle`:
 //   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
+//   keepwarm  the cache warning fired and the user opted in -> up to three prompts that keep the cache warm (see keepwarm.ts)
 // Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
@@ -22,6 +35,16 @@ const EXCERPT_CHAR_CAP = 4_000
 // JSON's longest escape, well clear of Linux's 128 KiB per-argument limit.
 const BACKGROUND_TASK_LIMIT = 16
 const BACKGROUND_COMMAND_CHAR_CAP = 512
+/** The prompt box must be empty and untouched this long before a ping starts a turn under the user. */
+const QUIET_MS = 10_000
+const HOLD_POLL_MS = 1_000
+/** A chained ping this late means the machine slept and the cache may be cold: skip it. */
+const LATE_PING_MS = 60_000
+/** How long a ping waits for a quiet box when core's lead is unknown. */
+const HOLD_FALLBACK_MS = 9 * 60_000
+const KEEPWARM_LOG = 'keepwarm'
+// The host lists the state a module touches, so the reference must be literal in this file.
+const IDLE_KEEPWARM = { plugin: 'meridian-idle', key: 'keepwarm' } as const
 
 type Json = Record<string, unknown>
 type BackgroundTask = NonNullable<ClassicHookInputs['Stop']['background_tasks']>[number]
@@ -34,6 +57,20 @@ type Armed = {
   at: Partial<Record<Stage, number>>
   /** What core answered when each stage's timer fired, for `/meridian-idle`. */
   fired: Partial<Record<Stage, string>>
+}
+
+/** The ping that was submitted and has not completed. Only one exists at a time. */
+type Ping = {
+  nonce: string
+  index: number
+  session: string
+  stretch: number
+  /** `submitted`: no main-loop turn carrying the nonce has started yet. `running`: that turn is in flight (`turnId`). */
+  phase: 'submitted' | 'running'
+  turnId: string | undefined
+  denied: string[]
+  /** The user typed during the ping turn: tools are theirs to steer again. */
+  userCame: boolean
 }
 
 type State = {
@@ -54,6 +91,11 @@ type State = {
   lastUserText: string | undefined
   /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
   stopTasks: BackgroundTask[] | undefined
+  ping: Ping | undefined
+  /** The last main-loop answer that was not a ping's: a ping turn's arm sends it, so the your-turn notice never reads the ping's reply. */
+  lastAnswer: string | undefined
+  /** When the prompt box was last touched, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
+  lastChange: Promise<number>
 }
 
 function newState(): State {
@@ -68,6 +110,9 @@ function newState(): State {
     log: [],
     lastUserText: undefined,
     stopTasks: undefined,
+    ping: undefined,
+    lastAnswer: undefined,
+    lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
   }
 }
 
@@ -280,6 +325,8 @@ async function armTask(
     if (current !== undefined && current.session === session && current.stretch === stretch && current.anchor === anchor) {
       return // same stretch and anchor: core absorbed this arm (a duplicate turn); keep our timers
     }
+    const warnAt = asNumber(reply.warn_at)
+    await trackStretch($, session, stretch, warnAt === undefined ? undefined : warnAt - (await $.clock.now()))
     if (typeof reply.push_held === 'string') note($, s, `push held: ${reply.push_held}`)
     const at = readSchedule(reply)
     if (Object.keys(at).length === 0 && typeof reply.reason === 'string') {
@@ -287,10 +334,170 @@ async function armTask(
       await recover($, s, session, epoch)
       return
     }
-    await adopt($, s, { session, stretch, anchor, at, fired: {} }, epoch)
+    const armed: Armed = { session, stretch, anchor, at, fired: {} }
+    await adopt($, s, armed, epoch)
+    await schedulePing($, s, armed, epoch)
   } catch (err) {
     note($, s, `arm error: ${describeError(err)}`)
   }
+}
+
+// -- keepwarm ---------------------------------------------------------------
+
+async function readKeepwarm($: EngineInterface): Promise<Keepwarm> {
+  return (await $.state.get(IDLE_KEEPWARM)).value ?? FRESH
+}
+
+/** `kw` as it stands for this stretch: a different session or core stretch starts the count and lead over. */
+function inStretch(kw: Keepwarm, session: string, stretch: number): Keepwarm {
+  return kw.session === session && kw.stretch === stretch ? kw : { ...kw, session, stretch, sent: 0, lead: 0 }
+}
+
+/** An arm reached core: record which stretch it belongs to and, when it placed the warning, the lead. */
+async function trackStretch($: EngineInterface, session: string, stretch: number, lead: number | undefined): Promise<void> {
+  const before = await readKeepwarm($)
+  const kw = inStretch(before, session, stretch)
+  const next = lead !== undefined && lead > 0 ? { ...kw, lead } : kw
+  if (next.session !== before.session || next.stretch !== before.stretch || next.lead !== before.lead) {
+    await $.state.set(IDLE_KEEPWARM, next)
+  }
+}
+
+function pingsOpen(kw: Keepwarm): boolean {
+  return kw.on && kw.sent < PING_CAP
+}
+
+/** Appends the ping's record to the experiment log. Runs inside the queue; from outside it use `logFailed`. */
+async function appendRecord(
+  $: EngineInterface,
+  s: State,
+  ping: Ping,
+  outcome: Outcome,
+  reply: string,
+  why?: string,
+): Promise<void> {
+  const record = {
+    at: new Date().toISOString(),
+    session: ping.session,
+    stretch: ping.stretch,
+    ping: ping.index,
+    outcome,
+    denied: ping.denied,
+    reply: excerpt(reply),
+    ...(why !== undefined ? { why } : {}),
+  }
+  // Another session may append at once and one record can be lost; pings are tens of minutes apart.
+  await $.store.set(KEEPWARM_LOG, appended(await $.store.get(KEEPWARM_LOG), record))
+  note($, s, `ping ${ping.index} ${outcome}${why !== undefined ? ` (${why})` : ''}${ping.denied.length > 0 ? ` denied ${ping.denied.join(',')}` : ''}`)
+}
+
+function logFailed($: EngineInterface, s: State, ping: Ping, why: string): Promise<unknown> {
+  return enqueue(s, () => appendRecord($, s, ping, 'failed', '', why))
+}
+
+/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned or `limitMs` passed first. */
+async function holdForUser($: EngineInterface, s: State, epoch: number, limitMs: number): Promise<boolean> {
+  const start = await $.clock.now()
+  for (;;) {
+    if (s.epoch !== epoch) return false
+    const now = await $.clock.now()
+    const changedAt = await s.lastChange
+    const { text } = await $.prompt.read()
+    if (s.epoch !== epoch) return false
+    if (text === '' && now - changedAt >= QUIET_MS) return true
+    if (now - start >= limitMs) return false
+    await $.clock.sleep(HOLD_POLL_MS)
+  }
+}
+
+function newNonce(): string {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, or the user returned. */
+async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<number | undefined> {
+  const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+  if (s.epoch !== epoch || !pingsOpen(kw)) return undefined
+  await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
+  return kw.sent + 1
+}
+
+/**
+ * Sends one keep-warm prompt for `armed`'s stretch, once the box has been quiet. The count is taken before the
+ * submit so that a reload or a failure can only cost a ping, never add one.
+ */
+async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
+  try {
+    const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+    if (!pingsOpen(kw)) return
+    const limit = kw.lead > LATE_PING_MS ? kw.lead - LATE_PING_MS : HOLD_FALLBACK_MS
+    if (!(await holdForUser($, s, epoch, limit))) {
+      note($, s, 'ping skipped: user is at the keyboard')
+      return
+    }
+    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch))
+    if (typeof index !== 'number' || s.epoch !== epoch) return
+    const lost = s.ping
+    const ping: Ping = {
+      nonce: newNonce(),
+      index,
+      session: armed.session,
+      stretch: armed.stretch,
+      phase: 'submitted',
+      turnId: undefined,
+      denied: [],
+      userCame: false,
+    }
+    // A ping still unmatched never started (its queue was cleared); its slot stays spent.
+    if (lost !== undefined) void logFailed($, s, lost, 'turn never started')
+    s.ping = ping
+    try {
+      const result = await $.prompt.submit({ text: pingText(ping.nonce) })
+      if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
+        s.ping = undefined
+        await logFailed($, s, ping, `dropped: ${result.drop}`)
+      }
+    } catch (err) {
+      if (s.ping === ping && ping.phase === 'submitted') s.ping = undefined
+      await logFailed($, s, ping, describeError(err))
+    }
+  } catch (err) {
+    note($, s, `ping error: ${describeError(err)}`)
+  }
+}
+
+/** Pings 2 and 3: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it. */
+async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
+  const kw = await readKeepwarm($)
+  if (!pingsOpen(kw) || kw.sent < 1 || kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
+  const due = (await $.clock.now()) + kw.lead
+  if (s.epoch !== epoch || s.armed !== armed) return
+  s.timers.push(
+    $.clock.after(kw.lead, () => {
+      void (async () => {
+        try {
+          if (s.armed !== armed || s.epoch !== epoch) return
+          if ((await $.clock.now()) - due > LATE_PING_MS) {
+            note($, s, 'ping skipped: timer ran late, the cache may be cold')
+            return
+          }
+          await runPing($, s, armed, epoch)
+        } catch (err) {
+          note($, s, `ping timer error: ${describeError(err)}`)
+        }
+      })()
+    }),
+  )
+  note($, s, `ping ${kw.sent + 1} in ${Math.round(kw.lead / 1000)}s`)
+}
+
+/** The ping's own turn ended: record how it went and, on a stop, end this stretch's pings. */
+async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
+  if (reason !== 'answer') return appendRecord($, s, ping, 'failed', answer, `turn ${reason}`)
+  if (!isStop(answer)) return appendRecord($, s, ping, 'continued', answer)
+  const kw = await readKeepwarm($)
+  if (kw.session === ping.session && kw.stretch === ping.stretch) await $.state.set(IDLE_KEEPWARM, { ...kw, sent: PING_CAP })
+  return appendRecord($, s, ping, 'stopped', answer)
 }
 
 // -- return ----------------------------------------------------------------
@@ -329,6 +536,7 @@ function userReturned($: EngineInterface, s: State): void {
   s.epoch += 1
   cancelTimers(s)
   s.armed = undefined
+  if (s.ping !== undefined) s.ping.userCame = true
   // Read the id now, not when the queued call runs: `/clear` changes it in between.
   const sessionId = $.session.id().catch(() => undefined)
   void enqueue(s, () => returnTask($, s, sessionId))
@@ -348,6 +556,8 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
     }
     note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
     armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
+    // The notice is already sent; the first ping follows it. Waiting for a quiet box must not hold the queue.
+    if (stage === 'warn' && reply.decision === 'act') void runPing($, s, armed, epoch)
   } catch (err) {
     note($, s, `timer ${stage} error: ${describeError(err)}`)
   }
@@ -358,7 +568,7 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
 async function startTask($: EngineInterface, s: State, epoch: number): Promise<void> {
   if (!(await gate($, s))) return
   try {
-    await $.command.register({ name: COMMAND, description: 'Show Meridian idle stretch and timers' })
+    await $.command.register({ name: COMMAND, description: 'Show Meridian idle stretch and timers; keepwarm on|off pings the model before the cache expires' })
   } catch (err) {
     note($, s, `command registration failed: ${describeError(err)}`)
   }
@@ -389,6 +599,10 @@ async function statusText($: EngineInterface, s: State): Promise<string> {
       lines.push(`  ${stage.padEnd(7)} ${timing}`)
     }
   }
+  const kw = await readKeepwarm($)
+  const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
+  lines.push(`keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`)
+  lines.push(...recordLines(await $.store.get(KEEPWARM_LOG)))
   if (s.log.length > 0) {
     lines.push('log:')
     for (const line of s.log.slice(-8)) lines.push(`  ${line}`)
@@ -415,7 +629,15 @@ export const register: Register = on => {
   // Subagent, teammate and compaction-fork turns raise turn.start too, with agentId set. Only the main loop's
   // start retires the Stop list that its own turn.complete will use.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) s.stopTasks = undefined
+    if (e.agentId === undefined) {
+      s.stopTasks = undefined
+      // The ping may queue behind a running turn, so its turn is found by the nonce in its text, not by order.
+      const ping = s.ping
+      if (ping?.phase === 'submitted' && e.text.includes(ping.nonce)) {
+        ping.phase = 'running'
+        ping.turnId = e.turnId
+      }
+    }
     return next(e)
   })
 
@@ -431,7 +653,14 @@ export const register: Register = on => {
       const epoch = s.epoch
       const tasks = s.stopTasks
       s.stopTasks = undefined
-      void enqueue(s, () => armTask($, s, epoch, e.answer, tasks))
+      const ping = s.ping?.turnId === e.turnId ? s.ping : undefined
+      if (ping !== undefined) s.ping = undefined
+      else s.lastAnswer = e.answer
+      void enqueue(s, async () => {
+        if (ping !== undefined) await finishPing($, s, ping, e.reason, e.answer)
+        // The ping's reply must not become the your-turn notice's excerpt.
+        await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
+      })
     }
     return next(e)
   })
@@ -452,9 +681,39 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // While the ping's turn runs the user is away and only asked to keep the cache warm, not to resume work.
+  on('tool.check', async ($, e, next) => {
+    const ping = s.ping
+    if (e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
+    if (!ping.denied.includes(e.tool)) ping.denied.push(e.tool)
+    return {
+      decision: 'deny',
+      reason: 'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing.',
+    }
+  })
+
+  // The user touching the prompt box: typing and deletion arrive as prompt.edit, every other write as prompt.change.
+  // Both run per edit, so they only record the time.
+  on('prompt.edit', async ($, e, next) => {
+    s.lastChange = $.clock.now()
+    void s.lastChange.catch(() => undefined)
+    return next(e)
+  })
+  on('prompt.change', async ($, e, next) => {
+    s.lastChange = $.clock.now()
+    void s.lastChange.catch(() => undefined)
+    return next(e)
+  })
+
   // Typed slash commands never reach prompt.submit. `/meridian-idle` itself is a read-only look at the timers and does not count as a return.
   on('command.run', { command: COMMAND }, async ($, e, next) => {
     void next
+    const [word, value] = e.args.trim().split(/\s+/)
+    if (word === 'keepwarm' && (value === 'on' || value === 'off')) {
+      await enqueue(s, async () => $.state.set(IDLE_KEEPWARM, { ...(await readKeepwarm($)), on: value === 'on' }))
+    } else if (word !== undefined && word !== '') {
+      return { text: 'usage: /meridian-idle [keepwarm on|off]' }
+    }
     return { text: await statusText($, s) }
   })
 

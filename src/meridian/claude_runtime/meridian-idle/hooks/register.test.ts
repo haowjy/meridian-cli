@@ -1,9 +1,18 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
+
+import { isStop } from './keepwarm'
 
 type Host = {
   calls: string[][]
   reply: Record<string, unknown | ((args: string[]) => unknown)>
+  /** Texts the mod submitted as plugin prompts. */
+  submitted: string[]
+  /** What `$.prompt.read()` answers. */
+  box: string
+  /** The plugin store as the mod last wrote it. */
+  store: Record<string, unknown>
 }
 
 const START = 1_000_000
@@ -14,6 +23,9 @@ const COMPOSER = { kind: 'composer' } as const
 function host(): Host {
   return {
     calls: [],
+    submitted: [],
+    box: '',
+    store: {},
     reply: {
       config: { enabled: true },
       arm: {
@@ -31,7 +43,11 @@ function host(): Host {
 
 function install(on: On, h: Host) {
   const clock = mock.clock(on, { now: START })
-  mock.store(on)
+  on('store.get', (_$, e) => ({ value: h.store[e.key] }))
+  on('store.set', (_$, e) => {
+    h.store[e.key] = JSON.parse(JSON.stringify(e.value))
+    return { value: undefined }
+  })
   on('process.run', (_$, e) => {
     const args = e.argv.slice(2)
     h.calls.push([...args])
@@ -54,7 +70,13 @@ function install(on: On, h: Host) {
   on('turn.complete', () => ({ text: '' }))
   on('classic.Stop', () => ({}))
   on('classic.Notification', () => ({}))
-  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('prompt.submit', (_$, e) => {
+    if (e.origin.kind === 'plugin') h.submitted.push(e.text)
+    return { text: e.text }
+  })
+  on('prompt.edit', (_$, e) => e as never)
+  on('prompt.read', () => ({ value: { text: h.box, cursor: 0 } }))
+  on('tool.check', () => ({ decision: 'allow' }))
   on('command.run', () => ({ text: '' }))
   return clock
 }
@@ -288,4 +310,200 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
   await $.classic.Notification({ message, notification_type: 'permission_prompt' } as never)
   await clock.advance(0)
   expect(calls(h, 'needs-permission')).toHaveLength(2)
+})
+
+// -- keepwarm ---------------------------------------------------------------
+
+const IDLE_COMMAND = { command: 'meridian-idle', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
+const LEAD = 20_000
+
+/** A fake core: the first arm of a stretch places the warning LEAD ahead, later arms of it place nothing. */
+function keepwarmHost(): Host {
+  const h = host()
+  let armed = 0
+  h.reply.arm = () => {
+    armed += 1
+    return armed === 1 ? { stretch: 1, anchor: armed, warn_at: START + 2000 + LEAD } : { stretch: 1, anchor: armed }
+  }
+  return h
+}
+
+async function startKeepwarm($: Engine, clock: ReturnType<typeof install>, answer = 'done') {
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm on' })
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ ...MAIN_TURN, answer })
+}
+
+/** The model's turn for the ping the mod just submitted. */
+async function pingTurn($: Engine, h: Host, turnId: string, answer: string, reason: 'answer' | 'aborted' = 'answer') {
+  await $.turn.start({ text: h.submitted.at(-1) ?? '', turnId })
+  await $.turn.complete({ ...MAIN_TURN, turnId, answer, reason, isAborted: reason === 'aborted' } as never)
+}
+
+function pingRecords(h: Host) {
+  return (h.store.keepwarm ?? []) as Array<{ ping: number; outcome: string; denied: string[]; reply: string; why?: string }>
+}
+
+test('keepwarm is off until asked: the warning sends no ping', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(LEAD)
+
+  expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
+  expect(h.submitted).toEqual([])
+})
+
+test('ping 1 follows the warning; its turn is found by nonce, its tools are limited, a stop ends the pings', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  // A keepwarm command is not a return.
+  expect(calls(h, 'return')).toEqual([])
+  await clock.advance(LEAD)
+  expect(h.submitted).toHaveLength(1)
+  expect(h.submitted[0]).toMatch(/^\[meridian-idle keepwarm [a-z0-9]+\]\n\nWaiting for the user, keeping warm\./)
+
+  const deny = (input: object) => $.tool.check({ tool: 'Edit', input: {}, ...input } as never)
+  expect((await deny({})).decision).toBe('allow') // before the ping turn starts
+  await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
+  expect((await deny({})).decision).toBe('deny')
+  expect((await deny({ isReadOnly: true })).decision).toBe('allow')
+  expect((await deny({ agentId: 'sub-1' })).decision).toBe('allow')
+  await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: '`stop-waiting`' })
+  await clock.advance(0)
+  expect((await deny({})).decision).toBe('allow') // after it
+
+  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'stopped', denied: ['Edit'], reply: '`stop-waiting`' }])
+  // The ping's arm carries the real answer of the last working turn, not the ping's reply.
+  expect(calls(h, 'arm')[1]).toContain('--assistant-text=done')
+  await clock.advance(10 * LEAD)
+  expect(h.submitted).toHaveLength(1)
+})
+
+test('a continued ping chains one more at the lead after its arm, three in all', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  for (const [turnId, answer] of [['p1', 'ok'], ['p2', 'Still waiting.'], ['p3', 'ok']] as const) {
+    expect(h.submitted).toHaveLength(Number(turnId.slice(1)))
+    await pingTurn($, h, turnId, answer)
+    await clock.advance(LEAD - 1)
+    expect(h.submitted).toHaveLength(Number(turnId.slice(1))) // not before the lead has passed
+    await clock.advance(1)
+  }
+  await clock.advance(10 * LEAD)
+
+  expect(h.submitted).toHaveLength(3)
+  expect((pingRecords(h)).map(r => [r.ping, r.outcome])).toEqual([[1, 'continued'], [2, 'continued'], [3, 'continued']])
+  expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
+})
+
+test('a user return cancels a ping that waits for the box and the chained ping', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'half a sentence'
+  await clock.advance(LEAD + 30_000)
+  expect(h.submitted).toEqual([]) // the box is busy
+  await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+  h.box = ''
+  await clock.advance(60_000)
+  expect(h.submitted).toEqual([]) // the user came back while the ping waited
+})
+
+test('a user return after ping 1 cancels the chained ping', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  await clock.advance(LEAD - 1000)
+  await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+  await clock.advance(10 * LEAD)
+  expect(h.submitted).toHaveLength(1)
+})
+
+test('the ping waits until the box has been empty for ten seconds', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'typing'
+  await clock.advance(LEAD + 5000)
+  h.box = ''
+  await ($.prompt as unknown as { edit: (e: object) => Promise<unknown> }).edit({ origin: { kind: 'user' }, text: '', inputText: '', cursor: 0, start: 0, end: 0 } as never)
+  await clock.advance(9000)
+  expect(h.submitted).toEqual([])
+  await clock.advance(2000)
+  expect(h.submitted).toHaveLength(1)
+})
+
+test('a turn already running when the warning fires is not mistaken for the ping', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await $.turn.start({ text: 'task notification', turnId: 't2' }) // runs through the warning
+  await clock.advance(LEAD)
+  expect(h.submitted).toHaveLength(1)
+  await $.turn.complete({ ...MAIN_TURN, turnId: 't2', answer: 'built it' })
+  await clock.advance(0)
+  expect(pingRecords(h)).toEqual([])
+  expect((await $.tool.check({ tool: 'Edit', input: {} } as never)).decision).toBe('allow')
+  expect(calls(h, 'arm')[1]).toContain('--assistant-text=built it')
+
+  await pingTurn($, h, 'p1', 'ok')
+  await clock.advance(0)
+  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'continued' }])
+  expect(calls(h, 'arm')[2]).toContain('--assistant-text=built it')
+})
+
+test('an aborted ping turn is logged failed and still counts', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', '', 'aborted')
+
+  expect(pingRecords(h)).toMatchObject([{ ping: 1, outcome: 'failed', why: 'turn aborted' }])
+  await clock.advance(LEAD)
+  expect(h.submitted).toHaveLength(2) // the cap counts pings, not outcomes
+})
+
+test('keepwarm off stops pings, and /meridian-idle prints the state and the tally', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'stop-waiting')
+  const status = await $.command.run({ ...IDLE_COMMAND, args: '' })
+  expect(status.text).toContain('keepwarm: on, 3/3 pings this stretch')
+  expect(status.text).toContain('pings logged: 1 stopped, 0 continued, 0 failed')
+
+  const off = await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })
+  expect(off.text).toContain('keepwarm: off')
+  expect((await $.command.run({ ...IDLE_COMMAND, args: 'bogus' })).text).toContain('usage')
+  expect(calls(h, 'return')).toEqual([])
+})
+
+test('a stop is the whole reply, alone or in one pair of quotes', () => {
+  for (const reply of ['stop-waiting', '  stop-waiting\n', '"stop-waiting"', "'stop-waiting'", '`stop-waiting`', '“stop-waiting”', '‘stop-waiting’']) {
+    expect(isStop(reply)).toBe(true)
+  }
+  for (const reply of ['stop-waiting.', 'I will stop-waiting', '""stop-waiting""', '"stop-waiting”', '', 'ok']) {
+    expect(isStop(reply)).toBe(false)
+  }
 })

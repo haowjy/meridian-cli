@@ -1,5 +1,6 @@
 {
   "name": "meridian-idle",
   "version": "0.1.0",
-  "description": "Senses Claude Code idle time, running work, user return, and still-waiting permission prompts for Meridian through `meridian idle`."
+  "description": "Senses Claude Code idle time, running work, user return, and still-waiting permission prompts for Meridian through `meridian idle`.",
+  "types": "./types/meridian-idle.d.ts"
 }
