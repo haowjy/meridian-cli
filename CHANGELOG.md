@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.20.8] - 2026-11-11
+
+### Fixed
+- `meridian kg kb`, `kg check kb` and `kg graph kb` now read an existing `./kb` directory, and otherwise resolve the current `kb` context (as `meridian context kb` does) instead of the path captured when the session launched. The same applies to `work`, `work.archive` and any extra context name. `meridian work root` now prints the configured work root, and `meridian context` no longer shows a stale `$MERIDIAN_ACTIVE_WORK_DIR` when no work item resolves.
+
 ## [0.20.7] - 2026-11-10
 
 ### Changed
