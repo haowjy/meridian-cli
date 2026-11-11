@@ -576,9 +576,6 @@ only; `allow`, `ask` and `'*'` fail the load. See
 in the Mars docs for the keys and merge order.
 
 ```toml
-[settings]
-min_mars_version = "0.29.0"
-
 [settings.tools]
 "bash(pkill -f *)" = "deny"
 ```
@@ -610,8 +607,14 @@ min_mars_version = "0.29.0"
   still applies, as it does to a profile's `bash: deny`, and the dry run marks the rule
   `partial`. Under `approval: never` the tool is removed, so the spawn's own
   `meridian spawn done` command grant is blocked and reported, as for a profile `bash: deny`.
-- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` without a word. Set
-  `min_mars_version = "0.29.0"` so it refuses the project instead.
+- **Continued and forked sessions.** `--continue` and `--fork` pick up the project-wide
+  denies in force now, including one added after the session started, and drop one you have
+  removed since. The rest of a continued session's rules stay as it started; your
+  `[agents.<name>.tools]` exemptions still apply. If Mars cannot resolve the agent, the
+  project-wide rules apply without its exemptions, and if Mars cannot be asked at all the
+  session keeps the project rules it started with; both print a warning.
+- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
+  without a word; only `mars validate` checks `min_mars_version`.
 
 ### Your own settings stay in force
 

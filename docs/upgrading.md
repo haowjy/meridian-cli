@@ -5,8 +5,8 @@
 `[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for every
 agent in the project, and `[agents.<name>.tools]` now takes a map of tool key to action. Nothing
 changes until you write one. This release takes `deny` only in `[settings.tools]`; `allow`,
-`ask` and `'*'` fail the load. Set `min_mars_version = "0.29.0"` in `mars.toml`, because an
-older Mars ignores the table without a word. Details:
+`ask` and `'*'` fail the load. An older Mars ignores the table and these overlay keys without
+a word. Continued and forked sessions pick up the project-wide denies in force now. Details:
 [Project-wide tool rules](agent-profiles.md#project-wide-tool-rules) and
 [agent overlays](configuration/mars.md).
 
