@@ -571,7 +571,8 @@ already met, and a rule Mars cannot name there is reported `unsupported`.
 
 `[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for
 every agent in the project and for a launch with no agent. In this release it takes `deny`
-only; `allow`, `ask` and `'*'` fail the load. See
+only; `allow`, `ask` and `'*'` fail the load. A release after 0.29.0 is expected to accept
+`allow` and `ask`. See
 [Project-wide tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules)
 in the Mars docs for the keys and merge order.
 
@@ -581,17 +582,16 @@ in the Mars docs for the keys and merge order.
 ```
 
 - **They restrict and never widen.** A project-wide deny joins the agent's own rules. An agent
-  `allow` or `ask` that the deny covers by key (`bash = "deny"` covers `bash(rg *): allow`;
-  `edit = "deny"` covers `write: allow`; `"bash(git *)" = "deny"` covers
-  `bash(git status *): allow`) is set aside, because some harnesses let a narrower allow beat
-  a broader deny. Where Mars cannot tell whether two keys overlap, both rules stay and
-  `mars sync` warns. `--dry-run` lists the set-aside rules under `Set aside:` (and as
-  `tool_rules_set_aside` in `--format json`), each with the deny that covers it. A set-aside
-  rule is not in the permission report, which keeps its four statuses.
-- **The report names them.** A project-wide rule appears as `project: tools <key> = deny`.
-  Where Mars cannot tell whether a deny and an agent rule overlap, both stay, and on every
+  `allow` or `ask` that the deny covers by key (`bash = "deny"` covers `bash(rg *): allow`) is
+  set aside, because some harnesses let a narrower allow beat a broader deny. Where Mars cannot
+  tell whether two keys overlap, both rules stay and `mars sync` warns. Mars's docs define
+  [set-aside rules and unsettled pairs](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#set-aside-rules-and-unsettled-pairs). `meridian spawn --dry-run` lists set-aside
+  rules under `Set aside:` (`tool_rules_set_aside` in `--format json`), each with the deny that
+  covers it; they are not in the permission report.
+- **The permission report names them.** The `Permissions:` block of `meridian spawn --dry-run`
+  shows a project-wide rule as `project: tools <key> = deny`. For an unsettled pair, on every
   harness but Claude the project-wide rule carries a note that the agent rule may override it.
-  Claude's own order holds.
+  Claude checks every deny first, so its order holds.
 - **Exempting one agent.** An entry in `[agents.<name>.tools]` with the same key replaces
   the project-wide deny for that agent, and `allow` also pre-approves the call:
 
@@ -602,22 +602,24 @@ in the Mars docs for the keys and merge order.
 
   Only the exact key is replaced: `bash = "allow"` does not lift
   `"bash(pkill -f *)" = "deny"`.
-- **Claude.** A project-wide plain deny is `--disallowedTools <Tool>` even when a scoped allow
-  of that tool sits beside it. Under `approval: default` or `confirm`, the completion gate
-  still applies, as it does to a profile's `bash: deny`, and the dry run marks the rule
-  `partial`. Under `approval: never` the tool is removed, so the spawn's own
-  `meridian spawn done` command grant is blocked and reported, as for a profile `bash: deny`.
-- **Continued and forked sessions.** `--continue` and `--fork` need a working Mars. They
-  pick up the project-wide denies in force now, including one added after the session
-  started. Removing a deny lifts it on the next continue, but allows that were set aside
-  when the session started do not come back; a new session has them. The rest of a
-  continued session's rules stay as it started; your `[agents.<name>.tools]` exemptions
-  still apply. When the agent no longer resolves, a continue prints a warning and applies
-  the project-wide rules alone, and a fork fails.
-- **Known limit on Codex, OpenCode and Pi.** A continued session can keep a scoped allow
-  that a deny added later covers, when the agent's profile or overlay no longer has that
-  allow or the agent no longer resolves. Claude is not affected. The next release's
-  precedence change ends it.
+- **Claude.** A project-wide plain deny is enforced as `--disallowedTools <Tool>` even when a
+  scoped allow of that tool sits beside it, so the denied tool is never available. Under
+  `approval: default` or `confirm` the dry run marks the rule `partial`, as it does for a
+  profile's `bash: deny`, because the completion gate still applies. Under `approval: never`
+  the tool is removed, so the spawn's own `meridian spawn done` command grant is blocked and
+  the report says so, as for a profile `bash: deny`.
+- **Continued and forked sessions.** `--continue` and `--fork` need a working Mars. They pick
+  up the project-wide denies in force now, including one added after the session started, and
+  your `[agents.<name>.tools]` exemptions still apply. The rest of a continued session's rules
+  stay as it started. Removing a deny lifts it on the next continue, but allows that were set
+  aside when the session started do not come back: start a new session to get them back.
+  When the agent no longer resolves, a continue prints a warning and applies the project-wide
+  rules alone, and a fork fails.
+- **Known limit on Codex, OpenCode and Pi.** A continued session can keep a scoped allow that a
+  deny added later covers, in two cases: the agent's profile or overlay no longer has that
+  allow, or the agent no longer resolves. Claude is not affected. A release after 0.29.0 makes
+  the strictest matching rule win on every harness (deny, then `ask`, then `allow`), which ends
+  this.
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and these overlay keys
   without a word; only `mars validate` checks `min_mars_version`.
 

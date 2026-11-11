@@ -3,10 +3,11 @@
 ## Project-wide tool denies, and the map form of an agent's tool overlay
 
 `[settings.tools]` in `mars.toml`, `mars.local.toml` or the user config denies a tool for every
-agent in the project, and `[agents.<name>.tools]` now takes a map of tool key to action. Nothing
-changes until you write one. This release takes `deny` only in `[settings.tools]`; `allow`,
-`ask` and `'*'` fail the load. An older Mars ignores the table and these overlay keys without
-a word. Continued and forked sessions pick up the project-wide denies in force now. Details:
+agent in the project, and `[agents.<name>.tools]` now takes a map of tool key to action. These
+need Mars 0.29.0: a Mars before it ignores the table and these overlay keys without a word.
+Nothing here changes until you write one of them, except the three profile forms below, which
+change for profiles you already have. This release takes `deny` only in `[settings.tools]`;
+`allow`, `ask` and `'*'` fail the load. Continued and forked sessions pick up the project-wide denies in force now. Details:
 [Project-wide tool rules](agent-profiles.md#project-wide-tool-rules) and
 [agent overlays](configuration/mars.md).
 
@@ -16,15 +17,15 @@ a word. Continued and forked sessions pick up the project-wide denies in force n
 - A string-valued key in `[agents.<name>.tools]` that is not a tool name used to be ignored. It
   is now read as a rule, and a malformed one fails the load.
 
-### Three forms will change in the next release
+### Three forms will change in a release after 0.29.0
 
-The next release makes one precedence rule apply on every harness: a deny covers the allows
-that are narrower than it. If a profile or overlay of yours has one of these forms, write what
+A release after 0.29.0 makes one precedence rule apply on every harness: the strictest matching
+rule wins (deny, then `ask`, then `allow`), so a deny covers the allows that are narrower than it. If a profile or overlay of yours has one of these forms, write what
 you want explicitly now:
 
-| Today | Next release |
+| Today | After that release |
 |---|---|
-| `bash: deny` (or `ask`) beside scoped allows such as `'bash(rg *)': allow` confines Bash to those calls | The deny covers the allows, so Bash is off. On Claude the permission mode then follows `approval` again, so calls to other tools that need approval stop being refused in a spawn |
+| `bash: deny` (or `ask`) beside scoped allows such as `'bash(rg *)': allow` confines Bash to those calls | The deny covers the allows, so Bash is off. On Claude, calls to other tools that need approval are no longer refused outright in a spawn; they follow your `approval` setting |
 | `edit: deny` with `write: allow` leaves writes allowed on Claude and Pi | Writes are denied |
 | A longer scoped allow beats a shorter scoped deny or ask on OpenCode, Pi and Codex | The deny or ask wins, as on Claude |
 

@@ -221,7 +221,7 @@ The `allowed` and `disallowed` lists still work but are deprecated: write the ma
 lists add rules to the profile's; `{ replace = [...] }` clears the profile's lower rules of
 that action, never a project-wide rule or a map entry. A table may mix map entries and lists.
 Two spellings of one key in one table (`Bash` beside `bash`) fail the load, and so does a
-string-valued key that is not a tool name; before, such a stray key was ignored.
+string-valued key that is not a tool name.
 The merged rules reach both native agent files and the launch bundle, so Meridian launches
 with them. A list-valued `tools` key under `[agents.<name>]` is a parse error.
 
