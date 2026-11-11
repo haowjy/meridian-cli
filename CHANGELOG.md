@@ -6,6 +6,28 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-11
+
+### Upgrade notes
+- Of the tool rules that match a call, the strictest now wins on every harness (deny, then ask, then allow), however narrow a key is. `bash: deny` beside `bash(rg *): allow` turns Bash off; write `'*': deny` with the allows. `edit: deny` beside `write: allow` denies writes. Needs Mars 0.30.0 or newer; this release pins 0.30.1. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+- Meridian's own command grants (`meridian spawn done`, read commands, `meridian spawn`) are decided before any tool rule on Pi, Codex and OpenCode, so a profile rule no longer restricts them there. On Claude a deny or ask that matches one still wins. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+- Continuing or forking a session needs Mars 0.30.0 or newer: Meridian sends the session's saved rules to Mars, which applies the current project-wide rules. An older Mars stops the continue and names the version. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+- `tool_rules_set_aside` in `--format json` is deprecated and always `[]`, and `--dry-run` prints no `Set aside:` block. A covered rule stays in the rules with a note naming the stricter rule. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+- Pi follows the Codex matcher on edge syntax: a lone `&` is split and each part checked, and a command is no longer refused only for containing `if`, `then` or `for`. On Codex a lone `&` under an allowlist is refused. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+
+### Added
+- `[settings.tools]` takes `allow` and `ask` beside `deny`, and a package's `[package.tools]` states tool rules once for every agent it ships (both from Mars 0.30). See [project-wide tool rules](https://github.com/haowjy/meridian-cli/blob/main/docs/agent-profiles.md#project-wide-tool-rules).
+
+### Changed
+- Pi and Codex decide each tool call with one evaluator, so a rule means the same on both.
+- On continue and fork, a project-wide rule added since the session started applies, one removed is gone, and an allow it covered works again.
+- `--fork` of a session whose agent profile was removed says to run `--fork-fresh <id> -a <agent>`.
+
+### Fixed
+- Codex installs its shell hook for any rule that can refuse a command, including a scoped `ask` and a `'*': deny` allowlist, and turns web search and image viewing off under `ask`.
+- A shell call with no command string is refused under scoped denies.
+- The dry run reports a covered rule once, with the rule that covers it, on every harness.
+
 ## [0.20.10] - 2026-11-11
 
 ### Added
