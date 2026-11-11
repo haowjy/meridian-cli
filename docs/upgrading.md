@@ -2,7 +2,7 @@
 
 ## The strictest tool rule wins on every harness
 
-Needs Mars 0.30.0, which this release pins. Of the rules that match a tool call, the
+Needs Mars 0.30.0 or newer; this release pins 0.30.1, the first published 0.30 build. Of the rules that match a tool call, the
 strictest wins (`deny`, then `ask`, then `allow`), however narrow a key is. A deny is never
 overridden by an allow beside it. Before, Claude worked this way and OpenCode, Pi and Codex
 let a narrower allow win, so one profile gave different answers. If a profile or overlay of
@@ -55,6 +55,13 @@ has this form: its Claude and Pi files gain `Write` in `disallowed-tools`.
 - A continued or forked session sends its saved rules back to Mars, which applies the new
   precedence and recomputes native names: `edit: deny` beside `write: allow` now refuses
   writes. This needs Mars 0.30.0.
+- Pi and Codex decide a tool call with one evaluator, so a rule means the same on both. On Pi,
+  a command ending or joined with a lone `&` is now split and each part checked, and a command
+  is no longer refused only for containing `if`, `then` or `for`: each part must still match
+  an allow under an allowlist. On Codex, a lone `&` under an allowlist is refused. A shell
+  call with no command string is refused.
+- `--fork` of a session whose agent profile was removed says to run
+  `--fork-fresh <id> -a <agent>`.
 
 None of the profiles installed from `meridian-base` and `meridian-dev-workflow` changes result
 except `prompt-tester` above.
