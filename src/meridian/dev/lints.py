@@ -590,6 +590,54 @@ def chat_lock_path_violations(sources: Sources) -> list[Violation]:
     ]
 
 
+# `ResolvedContext` recomputes these from config and state on every call; the variables
+# are its output for child processes, so reading one elsewhere returns a stale launch copy.
+_CONTEXT_ENV_NAME = re.compile(r"MERIDIAN_(?:CONTEXT|ACTIVE_WORK)_[A-Z0-9_]+")
+_CONTEXT_ENV_READERS = frozenset(
+    {
+        "meridian/lib/core/resolved_context.py",  # the resolver
+        "meridian/lib/notify/label.py",  # launch-environment fallback when state is unreadable
+        "meridian/lib/ops/spawn/execute_init.py",  # logs the child env the resolver just built
+    }
+)
+
+
+def _context_env_read_line(node: ast.Call | ast.Subscript) -> int | None:
+    """The line of an env lookup keyed by a context variable name, or None."""
+
+    key: ast.expr | None = None
+    if isinstance(node, ast.Call) and node.args:
+        if _call_name(node.func) in {"get", "getenv"}:
+            key = node.args[0]
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        key = node.slice
+    if (
+        isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and _CONTEXT_ENV_NAME.fullmatch(key.value)
+    ):
+        return node.lineno
+    return None
+
+
+def context_env_read_violations(sources: Sources) -> list[Violation]:
+    """Reject reading `MERIDIAN_CONTEXT_*` and `MERIDIAN_ACTIVE_WORK_*` outside the resolver."""
+
+    return [
+        Violation(
+            module.path,
+            line,
+            "context env vars are a launch-time copy: resolve through ResolvedContext "
+            "or context_sync, never read them here.",
+        )
+        for module in sources.python_modules
+        if module.path not in _CONTEXT_ENV_READERS and not module.path.startswith(_DEV_PREFIX)
+        for node in ast.walk(module.tree)
+        if isinstance(node, (ast.Call, ast.Subscript))
+        and (line := _context_env_read_line(node)) is not None
+    ]
+
+
 CHECKS: tuple[Check, ...] = (
     raw_write_violations,
     stale_raw_write_allowlist,
@@ -599,6 +647,7 @@ CHECKS: tuple[Check, ...] = (
     launch_path_violations,
     sys_executable_violations,
     chat_lock_path_violations,
+    context_env_read_violations,
 )
 
 

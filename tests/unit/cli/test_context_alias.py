@@ -31,3 +31,27 @@ def test_alias_reads_current_config_not_launch_env(
 ) -> None:
     root = _docs_repo(tmp_path, monkeypatch)
     assert resolve_context_alias(Path("kb")) == root / "newkb"
+
+
+def test_work_root_follows_config_not_launch_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from meridian.lib.ops.context import WorkRootInput, work_root_sync
+
+    root = _docs_repo(tmp_path, monkeypatch)
+    (root / "meridian.toml").write_text('[context.work]\npath = "newwork"\n')
+    monkeypatch.setenv("MERIDIAN_CONTEXT_WORK_DIR", str(tmp_path / "oldwork"))
+    assert work_root_sync(WorkRootInput()).work_root == (root / "newwork").as_posix()
+
+
+def test_context_ignores_stale_active_work_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from meridian.lib.ops.context import ContextInput, context_sync
+
+    _docs_repo(tmp_path, monkeypatch)
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "gone-item")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", str(tmp_path / "oldwork"))
+    text = context_sync(ContextInput()).format_text()
+    assert "oldwork" not in text
+    assert "work: (no active work item" in text

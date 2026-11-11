@@ -590,12 +590,6 @@ def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
 def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
 
     _ = input
-    import os
-
-    env_work_root = os.getenv("MERIDIAN_CONTEXT_WORK_DIR", "").strip()
-    if env_work_root:
-        return WorkRootOutput(work_root=env_work_root)
-
     authority = resolve_runtime_authority_for_read()
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
