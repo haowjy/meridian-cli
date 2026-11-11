@@ -38,8 +38,6 @@ const BACKGROUND_COMMAND_CHAR_CAP = 512
 /** The prompt box must be empty and untouched this long before a ping starts a turn under the user. */
 const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
-/** A chained ping this late means the machine slept and the cache may be cold: skip it. */
-const LATE_PING_MS = 60_000
 /** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
 const EXPIRY_MARGIN_MS = 60_000
 const KEEPWARM_LOG = 'keepwarm'
@@ -98,8 +96,6 @@ type State = {
   ping: Ping | undefined
   /** A main-loop turn is in flight (from its `turn.start` to its `turn.complete`). */
   running: boolean
-  /** A ping was skipped for a running turn; that turn's arm schedules the next one even though no slot was spent. */
-  owed: { session: string; stretch: number } | undefined
   /** The last main-loop answer that was not a ping's: a ping turn's arm sends it, so the your-turn notice never reads the ping's reply. */
   lastAnswer: string | undefined
   /** When the prompt box was last touched, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
@@ -121,7 +117,6 @@ function newState(): State {
     stopTasks: undefined,
     ping: undefined,
     running: false,
-    owed: undefined,
     lastAnswer: undefined,
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
   }
@@ -355,10 +350,11 @@ async function armTask(
   }
 }
 
-/** Keeps a real turn's answer (capped as the arm caps it) beside the keepwarm records; a store failure only costs the excerpt. */
+/** Keeps a real turn's answer (capped as the arm caps it) beside the keepwarm records, only while keepwarm is on; a store failure only costs the excerpt. */
 async function rememberAnswer($: EngineInterface, answer: string): Promise<string> {
   const text = capExcerpt(answer) ?? ''
   try {
+    if (!(await readKeepwarm($)).on) return text
     await $.store.set(LAST_ANSWER, { session: await $.session.id(), text })
   } catch {
     // the excerpt is best effort
@@ -386,7 +382,7 @@ async function readKeepwarm($: EngineInterface): Promise<Keepwarm> {
 
 /** `kw` as it stands for this stretch: a different session or core stretch starts the count and lead over. */
 function inStretch(kw: Keepwarm, session: string, stretch: number): Keepwarm {
-  return kw.session === session && kw.stretch === stretch ? kw : { ...kw, session, stretch, sent: 0, lead: 0 }
+  return kw.session === session && kw.stretch === stretch ? kw : { ...kw, session, stretch, sent: 0, lead: 0, warned: false }
 }
 
 /** An arm reached core: record which stretch it belongs to and, when it placed the warning, the lead. */
@@ -434,22 +430,20 @@ function logFailed($: EngineInterface, s: State, ping: Ping, why: string): Promi
 /** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
 function skipForRunningTurn($: EngineInterface, s: State, armed: Armed): boolean {
   if (!s.running) return false
-  s.owed = { session: armed.session, stretch: armed.stretch }
   note($, s, 'ping skipped: a turn is running; its arm schedules the next one')
   return true
 }
 
-/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned or `limitMs` passed first. */
-async function holdForUser($: EngineInterface, s: State, epoch: number, limitMs: number): Promise<boolean> {
-  const start = await $.clock.now()
+/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned or `deadline` (epoch ms) came first. */
+async function holdForUser($: EngineInterface, s: State, epoch: number, deadline: number): Promise<boolean> {
   for (;;) {
     if (s.epoch !== epoch) return false
     const now = await $.clock.now()
+    if (now >= deadline) return false
     const changedAt = await s.lastChange
     const { text } = await $.prompt.read()
     if (s.epoch !== epoch) return false
     if (text === '' && now - changedAt >= QUIET_MS) return true
-    if (now - start >= limitMs) return false
     await $.clock.sleep(HOLD_POLL_MS)
   }
 }
@@ -458,36 +452,36 @@ function newNonce(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, or the user returned. */
-async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<number | undefined> {
+/** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, the user returned or `deadline` passed. */
+async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<number | undefined> {
   const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
-  if (s.epoch !== epoch || !pingsOpen(kw)) return undefined
+  if (s.epoch !== epoch || !pingsOpen(kw) || (await $.clock.now()) >= deadline) return undefined
   await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
-  s.owed = undefined
   return kw.sent + 1
 }
 
 /**
- * Sends one keep-warm prompt for `armed`'s stretch, once the box has been quiet. The count is taken before the
- * submit so that a reload or a failure can only cost a ping, never add one.
+ * Sends one keep-warm prompt for `armed`'s stretch, once the box has been quiet. `dueAt` is when the stage's timer
+ * was scheduled to fire: `warn_minutes` of cache remain then, so the ping gives up at `dueAt + warn_minutes - margin`
+ * however late the timer ran. The count is taken before the submit so that a reload or a failure can only cost a
+ * ping, never add one.
  */
-async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
+async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number): Promise<void> {
   try {
     const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
     if (!pingsOpen(kw)) return
-    if (skipForRunningTurn($, s, armed)) return
-    // The warning and each chained timer fire `warn_minutes` before the cache expires; that is all the time there is.
-    const limit = s.warnMs === undefined ? 0 : s.warnMs - EXPIRY_MARGIN_MS
-    if (limit <= 0) {
+    if (s.warnMs === undefined || s.warnMs <= EXPIRY_MARGIN_MS) {
       note($, s, 'ping skipped: no usable warn_minutes from core')
       return
     }
-    if (!(await holdForUser($, s, epoch, limit))) {
-      note($, s, 'ping skipped: user is at the keyboard until the cache would expire')
+    const deadline = dueAt + s.warnMs - EXPIRY_MARGIN_MS
+    if (skipForRunningTurn($, s, armed)) return
+    if (!(await holdForUser($, s, epoch, deadline))) {
+      note($, s, 'ping skipped: user is at the keyboard or the cache would be cold')
       return
     }
     if (skipForRunningTurn($, s, armed)) return // a turn started while the ping waited
-    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch))
+    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline))
     if (typeof index !== 'number' || s.epoch !== epoch) return
     const lost = s.ping
     const ping: Ping = {
@@ -518,12 +512,13 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
   }
 }
 
-/** Pings 2 and 3: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it. */
+/**
+ * Pings 2 and 3: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it.
+ * Only after this stretch's warning acted (`warned`), and not while a warn timer is pending: that timer sends ping 1.
+ */
 async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
   const kw = await readKeepwarm($)
-  const owed = s.owed?.session === armed.session && s.owed.stretch === armed.stretch
-  // Before ping 1 the warn timer sends it; with a warn timer pending it will, so no chained one then either.
-  if (!pingsOpen(kw) || (kw.sent < 1 && !owed) || armed.at.warn !== undefined) return
+  if (!pingsOpen(kw) || !kw.warned || armed.at.warn !== undefined) return
   if (kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
   const due = (await $.clock.now()) + kw.lead
   if (s.epoch !== epoch || s.armed !== armed) return
@@ -532,11 +527,7 @@ async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: n
       void (async () => {
         try {
           if (s.armed !== armed || s.epoch !== epoch) return
-          if ((await $.clock.now()) - due > LATE_PING_MS) {
-            note($, s, 'ping skipped: timer ran late, the cache may be cold')
-            return
-          }
-          await runPing($, s, armed, epoch)
+          await runPing($, s, armed, epoch, due)
         } catch (err) {
           note($, s, `ping timer error: ${describeError(err)}`)
         }
@@ -591,7 +582,6 @@ function userReturned($: EngineInterface, s: State): void {
   s.epoch += 1
   cancelTimers(s)
   s.armed = undefined
-  s.owed = undefined
   if (s.ping !== undefined) s.ping.userCame = true
   // Read the id now, not when the queued call runs: `/clear` changes it in between.
   const sessionId = $.session.id().catch(() => undefined)
@@ -613,7 +603,14 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
     note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
     armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
     // The notice is already sent; the first ping follows it. Waiting for a quiet box must not hold the queue.
-    if (stage === 'warn' && reply.decision === 'act') void runPing($, s, armed, epoch)
+    const dueAt = armed.at.warn
+    if (stage === 'warn' && reply.decision === 'act' && dueAt !== undefined) {
+      await enqueue(s, async () => {
+        const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+        await $.state.set(IDLE_KEEPWARM, { ...kw, warned: true })
+      })
+      void runPing($, s, armed, epoch, dueAt)
+    }
   } catch (err) {
     note($, s, `timer ${stage} error: ${describeError(err)}`)
   }

@@ -10,7 +10,7 @@ const EXCERPT_CHARS = 200
 
 export type Keepwarm = MeridianIdleKeepwarm
 
-export const FRESH: Keepwarm = { on: false, session: '', stretch: 0, sent: 0, lead: 0 }
+export const FRESH: Keepwarm = { on: false, session: '', stretch: 0, sent: 0, lead: 0, warned: false }
 
 export type Outcome = 'stopped' | 'continued' | 'failed'
 

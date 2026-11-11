@@ -47,16 +47,18 @@ the cache expires) is followed by a prompt that keeps the cache warm: ping 1
 when `fire warn` answers `act`, then up to two more. Core fires the warning once
 per stretch, so the mod times pings 2 and 3 itself: `lead` (the gap core placed
 between the turn and the warning, taken from the arm that placed it) after each
-later main-loop arm of the same stretch. A new main-loop arm replaces the timer,
-a user return cancels it, and a timer that runs more than 60 s late is skipped
-because the cache may be cold. The count is kept per core stretch, in
-`$.state`, before each submit, so a reload can cost a ping but never add one.
+later main-loop arm of the same stretch, and only once the stretch's warning
+acted (`warned` in `$.state`; a warning core skipped starts no pings). A new
+main-loop arm replaces the timer and a user return cancels it. The count and
+`warned` are kept per core stretch, in `$.state`; the count is taken before each
+submit, so a reload can cost a ping but never add one.
 Pings send no notification.
 
 - **Quiet box.** A ping is submitted only after the prompt box has been empty
-  and untouched for 10 s. It gives up 1 minute before the cache would expire:
-  `warn_minutes` from `idle config` after the warning or chained timer fired,
-  not the lead. A skipped ping spends no slot.
+  and untouched for 10 s. Every check before the submit stops 1 minute before
+  the cache would expire: the stage's scheduled time plus `warn_minutes` (from
+  `idle config`) minus 1 minute. The deadline does not move when the timer runs
+  late, so a late timer has less time or none. A skipped ping spends no slot.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that
@@ -65,7 +67,7 @@ Pings send no notification.
 - **A running turn.** If the warning or a chained timer fires while a
   main-loop turn is in flight, no ping is sent and no slot is spent: that turn
   refreshes the cache, and its own arm sets the next chained timer one lead
-  later. A user return cancels it as usual.
+  later (the stretch is already `warned`). A user return cancels it as usual.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
   touched. The denied tool names go in the log record.
@@ -73,8 +75,9 @@ Pings send no notification.
   quotes or backticks) ends this stretch's pings; keepwarm stays on.
 - **Your-turn push.** The ping turn's arm sends the last answer from a
   non-ping turn as `--assistant-text`, so the next notice does not read "ok".
-  That answer is also kept in `$.store` key `answer` (with its session id), so
-  it survives a resume or hot reload; another session's value is ignored.
+  While keepwarm is on, that answer is also kept in `$.store` key `answer` (with
+  its session id), so it survives a resume or hot reload; another session's
+  value is ignored.
 
 Each submitted ping adds one record (time, session, stretch, ping number,
 `stopped`, `continued` or `failed`, denied tools, reply excerpt) to the plugin

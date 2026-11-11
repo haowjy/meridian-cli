@@ -13,6 +13,8 @@ type Host = {
   box: string
   /** The plugin store as the mod last wrote it. */
   store: Record<string, unknown>
+  /** How long `fire` takes to answer, standing in for a timer the machine ran late. */
+  fireDelayMs?: number
 }
 
 const START = 1_000_000
@@ -48,9 +50,10 @@ function install(on: On, h: Host) {
     h.store[e.key] = JSON.parse(JSON.stringify(e.value))
     return { value: undefined }
   })
-  on('process.run', (_$, e) => {
+  on('process.run', async (_$, e) => {
     const args = e.argv.slice(2)
     h.calls.push([...args])
+    if (args[0] === 'fire' && h.fireDelayMs !== undefined) await clock.sleep(h.fireDelayMs)
     const reply = h.reply[args[0] ?? '']
     const body = typeof reply === 'function' ? reply(args) : reply
     return {
@@ -317,13 +320,18 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
 const IDLE_COMMAND = { command: 'meridian-idle', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
 const LEAD = 20_000
 
-/** A fake core: the first arm of a stretch places the warning LEAD ahead, later arms of it place nothing. */
+/** A fake core: the first arm places the warning LEAD ahead, later arms place nothing, and a return opens a new stretch. */
 function keepwarmHost(lead = LEAD): Host {
   const h = host()
   let armed = 0
+  let stretch = 1
   h.reply.arm = () => {
     armed += 1
-    return armed === 1 ? { stretch: 1, anchor: armed, warn_at: START + 2000 + lead } : { stretch: 1, anchor: armed }
+    return armed === 1 ? { stretch, anchor: armed, warn_at: START + 2000 + lead } : { stretch, anchor: armed }
+  }
+  h.reply.return = () => {
+    stretch += 1
+    return { stretch_closed: true }
   }
   return h
 }
@@ -436,6 +444,20 @@ test('a ping held by a draft gives up before the cache expires, however long the
   await clock.advance(10 * MINUTE)
   expect(h.submitted).toEqual([])
   expect(pingRecords(h)).toEqual([])
+})
+
+test('a warning acted on 90 s late gets no ping once a draft holds the box to the expiry', async ($, on) => {
+  const MINUTE = 60_000
+  const h = keepwarmHost(50 * MINUTE)
+  h.fireDelayMs = 90_000 // core accepts a warning up to 120 s late
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'a draft'
+  await clock.advance(60 * MINUTE - 1000) // just before the cache expires
+  h.box = ''
+  await clock.advance(30_000)
+  expect(h.submitted).toEqual([])
 })
 
 test('a user return after ping 1 cancels the chained ping', async ($, on) => {
