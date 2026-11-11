@@ -3,7 +3,11 @@
 A Claude Code mod that tells Meridian when a session goes idle, what work the
 turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
-expire. The mod only senses and runs the timers Meridian places.
+expire. For those the mod only senses and runs the timers Meridian places.
+The one thing it does on its own is keepwarm, which is off until the user turns
+it on: it submits up to three short prompts so the cache stays warm while the
+user is away, the first when Meridian's cache warning fires and the next two on
+its own timer.
 
 ## What it does
 
@@ -18,6 +22,9 @@ that common flag for readability.
 | `classic.Notification` with `notification_type = "permission_prompt"` | `meridian idle needs-permission --harness claude --message <text>` | Claude reports that a main-loop or background-subagent permission prompt is still unanswered. Meridian forwards one stateless `notify.needs_permission` notice; other notification types are ignored. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
 | timer: push, warn | `meridian idle fire push\|warn …` | Core sends the notification itself. The mod only reports that the timer fired. |
+| `fire warn` answers `act`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
+| `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's turn by its nonce, read its reply, and deny tools that change anything while it runs. |
+| `prompt.edit`, `prompt.change` | none | Remember when the user last touched the prompt box, so a ping waits for a quiet one. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns.
@@ -29,8 +36,55 @@ Its own diagnostics live in the plugin's `$.store` under the key `log` (last
 
 ## `/meridian-idle`
 
-Prints the current stretch, anchor, time left on each timer and the last log
-lines. It does not count as a return.
+Prints the current stretch, anchor, time left on each timer, the keepwarm state
+and pings sent this stretch, and the last log lines. It does not count as a return.
+
+`/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` set keepwarm.
+
+## Keepwarm
+
+Off until `/meridian-idle keepwarm on`; the model cannot turn it on. A restart
+or `/clear` drops the setting (`$.state` is reset), a hot reload keeps it.
+
+With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
+the cache expires) is followed by a prompt that keeps the cache warm: ping 1
+when `fire warn` answers `act`, then up to two more. Core fires the warning once
+per stretch, so the mod times pings 2 and 3 itself: `lead` (the gap core placed
+between the turn and the warning, taken from the arm that placed it) after each
+later main-loop arm of the same stretch, and only once the stretch's warning
+acted (`warned` in `$.state`; a warning core skipped starts no pings). A new
+main-loop arm replaces the timer and a user return cancels it. The count and
+`warned` are kept per core stretch, in `$.state`; the count is taken before each
+submit, so a reload can cost a ping but never add one.
+Pings send no notification.
+
+- **Quiet box.** A ping is submitted only after the prompt box has been empty
+  and untouched for 10 s. Every check before the submit stops 1 minute before
+  the cache would expire: the stage's scheduled time plus `warn_minutes` (from
+  `idle config`) minus 1 minute. The deadline does not move when the timer runs
+  late, so a late timer has less time or none. A skipped ping spends no slot.
+- **Not the user.** The ping is a plugin prompt without `asUser`, so the model
+  reads it as sent by the plugin, and the mod does not count it as a return.
+- **Its turn.** The text carries a nonce; the main-loop `turn.start` that
+  carries it names the ping's `turnId`, and only that turn's `turn.complete`
+  with reason `answer` is read.
+- **A running turn.** If the warning or a chained timer fires while a
+  main-loop turn is in flight, no ping is sent and no slot is spent: that turn
+  refreshes the cache, and its own arm sets the next chained timer one lead
+  later (the stretch is already `warned`). A user return cancels it as usual.
+- **Tools.** While the ping's turn runs, main-loop tool calls that are not
+  `isReadOnly` are denied. Subagent loops and the rest of the session are not
+  touched.
+- **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
+  quotes or backticks) ends this stretch's pings; keepwarm stays on.
+- **Your-turn push.** The ping turn's arm sends the last answer from a
+  non-ping turn as `--assistant-text`, so the next notice does not read "ok".
+  The answer is held in memory only: after a hot reload the next ping turn's
+  arm has none, and that notice carries no assistant excerpt.
+
+The mod keeps no record of the pings beyond its diagnostic `log`. Each ping is
+in the session transcript, as a plugin prompt starting
+`[meridian-idle keepwarm <nonce>]`, with the model's reply after it.
 
 ## Where it runs
 

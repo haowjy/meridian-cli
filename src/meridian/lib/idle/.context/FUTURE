@@ -6,3 +6,9 @@
   capability rather than relying on a duck-typed flag with silent defaults.
 - `claude_runtime/meridian-idle`: check host busy state before a due push, and
   forward permission prompts without holding the push for a waiting subagent.
+- `claude_runtime/meridian-idle`: the plugin `$.store` is one file shared by
+  every session, and each session overwrites `log` with its own lines, so
+  concurrent sessions lose each other's diagnostics. Key it per session.
+- `claude_runtime/meridian-idle`: the keepwarm skip for a warning that fires
+  while a main-loop turn is running is covered by the mod tests but not seen
+  live; a user prompt closes the stretch, so only an injected turn overlaps.

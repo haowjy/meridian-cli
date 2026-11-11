@@ -188,7 +188,7 @@ class IdleConfig(ConfigModel):
             env_vars=("MERIDIAN_IDLE_WARN_MINUTES",),
         ),
         Field(ge=0),
-    ] = 15
+    ] = 10
     warn_email: Annotated[
         bool,
         config_field(
