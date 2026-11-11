@@ -678,12 +678,19 @@ def _meridian_commands_line(
                         f"Bash({command.command}{' *' if command.match == 'prefix' else ''})"
                     )
     if blocked:
+        project_denies = {
+            native
+            for rule in policy.rules
+            if rule.origin == PROJECT_ORIGIN and rule.action == "deny"
+            for native in rule.native
+        }
         problems: list[str] = []
         for (blocker, profile_restrictable), names in blocked.items():
             subject = ",".join(names)
             if profile_restrictable:
+                source = "project" if blocker in project_denies else "profile"
                 problems.append(
-                    f"{subject}: profile restriction {blocker or 'omission'} remains stricter"
+                    f"{subject}: {source} restriction {blocker or 'omission'} remains stricter"
                 )
             elif blocker:
                 problems.append(
