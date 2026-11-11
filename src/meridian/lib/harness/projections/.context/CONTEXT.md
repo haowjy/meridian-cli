@@ -2,7 +2,10 @@
 
 A permission compile maps the transport-neutral policy to a native value and an
 enforcement report. Platform agent and task denies override profile rules; their native
-names come from Mars, not a second table. Completion grants for `meridian spawn done`
+names come from Mars, not a second table. A project-wide deny (`[settings.tools]`) is a
+rule with `origin == "project"`: every compile spells it like any other deny, and a rule Mars
+attached a `note` to (an unsettled pair) is at best `partial`, the note appended to whatever
+the compile already said. Completion grants for `meridian spawn done`
 and `meridian spawn rearm` cannot be restricted by profile rules; read and launch
 grants allow an equally or more specific profile restriction. Harness limitations
 can make a grant partial or unsupported.
@@ -24,7 +27,9 @@ are treated as unrestricted. Shell network policy is separate from built-in web 
 Claude evaluates deny, then ask, then allow. A plain deny or ask shadows scoped allows
 for the same native tool or permission spelling, including `Write` or `Edit` beside a
 scoped write allow expressed as `Edit(path)`. The compile gates unmatched calls through
-permission mode instead. Headless spawns refuse calls requiring approval. `auto` cannot
+permission mode instead, except for a project-wide deny (`origin == "project"`): Mars already
+set aside the allows it covers by key, and a scoped allow Mars could not see must not turn
+the deny into a mode. Headless spawns refuse calls requiring approval. `auto` cannot
 serve as that gate because its classifier approves unmatched calls; `acceptEdits` can
 also run file commands, so edit gates need `manual`. `dontAsk` is reserved for a whole
 policy allowlist because it refuses every other tool. Ask rules hold even in bypass mode;

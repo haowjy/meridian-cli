@@ -26,7 +26,8 @@ from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
-from tests.support.launch import stub_bundle_request_and_resolve
+from meridian.lib.tools import RuleRef, SetAsideRule
+from tests.support.launch import stub_bundle_request_and_resolve, tool_rule
 
 
 def _state_root(project_root: Path) -> Path:
@@ -456,6 +457,62 @@ def test_primary_continue_yolo_reaches_command_and_snapshot(
     assert request.launch_policy_snapshot is not None
     assert request.launch_policy_snapshot.execution_policy.approval == "never"
     assert request.launch_policy_snapshot.field_provenance["approval_source"] == "cli"
+
+
+def test_primary_continue_replaces_project_rules_with_the_ones_in_force_now(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def project(rule: Any) -> Any:
+        return rule.model_copy(update={"origin": "project"})
+
+    profile_rule = tool_rule("bash", "allow", "Bash")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        tool_rules=(profile_rule, project(tool_rule("web", "deny", "WebSearch", "WebFetch"))),
+        tool_rules_set_aside=(
+            SetAsideRule(
+                capability="write",
+                action="allow",
+                by=RuleRef(capability="edit", action="deny", origin="project"),
+            ),
+        ),
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _seed_primary_spawn(
+        _state_root(project_root),
+        spawn_id="p48",
+        harness_session_id="00000000-0000-4000-8000-000000000048",
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="gpt-5.3-codex",
+            harness="codex",
+            tool_rules=(
+                tool_rule("edit", "allow", "Edit"),
+                tool_rule("write", "allow", "Write"),
+                project(tool_rule("read", "deny", "Read")),
+            ),
+        ),
+    )
+    contexts: list[Any] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+
+    _run_primary_continue(project_root, "p48", dry_run=True)
+
+    rules = [
+        (rule.capability, rule.action, rule.origin)
+        for rule in contexts[0].resolved_request.tool_rules
+    ]
+    assert rules == [("edit", "allow", None), ("web", "deny", "project")]
 
 
 @pytest.mark.parametrize(

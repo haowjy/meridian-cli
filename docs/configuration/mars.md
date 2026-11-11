@@ -207,10 +207,26 @@ Duplicate matches are valid; the earlier rule in the combined list wins.
 
 `approval`, `sandbox`, and `network` overlays take effect, with the per-harness limits in
 [Permissions by harness](../agent-profiles.md#permissions-by-harness). A
-`[agents.<name>.tools]` table merges into the profile's tool policy: plain `allowed` and
-`disallowed` lists add to it, and `{ replace = [...] }` clears that action's lower rules.
+`[agents.<name>.tools]` table merges into the profile's tool policy. The rule form is a map
+of tool key to `allow`, `deny` or `ask`; an entry replaces the same key in the profile and in
+the project-wide `[settings.tools]` rules, for that agent only:
+
+```toml
+[agents.coder.tools]
+"bash(git push *)" = "ask"
+"bash(pkill -f *)" = "allow"   # exempts coder from a project-wide deny of this key
+```
+
+The `allowed` and `disallowed` lists still work but are deprecated: write the map form. The
+lists add rules to the profile's; `{ replace = [...] }` clears the profile's lower rules of
+that action, never a project-wide rule or a map entry. A table may mix map entries and lists.
+Two spellings of one key in one table (`Bash` beside `bash`) fail the load, and so does a
+string-valued key that is not a tool name.
 The merged rules reach both native agent files and the launch bundle, so Meridian launches
 with them. A list-valued `tools` key under `[agents.<name>]` is a parse error.
+
+Project-wide denies live in `[settings.tools]`; see
+[Project-wide tool rules](../agent-profiles.md#project-wide-tool-rules).
 
 ### Three-state model-policy semantics
 

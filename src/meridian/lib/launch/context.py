@@ -1330,6 +1330,7 @@ def prepare_launch_surface(
             # to request.tool_rules only when no rules were resolved.
             "tool_rules": policies.resolved_tool_rules or request.tool_rules,
             "platform_tool_rules": policies.platform_tool_rules,
+            "tool_rules_set_aside": policies.tool_rules_set_aside,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,

@@ -24,6 +24,7 @@ from pydantic import (
 from meridian.lib.tools import (
     LEGACY_SNAPSHOT_ORIGIN,
     PLATFORM_ORIGIN,
+    PROJECT_ORIGIN,
     ToolRule,
     split_native,
     unscoped_action,
@@ -273,6 +274,8 @@ def rule_element(rule: ToolRule) -> str:
     name = rule.capability if rule.capability is not None else ", ".join(rule.native)
     if rule.pattern is not None:
         name = f"{name}({rule.pattern})"
+    if rule.origin == PROJECT_ORIGIN:
+        return f"project: tools {name} = {rule.action}"
     legacy = " [legacy snapshot]" if rule.origin == LEGACY_SNAPSHOT_ORIGIN else ""
     return f"tools: {name} = {rule.action}{legacy}"
 
@@ -394,9 +397,10 @@ def complete_report(
         rule = rules_by_element.get(default.element)
         if rule is not None and rule.origin == PLATFORM_ORIGIN and line.status == "native":
             line = ReportLine(line.element, "platform", line.note)
-        elif rule is not None and rule.note and line.status == "native":
+        elif rule is not None and rule.note and line.status in ("native", "partial"):
             # Mars notes a rule only when its native spelling does not carry the rule exactly
             # (a shared permission name, an overlap, a shadowed scope), so it is not native.
+            # A compile's own partial note says how it falls short, not what Mars saw.
             note = rule.note if not line.note else f"{line.note}; {rule.note}"
             line = ReportLine(line.element, "partial", note)
         if line.element in spilled and line.status == "native":
