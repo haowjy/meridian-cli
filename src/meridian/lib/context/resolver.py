@@ -175,31 +175,3 @@ def context_env_key(name: str) -> str:
 
     env_name = "".join(c if c.isalnum() else "_" for c in name.upper()).strip("_")
     return f"MERIDIAN_CONTEXT_{env_name}_DIR"
-
-
-def render_context_lines(
-    resolved: ResolvedContextPaths,
-    *,
-    active_work_dir: Path | None,
-) -> list[str]:
-    """Render context paths for CLI display from resolved values only."""
-
-    lines: list[str] = []
-    if active_work_dir is not None:
-        lines.append(f"work: {active_work_dir.as_posix()}")
-    else:
-        lines.append("work: (no active work item — run 'meridian work start')")
-
-    if resolved.work_archive is not None:
-        lines.append(f"  archive: {resolved.work_archive.as_posix()}")
-
-    if resolved.kb_root is not None:
-        lines.append(f"kb: {resolved.kb_root.as_posix()}")
-    else:
-        lines.append("kb: (unresolved — project state is not materialized)")
-
-    for name in sorted(resolved.extra):
-        path, _ = resolved.extra[name]
-        lines.append(f"{name}: {path.as_posix()}")
-
-    return lines

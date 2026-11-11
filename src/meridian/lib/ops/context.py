@@ -10,12 +10,11 @@ from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
-    render_context_lines,
     resolve_context_paths,
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time
-from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.resolved_context import ResolvedContext, render_context_lines
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir

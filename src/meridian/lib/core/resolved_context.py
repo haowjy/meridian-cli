@@ -4,13 +4,18 @@ This module defines the canonical environment-to-context translation used by
 launch, ops, and child-environment composition paths.
 """
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, Self
 
 from meridian.lib.config.context_config import ContextConfig
-from meridian.lib.context.resolver import context_env_key, resolve_context_paths
+from meridian.lib.context.resolver import (
+    ResolvedContextPaths,
+    context_env_key,
+    resolve_context_paths,
+)
 from meridian.lib.core.depth import (
     DEPTH_ENV,
     child_meridian_depth,
@@ -283,3 +288,40 @@ class ResolvedContext:
             env_key = context_env_key(context_name)
             overrides[env_key] = context_dir.as_posix()
         return overrides
+
+
+def _display_path(env_key: str, path: Path) -> str:
+    """The `$VAR` name when that variable still holds this resolved path, else the path."""
+
+    value = path.as_posix()
+    return f"${env_key}" if os.environ.get(env_key) == value else value
+
+
+def render_context_lines(
+    resolved: ResolvedContextPaths,
+    *,
+    active_work_dir: Path | None,
+) -> list[str]:
+    """Render context paths for CLI display; a variable is named only if it matches."""
+
+    lines: list[str] = []
+    if active_work_dir is not None:
+        lines.append(f"work: {_display_path('MERIDIAN_ACTIVE_WORK_DIR', active_work_dir)}")
+    else:
+        lines.append("work: (no active work item — run 'meridian work start')")
+
+    if resolved.work_archive is not None:
+        lines.append(
+            f"  archive: {_display_path(context_env_key('work_archive'), resolved.work_archive)}"
+        )
+
+    if resolved.kb_root is not None:
+        lines.append(f"kb: {_display_path(context_env_key('kb'), resolved.kb_root)}")
+    else:
+        lines.append("kb: (unresolved — project state is not materialized)")
+
+    for name in sorted(resolved.extra):
+        path, _ = resolved.extra[name]
+        lines.append(f"{name}: {_display_path(context_env_key(name), path)}")
+
+    return lines
