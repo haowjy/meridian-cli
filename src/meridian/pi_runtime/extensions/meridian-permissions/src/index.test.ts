@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,7 @@ function policy(
   overrides: Partial<PermissionPolicy> = {},
 ): PermissionPolicy {
   return {
-    version: 1,
+    version: 2,
     rules,
     meridian_commands: [],
     headless_reject_reason: HEADLESS_REASON,
@@ -44,31 +44,36 @@ afterEach(() => {
 });
 
 describe("permission precedence", () => {
-  it("chooses the most specific matching scope", () => {
-    const decision = decideToolCall(
-      policy([
-        rule({ pattern: "rg *", action: "deny", label: "bash(rg *)" }),
-        rule({ pattern: "rg src/*", action: "allow", label: "bash(rg src/*)" }),
-      ]),
-      "bash",
-      { command: "rg src/file.ts" },
-    );
-
-    expect(decision?.action).toBe("allow");
-  });
-
-  it("chooses deny over ask over allow at equal specificity", () => {
+  it("chooses deny over ask over allow, however narrow the key", () => {
     const actions = ["allow", "ask", "deny"] as const;
     const decision = decideToolCall(
       policy(actions.map((action) => rule({ pattern: "rg *", action, label: action }))),
       "bash",
       { command: "rg needle" },
     );
-
     expect(decision?.action).toBe("deny");
+
+    const narrowerAllow = decideToolCall(
+      policy([
+        rule({ pattern: "rg *", action: "ask", label: "bash(rg *)" }),
+        rule({ pattern: "rg src/*", action: "allow", label: "bash(rg src/*)" }),
+      ]),
+      "bash",
+      { command: "rg src/file.ts" },
+    );
+    expect(narrowerAllow?.action).toBe("ask");
   });
 
-  it("chooses write over edit for Pi's shared write tool", () => {
+  it("lets `*` decide only when no rule of the tool matches", () => {
+    const rules = [
+      rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
+      rule({ capability: "read", tool: "read", action: "allow", label: "read" }),
+    ];
+    expect(decideToolCall(policy(rules), "read", { path: "a.txt" })?.action).toBe("allow");
+    expect(decideToolCall(policy(rules), "grep", { path: "a" })?.action).toBe("deny");
+  });
+
+  it("takes the strictest of write rules from different capabilities", () => {
     const decision = decideToolCall(
       policy([
         rule({ capability: "edit", tool: "write", pattern: "src/*", action: "allow" }),
@@ -82,12 +87,30 @@ describe("permission precedence", () => {
   });
 });
 
+describe("shared case table", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("../../../../../../tests/fixtures/tool_policy_cases.json", import.meta.url), "utf8"),
+  ) as {
+    policies: Record<string, Omit<PermissionPolicy, "version" | "headless_reject_reason">>;
+    cases: { policy: string; command: string; expected: "allow" | "deny" }[];
+  };
+
+  it.each(fixture.cases)("$policy: $command -> $expected", ({ policy: name, command, expected }) => {
+    const decision = decideToolCall(
+      { ...fixture.policies[name], version: 2, headless_reject_reason: HEADLESS_REASON },
+      "bash",
+      { command },
+    );
+    expect(decision?.action === "deny" ? "deny" : "allow").toBe(expected);
+  });
+});
+
 describe("bash command evaluation", () => {
   const restrictive = policy(
     [
       rule({ pattern: "rg *", action: "allow", label: "bash(rg *)" }),
       rule({ pattern: "touch *", action: "deny", label: "bash(touch *)" }),
-      rule({ action: "deny", label: "bash" }),
+      rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
     ],
     { bash_fail_closed: true },
   );
@@ -232,7 +255,7 @@ describe("path scope evaluation", () => {
     try {
       const scoped = policy([
         rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
-        rule({ capability: "read", tool: "read", action: "deny" }),
+        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
       ]);
 
       expect(
@@ -260,11 +283,11 @@ describe("path scope evaluation", () => {
     try {
       const scoped = policy([
         rule({ capability: "read", tool: "read", pattern: "src/*", action: "allow" }),
-        rule({ capability: "read", tool: "read", action: "deny" }),
+        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
       ]);
       const writeScoped = policy([
         rule({ capability: "write", tool: "write", pattern: "src/*", action: "allow" }),
-        rule({ capability: "write", tool: "write", action: "deny" }),
+        rule({ capability: "*", tool: "*", action: "deny", label: "*" }),
       ]);
 
       expect(

@@ -3,13 +3,13 @@
 Codex runs this once per shell call, so it must not import Meridian (see #721 for what a CLI
 import costs). It is a guard against accidents such as a careless ``git reset --hard``, not a
 sandbox: an agent that tries can get past it. The rule matching mirrors the Pi permission
-extension's ``policyDecision``, so a rule means the same on both, and the policy JSON is
-``tool_extension_policy.ExtensionPolicy``.
+extension's ``policyDecision`` (both run ``tests/fixtures/tool_policy_cases.json``), so a rule
+means the same on both, and the policy JSON is ``tool_extension_policy.ExtensionPolicy``.
 
 The command is split on ``;``, ``&&``, ``||``, ``|``, ``&`` and newlines (outside quotes) and
-each segment is wildcard-matched against the rules. Deny wins; a deny-list passes a segment
-no rule names; an allowlist (``bash_fail_closed``) passes a command only if every segment
-matches an allow, and also refuses ``$``, backticks, redirection and other shell syntax as Pi
+each segment is wildcard-matched against the rules. Of the rules that match, deny wins; a
+segment no bash rule matches is decided by the ``*`` rule, else it passes; an allowlist
+(``bash_fail_closed``) also refuses ``$``, backticks, redirection and other shell syntax as Pi
 does. What the matcher does not see is not a bug: wrappers (``sudo git reset --hard``),
 ``bash -c`` strings, substitutions, subshells, options between a program and its subcommand,
 scripts and interpreters.
@@ -87,11 +87,7 @@ def _glob_matches(pattern: str, value: str) -> bool:
     return True
 
 
-def _literal_length(pattern: str | None) -> int:
-    return len(pattern.replace("*", "").rstrip()) if pattern else 0
-
-
-_ACTION_RANK = {"deny": 2, "allow": 0}
+_ACTION_RANK = {"allow": 0, "deny": 2}
 
 
 @dataclass(frozen=True)
@@ -103,18 +99,20 @@ class Rule:
 
 
 def _winner(rules: list[Rule], command: str) -> Rule | None:
-    """The rule deciding ``command``: scoped beats bash's own unscoped rule, which beats
-    ``*``; then the longer literal; then deny."""
+    """The rule deciding ``command``: the strictest of the bash rules that match it, however
+    narrow its key; the ``*`` rules decide only when none matches."""
 
-    best: tuple[tuple[int, int, int], Rule] | None = None
-    for rule in rules:
-        if rule.pattern is not None and not _glob_matches(rule.pattern, command):
-            continue
-        tier = 2 if rule.pattern is not None else int(rule.tool != "*")
-        rank = (tier, _literal_length(rule.pattern), _ACTION_RANK[rule.action])
-        if best is None or rank > best[0]:
-            best = (rank, rule)
-    return None if best is None else best[1]
+    matching = [
+        rule
+        for rule in rules
+        if rule.tool == "bash" and (rule.pattern is None or _glob_matches(rule.pattern, command))
+    ]
+    deciding = matching or [rule for rule in rules if rule.tool == "*"]
+    best: Rule | None = None
+    for rule in deciding:
+        if best is None or _ACTION_RANK[rule.action] > _ACTION_RANK[best.action]:
+            best = rule
+    return best
 
 
 def _granted(grant: dict[str, object], text: str) -> bool:

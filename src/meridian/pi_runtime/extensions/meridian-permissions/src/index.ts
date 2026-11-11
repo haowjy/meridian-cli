@@ -43,7 +43,7 @@ export type PermissionRule = {
 };
 
 export type PermissionPolicy = {
-  version: 1;
+  version: 2;
   rules: PermissionRule[];
   meridian_commands: { command: string; match: "exact" | "prefix" }[];
   headless_reject_reason: string;
@@ -58,10 +58,6 @@ export type PermissionDecision = {
   action: ToolAction;
   detail: string;
   reason: string;
-};
-
-type RankedDecision = PermissionDecision & {
-  rank: readonly [number, number, number, number];
 };
 
 type SplitResult = { commands: string[]; complete: boolean };
@@ -87,7 +83,7 @@ function parsePolicy(raw: string | undefined): PermissionPolicy {
   if (typeof value !== "object" || value === null) throw new Error("Pi permission policy is not an object");
   const policy = value as Partial<PermissionPolicy>;
   if (
-    policy.version !== 1
+    policy.version !== 2
     || !Array.isArray(policy.rules)
     || !Array.isArray(policy.meridian_commands)
     || typeof policy.headless_reject_reason !== "string"
@@ -126,27 +122,12 @@ function globMatches(pattern: string, value: string): boolean {
   return new RegExp(`^${expression}$`, "u").test(value);
 }
 
-function literalLength(pattern: string | null | undefined): number {
-  // ``cmd *`` also matches bare ``cmd``. Rank those two spellings equally for the bare
-  // call so a stricter profile rule wins instead of the synthetic platform allow.
-  return pattern?.replaceAll("*", "").trimEnd().length ?? 0;
-}
-
 function actionRank(action: ToolAction): number {
   return action === "deny" ? 2 : action === "ask" ? 1 : 0;
 }
 
-function capabilityRank(rule: PermissionRule, tool: string): number {
-  return tool === "write" && rule.capability === "write" ? 1 : 0;
-}
-
-function isHigherRank(left: RankedDecision, right: RankedDecision): boolean {
-  for (let index = 0; index < left.rank.length; index += 1) {
-    if (left.rank[index] !== right.rank[index]) return left.rank[index] > right.rank[index];
-  }
-  return false;
-}
-
+// Of the rules that match the call, the strictest decides, however narrow its key. The `*`
+// rules decide only when none matches.
 function policyDecision(
   policy: PermissionPolicy,
   tool: string,
@@ -154,9 +135,8 @@ function policyDecision(
   detail: string,
   workingDirectory: string,
 ): PermissionDecision | undefined {
-  const candidates = policy.rules.filter((rule) => rule.tool === tool || rule.tool === "*");
-  const scoped = candidates.filter((rule) => rule.pattern != null);
-  if (scope === undefined && scoped.length > 0) {
+  const own = policy.rules.filter((rule) => rule.tool === tool);
+  if (scope === undefined && own.some((rule) => rule.pattern != null)) {
     return {
       action: "deny",
       detail,
@@ -164,28 +144,27 @@ function policyDecision(
     };
   }
 
-  let winner: RankedDecision | undefined;
-  for (const rule of candidates) {
-    if (rule.pattern != null) {
-      const pattern = PATH_TOOLS.has(tool)
-        ? normalizePathPattern(rule.pattern, workingDirectory)
-        : rule.pattern;
-      if (scope === undefined || pattern === undefined || !globMatches(pattern, scope)) continue;
-    }
-    const decision: RankedDecision = {
-      action: rule.action,
-      detail,
-      reason: `${DENIAL_PREFIX}${rule.label} = ${rule.action}. Attempted: ${detail}`,
-      rank: [
-        rule.pattern == null ? (rule.tool === "*" ? 0 : 1) : 2,
-        literalLength(rule.pattern),
-        capabilityRank(rule, tool),
-        actionRank(rule.action),
-      ],
-    };
-    if (winner === undefined || isHigherRank(decision, winner)) winner = decision;
+  const matching = own.filter((rule) => {
+    if (rule.pattern == null) return true;
+    const pattern = PATH_TOOLS.has(tool)
+      ? normalizePathPattern(rule.pattern, workingDirectory)
+      : rule.pattern;
+    return scope !== undefined && pattern !== undefined && globMatches(pattern, scope);
+  });
+  const deciding = matching.length > 0
+    ? matching
+    : policy.rules.filter((rule) => rule.tool === "*");
+  let winner: PermissionRule | undefined;
+  for (const rule of deciding) {
+    if (winner === undefined || actionRank(rule.action) > actionRank(winner.action)) winner = rule;
   }
-  return winner;
+  return winner === undefined
+    ? undefined
+    : {
+        action: winner.action,
+        detail,
+        reason: `${DENIAL_PREFIX}${winner.label} = ${winner.action}. Attempted: ${detail}`,
+      };
 }
 
 function isAssignment(word: ShellWord): boolean {

@@ -59,9 +59,8 @@ def _compile_flags(
     named = tuple(
         rule for rule in policy.rules if rule.native_status == "known" and not rule.is_wildcard
     )
-    # A plain deny removes its tools unless a scoped rule still needs them; the extension
-    # then refuses what the scoped rules don't allow.
-    scoped_tools = frozenset(tool for rule in named if rule.is_scoped for tool in rule.tools)
+    # A plain deny covers every scoped rule of its tool, so it removes the tool, except bash
+    # while Meridian's commands need it: the extension then refuses all but those.
     meridian_tools = frozenset({"bash"} if meridian_commands else ())
 
     exclude = tuple(
@@ -70,10 +69,10 @@ def _compile_flags(
             for rule in named
             if rule.action == "deny" and not rule.is_scoped
             for tool in rule.tools
-            if tool not in scoped_tools and tool not in meridian_tools
+            if tool not in meridian_tools
         )
     )
-    callable_tools = policy.allowed_tools
+    callable_tools = tuple(tool for tool in policy.allowed_tools if tool not in exclude)
     wildcard = strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
     if wildcard == "deny":
         allowed = tuple(dedupe_nonempty((*callable_tools, *meridian_tools)))
@@ -151,9 +150,11 @@ def _rule_report_line(
         return ReportLine(rule_element(rule), "native", "--tools " + ",".join(permissions.tools))
     if rule.action == "deny":
         return ReportLine(
-            rule_element(rule), "native", "tool_call handler refuses calls no scoped rule allows"
+            rule_element(rule),
+            "native",
+            "tool_call handler refuses it; bash stays callable only for Meridian's commands",
         )
-    return ReportLine(rule_element(rule), "native", "tool_call handler preserves scoped precedence")
+    return ReportLine(rule_element(rule), "native", "no rule removes it")
 
 
 def _report(

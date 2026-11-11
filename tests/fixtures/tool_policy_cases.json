@@ -1,0 +1,503 @@
+{
+ "_comment": "Shared by the Codex hook (tests/unit/harness/test_codex_tool_hook.py) and the Pi permissions extension (index.test.ts). Each case: the policy named in `policies`, one bash command, and whether the call is denied. `allow` also covers a call the policy has no opinion on. Rows only one of them runs live in that suite.",
+ "policies": {
+  "deny_list": {
+   "rules": [
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "git reset --hard *",
+     "action": "deny",
+     "label": "bash(git reset --hard *)"
+    }
+   ],
+   "meridian_commands": [],
+   "bash_fail_closed": false
+  },
+  "allowlist": {
+   "rules": [
+    {
+     "capability": "*",
+     "tool": "*",
+     "pattern": null,
+     "action": "deny",
+     "label": "*"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "git *",
+     "action": "allow",
+     "label": "bash(git *)"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "rg *",
+     "action": "allow",
+     "label": "bash(rg *)"
+    }
+   ],
+   "meridian_commands": [
+    {
+     "command": "meridian spawn done",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian work show",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian task-dir",
+     "match": "exact"
+    }
+   ],
+   "bash_fail_closed": true
+  },
+  "bash_over_star": {
+   "rules": [
+    {
+     "capability": "*",
+     "tool": "*",
+     "pattern": null,
+     "action": "deny",
+     "label": "*"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": null,
+     "action": "allow",
+     "label": "bash"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "rm *",
+     "action": "deny",
+     "label": "bash(rm *)"
+    }
+   ],
+   "meridian_commands": [],
+   "bash_fail_closed": false
+  },
+  "unscoped_deny_covers_allow": {
+   "rules": [
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": null,
+     "action": "deny",
+     "label": "bash"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "rg *",
+     "action": "allow",
+     "label": "bash(rg *)"
+    }
+   ],
+   "meridian_commands": [
+    {
+     "command": "meridian spawn done",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian work show",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian task-dir",
+     "match": "exact"
+    }
+   ],
+   "bash_fail_closed": true
+  },
+  "scoped_deny_covers_longer_allow": {
+   "rules": [
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "rg *",
+     "action": "deny",
+     "label": "bash(rg *)"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "rg src/*",
+     "action": "allow",
+     "label": "bash(rg src/*)"
+    }
+   ],
+   "meridian_commands": [],
+   "bash_fail_closed": false
+  },
+  "open_shell_scoped_deny": {
+   "rules": [
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": null,
+     "action": "allow",
+     "label": "bash"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "git revert *",
+     "action": "deny",
+     "label": "bash(git revert *)"
+    }
+   ],
+   "meridian_commands": [],
+   "bash_fail_closed": false
+  },
+  "grant_beats_deny": {
+   "rules": [
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": null,
+     "action": "deny",
+     "label": "bash"
+    },
+    {
+     "capability": "bash",
+     "tool": "bash",
+     "pattern": "meridian spawn done private *",
+     "action": "deny",
+     "label": "bash(meridian spawn done private *)"
+    }
+   ],
+   "meridian_commands": [
+    {
+     "command": "meridian spawn done",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian work show",
+     "match": "prefix"
+    },
+    {
+     "command": "meridian task-dir",
+     "match": "exact"
+    }
+   ],
+   "bash_fail_closed": true
+  }
+ },
+ "cases": [
+  {
+   "policy": "deny_list",
+   "command": "git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git reset --hard HEAD~1",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "cd x && git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git status; git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git status || git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git status | git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git status\ngit reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "echo 'a;b' && git reset --hard",
+   "expected": "deny"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git status",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git reset --soft HEAD",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "echo 'git reset --hard'",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "echo 'a && git reset --hard'",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "sudo git reset --hard",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "bash -c 'git reset --hard'",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "echo $(git reset --hard)",
+   "expected": "allow"
+  },
+  {
+   "policy": "deny_list",
+   "command": "git -C . reset --hard",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "touch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status && touch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status | touch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status; touch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status\ntouch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian work list",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian spawn done && touch x",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status > out",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status 2>&1",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git $(touch x)",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git `touch x`",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git \"$HOME\"",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git 'unterminated",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status #",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian task-dir set /tmp",
+   "expected": "deny"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git status && rg x | git log",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "git commit -m 'a; b'",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian spawn done",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian work show foo",
+   "expected": "allow"
+  },
+  {
+   "policy": "allowlist",
+   "command": "meridian task-dir",
+   "expected": "allow"
+  },
+  {
+   "policy": "bash_over_star",
+   "command": "rm -rf x",
+   "expected": "deny"
+  },
+  {
+   "policy": "bash_over_star",
+   "command": "git status; rm x",
+   "expected": "deny"
+  },
+  {
+   "policy": "bash_over_star",
+   "command": "touch x",
+   "expected": "allow"
+  },
+  {
+   "policy": "bash_over_star",
+   "command": "git status",
+   "expected": "allow"
+  },
+  {
+   "policy": "unscoped_deny_covers_allow",
+   "command": "rg x",
+   "expected": "deny"
+  },
+  {
+   "policy": "unscoped_deny_covers_allow",
+   "command": "git status",
+   "expected": "deny"
+  },
+  {
+   "policy": "unscoped_deny_covers_allow",
+   "command": "rg x; touch y",
+   "expected": "deny"
+  },
+  {
+   "policy": "unscoped_deny_covers_allow",
+   "command": "meridian spawn done",
+   "expected": "allow"
+  },
+  {
+   "policy": "unscoped_deny_covers_allow",
+   "command": "meridian work show p1",
+   "expected": "allow"
+  },
+  {
+   "policy": "scoped_deny_covers_longer_allow",
+   "command": "rg src/file.ts",
+   "expected": "deny"
+  },
+  {
+   "policy": "scoped_deny_covers_longer_allow",
+   "command": "rg needle",
+   "expected": "deny"
+  },
+  {
+   "policy": "scoped_deny_covers_longer_allow",
+   "command": "git status",
+   "expected": "allow"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "git revert HEAD",
+   "expected": "deny"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "git log -1 && git revert HEAD",
+   "expected": "deny"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "git status",
+   "expected": "allow"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "uv run pytest tests/ 2>&1 | tail -20",
+   "expected": "allow"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "echo $HOME",
+   "expected": "allow"
+  },
+  {
+   "policy": "open_shell_scoped_deny",
+   "command": "for f in *.py; do echo $f; done",
+   "expected": "allow"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "touch y",
+   "expected": "deny"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "meridian spawn done p-1; touch y",
+   "expected": "deny"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "meridian spawn done > output",
+   "expected": "deny"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "meridian spawn done private p-1",
+   "expected": "allow"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "meridian spawn done",
+   "expected": "allow"
+  },
+  {
+   "policy": "grant_beats_deny",
+   "command": "meridian work show x",
+   "expected": "allow"
+  }
+ ]
+}

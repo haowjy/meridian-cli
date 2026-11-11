@@ -44,7 +44,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolAction, ToolRule
 
 _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
@@ -103,19 +103,49 @@ class CodexPermissions:
     tool_hook: ExtensionPolicy | None
 
 
+_SWITCH_BY_CAPABILITY = {"web": "web_search", "web_search": "web_search", "image": "view_image"}
+_STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
+
+
 def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
-    """Return the Codex switch an exact, unscoped tool rule controls."""
+    """Return the Codex switch an exact, unscoped allow or deny rule sets."""
 
     if rule.pattern is not None or rule.action == "ask":
         return None
     enabled = rule.action == "allow"
-    if rule.capability in {"web", "web_search"}:
+    switch = _SWITCH_BY_CAPABILITY.get(rule.capability or "")
+    if switch == "web_search":
         note = "-c tools.web_search=true" if enabled else '-c web_search="disabled"'
-        return "web_search", enabled, note
-    if rule.capability == "image":
+        return switch, enabled, note
+    if switch == "view_image":
         verb = "--enable" if enabled else "--disable"
-        return "view_image", enabled, f"{verb} view_image"
+        return switch, enabled, f"{verb} view_image"
     return None
+
+
+def _switch_values(policy: PermissionPolicy) -> dict[str, bool | None]:
+    """Each switch's value: the strictest unscoped rule that concerns it decides.
+
+    Reads capabilities, not native names: a covered allow arrives with its rule, and a
+    switch is not a rule an enforcer would settle. Codex cannot ask, so an ask leaves the
+    switch at its default for the policy.
+    """
+
+    # Under an allowlist, search and image viewing are off unless a rule allows them. The
+    # shell stays on because Codex reads files through it.
+    off = False if policy.is_allowlist else None
+    values: dict[str, bool | None] = {"web_search": off, "view_image": off}
+    decisive: dict[str, ToolAction] = {}
+    for rule in policy.rules:
+        switch = _SWITCH_BY_CAPABILITY.get(rule.capability or "")
+        if switch is None or rule.pattern is not None:
+            continue
+        if switch not in decisive or _STRICTNESS[rule.action] > _STRICTNESS[decisive[switch]]:
+            decisive[switch] = rule.action
+    for switch, action in decisive.items():
+        if action != "ask":
+            values[switch] = action == "allow"
+    return values
 
 
 def project_codex_network(
@@ -227,18 +257,7 @@ def _compile_codex_permission_values(
     """Resolve every native permission value, once."""
 
     policy = spec.permission_policy
-    # Under an allowlist, search and image viewing are off unless a rule allows them. The
-    # shell stays on because Codex reads files through it.
-    off = False if policy.is_allowlist else None
-    switches: dict[str, bool | None] = {
-        "web_search": off,
-        "view_image": off,
-    }
-    # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
-    for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):
-        switch = _tool_switch(rule)
-        if switch is not None:
-            switches[switch[0]] = switch[1]
+    switches = _switch_values(policy)
 
     tool_hook = _compile_tool_hook(policy)
     network = project_codex_network(policy)
@@ -280,13 +299,18 @@ def _hook_report_line(rule: ToolRule) -> ReportLine:
             if rule.capability == "*"
             else ""
         )
+        refuses = (
+            "refuses every shell command segment that no bash rule matches, and shell syntax "
+            "such as expansion and redirection"
+            if rule.capability == "*"
+            else "refuses every shell command"
+        )
         return ReportLine(
             element,
             "partial",
-            f"{_HOOK_NOTE} refuses every shell command segment no scoped allow matches, and "
-            f"shell syntax such as expansion and redirection.{asked} Reads are bound too: Codex "
-            "reads files through the shell, so allow the read commands the agent needs. Beyond "
-            f"the allowed commands themselves (a permitted interpreter can run anything): "
+            f"{_HOOK_NOTE} {refuses}.{asked} Reads are bound too: Codex reads files through "
+            "the shell, so allow the read commands the agent needs. Beyond the allowed "
+            f"commands themselves (a permitted interpreter can run anything): "
             f"{_HOOK_LIMITS}.{agents}",
         )
     return ReportLine(
@@ -327,7 +351,11 @@ def _codex_report(
         elif rule.capability == "bash" and rule.pattern is None and rule.action == "allow":
             lines.append(ReportLine(rule_element(rule), "native", "Codex's shell is on by default"))
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
-            lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
+            lines.append(
+                ReportLine(
+                    rule_element(rule), "partial", "a stricter rule on the same switch decides it"
+                )
+            )
         elif switch is not None:
             lines.append(ReportLine(rule_element(rule), "native", switch[2]))
         elif rule.pattern is not None and rule.capability in {"bash", "web", "web_search", "image"}:

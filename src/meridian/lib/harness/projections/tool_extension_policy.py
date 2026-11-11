@@ -43,7 +43,7 @@ class ExtensionPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    version: int = 1
+    version: int = 2
     rules: tuple[ExtensionRule, ...]
     meridian_commands: tuple[PlatformCommand, ...] = ()
     headless_reject_reason: str = HEADLESS_REJECT_REASON
