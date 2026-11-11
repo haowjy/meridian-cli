@@ -49,6 +49,7 @@ from meridian.lib.launch.continue_replay import (
     continue_replay_source_from_reference,
     reject_continue_policy_overrides,
 )
+from meridian.lib.launch.fork import require_replayed_agent
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
 from meridian.lib.ops.mars import mars_list_agents
@@ -2484,6 +2485,16 @@ def spawn_fork_sync(
     )
     if gone is not None:
         return gone
+    if requested_agent is None and not payload.agent_opt_out and resolved_reference.source_agent:
+        try:
+            require_replayed_agent(
+                project_root=project_root,
+                agent=resolved_reference.source_agent,
+                source_ref=normalized_source_ref,
+                command="meridian spawn",
+            )
+        except FileNotFoundError as exc:
+            return pre_init_failed_output(payload=create_input, exc=exc)
     preparation = _run_spawn_create_preparation(
         create_input,
         ctx=ctx,
