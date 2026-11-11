@@ -18,6 +18,9 @@ that common flag for readability.
 | `classic.Notification` with `notification_type = "permission_prompt"` | `meridian idle needs-permission --harness claude --message <text>` | Claude reports that a main-loop or background-subagent permission prompt is still unanswered. Meridian forwards one stateless `notify.needs_permission` notice; other notification types are ignored. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
 | timer: push, warn | `meridian idle fire push\|warn …` | Core sends the notification itself. The mod only reports that the timer fired. |
+| `fire warn` answers `act`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
+| `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's turn by its nonce, read its reply, and deny tools that change anything while it runs. |
+| `prompt.edit`, `prompt.change` | none | Remember when the user last touched the prompt box, so a ping waits for a quiet one. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns.
@@ -29,8 +32,48 @@ Its own diagnostics live in the plugin's `$.store` under the key `log` (last
 
 ## `/meridian-idle`
 
-Prints the current stretch, anchor, time left on each timer and the last log
-lines. It does not count as a return.
+Prints the current stretch, anchor, time left on each timer, the keepwarm state
+and tally, and the last log lines. It does not count as a return.
+
+`/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` set keepwarm.
+
+## Keepwarm
+
+Off until `/meridian-idle keepwarm on`; the model cannot turn it on. A restart
+or `/clear` drops the setting (`$.state` is reset), a hot reload keeps it.
+
+With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
+the cache expires) is followed by a prompt that keeps the cache warm: ping 1
+when `fire warn` answers `act`, then up to two more. Core fires the warning once
+per stretch, so the mod times pings 2 and 3 itself: `lead` (the gap core placed
+between the turn and the warning, taken from the arm that placed it) after each
+later main-loop arm of the same stretch. A new main-loop arm replaces the timer,
+a user return cancels it, and a timer that runs more than 60 s late is skipped
+because the cache may be cold. The count is kept per core stretch, in
+`$.state`, before each submit, so a reload can cost a ping but never add one.
+Pings send no notification.
+
+- **Quiet box.** A ping is submitted only after the prompt box has been empty
+  and untouched for 10 s. It gives up when about one lead has passed.
+- **Not the user.** The ping is a plugin prompt without `asUser`, so the model
+  reads it as sent by the plugin, and the mod does not count it as a return.
+- **Its turn.** The text carries a nonce; the main-loop `turn.start` that
+  carries it names the ping's `turnId`, and only that turn's `turn.complete`
+  with reason `answer` is read. A turn already running when the warning fires
+  is not mistaken for it.
+- **Tools.** While the ping's turn runs, main-loop tool calls that are not
+  `isReadOnly` are denied. Subagent loops and the rest of the session are not
+  touched. The denied tool names go in the log record.
+- **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
+  quotes or backticks) ends this stretch's pings; keepwarm stays on.
+- **Your-turn push.** The ping turn's arm sends the last answer from a
+  non-ping turn as `--assistant-text`, so the next notice does not read "ok".
+
+Each submitted ping adds one record (time, session, stretch, ping number,
+`stopped`, `continued` or `failed`, denied tools, reply excerpt) to the plugin
+`$.store` key `keepwarm`, the last 200. Two sessions appending at once can lose
+a record. A `continued` reply that is just an acknowledgement means the model
+waited; denied tools or a reply that starts work mean it did not.
 
 ## Where it runs
 
