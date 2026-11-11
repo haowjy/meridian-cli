@@ -3,7 +3,11 @@
 A Claude Code mod that tells Meridian when a session goes idle, what work the
 turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
-expire. The mod only senses and runs the timers Meridian places.
+expire. For those the mod only senses and runs the timers Meridian places.
+The one thing it does on its own is keepwarm, which is off until the user turns
+it on: it submits up to three short prompts so the cache stays warm while the
+user is away, the first when Meridian's cache warning fires and the next two on
+its own timer.
 
 ## What it does
 
