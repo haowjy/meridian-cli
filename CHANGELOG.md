@@ -6,6 +6,17 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-12
+
+### Upgrade notes
+- An OpenCode launch is stricter in the ways named in [the upgrade note](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#an-opencode-launch-answers-as-strictly-as-the-agents-native-file): a profile allow with no restricting `*` is not written and can lose to a project `ask`, and an override's `*` and denies now apply.
+
+### Changed
+- Pins Mars 0.31.0.
+
+### Fixed
+- An OpenCode launch now answers every call at least as strictly as the agent's native file: a profile `allow` no longer overrides a deny in the project's `opencode.json` (it can also lose to a project `ask` and OpenCode's built-in `read *.env: ask`, which a headless spawn refuses), `harness-overrides.opencode.permission` denies and asks now apply (a launch ignored the whole block) and its `*` only restricts (`*: allow` is ignored, an `ask` or `deny` `*` raises every rule), and a shell rule that denies or asks turns off OpenCode's `execute` tool, as the file does. `--dry-run` prints `not written` on a profile allow it leaves out. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+
 ## [0.21.0] - 2026-11-11
 
 ### Upgrade notes
