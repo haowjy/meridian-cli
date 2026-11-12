@@ -477,31 +477,26 @@ def _resolved_label(token: str, canonical: str) -> str:
 
 
 def _exhausted_message(report: RouteDecisionReport) -> str | None:
-    lines: list[str] = []
-    harnesses: list[str] = []
-    reasons: list[str] = []
+    rows: list[tuple[str, str, str]] = []
     for attempt in report.model_attempts:
         label = _resolved_label(attempt.model_token, attempt.canonical_model)
         for assessment in attempt.assessments:
-            harnesses.append(assessment.harness)
-            reason = _assessment_reason(assessment)
-            reasons.append(reason)
-            if reason == "no_model_match":
-                lines.append(f"{label} is not in the {assessment.harness} model list")
-            else:
-                lines.append(f"{label}: {assessment.harness}: {reason}")
-    if not lines:
+            rows.append((label, assessment.harness, _assessment_reason(assessment)))
+    if not rows:
         return None
-    unique = list(dict.fromkeys(harnesses))
-    missing = all(reason == "no_model_match" for reason in reasons)
-    if len(unique) == 1 and missing:
-        header = f"cannot find a model for harness {unique[0]}"
-    elif missing:
-        header = "cannot find a model"
-    elif len(unique) == 1:
-        header = f"cannot run a model for harness {unique[0]}"
-    else:
-        header = "cannot run a model"
+    unique = list(dict.fromkeys(harness for _, harness, _ in rows))
+    one_harness = len(unique) == 1
+    header = (
+        f"cannot find a model for harness {unique[0]}" if one_harness else "cannot find a model"
+    )
+    lines: list[str] = []
+    for label, harness, reason in rows:
+        extra: list[str] = []
+        if not one_harness:
+            extra.append(harness)
+        if reason != "no_model_match":
+            extra.append(reason)
+        lines.append(f"{label}: {': '.join(extra)}" if extra else label)
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 
