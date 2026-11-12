@@ -1,8 +1,36 @@
 # Upgrade notes
 
+## An OpenCode launch answers as strictly as the agent's native file
+
+Needs Mars 0.31.0, which this release pins. Mars 0.31 writes an agent's tool rules into
+`.opencode/agents/<name>.md` so that every call gets an answer at least as strict as the
+profile's tool rules and as the author's `harness-overrides.opencode.permission`. The launch
+config lands after that file in OpenCode's source order, so it now holds the same line. An
+agent that worked before can be stricter in these ways:
+
+- **A profile `allow` is written only under a restricting `*`** (the profile's `*`, the
+  `approval` default or the override's `*`). Before, it was always written, so
+  `bash(git *): allow` ran past a `bash: deny` in the project's `opencode.json`. Now the rule
+  is not written, and what is outside the launch decides: that deny, a project `ask`, and
+  OpenCode's built-in `read *.env: ask`. A headless spawn refuses an `ask`, so an agent
+  whose profile allowed `read(*.env)`, or `bash` under a project that asks about it, now
+  fails there. `meridian spawn --dry-run` prints `not written` on each such rule. To keep
+  the allow, add a `'*'` rule (it carves the allow out of a deny) or loosen the project rule.
+- **`harness-overrides.opencode.permission` now applies.** A launch used to ignore it. Its
+  denies and asks join the profile's rules and the strictest match wins. Its allows are
+  ignored, `*: allow` included: the bundle sorts the override's keys, so a launch cannot tell
+  a carve-out from a mistake, and it can be stricter than the native file. An `ask` or `deny`
+  under `*` raises every rule, the profile's allows included: a profile allow under an
+  override `*: ask` now asks. A map under `*` (`"*": {"git *": deny}`) applies to every call.
+  An ask is a deny in a headless spawn.
+- **A shell rule that denies or asks also turns off OpenCode's `execute` tool** (V2), as the
+  native file does.
+
+Nothing becomes looser. An agent with no tool rules and no override launches as before.
+
 ## The strictest tool rule wins on every harness
 
-Needs Mars 0.30.0 or newer; this release pins 0.31.0. Of the rules that match a tool call, the
+Needs Mars 0.30.0 or newer; this release pins 0.30.1, the first published 0.30 build. Of the rules that match a tool call, the
 strictest wins (`deny`, then `ask`, then `allow`), however narrow a key is. A deny is never
 overridden by an allow beside it. Before, Claude worked this way and OpenCode, Pi and Codex
 let a narrower allow win, so one profile gave different answers. If a profile or overlay of
@@ -62,13 +90,6 @@ has this form: its Claude and Pi files gain `Write` in `disallowed-tools`.
   call with no command string is refused.
 - `--fork` of a session whose agent profile was removed says to run
   `--fork-fresh <id> -a <agent>`.
-- An OpenCode launch now answers a call as strictly as the agent's native file does. Before,
-  it wrote a profile `allow` even when no `*` rule restricted anything, so a tool allowed in
-  the profile could run past a deny in the project's `opencode.json`; now an allow is written
-  only under a restricting `*`. `harness-overrides.opencode.permission` was ignored by a
-  launch and now applies its denies and asks (its allows are ignored; Mars's native file
-  keeps the author's key order, a launch cannot, so a launch can be stricter than the file).
-  A shell rule that denies or asks also turns off OpenCode's `execute` tool, as in the file.
 
 None of the profiles installed from `meridian-base` and `meridian-dev-workflow` changes result
 except `prompt-tester` above.

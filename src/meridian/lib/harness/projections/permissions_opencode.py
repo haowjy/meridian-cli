@@ -11,14 +11,14 @@ every call the rules answer at least as strictly as the profile's tool rules and
 author's ``harness-overrides.opencode.permission``, and exactly as the tool rules when there is
 no override. Three consequences:
 
-- A profile allow is written only under a restricting ``*`` (the author's, the profile's or
-  the approval default), where it carves an exception. Elsewhere it restates OpenCode's
-  default and could only override ``opencode.json``.
+- A profile allow is written only under a restricting ``*`` (the profile's, the approval
+  default or the override's), where it carves an exception. Elsewhere it restates OpenCode's
+  default and could only override ``opencode.json``; the dry-run says so.
 - The override adds restrictions only: the Mars bundle hands it over with its keys sorted,
   so the author's order is gone and an allow could be a carve-out or a mistake. An ignored
-  allow can only make the launch stricter than the native file. A rule from one source is
-  raised to the other source's ``*`` when that is stricter; an allow under the other source's
-  restricting ``*`` is left out.
+  allow can only make the launch stricter than the native file. The override's ``*`` is a
+  floor: an ask or deny raises every rule from both sources. The final ``*`` is the stricter
+  of that floor and the profile's fallback (its ``*``, else the approval default).
 - A shell rule that restricts also denies ``execute`` (code mode), as the native file does.
 
 Because V2 merges ``write`` and ``patch`` into ``edit``, rules for those capabilities share
@@ -125,29 +125,36 @@ def _order(rules: list[OpenCodePermissionRule]) -> tuple[OpenCodePermissionRule,
 class _Override:
     """The restrictions of the author's ``harness-overrides.opencode.permission``."""
 
-    star: ToolAction | None
     rules: tuple[OpenCodePermissionRule, ...]
     ignored: tuple[str, ...]
+
+    @property
+    def star(self) -> ToolAction | None:
+        """The override's ``*`` rule: a floor under every other rule, never a fallback."""
+
+        return strictest(rule.effect for rule in self.rules if rule.action == "*")
 
 
 def _override(spec: ResolvedLaunchSpec, *, version: OpenCodeVersion) -> _Override:
     """Read the override as restrictions only.
 
-    The bundle sorts the map's keys, so the author's order is gone and OpenCode's last-match
-    reading cannot be applied. Every ask and deny is kept and allows are ignored: with the
-    strictest match deciding, the result is at least as strict as the author's own reading.
-    A glob action key (``sh*``) can match another key's calls, which one ordering of keys
-    cannot make safe, so it becomes a deny of everything it names.
+    Interim derivation. The bundle sorts the map's keys, so the author's order is gone and
+    OpenCode's last-match reading cannot be applied. Every ask and deny is kept and allows
+    (``*: allow`` included) are ignored: with the strictest match deciding, the result is at
+    least as strict as the author's own reading. A glob action key (``sh*``) can match another
+    key's calls, which one ordering of keys cannot make safe, so it becomes a deny of
+    everything it names. Do not extend this toward Mars's order-aware pipeline: the fix is the
+    Mars bundle carrying the computed rule list (mars-agents issue #374), after which this
+    reading, ``_join`` and ``_raised`` are deleted.
     """
 
     permission = spec.native_config.get("permission")
     if permission is None:
-        return _Override(None, (), ())
-    ignored: list[str] = []
-    star: ToolAction | None = None
-    rules: list[OpenCodePermissionRule] = []
+        return _Override((), ())
     if not isinstance(permission, Mapping):
-        return _Override(None, (), ("permission is not a map",))
+        return _Override((), ("permission is not a map",))
+    ignored: list[str] = []
+    rules: list[OpenCodePermissionRule] = []
     for key, value in cast("Mapping[str, object]", permission).items():
         entries = (
             {"*": value}
@@ -156,19 +163,23 @@ def _override(spec: ResolvedLaunchSpec, *, version: OpenCodeVersion) -> _Overrid
             if isinstance(value, Mapping)
             else None
         )
-        if entries is None or (key == "*" and not isinstance(value, str)):
+        if entries is None:
             ignored.append(f"{key}: unreadable")
             continue
         action = _native_action(key, version=version)
         for resource, raw in entries.items():
-            if raw not in STRICTNESS:
+            if not isinstance(raw, str) or raw not in STRICTNESS:
                 ignored.append(f"{key}: unreadable")
                 continue
             effect = _effective_action(raw, interactive=spec.interactive)
-            if key == "*":
-                star = strictest(a for a in (star, effect) if a is not None)
-            elif effect == "allow":
+            if effect == "allow":
                 ignored.append(f"{key}({resource}): allow")
+            elif action == "*":
+                # A map under ``*`` names resources of every action. V1's rendered map cannot
+                # order such a rule after the named ones, so it applies to all calls.
+                if resource != "*":
+                    ignored.append(f"*({resource}): applied to every call")
+                rules.append(OpenCodePermissionRule(action="*", resource="*", effect=effect))
             elif "*" in action:
                 ignored.append(f"{key}: glob key denied")
                 rules.append(OpenCodePermissionRule(action=action, resource="*", effect="deny"))
@@ -176,7 +187,7 @@ def _override(spec: ResolvedLaunchSpec, *, version: OpenCodeVersion) -> _Overrid
                 rules.append(
                     OpenCodePermissionRule(action=action, resource=resource, effect=effect)
                 )
-    return _Override(star, tuple(rules), tuple(dict.fromkeys(ignored)))
+    return _Override(tuple(rules), tuple(dict.fromkeys(ignored)))
 
 
 def _override_report(spec: ResolvedLaunchSpec, override: _Override) -> EnforcementReport:
@@ -206,25 +217,22 @@ def _raised(effect: ToolAction, floor: ToolAction | None) -> ToolAction:
 
 def _join(
     policy_rules: list[OpenCodePermissionRule],
-    policy_star: ToolAction | None,
     override: _Override,
-    default: OpenCodePermissionRule | None,
+    star: ToolAction | None,
 ) -> list[OpenCodePermissionRule]:
-    """Merge profile and override rules.
+    """Merge profile and override rules under the final ``*``.
 
-    A rule never answers weaker than the other source's ``*``: it is raised to it. A profile
-    allow survives only under a restricting ``*``, which it then carves an exception to.
+    A profile rule is raised to the override's ``*``; an override rule is raised to the final
+    ``*``, which also holds the profile's fallback. A profile allow survives only under a
+    restricting ``*``, which it then carves an exception to.
     """
 
-    star = strictest(a for a in (policy_star, override.star, default and default.effect) if a)
     joined: list[OpenCodePermissionRule] = []
     for rule in policy_rules:
         effect = _raised(rule.effect, override.star)
         if effect != "allow" or star not in {None, "allow"}:
             joined.append(replace(rule, effect=effect))
-    joined.extend(
-        replace(rule, effect=_raised(rule.effect, policy_star)) for rule in override.rules
-    )
+    joined.extend(replace(rule, effect=_raised(rule.effect, star)) for rule in override.rules)
     return joined
 
 
@@ -292,18 +300,22 @@ def _tool_rule_lines(
             continue
         rendered = ", ".join(f"{entry.action}({entry.resource})" for entry in entries)
         effective = _effective_action(rule.action, interactive=spec.interactive)
-        beaten = [
-            entry
-            for entry in entries
-            if final_by_key.get((entry.action, entry.resource), entry).effect != effective
-        ]
-        if beaten:
+        if any((entry.action, entry.resource) not in final_by_key for entry in entries):
             lines.append(
                 ReportLine(
                     rule_element(rule),
                     "partial",
-                    f"permission {rendered}: {effective}; another rule on the same permission "
-                    "wins (a stricter one, or a Meridian command grant)",
+                    f"not written ({rendered}: {effective}): no restricting `*` applies, so "
+                    "the project's opencode.json and OpenCode's own rules decide",
+                )
+            )
+        elif any(final_by_key[(e.action, e.resource)].effect != effective for e in entries):
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "partial",
+                    f"permission {rendered}: {effective}; a stricter rule wins (another rule "
+                    "on the same permission, the override's *, or a Meridian command grant)",
                 )
             )
         elif (
@@ -362,23 +374,24 @@ def compile_opencode_permissions(
     lines: list[ReportLine] = []
     rule_entries = [entry for _rule, entries in entries_by_rule for entry in entries]
     policy_star = strictest(entry.effect for entry in rule_entries if entry.action == "*")
-    has_star = policy_star is not None or override.star is not None
-    default = _default_entry(spec, has_profile_native=has_profile_native, has_star=has_star)
+    default = _default_entry(
+        spec, has_profile_native=has_profile_native, has_star=policy_star is not None
+    )
+    # The profile's fallback is its ``*`` else the approval default; the override's ``*`` only
+    # restricts it. The override never decides whether the approval default is written.
+    star = strictest(
+        effect
+        for effect in (policy_star, override.star, default.effect if default else None)
+        if effect is not None
+    )
     named = [entry for entry in rule_entries if entry.action != "*"]
     if resolved_version == "v2" and any(
         entry.action == "shell" and entry.effect != "allow" for entry in named
     ):
         # Code mode (``execute``) ignores shell rules; the native agent file denies it too.
         named.append(OpenCodePermissionRule(action="execute", resource="*", effect="deny"))
-    joined = _join(named, policy_star, override, default)
-    star_effect = strictest(effect for effect in (policy_star, override.star) if effect is not None)
-    star_rule = (
-        [OpenCodePermissionRule(action="*", resource="*", effect=star_effect)]
-        if star_effect is not None
-        else [default]
-        if default is not None
-        else []
-    )
+    joined = _join(named, override, star)
+    star_rule = [OpenCodePermissionRule(action="*", resource="*", effect=star)] if star else []
     grants: list[OpenCodePermissionRule] = []
     for platform in policy.platform_rules:
         if platform.kind != "meridian-commands":
@@ -410,11 +423,13 @@ def compile_opencode_permissions(
     lines.extend(_tool_rule_lines(spec, entries_by_rule, final_by_key, version=resolved_version))
 
     if default is not None and policy.approval != "default":
-        note = f"permission *(*): {default.effect}"
+        note = f"permission *(*): {star}"
+        if star != default.effect:
+            note += "; the override's * is stricter"
         if policy.approval == "confirm" and not spec.interactive:
             note += "; a headless spawn cannot confirm, so calls are refused"
         lines.append(ReportLine(f"approval: {policy.approval}", "native", note))
-    elif not spec.interactive and not has_star:
+    elif not spec.interactive and policy_star is None and override.star is None:
         lines.append(_headless_default_line(default))
 
     lines.extend(_override_report(spec, override))
