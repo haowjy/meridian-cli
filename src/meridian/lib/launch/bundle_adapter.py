@@ -479,24 +479,29 @@ def _resolved_label(token: str, canonical: str) -> str:
 def _exhausted_message(report: RouteDecisionReport) -> str | None:
     lines: list[str] = []
     harnesses: list[str] = []
+    reasons: list[str] = []
     for attempt in report.model_attempts:
         label = _resolved_label(attempt.model_token, attempt.canonical_model)
         for assessment in attempt.assessments:
             harnesses.append(assessment.harness)
             reason = _assessment_reason(assessment)
+            reasons.append(reason)
             if reason == "no_model_match":
                 lines.append(f"{label} is not in the {assessment.harness} model list")
             else:
                 lines.append(f"{label}: {assessment.harness}: {reason}")
     if not lines:
         return None
-    primary = report.model_attempts[0].model_token
     unique = list(dict.fromkeys(harnesses))
-    header = (
-        f"no route for `{primary}` on {unique[0]}"
-        if len(unique) == 1
-        else f"no route for `{primary}`"
-    )
+    missing = all(reason == "no_model_match" for reason in reasons)
+    if len(unique) == 1 and missing:
+        header = f"cannot find a model for harness {unique[0]}"
+    elif missing:
+        header = "cannot find a model"
+    elif len(unique) == 1:
+        header = f"cannot run a model for harness {unique[0]}"
+    else:
+        header = "cannot run a model"
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 
