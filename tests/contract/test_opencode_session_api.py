@@ -454,6 +454,7 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
             {"action": shell, "resource": "git push *", "effect": "deny"},
             {"action": shell, "resource": "meridian spawn *", "effect": "deny"},
             {"action": "edit", "resource": "*", "effect": "deny"},
+            {"action": "execute", "resource": "*", "effect": "deny"},
             {"action": shell, "resource": "meridian spawn done", "effect": "allow"},
             {"action": shell, "resource": "meridian spawn done *", "effect": "allow"},
             {"action": shell, "resource": "meridian spawn rearm", "effect": "allow"},
