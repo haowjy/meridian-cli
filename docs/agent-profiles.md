@@ -226,8 +226,10 @@ so `mcp_servers.*` entries pass through like other native config. A key segment 
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
 as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
 `[native] native_config: some_key = true -> -c some_key=true`.
-Claude, OpenCode, Pi, and Cursor do not apply native config; their report lists the key
-names as `[unsupported] native_config: ... -> not applied for <Harness>`.
+Claude, Pi, and Cursor do not apply native config; their report lists the key
+names as `[unsupported] native_config: ... -> not applied for <Harness>`. OpenCode applies
+only `permission`: its denies and asks join the profile's tool rules and the strictest match
+wins; its allows are ignored.
 
 The selected harness block is the config tree. A key named `native-config` inside it is a
 literal root key and is flattened like any other key; Meridian does not unwrap it.
