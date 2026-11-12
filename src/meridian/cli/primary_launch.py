@@ -36,6 +36,7 @@ from meridian.lib.launch.continue_replay import (
     continue_replay_source_from_reference,
     reject_continue_policy_overrides,
 )
+from meridian.lib.launch.fork import require_replayed_agent
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -66,6 +67,8 @@ class PrimaryLaunchOutput(BaseModel):
     exit_code: int
     command: tuple[str, ...] = ()
     permission_report: EnforcementReport = ()
+    # Always empty: kept for scripts that read it, removed after 0.22.
+    tool_rules_set_aside: tuple[str, ...] = ()
     launch_plan: ManagedPrimaryPreview | None = None
     continue_ref: str | None = None
     continue_chat_id: str | None = None
@@ -469,6 +472,12 @@ def run_primary_launch(
         if not model.strip() and resolved_fork.source_model is not None:
             requested_model = resolved_fork.source_model
         if agent is None and not agent_opt_out and resolved_fork.source_agent is not None:
+            require_replayed_agent(
+                project_root=project_root,
+                agent=resolved_fork.source_agent,
+                source_ref=selected_fork_target,
+                command="meridian",
+            )
             requested_agent = resolved_fork.source_agent
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id

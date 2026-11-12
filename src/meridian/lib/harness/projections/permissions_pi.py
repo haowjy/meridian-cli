@@ -13,7 +13,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
     command_grants,
     extension_rules,
     needs_extension,
-    strictest,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
@@ -22,12 +21,11 @@ from meridian.lib.safety.policy import (
     PermissionPolicy,
     PlatformCommand,
     ReportLine,
-    command_grant_covers_pattern,
     complete_report,
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import ToolRule, callable_tools, removed_tools, unscoped_action
 
 # Pi's tool-selection flags and their short forms; under a bound policy the compile owns them.
 _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (
@@ -54,34 +52,20 @@ class PiPermissions:
 
 def _compile_flags(
     policy: PermissionPolicy,
-    rules: tuple[ExtensionRule, ...],
     meridian_commands: tuple[PlatformCommand, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
-    named = tuple(
-        rule for rule in policy.rules if rule.native_status == "known" and not rule.is_wildcard
-    )
-    # A plain deny removes its tools unless a scoped rule still needs them; the extension
-    # then refuses what the scoped rules don't allow.
-    scoped_tools = frozenset(tool for rule in named if rule.is_scoped for tool in rule.tools)
+    # A plain deny covers every scoped rule of its tool, so it removes the tool, except bash
+    # while Meridian's commands need it: the extension then refuses all but those.
     meridian_tools = frozenset({"bash"} if meridian_commands else ())
-
-    exclude = tuple(
-        dedupe_nonempty(
-            tool
-            for rule in named
-            if rule.action == "deny" and not rule.is_scoped
-            for tool in rule.tools
-            if tool not in scoped_tools and tool not in meridian_tools
-        )
-    )
-    callable_tools = policy.allowed_tools
-    wildcard = strictest(rule for rule in rules if rule.tool == "*" and rule.pattern is None)
+    exclude = tuple(tool for tool in removed_tools(policy.rules) if tool not in meridian_tools)
+    keep = callable_tools(policy.rules)
+    wildcard = unscoped_action(policy.rules, "*")
     if wildcard == "deny":
-        allowed = tuple(dedupe_nonempty((*callable_tools, *meridian_tools)))
+        allowed = tuple(dedupe_nonempty((*keep, *meridian_tools)))
         return allowed, exclude
     if wildcard in {"allow", "ask"}:
         return ("*",), exclude
-    additions = tuple(f"+{tool}" for tool in callable_tools)
+    additions = tuple(f"+{tool}" for tool in keep)
     return (additions or None), exclude
 
 
@@ -152,9 +136,11 @@ def _rule_report_line(
         return ReportLine(rule_element(rule), "native", "--tools " + ",".join(permissions.tools))
     if rule.action == "deny":
         return ReportLine(
-            rule_element(rule), "native", "tool_call handler refuses calls no scoped rule allows"
+            rule_element(rule),
+            "native",
+            "tool_call handler refuses it; bash stays callable only for Meridian's commands",
         )
-    return ReportLine(rule_element(rule), "native", "tool_call handler preserves scoped precedence")
+    return ReportLine(rule_element(rule), "native", "no rule removes it")
 
 
 def _report(
@@ -178,27 +164,11 @@ def _report(
     ]
     for platform in policy.platform_rules:
         if platform.kind == "meridian-commands":
-            stricter = any(
-                rule.tool in {"bash", "*"}
-                and rule.pattern is not None
-                and rule.action != "allow"
-                and any(
-                    command.profile_restrictable
-                    and command_grant_covers_pattern(command, rule.pattern)
-                    for command in platform.commands
-                )
-                for rule in extension_rules
-            )
             lines.append(
                 ReportLine(
                     platform_element(platform),
-                    "partial" if stricter else "platform",
-                    (
-                        "--tools bash plus fixed tool_call grants; narrower profile rules "
-                        "remain stricter"
-                        if stricter
-                        else "--tools bash plus fixed tool_call grants"
-                    )
+                    "platform",
+                    "--tools bash plus fixed tool_call grants, decided before any rule"
                     if permissions.extension_policy is not None
                     else "no rule restricts bash, so they run",
                 )
@@ -224,7 +194,7 @@ def compile_pi_permissions(
     policy = spec.permission_policy
     rules = extension_rules(policy.rules)
     meridian_commands = command_grants(policy)
-    tools, exclude_tools = _compile_flags(policy, rules, meridian_commands)
+    tools, exclude_tools = _compile_flags(policy, meridian_commands)
     extension_policy = (
         ExtensionPolicy(
             rules=rules,

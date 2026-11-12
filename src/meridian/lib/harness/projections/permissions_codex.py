@@ -24,7 +24,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
     bash_fails_closed,
     command_grants,
     extension_rules,
-    needs_extension,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -44,7 +43,7 @@ from meridian.lib.safety.policy import (
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule, could_refuse, unscoped_action
 
 _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,
@@ -103,19 +102,46 @@ class CodexPermissions:
     tool_hook: ExtensionPolicy | None
 
 
-def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
-    """Return the Codex switch an exact, unscoped tool rule controls."""
+_SWITCH_CAPABILITIES = {"web_search": ("web", "web_search"), "view_image": ("image",)}
+_SWITCH_BY_CAPABILITY = {
+    capability: switch
+    for switch, capabilities in _SWITCH_CAPABILITIES.items()
+    for capability in capabilities
+}
 
-    if rule.pattern is not None or rule.action == "ask":
+
+def _tool_switch(rule: ToolRule) -> tuple[str, bool, str] | None:
+    """Return the Codex switch an unscoped rule sets."""
+
+    if rule.pattern is not None:
         return None
     enabled = rule.action == "allow"
-    if rule.capability in {"web", "web_search"}:
+    switch = _SWITCH_BY_CAPABILITY.get(rule.capability or "")
+    if switch == "web_search":
         note = "-c tools.web_search=true" if enabled else '-c web_search="disabled"'
-        return "web_search", enabled, note
-    if rule.capability == "image":
+        return switch, enabled, note
+    if switch == "view_image":
         verb = "--enable" if enabled else "--disable"
-        return "view_image", enabled, f"{verb} view_image"
+        return switch, enabled, f"{verb} view_image"
     return None
+
+
+def _switch_values(policy: PermissionPolicy) -> dict[str, bool | None]:
+    """Each switch's value: the strictest unscoped rule that concerns it decides.
+
+    Reads capabilities, not native names: a covered allow arrives with its rule, and a
+    switch is not a rule an enforcer would settle. Codex cannot ask, so an ask turns the
+    switch off: the stricter result.
+    """
+
+    # Under an allowlist, search and image viewing are off unless a rule allows them. The
+    # shell stays on because Codex reads files through it.
+    off = False if policy.is_allowlist else None
+    values: dict[str, bool | None] = {}
+    for switch, capabilities in _SWITCH_CAPABILITIES.items():
+        action = unscoped_action(policy.rules, *capabilities)
+        values[switch] = off if action is None else action == "allow"
+    return values
 
 
 def project_codex_network(
@@ -177,9 +203,9 @@ def effective_codex_policy(
 
 
 def _hook_carries(rule: ToolRule | ExtensionRule) -> bool:
-    """Whether the hook can carry this rule: a shell rule, except a scoped ``ask``."""
+    """Whether the hook carries this rule: every shell rule, and the ``*`` rule."""
 
-    return rule.capability in {"bash", "*"} and not (rule.action == "ask" and rule.pattern)
+    return rule.capability in {"bash", "*"}
 
 
 def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
@@ -187,26 +213,21 @@ def _compile_tool_hook(policy: PermissionPolicy) -> ExtensionPolicy | None:
 
     The hook sees one shell tool, so only ``bash`` and ``*`` rules go in; Mars names the tool
     ``exec_command`` for Codex, which the enforcer knows as ``bash``. A hook cannot ask, so
-    an unscoped ``ask`` is carried as ``deny``: carrying nothing would let the command run.
-    A scoped ``ask`` is not carried and stays ``unsupported``.
+    an ``ask``, scoped or not, is carried as ``deny``: carrying nothing would let the command
+    run.
 
     Codex has no shell switch worth using: ``features.shell_tool=false`` would also disable
-    Meridian's own commands. So every shell rule that restricts goes to the hook: an unscoped
-    ``bash`` deny or ask, or a scoped rule beside something that restricts. A ``*: deny``
-    allowlist alone stays off the hook, since the hook would also block file reads.
+    Meridian's own commands. So the hook is installed whenever any shell rule could refuse a
+    command (a deny or an ask, including ``*: deny``): it then refuses every command no allow
+    or Meridian command grant matches, reads included, since Codex reads files through the
+    shell. A rule Mars covered arrives with no native names and is not carried; the rule that
+    covers it is.
     """
 
+    if not could_refuse(policy.rules, "bash"):
+        return None
     carried = [rule for rule in extension_rules(policy.rules) if _hook_carries(rule)]
     commands = command_grants(policy)
-    shell_restricted = any(
-        rule.capability == "bash" and rule.pattern is None and rule.action != "allow"
-        for rule in carried
-    )
-    scoped = any(rule.pattern is not None for rule in carried)
-    if not (
-        shell_restricted or (scoped and needs_extension(tuple(carried), meridian_commands=commands))
-    ):
-        return None
     rules: list[ExtensionRule] = []
     for rule in carried:
         if rule.action == "ask":
@@ -227,18 +248,7 @@ def _compile_codex_permission_values(
     """Resolve every native permission value, once."""
 
     policy = spec.permission_policy
-    # Under an allowlist, search and image viewing are off unless a rule allows them. The
-    # shell stays on because Codex reads files through it.
-    off = False if policy.is_allowlist else None
-    switches: dict[str, bool | None] = {
-        "web_search": off,
-        "view_image": off,
-    }
-    # `web_search` is narrower than `web`, so it decides the search switch whatever the order.
-    for rule in sorted(policy.rules, key=lambda rule: rule.capability == "web_search"):
-        switch = _tool_switch(rule)
-        if switch is not None:
-            switches[switch[0]] = switch[1]
+    switches = _switch_values(policy)
 
     tool_hook = _compile_tool_hook(policy)
     network = project_codex_network(policy)
@@ -273,26 +283,31 @@ def _hook_report_line(rule: ToolRule) -> ReportLine:
     element = rule_element(rule)
     if rule.action == "allow":
         return ReportLine(element, "native", f"{_HOOK_NOTE}; a matching command may run")
+    asked = " Codex's hook cannot ask, so `ask` is a deny;" if rule.action == "ask" else ""
     if rule.pattern is None:
-        asked = " Codex's hook cannot ask, so `ask` is a deny;" if rule.action == "ask" else ""
         agents = (
             " Web search and image viewing are off unless allowed."
             if rule.capability == "*"
             else ""
         )
+        refuses = (
+            "refuses every shell command segment that no bash rule matches, and shell syntax "
+            "such as expansion and redirection"
+            if rule.capability == "*"
+            else "refuses every shell command"
+        )
         return ReportLine(
             element,
             "partial",
-            f"{_HOOK_NOTE} refuses every shell command segment no scoped allow matches, and "
-            f"shell syntax such as expansion and redirection.{asked} Reads are bound too: Codex "
-            "reads files through the shell, so allow the read commands the agent needs. Beyond "
-            f"the allowed commands themselves (a permitted interpreter can run anything): "
+            f"{_HOOK_NOTE} {refuses}.{asked} Reads are bound too: Codex reads files through "
+            "the shell, so allow the read commands the agent needs. Beyond the allowed "
+            f"commands themselves (a permitted interpreter can run anything): "
             f"{_HOOK_LIMITS}.{agents}",
         )
     return ReportLine(
         element,
         "partial",
-        f"{_HOOK_NOTE}; a guard against accidents, not a sandbox: {_HOOK_LIMITS}",
+        f"{_HOOK_NOTE};{asked} a guard against accidents, not a sandbox: {_HOOK_LIMITS}",
     )
 
 
@@ -326,8 +341,20 @@ def _codex_report(
             lines.append(_hook_report_line(rule))
         elif rule.capability == "bash" and rule.pattern is None and rule.action == "allow":
             lines.append(ReportLine(rule_element(rule), "native", "Codex's shell is on by default"))
+        elif switch is not None and rule.action == "ask":
+            lines.append(
+                ReportLine(
+                    rule_element(rule),
+                    "partial",
+                    f"Codex cannot ask, so `ask` turns the switch off ({switch[2]})",
+                )
+            )
         elif switch is not None and getattr(permissions, switch[0]) != switch[1]:
-            lines.append(ReportLine(rule_element(rule), "partial", "overridden by a narrower rule"))
+            lines.append(
+                ReportLine(
+                    rule_element(rule), "partial", "a stricter rule on the same switch decides it"
+                )
+            )
         elif switch is not None:
             lines.append(ReportLine(rule_element(rule), "native", switch[2]))
         elif rule.pattern is not None and rule.capability in {"bash", "web", "web_search", "image"}:

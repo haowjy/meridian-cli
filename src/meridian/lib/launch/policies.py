@@ -25,7 +25,7 @@ from meridian.lib.safety.policy import (
     SandboxDerivedNetwork,
     resolve_network_policy,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -607,37 +607,109 @@ def _resolve_policy_from_snapshot(
     )
 
 
-def _with_platform_natives(
+def _first_line(exc: Exception) -> str:
+    lines = str(exc).strip().splitlines()
+    return lines[0] if lines else type(exc).__name__
+
+
+# The origins Mars accepts back through ``--agent-tool-rules``.
+_AGENT_ORIGINS = ("profile", "overlay")
+
+
+def _ask_mars(
+    surface: SurfacePolicyInput,
+    *,
+    harness: str,
+    agent: str | None = None,
+    model: str | None = None,
+    agent_rules: tuple[ToolRule, ...] | None = None,
+) -> bundle_adapter.BundleResult:
+    return bundle_adapter.request_and_resolve(
+        bundle_adapter.BundleRequest(
+            agent=agent,
+            project_root=surface.catalog.project_root,
+            model_override=model,
+            literal_model=model is not None,
+            harness_override=harness,
+            no_refresh_models=True,
+            agent_tool_rules=agent_rules,
+        ),
+        harness_registry=surface.harness_registry,
+    )
+
+
+def _with_current_bundle_rules(
     policy: ResolvedLaunchPolicy,
     surface: SurfacePolicyInput,
-    bundle: bundle_adapter.BundleResult | None = None,
+    snapshot: LaunchPolicySnapshot,
+    agentless_bundle: bundle_adapter.BundleResult | None = None,
 ) -> ResolvedLaunchPolicy:
-    """Name a replayed snapshot's platform denies when an older build did not persist them.
+    """Replace a replayed snapshot's rules with what Mars says is in force now.
 
-    Mars names them per harness, whatever the profile, so any bundle for the snapshot's
-    harness carries them: the continue path's own bundle, else one requested here. If Mars
-    cannot build one, they stay unnamed and the launch reports them unenforced
-    (``launch_permission_rules``) rather than failing a launch the snapshot can still run.
+    The agent's own rules (origin ``profile`` and ``overlay``) stay as the session started:
+    they go to Mars with ``--agent-tool-rules``, which applies the current ``[settings.tools]``
+    to them. A project-wide deny added since holds, one removed is gone, and a project allow
+    or ask is shaped by the snapshot's ``*`` rule. The bundle's rules are the session's rules.
+    Mars is asked with ``--agent`` for the agent's per-agent exemptions; when the agent no
+    longer resolves it is asked without. When Mars cannot be asked at all, the error propagates.
+    The bundle also names platform denies an older snapshot did not persist.
+
+    A snapshot an older build wrote can hold agent rules with no ``capability``: native keys
+    alone, which Mars cannot take. Such a snapshot keeps all its rules and gains the current
+    project-wide denies, so it never opens a tool. It keeps its own project allows and asks,
+    and a project deny removed since stays.
     """
 
-    if policy.platform_tool_rules:
-        return policy
-    if bundle is None:
-        try:
-            bundle = bundle_adapter.request_and_resolve(
-                bundle_adapter.BundleRequest(
-                    agent=None,
-                    project_root=surface.catalog.project_root,
-                    harness_override=str(policy.harness),
-                    no_refresh_models=True,
-                ),
-                harness_registry=surface.harness_registry,
-            )
-        except RuntimeError:
-            return policy
-    if bundle.harness != policy.harness:
-        return policy
-    return replace(policy, platform_tool_rules=bundle.platform_tool_rules)
+    harness = str(policy.harness)
+    agent_rules = tuple(
+        rule
+        for rule in policy.resolved_tool_rules
+        if rule.origin not in (PROJECT_ORIGIN, PLATFORM_ORIGIN)
+    )
+    sendable = all(
+        rule.capability is not None and rule.origin in _AGENT_ORIGINS for rule in agent_rules
+    )
+    warning: str | None = None
+    if not sendable:
+        bundle = agentless_bundle or _ask_mars(surface, harness=harness)
+        denies = tuple(
+            rule
+            for rule in bundle.tool_rules
+            if rule.origin == PROJECT_ORIGIN
+            and rule.action == "deny"
+            and rule not in policy.resolved_tool_rules
+        )
+        rules = (*policy.resolved_tool_rules, *denies)
+    else:
+        agent = (snapshot.agent or "").strip() or None
+        bundle = None
+        if agent is not None and not snapshot.agent_opt_out:
+            try:
+                bundle = _ask_mars(
+                    surface,
+                    harness=harness,
+                    agent=agent,
+                    model=policy.model,
+                    agent_rules=agent_rules,
+                )
+            except bundle_adapter.MarsAgentToolRulesUnsupportedError:
+                raise
+            except RuntimeError as exc:
+                warning = (
+                    f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
+                    "project-wide tool rules without its per-agent exemptions."
+                )
+        bundle = bundle or _ask_mars(surface, harness=harness, agent_rules=agent_rules)
+        rules = bundle.tool_rules
+    warnings = policy.warnings
+    if warning is not None:
+        warnings = (*warnings, CompositionWarning(code="project_tool_rules_agent", message=warning))
+    return replace(
+        policy,
+        resolved_tool_rules=rules,
+        platform_tool_rules=policy.platform_tool_rules or bundle.platform_tool_rules,
+        warnings=warnings,
+    )
 
 
 def _model_selection_from_replayed_snapshot(
@@ -719,7 +791,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if network_given:
             explicit_sources["network_source"] = ProvenanceLevel.CLI
         return replace(
-            _with_platform_natives(replayed, surface, bundle),
+            _with_current_bundle_rules(replayed, surface, snapshot, bundle),
             execution_policy=execution_policy,
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
@@ -741,9 +813,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         )
 
     if surface.policy_snapshot is not None:
-        return _with_platform_natives(
+        return _with_current_bundle_rules(
             _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot),
             surface,
+            surface.policy_snapshot,
         )
 
     if surface.surface in {

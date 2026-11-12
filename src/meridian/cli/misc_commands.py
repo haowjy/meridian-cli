@@ -129,13 +129,12 @@ def register_misc_commands(
     ) -> None:
         """Query configured context paths."""
 
-        from meridian.lib.ops.context import ContextInput, context_sync
+        from meridian.lib.ops.context import ContextInput, context_dir_sync, context_sync
 
-        output = context_sync(ContextInput(verbose=verbose))
         if name is None:
-            emit(output)
+            emit(context_sync(ContextInput(verbose=verbose)))
             return
-        emit(output.resolve_name(name))
+        emit(context_dir_sync(name))
 
     completion_app.command(completion_bash, name="bash")
     completion_app.command(completion_zsh, name="zsh")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -176,55 +175,3 @@ def context_env_key(name: str) -> str:
 
     env_name = "".join(c if c.isalnum() else "_" for c in name.upper()).strip("_")
     return f"MERIDIAN_CONTEXT_{env_name}_DIR"
-
-
-def render_context_lines(
-    resolved: ResolvedContextPaths,
-    *,
-    active_work_dir: Path | None = None,
-) -> list[str]:
-    """Render context paths for CLI display."""
-
-    lines: list[str] = []
-
-    active_work_resolved = (
-        active_work_dir.as_posix()
-        if active_work_dir is not None
-        else os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
-    )
-    if active_work_resolved:
-        if os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "") == active_work_resolved:
-            lines.append("work: $MERIDIAN_ACTIVE_WORK_DIR")
-        else:
-            lines.append(f"work: {active_work_resolved}")
-    else:
-        lines.append("work: (no active work item — run 'meridian work start')")
-
-    archive_resolved = resolved.work_archive.as_posix() if resolved.work_archive is not None else ""
-    if archive_resolved:
-        archive_env_key = context_env_key("work_archive")
-        if os.getenv(archive_env_key, "") == archive_resolved:
-            lines.append(f"  archive: ${archive_env_key}")
-        else:
-            lines.append(f"  archive: {archive_resolved}")
-
-    if resolved.kb_root is not None:
-        kb_resolved = resolved.kb_root.as_posix()
-        kb_env_key = context_env_key("kb")
-        if os.getenv(kb_env_key, "") == kb_resolved:
-            lines.append(f"kb: ${kb_env_key}")
-        else:
-            lines.append(f"kb: {kb_resolved}")
-    else:
-        lines.append("kb: (unresolved — project state is not materialized)")
-
-    for name in sorted(resolved.extra):
-        path, _ = resolved.extra[name]
-        env_key = context_env_key(name)
-        path_str = path.as_posix()
-        if os.getenv(env_key, "") == path_str:
-            lines.append(f"{name}: ${env_key}")
-        else:
-            lines.append(f"{name}: {path_str}")
-
-    return lines

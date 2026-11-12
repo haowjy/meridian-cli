@@ -6,6 +6,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 type ToolAction = Literal["allow", "deny", "ask"]
+# Strictest wins: deny over ask over allow. The one copy of the order in Meridian; Mars's
+# ``ToolAction::strictness()`` is its counterpart.
+STRICTNESS: dict[ToolAction, int] = {"allow": 0, "ask": 1, "deny": 2}
 # The pre-rules shape of a profile's tools: native key -> action. Only old persisted
 # launch snapshots still hold it; ``legacy_tool_rules`` is the one reader.
 type ToolsField = dict[str, ToolAction]
@@ -13,6 +16,16 @@ type NativeStatus = Literal["known", "absent", "unknown"]
 
 LEGACY_SNAPSHOT_ORIGIN = "legacy-snapshot"
 PLATFORM_ORIGIN = "platform"
+PROJECT_ORIGIN = "project"
+
+
+class CoveredBy(BaseModel):
+    """The stricter rule that decides every call a covered rule names."""
+
+    model_config = ConfigDict(frozen=True)
+
+    action: ToolAction
+    key: str
 
 
 class ToolRule(BaseModel):
@@ -33,6 +46,15 @@ class ToolRule(BaseModel):
     ``note`` can explain that gap. The ``*`` rule names no tool: capability ``*`` and no
     ``native``.
 
+    ``covered_by``: Mars sets it when a stricter rule decides every call this rule names,
+    and then sends the rule with no ``native`` names. A snapshot an older build wrote lacks
+    it, so such a rule reads as uncovered. Coverage is this field, never an inference from
+    ``native`` or ``note``.
+
+    A reader that is not a rule (a mode gate, a switch, tool availability) asks the functions
+    below this class, which apply ``STRICTNESS``; none walks the list for a decision (the
+    shell enforcer's ``ExtensionRule`` view is the exception).
+
     ``capability`` is ``None`` only for rules read from a launch snapshot an older build
     wrote: those carry native keys alone, so a harness can emit them but not interpret them.
     ``native_tools`` is ``None`` only for rules a launch snapshot kept from before Mars gave
@@ -49,6 +71,7 @@ class ToolRule(BaseModel):
     native_status: NativeStatus = "known"
     origin: str | None = None
     note: str | None = None
+    covered_by: CoveredBy | None = None
 
     @property
     def is_wildcard(self) -> bool:
@@ -58,10 +81,12 @@ class ToolRule(BaseModel):
     def is_scoped(self) -> bool:
         """Whether the rule covers only some calls of its tools.
 
-        Read from ``native``, which a legacy snapshot rule (no ``pattern``) also scopes.
+        ``pattern``, or ``native`` for a legacy snapshot rule (no ``pattern``).
         """
 
-        return any(split_native(native)[1] is not None for native in self.native)
+        return self.pattern is not None or any(
+            split_native(native)[1] is not None for native in self.native
+        )
 
     @property
     def tools(self) -> tuple[str, ...]:
@@ -131,11 +156,69 @@ def legacy_platform_tool_rules() -> tuple[ToolRule, ...]:
     )
 
 
-def unscoped_action(rules: Iterable[ToolRule], capability: str) -> ToolAction | None:
-    """The action of the unscoped rule naming exactly ``capability``; the last one wins."""
+def strictest(actions: Iterable[ToolAction]) -> ToolAction | None:
+    """The strictest of ``actions`` (deny, then ask, then allow); ``None`` for none."""
 
-    action: ToolAction | None = None
-    for rule in rules:
-        if rule.capability == capability and rule.pattern is None:
-            action = rule.action
-    return action
+    return max(actions, key=STRICTNESS.__getitem__, default=None)
+
+
+def unscoped_action(rules: Iterable[ToolRule], *capabilities: str) -> ToolAction | None:
+    """The strictest action among the unscoped rules naming any of ``capabilities``.
+
+    ``None`` when none does. The capabilities are one feature's spellings (Codex's ``web``
+    and ``web_search``); ``"*"`` is the default rule.
+    """
+
+    return strictest(
+        rule.action for rule in rules if rule.capability in capabilities and rule.pattern is None
+    )
+
+
+def could_refuse(rules: Iterable[ToolRule], capability: str) -> bool:
+    """Whether any rule could refuse or ask for a call to ``capability``.
+
+    A deny or ask counts whatever its scope, and so does the ``*`` rule: either may decide
+    a call no allow matches.
+    """
+
+    return any(rule.action != "allow" and rule.capability in {capability, "*"} for rule in rules)
+
+
+def removed_tools(rules: Iterable[ToolRule]) -> tuple[str, ...]:
+    """The harness tools an unscoped deny takes away, whatever else allows them.
+
+    A scoped deny leaves the tool; the ``*`` rule names none.
+    """
+
+    return tuple(
+        dict.fromkeys(
+            tool
+            for rule in rules
+            if rule.action == "deny"
+            and not rule.is_wildcard
+            and not rule.is_scoped
+            and rule.native_status == "known"
+            for tool in rule.tools
+        )
+    )
+
+
+def callable_tools(rules: Iterable[ToolRule]) -> tuple[str, ...]:
+    """The harness tools a rule leaves callable (``allow``, ``ask``) and no deny removes.
+
+    Policy order, deduplicated. Under an allowlist these are the tools a harness's tool
+    list keeps; ``ask`` stays because the harness, not the rule, decides that call. A
+    platform that needs a removed tool for its own commands adds it back itself.
+    """
+
+    rules = tuple(rules)
+    removed = set(removed_tools(rules))
+    return tuple(
+        dict.fromkeys(
+            tool
+            for rule in rules
+            if rule.action != "deny"
+            for tool in rule.tools
+            if tool not in removed
+        )
+    )

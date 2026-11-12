@@ -62,9 +62,9 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release whose launch bundle carries ``execution_policy.network`` and
-# ``provenance.network_source``.
-_MARS_BUNDLE_MIN_VERSION = "0.18.0"
+# First Mars release with project-wide tool denies, the map form of agent tool
+# overlays and ``launch-bundle --agent-tool-rules`` (a continued session needs it).
+_MARS_BUNDLE_MIN_VERSION = "0.30.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -87,6 +87,8 @@ class BundleRequest:
     network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
     extra_skills: tuple[str, ...] = ()
     no_refresh_models: bool = False
+    # A continued session's own agent rules, in place of the agent's current ones; sent on stdin.
+    agent_tool_rules: tuple[ToolRule, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -414,7 +416,24 @@ def _build_bundle_command(
         command.extend(["--network-deny", host])
     for skill in request.extra_skills:
         command.extend(["--skill", skill])
+    if request.agent_tool_rules is not None:
+        command.extend(["--agent-tool-rules", "-"])
     return command
+
+
+def _agent_tool_rules_json(rules: tuple[ToolRule, ...] | None) -> str | None:
+    if rules is None:
+        return None
+    entries = [
+        {
+            "capability": rule.capability,
+            "pattern": rule.pattern,
+            "action": rule.action,
+            "origin": rule.origin,
+        }
+        for rule in rules
+    ]
+    return json.dumps(entries)
 
 
 def _extract_error_message(*, stdout: str, stderr: str) -> str:
@@ -514,6 +533,10 @@ def _selection_error_message(message: str, report: RouteDecisionReport | None) -
     return "; ".join([message, *details])
 
 
+class MarsAgentToolRulesUnsupportedError(RuntimeError):
+    """The installed Mars does not know ``--agent-tool-rules``."""
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
@@ -590,6 +613,14 @@ def _raise_bundle_error(
                 f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
                 note,
             )
+        )
+    if "--agent-tool-rules" in normalized and (
+        "unexpected argument" in normalized or "unrecognized" in normalized
+    ):
+        raise MarsAgentToolRulesUnsupportedError(
+            "The installed Mars does not accept --agent-tool-rules, which continuing or forking "
+            f"a session needs. Install mars >= {_MARS_BUNDLE_MIN_VERSION}. "
+            f"Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
@@ -717,6 +748,7 @@ def request_and_resolve(
     try:
         result = subprocess.run(
             command,
+            input=_agent_tool_rules_json(request.agent_tool_rules),
             capture_output=True,
             text=True,
             timeout=60,

@@ -86,7 +86,7 @@ from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import ToolRule
+from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 from meridian.plugin_api.types import SpawnKind
 
@@ -1312,8 +1312,16 @@ def prepare_launch_surface(
         projected_content=content.projected_content,
         composed_content=content.composed_content,
     )
+    # Only the agent's own rules can opt a spawn out of the platform `task` deny: a
+    # project-wide `task = "allow"` must not.
     profile_tool_rules = (
-        policies.resolved_tool_rules if (profile is not None or using_policy_snapshot) else ()
+        tuple(
+            rule
+            for rule in policies.resolved_tool_rules
+            if rule.origin not in (PROJECT_ORIGIN, PLATFORM_ORIGIN)
+        )
+        if (profile is not None or using_policy_snapshot)
+        else ()
     )
 
     resolved_request = request.model_copy(

@@ -240,7 +240,10 @@ class ResolvedContext:
             )
             resolved_builtins = tuple((name, path) for name, path in builtins if path is not None)
             context_dirs = resolved_builtins + tuple(
-                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
+                sorted(
+                    (name.strip().lower(), path)
+                    for name, (path, _) in resolved_context_paths.extra.items()
+                )
             )
 
         return cls(
@@ -256,6 +259,29 @@ class ResolvedContext:
             kb_dir=kb_dir,
             context_dirs=context_dirs,
         )
+
+    def context_dir(self, name: str) -> Path | None:
+        """The directory a context name resolves to now, None when it is unresolved.
+
+        Raises KeyError for a name that is not a context here.
+        """
+
+        normalized = name.strip().lower()
+        if normalized == "work":
+            return self.work_dir
+        key = (
+            "work_archive"
+            if normalized in {"work.archive", "archive", "archive.work"}
+            else normalized
+        )
+        dirs = dict(self.context_dirs)
+        if key in dirs:
+            return dirs[key]
+        extras = sorted(n for n in dirs if n not in {"work", "work_archive", "kb"})
+        if key in {"kb", "work_archive"}:
+            return None
+        names = ", ".join(["work", "kb", "work.archive", *extras])
+        raise KeyError(f"Unknown context '{name}'. Expected one of: {names}.")
 
     def child_env_overrides(
         self, *, increment_depth: bool = True, child_spawn_id: str | None = None

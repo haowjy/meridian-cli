@@ -293,6 +293,8 @@ class SpawnActionOutput(BaseModel):
     task_cwd_work_item: str | None = None
     cli_command: tuple[str, ...] = ()
     permission_report: EnforcementReport = ()
+    # Always empty: kept for scripts that read it, removed after 0.22.
+    tool_rules_set_aside: tuple[str, ...] = ()
     exit_code: int | None = None
     duration_secs: float | None = None
     background: bool = False
@@ -420,6 +422,7 @@ class SpawnActionOutput(BaseModel):
                 wire["cli_command"] = list(self.cli_command)
             if self.permission_report:
                 wire["permission_report"] = [line.to_wire() for line in self.permission_report]
+            wire["tool_rules_set_aside"] = list(self.tool_rules_set_aside)
         return wire
 
     def to_cli_wire(self) -> dict[str, object]:

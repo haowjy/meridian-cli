@@ -4,11 +4,38 @@ A scoped `native` permission spelling can name a different tool from the one
 it governs: Claude uses `Edit(path)` for scoped writes. Use `native_tools` to
 decide which tools remain callable, not the spelling of `native`.
 
-A scoped allow only pre-approves the calls it matches; it restricts nothing. A capability
-with only scoped allows leaves unmatched calls to the other rules and `approval`. To restrict
-it, the profile writes an unscoped `deny` beside the allows (`bash: deny`), or `'*': deny` for
-a whole-policy allowlist.
+One precedence on every harness: of the rules that match a call, deny, then ask, then
+allow; `'*'` only when none matches. How narrow a key is never matters, so a scoped allow
+only pre-approves calls no stricter rule matches. To confine a tool to some commands the
+profile writes `'*': deny` with the allows (a whole-policy allowlist); `bash: deny` beside
+`bash(rg *): allow` turns Bash off. Meridian's command grants are decided before any rule
+on Pi, Codex and OpenCode; Claude checks its denies and asks first, so there a matching
+deny or ask still restricts a grant.
 
-Launch snapshots keep Mars rules; the policy is rebuilt at bind. Completion
-signals are always granted, while read and spawn commands remain subject to
-narrower profile restrictions. See `docs/agent-profiles.md` for harness limits.
+Questions about a policy's rules are answered in one place, `lib/tools.py`, on the one
+`STRICTNESS` order: `unscoped_action(rules, *capabilities)` (the strictest unscoped action,
+for `*` or a feature's spellings), `could_refuse(rules, capability)` (whether any deny, ask or
+`*` rule could stop a call), `removed_tools` and `callable_tools` (what a tool list drops and
+keeps), and `strictest(actions)`. A place that reads rules for something other than emitting
+them (a permission-mode gate, a Codex switch or hook, tool availability, the platform `task`
+opt-out) calls these and never walks the list for a decision; add the question there if it
+is missing. The exception is the evaluator's input compile: `needs_extension` and
+`bash_fails_closed` (`harness/projections/tool_extension_policy.py`) read `ExtensionRule`s,
+not `ToolRule`s, and apply `strictest` themselves. A rule Mars covered keeps its place in the list, and a continued snapshot's rules
+never pass through Mars again.
+
+Coverage is Mars's `covered_by` field (`{action, key}`) on the rule, carried on `ToolRule`
+and saved in snapshots (an older snapshot has none, so its rules read as uncovered). Never
+infer it from a missing `native` or a note. `complete_report` reports a covered rule with
+Mars's note on every harness, whatever a compile said, and marks a shell deny or ask `partial`
+where the harness decides Meridian's command grants first and one lies in its scope.
+
+Launch snapshots keep the agent's Mars rules (origin `profile` and `overlay`); the policy
+is rebuilt at bind. On a continue or fork, `_with_current_bundle_rules` (`launch/policies.py`)
+sends those rules to Mars with `--agent-tool-rules` and takes the bundle's rules as the
+session's: Mars applies the current `[settings.tools]`, shapes project allows and asks by the
+snapshot's `*` rule, and keeps the agent's per-agent exemption. A snapshot rule with no
+`capability` (written by an older build) cannot be sent; such a snapshot keeps all its rules
+and gains the current project-wide denies. If Mars cannot be asked the replay fails.
+Only profile and overlay rules can opt a spawn out of the platform `task` deny. See
+`docs/agent-profiles.md` for harness limits.

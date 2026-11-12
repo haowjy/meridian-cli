@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from meridian.lib.safety.policy import PlatformCommand, PlatformCommandRole, PlatformRule
+from meridian.lib.safety.policy import PlatformCommand, PlatformRule
 from meridian.lib.tools import (
     PLATFORM_ORIGIN,
     ToolRule,
@@ -11,21 +11,13 @@ from meridian.lib.tools import (
 )
 
 
-def _exact(command: str, *, role: PlatformCommandRole = "read") -> PlatformCommand:
-    return PlatformCommand(command=command, match="exact", role=role)
+def _exact(command: str) -> PlatformCommand:
+    return PlatformCommand(command=command, match="exact")
 
 
-def _prefix(
-    command: str,
-    *,
-    role: PlatformCommandRole = "read",
-    runs_outside_sandbox: bool = False,
-) -> PlatformCommand:
+def _prefix(command: str, *, runs_outside_sandbox: bool = False) -> PlatformCommand:
     return PlatformCommand(
-        command=command,
-        match="prefix",
-        role=role,
-        runs_outside_sandbox=runs_outside_sandbox,
+        command=command, match="prefix", runs_outside_sandbox=runs_outside_sandbox
     )
 
 
@@ -33,8 +25,8 @@ def _prefix(
 # spawn id targets it). A child without these commands cannot reject a premature completion; it
 # closes only when its completion window runs out.
 _COMPLETION_COMMANDS: tuple[PlatformCommand, ...] = (
-    _prefix("meridian spawn done", role="completion"),
-    _prefix("meridian spawn rearm", role="completion"),
+    _prefix("meridian spawn done"),
+    _prefix("meridian spawn rearm"),
 )
 
 # Commands whose registered behavior reads or reports without mutating project/runtime authority.
@@ -119,15 +111,11 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _exact("meridian work task-dir"),
 )
 
-SPAWN_PLATFORM_COMMAND = _prefix(
-    "meridian spawn",
-    role="launch",
-    runs_outside_sandbox=True,
-)
+SPAWN_PLATFORM_COMMAND = _prefix("meridian spawn", runs_outside_sandbox=True)
 
 # Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
 # directories beneath the active work directory, so it is intentionally not a general read grant.
-_SPAWN_WORK_PATH_COMMAND = _prefix("meridian work path", role="launch")
+_SPAWN_WORK_PATH_COMMAND = _prefix("meridian work path")
 
 
 def _native_subagent_capabilities(

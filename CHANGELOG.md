@@ -6,6 +6,65 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-12
+
+### Upgrade notes
+- An OpenCode launch is stricter in the ways named in [the upgrade note](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#an-opencode-launch-answers-as-strictly-as-the-agents-native-file): a profile allow with no restricting `*` is not written and can lose to a project `ask`, and an override's `*` and denies now apply.
+
+### Changed
+- Pins Mars 0.31.0.
+
+### Fixed
+- An OpenCode launch now answers every call at least as strictly as the agent's native file: a profile `allow` no longer overrides a deny in the project's `opencode.json` (it can also lose to a project `ask` and OpenCode's built-in `read *.env: ask`, which a headless spawn refuses), `harness-overrides.opencode.permission` denies and asks now apply (a launch ignored the whole block) and its `*` only restricts (`*: allow` is ignored, an `ask` or `deny` `*` raises every rule), and a shell rule that denies or asks turns off OpenCode's `execute` tool, as the file does. `--dry-run` prints `not written` on a profile allow it leaves out. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+
+## [0.21.0] - 2026-11-11
+
+### Upgrade notes
+- Of the tool rules that match a call, the strictest now wins on every harness (deny, then ask, then allow), however narrow a key is. `bash: deny` beside `bash(rg *): allow` turns Bash off; write `'*': deny` with the allows. `edit: deny` beside `write: allow` denies writes. Needs Mars 0.30.0 or newer; this release pins 0.30.1. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+- Meridian's own command grants (`meridian spawn done`, read commands, `meridian spawn`) are decided before any tool rule on Pi, Codex and OpenCode, so a profile rule no longer restricts them there. On Claude a deny or ask that matches one still wins. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#the-strictest-tool-rule-wins-on-every-harness).
+- Continuing or forking a session needs Mars 0.30.0 or newer: Meridian sends the session's saved rules to Mars, which applies the current project-wide rules. An older Mars stops the continue and names the version. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+- `tool_rules_set_aside` in `--format json` is deprecated and always `[]`, and `--dry-run` prints no `Set aside:` block. A covered rule stays in the rules with a note naming the stricter rule. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+- Pi follows the Codex matcher on edge syntax: a lone `&` is split and each part checked, and a command is no longer refused only for containing `if`, `then` or `for`. On Codex a lone `&` under an allowlist is refused. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#also-in-this-release).
+
+### Added
+- `[settings.tools]` takes `allow` and `ask` beside `deny`, and a package's `[package.tools]` states tool rules once for every agent it ships (both from Mars 0.30). See [project-wide tool rules](https://github.com/haowjy/meridian-cli/blob/main/docs/agent-profiles.md#project-wide-tool-rules).
+
+### Changed
+- Pi and Codex decide each tool call with one evaluator, so a rule means the same on both.
+- On continue and fork, a project-wide rule added since the session started applies, one removed is gone, and an allow it covered works again.
+- `--fork` of a session whose agent profile was removed says to run `--fork-fresh <id> -a <agent>`.
+
+### Fixed
+- Codex installs its shell hook for any rule that can refuse a command, including a scoped `ask` and a `'*': deny` allowlist, and turns web search and image viewing off under `ask`.
+- A shell call with no command string is refused under scoped denies.
+- The dry run reports a covered rule once, with the rule that covers it, on every harness.
+
+## [0.20.10] - 2026-11-11
+
+### Added
+- Claude interactive sessions can keep the prompt cache warm while you are away. `/meridian-idle keepwarm on` sends up to three short prompts, the first when the cache warning fires; a reply of exactly `stop-waiting` ends them for that absence. During a ping the model gets read-only tools only. Off until you turn it on, and off again after `/clear`.
+
+### Changed
+- `idle.warn_minutes` defaults to 10 (was 15), for every harness. The cache warning now arrives 10 minutes before expiry: 50 minutes after the turn on a 1-hour cache. Set `idle.warn_minutes = 15` to keep the old lead.
+
+## [0.20.9] - 2026-11-11
+
+### Upgrade notes
+- `[settings.tools]` (project-wide tool denies) and the map form of `[agents.<name>.tools]` need Mars 0.29.0, which this release pins. A release after 0.29.0 changes three forms of profile rule when the strictest matching rule starts to win on every harness. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#project-wide-tool-denies-and-the-map-form-of-an-agents-tool-overlay).
+- Mars 0.29.0 stops loading two configs it used to accept: `tools.mcp = [...]` in an agent overlay (write `"mcp(server)"` in `tools.allowed`), and a stray string-valued key in `[agents.<name>.tools]`, which is now read as a tool rule. See [Mars 0.29.0](https://github.com/haowjy/mars-agents/releases/tag/v0.29.0).
+
+### Added
+- `meridian spawn --dry-run` names a project-wide tool rule `project: tools <key> = deny`, and lists under `Set aside:` (`tool_rules_set_aside` in `--format json`) each agent allow or ask that a project-wide deny covers.
+
+### Changed
+- `--continue` and `--fork` apply the project-wide denies in force now, including one added after the session started. Continuing needs a working Mars.
+- On Claude, a project-wide plain deny stays `--disallowedTools <Tool>` beside a scoped allow of the same tool.
+
+## [0.20.8] - 2026-11-11
+
+### Fixed
+- `meridian kg kb`, `kg check kb` and `kg graph kb` now read an existing `./kb` directory, and otherwise resolve the current `kb` context (as `meridian context kb` does) instead of the path captured when the session launched. The same applies to `work`, `work.archive` and any extra context name. `meridian work root` now prints the configured work root, and `meridian context` no longer shows a stale `$MERIDIAN_ACTIVE_WORK_DIR` when no work item resolves.
+
 ## [0.20.7] - 2026-11-10
 
 ### Changed

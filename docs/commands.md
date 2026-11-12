@@ -123,6 +123,8 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 --fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.
 ```
 
+If the source session's agent profile no longer exists, `--fork` fails and names the command to run instead: `--fork-fresh REF -a <agent>`. (`--continue` of such a session warns and proceeds.)
+
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
 Session initiation modes: `--continue` resumes the same transcript and keeps the spawn's ID (`--continue p7` is still `p7`; bare `meridian --continue`, with no ref, opens `meridian session browse` to pick one), `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
