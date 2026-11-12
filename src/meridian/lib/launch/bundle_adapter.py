@@ -35,7 +35,7 @@ from meridian.lib.catalog.mars_roots import (
     resolve_mars_roots,
 )
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
-from meridian.lib.core.route_report import RouteDecisionReport
+from meridian.lib.core.route_report import AssessmentReport, RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
 from meridian.lib.launch.launch_types import (
@@ -453,6 +453,67 @@ def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
     )
 
 
+def _assessment_reason(assessment: AssessmentReport) -> str:
+    extra = json_object(assessment.model_extra) or {}
+    reason = extra.get("reason", assessment.verdict)
+    return str(reason)
+
+
+def _selection_details(report: RouteDecisionReport) -> list[str]:
+    details: list[str] = []
+    for attempt in report.model_attempts:
+        reasons = ", ".join(
+            f"{assessment.harness}: {_assessment_reason(assessment)}"
+            for assessment in attempt.assessments
+        )
+        details.append(f"{attempt.model_token}: {reasons}")
+    return details
+
+
+def _resolved_label(token: str, canonical: str) -> str:
+    if canonical and canonical != token:
+        return f"{token} → {canonical}"
+    return token
+
+
+def _exhausted_message(report: RouteDecisionReport) -> str | None:
+    lines: list[str] = []
+    harnesses: list[str] = []
+    for attempt in report.model_attempts:
+        label = _resolved_label(attempt.model_token, attempt.canonical_model)
+        for assessment in attempt.assessments:
+            harnesses.append(assessment.harness)
+            reason = _assessment_reason(assessment)
+            if reason == "no_model_match":
+                lines.append(f"{label} is not in the {assessment.harness} model list")
+            else:
+                lines.append(f"{label}: {assessment.harness}: {reason}")
+    if not lines:
+        return None
+    primary = report.model_attempts[0].model_token
+    unique = list(dict.fromkeys(harnesses))
+    header = (
+        f"no route for `{primary}` on {unique[0]}"
+        if len(unique) == 1
+        else f"no route for `{primary}`"
+    )
+    body = "\n".join(f"  {line}" for line in lines)
+    return f"{header}\n{body}"
+
+
+def _selection_error_message(message: str, report: RouteDecisionReport | None) -> str:
+    if report is None:
+        return message
+    if report.outcome == "exhausted":
+        formatted = _exhausted_message(report)
+        if formatted is not None:
+            return formatted
+    details = _selection_details(report)
+    if not details:
+        return message
+    return "; ".join([message, *details])
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
@@ -466,17 +527,7 @@ class MarsSelectionError(RuntimeError):
     ) -> None:
         self.code = code
         self.selection_report = report.model_dump(mode="json") if report is not None else None
-        details: list[str] = []
-        if report is not None:
-            for attempt in report.model_attempts:
-                attempt_reasons: list[str] = []
-                for assessment in attempt.assessments:
-                    extra = json_object(assessment.model_extra) or {}
-                    reason = extra.get("reason", assessment.verdict)
-                    attempt_reasons.append(f"{assessment.harness}: {reason}")
-                reasons = ", ".join(attempt_reasons)
-                details.append(f"{attempt.model_token}: {reasons}")
-        super().__init__(_append_error_note("; ".join([message, *details]), note))
+        super().__init__(_append_error_note(_selection_error_message(message, report), note))
 
 
 class _MarsError(BaseModel):

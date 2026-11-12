@@ -43,11 +43,12 @@ Opus is chosen. Fallback starts only when the primary's harness can't run it her
 ## Which Harnesses Can Run It
 
 `targets` in `mars.toml` also decides which harnesses a launch may use.
-`targets = [".claude"]` allows only Claude: a Pi or Codex model fails with "fallback
-candidates exhausted ... on linked harnesses" even when that harness is installed and
-logged in. Link it (`meridian mars link .pi`) to allow it; `--harness` can't widen the
-list. With no `targets`, routing picks among installed harnesses. A model family is not a harness: an Anthropic
-model may still run through an enabled OpenCode route.
+`targets = [".claude"]` allows only Claude: a Pi or Codex model fails even when
+that harness is installed and logged in. The error names each resolved id and the
+harness that was tried. Link it (`meridian mars link .pi`) to allow it; `--harness`
+can't widen the list. With no `targets`, routing picks among installed harnesses. A model
+family is not a harness: an Anthropic model may still run through an enabled OpenCode
+route.
 
 The harness decides what the profile's permissions are worth (`resources/agents.md`). A
 child that a sandboxed lead spawns on OpenCode or Pi is refused, because those harnesses
