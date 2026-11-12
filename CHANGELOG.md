@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-11-12
+
+### Fixed
+- When no model can run, the error names the harness and each alias's resolved id, instead of `no_model_match`.
+
 ## [0.21.1] - 2026-11-12
 
 ### Upgrade notes
