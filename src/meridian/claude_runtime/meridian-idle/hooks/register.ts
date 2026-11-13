@@ -357,10 +357,6 @@ async function keepwarmLine($: EngineInterface, s: State): Promise<string> {
   return `keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`
 }
 
-async function setKeepwarm($: EngineInterface, s: State, enabled: boolean): Promise<void> {
-  await enqueue(s, async () => $.state.set(IDLE_KEEPWARM, { ...(await readKeepwarm($)), on: enabled }))
-}
-
 /** `kw` as it stands for this stretch: a different session or core stretch starts the count and lead over. */
 function inStretch(kw: Keepwarm, session: string, stretch: number): Keepwarm {
   return kw.session === session && kw.stretch === stretch ? kw : { ...kw, session, stretch, sent: 0, lead: 0, warned: false }
@@ -711,12 +707,7 @@ export const register: Register = on => {
   // Typed slash commands never reach prompt.submit. `/meridian-idle` and `/keepwarm` do not count as a return.
   on('command.run', { command: COMMAND }, async ($, e, next) => {
     void next
-    const [word, value] = e.args.trim().split(/\s+/)
-    if (word === 'keepwarm' && (value === 'on' || value === 'off')) {
-      await setKeepwarm($, s, value === 'on')
-    } else if (word !== undefined && word !== '') {
-      return { text: 'usage: /meridian-idle [keepwarm on|off]' }
-    }
+    if (e.args.trim() !== '') return { text: 'usage: /meridian-idle\nkeepwarm: /keepwarm [on|off]' }
     return { text: await statusText($, s) }
   })
 
@@ -726,8 +717,10 @@ export const register: Register = on => {
     if (word !== '' && word !== 'on' && word !== 'off') {
       return { text: 'usage: /keepwarm [on|off]' }
     }
-    const enabled = word === '' ? !(await readKeepwarm($)).on : word === 'on'
-    await setKeepwarm($, s, enabled)
+    await enqueue(s, async () => {
+      const kw = await readKeepwarm($)
+      await $.state.set(IDLE_KEEPWARM, { ...kw, on: word === '' ? !kw.on : word === 'on' })
+    })
     return { text: await keepwarmLine($, s) }
   })
 

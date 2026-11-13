@@ -44,9 +44,6 @@ and pings sent this stretch, and the last log lines. It does not count as a retu
 Prints the keepwarm state. With no argument it toggles first; `on` and `off` set
 it. It does not count as a return.
 
-`/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` still set keepwarm
-and then print the full idle status.
-
 ## Keepwarm
 
 Off until `/keepwarm on` (or a toggle from off); the model cannot turn it on. A restart

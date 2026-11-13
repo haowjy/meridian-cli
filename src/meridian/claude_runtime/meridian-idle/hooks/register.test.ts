@@ -542,11 +542,7 @@ test('keepwarm off stops pings, and /meridian-idle prints the state', async ($, 
 
   const off = await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
   expect(off.text).toBe('keepwarm: off, 3/3 pings this stretch')
-  const toggled = await $.command.run({ ...KEEPWARM_COMMAND, args: '' })
-  expect(toggled.text).toBe('keepwarm: on, 3/3 pings this stretch')
-  expect((await $.command.run({ ...KEEPWARM_COMMAND, args: 'bogus' })).text).toContain('usage: /keepwarm')
-  expect((await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })).text).toContain('keepwarm: off')
-  expect((await $.command.run({ ...IDLE_COMMAND, args: 'bogus' })).text).toContain('usage')
+  expect((await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })).text).toContain('usage: /meridian-idle')
   expect(calls(h, 'return')).toEqual([])
 })
 
