@@ -17,13 +17,14 @@ import {
 //   keepwarm  the cache warning fired and the user opted in -> up to three prompts that keep the cache warm (see keepwarm.ts)
 // Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
-// plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request.
+// plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request. `/keepwarm` toggles or sets keepwarm.
 
 type Stage = 'push' | 'warn'
 
 const STAGES: readonly Stage[] = ['push', 'warn']
 const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
+const KEEPWARM_COMMAND = 'keepwarm'
 const CLI_TIMEOUT_MS = 20_000
 const LOG_LIMIT = 100
 const EXCERPT_CHAR_CAP = 4_000
@@ -349,6 +350,17 @@ async function readKeepwarm($: EngineInterface): Promise<Keepwarm> {
   return (await $.state.get(IDLE_KEEPWARM)).value ?? FRESH
 }
 
+async function keepwarmLine($: EngineInterface, s: State): Promise<string> {
+  const kw = await readKeepwarm($)
+  const armed = s.armed
+  const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
+  return `keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`
+}
+
+async function setKeepwarm($: EngineInterface, s: State, enabled: boolean): Promise<void> {
+  await enqueue(s, async () => $.state.set(IDLE_KEEPWARM, { ...(await readKeepwarm($)), on: enabled }))
+}
+
 /** `kw` as it stands for this stretch: a different session or core stretch starts the count and lead over. */
 function inStretch(kw: Keepwarm, session: string, stretch: number): Keepwarm {
   return kw.session === session && kw.stretch === stretch ? kw : { ...kw, session, stretch, sent: 0, lead: 0, warned: false }
@@ -559,7 +571,8 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
 async function startTask($: EngineInterface, s: State, epoch: number): Promise<void> {
   if (!(await gate($, s))) return
   try {
-    await $.command.register({ name: COMMAND, description: 'Show Meridian idle stretch and timers; keepwarm on|off pings the model before the cache expires' })
+    await $.command.register({ name: COMMAND, description: 'Show Meridian idle stretch and timers' })
+    await $.command.register({ name: KEEPWARM_COMMAND, description: 'Toggle keepwarm, or pass on|off' })
   } catch (err) {
     note($, s, `command registration failed: ${describeError(err)}`)
   }
@@ -590,9 +603,7 @@ async function statusText($: EngineInterface, s: State): Promise<string> {
       lines.push(`  ${stage.padEnd(7)} ${timing}`)
     }
   }
-  const kw = await readKeepwarm($)
-  const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
-  lines.push(`keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`)
+  lines.push(await keepwarmLine($, s))
   if (s.log.length > 0) {
     lines.push('log:')
     for (const line of s.log.slice(-8)) lines.push(`  ${line}`)
@@ -697,20 +708,31 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Typed slash commands never reach prompt.submit. `/meridian-idle` itself is a read-only look at the timers and does not count as a return.
+  // Typed slash commands never reach prompt.submit. `/meridian-idle` and `/keepwarm` do not count as a return.
   on('command.run', { command: COMMAND }, async ($, e, next) => {
     void next
     const [word, value] = e.args.trim().split(/\s+/)
     if (word === 'keepwarm' && (value === 'on' || value === 'off')) {
-      await enqueue(s, async () => $.state.set(IDLE_KEEPWARM, { ...(await readKeepwarm($)), on: value === 'on' }))
+      await setKeepwarm($, s, value === 'on')
     } else if (word !== undefined && word !== '') {
       return { text: 'usage: /meridian-idle [keepwarm on|off]' }
     }
     return { text: await statusText($, s) }
   })
 
+  on('command.run', { command: KEEPWARM_COMMAND }, async ($, e, next) => {
+    void next
+    const word = e.args.trim()
+    if (word !== '' && word !== 'on' && word !== 'off') {
+      return { text: 'usage: /keepwarm [on|off]' }
+    }
+    const enabled = word === '' ? !(await readKeepwarm($)).on : word === 'on'
+    await setKeepwarm($, s, enabled)
+    return { text: await keepwarmLine($, s) }
+  })
+
   on('command.run', async ($, e, next) => {
-    if (!s.inert && e.command !== COMMAND && isUserOrigin(e.origin)) {
+    if (!s.inert && e.command !== COMMAND && e.command !== KEEPWARM_COMMAND && isUserOrigin(e.origin)) {
       s.lastUserText = `/${e.command}${e.args ? ` ${e.args}` : ''}`
       userReturned($, s)
     }

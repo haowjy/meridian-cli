@@ -39,11 +39,17 @@ Its own diagnostics live in the plugin's `$.store` under the key `log` (last
 Prints the current stretch, anchor, time left on each timer, the keepwarm state
 and pings sent this stretch, and the last log lines. It does not count as a return.
 
-`/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` set keepwarm.
+## `/keepwarm`
+
+Prints the keepwarm state. With no argument it toggles first; `on` and `off` set
+it. It does not count as a return.
+
+`/meridian-idle keepwarm on` and `/meridian-idle keepwarm off` still set keepwarm
+and then print the full idle status.
 
 ## Keepwarm
 
-Off until `/meridian-idle keepwarm on`; the model cannot turn it on. A restart
+Off until `/keepwarm on` (or a toggle from off); the model cannot turn it on. A restart
 or `/clear` drops the setting (`$.state` is reset), a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
