@@ -318,6 +318,7 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
 // -- keepwarm ---------------------------------------------------------------
 
 const IDLE_COMMAND = { command: 'meridian-idle', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
+const KEEPWARM_COMMAND = { command: 'keepwarm', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
 const LEAD = 20_000
 
 /** A fake core: the first arm places the warning LEAD ahead, later arms place nothing, and a return opens a new stretch. */
@@ -339,7 +340,7 @@ function keepwarmHost(lead = LEAD): Host {
 async function startKeepwarm($: Engine, clock: ReturnType<typeof install>, answer = 'done') {
   await $.session.start(TUI)
   await clock.advance(2000)
-  await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm on' })
+  await $.command.run({ ...KEEPWARM_COMMAND, args: 'on' })
   await $.turn.start({ text: 'go', turnId: 't1' })
   await $.turn.complete({ ...MAIN_TURN, answer })
 }
@@ -539,9 +540,9 @@ test('keepwarm off stops pings, and /meridian-idle prints the state', async ($, 
   const status = await $.command.run({ ...IDLE_COMMAND, args: '' })
   expect(status.text).toContain('keepwarm: on, 3/3 pings this stretch')
 
-  const off = await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })
-  expect(off.text).toContain('keepwarm: off')
-  expect((await $.command.run({ ...IDLE_COMMAND, args: 'bogus' })).text).toContain('usage')
+  const off = await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
+  expect(off.text).toBe('keepwarm: off, 3/3 pings this stretch')
+  expect((await $.command.run({ ...IDLE_COMMAND, args: 'keepwarm off' })).text).toContain('usage: /meridian-idle')
   expect(calls(h, 'return')).toEqual([])
 })
 
