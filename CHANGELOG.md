@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-11-13
+
+### Changed
+- Keepwarm in a Claude session is `/keepwarm`: no argument toggles and prints the keepwarm line; `on` and `off` set it. `/meridian-idle` prints the full idle status.
+
+### Removed
+- `/meridian-idle keepwarm on|off`. Use `/keepwarm` instead.
+
 ## [0.21.2] - 2026-11-12
 
 ### Fixed
