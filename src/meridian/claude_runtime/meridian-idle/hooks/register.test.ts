@@ -15,6 +15,8 @@ type Host = {
   store: Record<string, unknown>
   /** How long `fire` takes to answer, standing in for a timer the machine ran late. */
   fireDelayMs?: number
+  /** What the host answers a compaction with; the default is a finished compaction. */
+  compact?: () => unknown
 }
 
 const START = 1_000_000
@@ -81,7 +83,8 @@ function install(on: On, h: Host) {
   on('prompt.read', () => ({ value: { text: h.box, cursor: 0 } }))
   on('tool.check', () => ({ decision: 'allow' }))
   on('command.run', () => ({ text: '' }))
-  on('session.compact', () => ({ messages: [SUMMARY] }) as never)
+  on('session.end', () => ({ sessionId: 'sess-1' }) as never)
+  on('session.compact', () => (h.compact?.() ?? { messages: [SUMMARY] }) as never)
   return clock
 }
 
@@ -594,6 +597,7 @@ test('/clear drops the /keepwarm off override and the config default returns', a
   await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
   expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: off')
 
+  await $.session.end({ reason: 'clear' } as never)
   cleared = true
   expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on')
 })
@@ -639,6 +643,40 @@ test('a compaction while ping 1 waits for the box sends no ping', async ($, on) 
   h.box = ''
   await clock.advance(10 * LEAD)
   expect(h.submitted).toEqual([])
+})
+
+test('a skipped compaction leaves the pings alone and returns the host result', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+  h.compact = () => ({ skip: 'blocked by a PreCompact hook' })
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  const result = await $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  await clock.advance(LEAD)
+
+  expect(result).toEqual({ skip: 'blocked by a PreCompact hook' })
+  expect(h.submitted).toHaveLength(2)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 2/3')
+})
+
+test('a ping due while a compaction runs sends nothing and spends no slot', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+  let finish: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { finish = resolve })
+  h.compact = () => gate.then(() => ({ skip: 'blocked' }))
+
+  await startKeepwarm($, clock)
+  await clock.advance(1) // the arm has reached core
+  const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  await clock.advance(LEAD - 1)
+  expect(h.submitted).toEqual([])
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 0/3')
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('a compaction is running')
+  finish()
+  await compaction
 })
 
 for (const event of [{ trigger: 'precompute' }, { trigger: 'auto', agentId: 'sub-1' }]) {

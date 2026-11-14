@@ -1,5 +1,5 @@
 /**
- * Keepwarm's session-wide state, in `$.state` so a hot reload keeps it (a restart drops it: off is the safe default).
+ * Keepwarm's session-wide state, in `$.state` so a hot reload keeps it (a restart, a resume or `/clear` drops it, and the config default applies again).
  * `sent` and `warned` belong to `session` and core's `stretch`; a different pair starts them over.
  */
 export type MeridianIdleKeepwarm = {

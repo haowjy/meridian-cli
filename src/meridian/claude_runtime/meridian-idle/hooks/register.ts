@@ -80,6 +80,8 @@ type State = {
   timers: Timer[]
   /** The chained ping's timer (pings 2 and 3), kept apart so a compaction can cancel it alone. */
   pingTimer: Timer | undefined
+  /** A main-conversation compaction is running: no ping may start, since it would prefill a conversation about to be replaced. */
+  compacting: boolean
   /** Bumped by every user return. Async work compares it to detect that the user came back meanwhile. */
   epoch: number
   /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
@@ -109,6 +111,7 @@ function newState(): State {
     armed: undefined,
     timers: [],
     pingTimer: undefined,
+    compacting: false,
     epoch: 0,
     mayBeOpen: false,
     queue: Promise.resolve(),
@@ -387,22 +390,29 @@ function pingsOpen(kw: Keepwarm): boolean {
 }
 
 /** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
-function skipForRunningTurn($: EngineInterface, s: State, armed: Armed): boolean {
+function skipForRunningTurn($: EngineInterface, s: State): boolean {
+  if (s.compacting) {
+    note($, s, 'ping skipped: a compaction is running')
+    return true
+  }
   if (!s.running) return false
   note($, s, 'ping skipped: a turn is running; its arm schedules the next one')
   return true
 }
 
-/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. */
-async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<boolean> {
+/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended, a compaction runs or `deadline` (epoch ms) came first. */
+async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<string | undefined> {
+  const RETURNED = 'the user returned'
   for (;;) {
-    if (s.epoch !== epoch || !pingsOpen(inStretch(await readKeepwarm($, s), armed.session, armed.stretch))) return false
+    if (s.epoch !== epoch) return RETURNED
+    if (s.compacting) return 'a compaction is running'
+    if (!pingsOpen(inStretch(await readKeepwarm($, s), armed.session, armed.stretch))) return "this stretch's pings are over or keepwarm is off"
     const now = await $.clock.now()
-    if (now >= deadline) return false
+    if (now >= deadline) return 'the cache would be cold'
     const changedAt = await s.lastChange
     const { text } = await $.prompt.read()
-    if (s.epoch !== epoch) return false
-    if (text === '' && now - changedAt >= QUIET_MS) return true
+    if (s.epoch !== epoch) return RETURNED
+    if (text === '' && now - changedAt >= QUIET_MS) return undefined
     await $.clock.sleep(HOLD_POLL_MS)
   }
 }
@@ -434,12 +444,13 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       return
     }
     const deadline = dueAt + s.warnMs - EXPIRY_MARGIN_MS
-    if (skipForRunningTurn($, s, armed)) return
-    if (!(await holdForUser($, s, armed, epoch, deadline))) {
-      note($, s, 'ping skipped: user is at the keyboard or the cache would be cold')
+    if (skipForRunningTurn($, s)) return
+    const held = await holdForUser($, s, armed, epoch, deadline)
+    if (held !== undefined) {
+      note($, s, `ping skipped: ${held}`)
       return
     }
-    if (skipForRunningTurn($, s, armed)) return // a turn started while the ping waited
+    if (skipForRunningTurn($, s)) return // a turn started while the ping waited
     const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline))
     if (typeof index !== 'number' || s.epoch !== epoch) return
     const ping: Ping = {
@@ -697,7 +708,7 @@ export const register: Register = on => {
     return {
       decision: 'deny',
       reason:
-        'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing. To end the wait, reply with exactly stop-waiting.',
+        'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing. To stop waiting for the user and let the cache go cold, reply with exactly stop-waiting.',
     }
   })
 
@@ -747,7 +758,17 @@ export const register: Register = on => {
   // counted as a return (its command.run), so this acts on the auto and plugin compactions of a still-armed stretch.
   on('session.compact', async ($, e, next) => {
     const armed = s.armed
-    if (!s.inert && e.agentId === undefined && e.trigger !== 'precompute' && armed !== undefined) {
+    if (s.inert || e.agentId !== undefined || e.trigger === 'precompute' || armed === undefined) return next(e)
+    // `session.compact` fires before the compaction, and `next` resolves to its outcome: a skip (a PreCompact hook
+    // blocked it) leaves the conversation and its cache, so only a result with messages ends the pings.
+    s.compacting = true
+    let result: Awaited<ReturnType<typeof next>>
+    try {
+      result = await next(e)
+    } finally {
+      s.compacting = false
+    }
+    if ('messages' in result) {
       s.pingTimer?.cancel()
       s.pingTimer = undefined
       // Queued before the next reservation, so a ping waiting in holdForUser or a timer that already fired finds the cap.
@@ -757,7 +778,7 @@ export const register: Register = on => {
       })
       note($, s, `compaction (${e.trigger}): this stretch's pings are over`)
     }
-    return next(e)
+    return result
   })
 
   on('session.end', async ($, e, next) => {
