@@ -16,5 +16,6 @@
   since `$.state` resets and the config default takes over. Persisting it would
   need a file the mod does not write today.
 - `lib/idle`: after a compaction, the stretch's warn and push keep the times the
-  pre-compaction TTL placed. Re-placing them needs its own notification
-  semantics, so keepwarm stops at the compaction and the timers stay.
+  pre-compaction TTL placed. Should they be re-placed from the new TTL? That
+  changes when the push and warning reach the user, so it needs a decision on
+  those notifications first; keepwarm stops at the compaction either way.

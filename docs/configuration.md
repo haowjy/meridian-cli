@@ -459,7 +459,19 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
 
-Idle settings resolve **precedence level first, then specificity**:
+`keepwarm = true` starts every Claude primary with keepwarm on: after the cache
+warning, the Claude idle mod sends up to three short prompts so the cache stays
+warm while you are away. Other harnesses accept the key and ignore it. The model
+cannot turn it on or off; `/keepwarm on|off` sets it for the session, and
+`/clear`, a restart or a resume returns to the configured default. A keepwarm
+ping that the model answers with exactly `stop-waiting` ends the current
+stretch's pings, and so does a compaction of the main conversation (a
+`precompute` compaction and a subagent's own do not count): the cache the pings
+protected is gone, so a ping would only pay for a fresh prefill.
+
+`keepwarm` has no global `[idle]` counterpart; set it per harness in the file or
+through the variable in the table. The other keys resolve **precedence level
+first, then specificity**:
 
 ```text
 per-harness environment > global environment
@@ -472,16 +484,17 @@ local config. Environment always beats every file, so a per-tmux
 `MERIDIAN_IDLE_ENABLED=0` always wins, even over a
 `[harness.<harness>.idle] enabled` file setting.
 
-A file that also sets a harness model must spell it `[harness.<harness>] model = "..."`;
-`[harness] <harness> = "..."` conflicts with the idle table and makes the file invalid TOML.
+A file that also sets a harness model must write it as a table. The flat
+`[harness] <harness> = "..."` spelling conflicts with the idle table and makes
+the file invalid TOML.
 
-`keepwarm = true` starts every Claude primary with keepwarm on: after the cache
-warning, the Claude idle mod sends up to three short prompts so the cache stays
-warm while you are away. Other harnesses accept the key and ignore it. In a
-session, `/keepwarm off` overrides the setting until `/clear`, a restart or a resume, after which the
-configured default applies again. A reply of exactly `stop-waiting` ends the
-current stretch's pings, and so does a compaction of the main conversation: the
-cache the pings protected is gone, so a ping would only pay for a fresh prefill.
+```toml
+[harness.claude]
+model = "claude-sonnet-5-5"
+
+[harness.claude.idle]
+keepwarm = true
+```
 
 ### Default behavior per harness
 
