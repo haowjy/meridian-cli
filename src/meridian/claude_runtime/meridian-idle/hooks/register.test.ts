@@ -661,23 +661,27 @@ test('a skipped compaction leaves the pings alone and returns the host result', 
   expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 2/3')
 })
 
-test('a ping due while a compaction runs sends nothing and spends no slot', async ($, on) => {
-  const h = keepwarmHost()
-  const clock = install(on, h)
-  let finish: () => void = () => undefined
-  const gate = new Promise<void>(resolve => { finish = resolve })
-  h.compact = () => gate.then(() => ({ skip: 'blocked' }))
+for (const outcome of ['skipped', 'landed'] as const) {
+  test(`a ping due while a compaction runs waits; a ${outcome} compaction ${outcome === 'skipped' ? 'lets it go out' : 'ends it'}`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+    let finish: () => void = () => undefined
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    h.compact = () => gate.then(() => (outcome === 'skipped' ? { skip: 'blocked' } : { messages: [SUMMARY] }))
 
-  await startKeepwarm($, clock)
-  await clock.advance(1) // the arm has reached core
-  const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
-  await clock.advance(LEAD - 1)
-  expect(h.submitted).toEqual([])
-  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 0/3')
-  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('a compaction is running')
-  finish()
-  await compaction
-})
+    await startKeepwarm($, clock)
+    await clock.advance(1) // the arm has reached core
+    const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+    await clock.advance(LEAD - 1)
+    expect(h.submitted).toEqual([])
+    expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 0/3')
+    finish()
+    await compaction
+    await clock.advance(5000)
+
+    expect(h.submitted).toHaveLength(outcome === 'skipped' ? 1 : 0)
+  })
+}
 
 test('a ping waiting for the box through a skipped compaction goes out once it clears', async ($, on) => {
   const h = keepwarmHost()

@@ -391,10 +391,6 @@ function pingsOpen(kw: Keepwarm): boolean {
 
 /** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
 function skipForRunningTurn($: EngineInterface, s: State): boolean {
-  if (s.compacting) {
-    note($, s, 'ping skipped: a compaction is running')
-    return true
-  }
   if (!s.running) return false
   note($, s, 'ping skipped: a turn is running; its arm schedules the next one')
   return true
@@ -408,14 +404,13 @@ async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: nu
     if (!pingsOpen(inStretch(await readKeepwarm($, s), armed.session, armed.stretch))) return "this stretch's pings are over or keepwarm is off"
     const now = await $.clock.now()
     if (now >= deadline) return 'the cache would be cold'
-    if (s.compacting) {
-      await $.clock.sleep(HOLD_POLL_MS) // a landed compaction ends the wait through the cap; a skipped one lets the ping go
-      continue
+    // A landed compaction ends the wait through the cap; a skipped one lets the ping go.
+    if (!s.compacting) {
+      const changedAt = await s.lastChange
+      const { text } = await $.prompt.read()
+      if (s.epoch !== epoch) return RETURNED
+      if (!s.compacting && text === '' && now - changedAt >= QUIET_MS) return undefined
     }
-    const changedAt = await s.lastChange
-    const { text } = await $.prompt.read()
-    if (s.epoch !== epoch) return RETURNED
-    if (text === '' && now - changedAt >= QUIET_MS) return undefined
     await $.clock.sleep(HOLD_POLL_MS)
   }
 }
@@ -427,7 +422,7 @@ function newNonce(): string {
 /** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, the user returned or `deadline` passed. */
 async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<number | undefined> {
   const kw = inStretch(await readKeepwarm($, s), armed.session, armed.stretch)
-  if (s.epoch !== epoch || !pingsOpen(kw) || (await $.clock.now()) >= deadline) return undefined
+  if (s.compacting || s.epoch !== epoch || !pingsOpen(kw) || (await $.clock.now()) >= deadline) return undefined
   await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
   return kw.sent + 1
 }
