@@ -2,12 +2,12 @@ import type { MeridianIdleKeepwarm } from '../types/meridian-idle'
 
 // Keepwarm: the pieces that need no host. Orchestration (timers, quiet window, turn matching) is in register.ts.
 
-/** Pings per absence. Three keep a 1-hour cache warm for about 3.5 hours for less than one rebuild. */
-export const PING_CAP = 3
+/** Pings per stretch when core does not send `keepwarm_pings`. Three keep a 1-hour cache warm for about 3.5 hours for less than one rebuild. */
+export const DEFAULT_PINGS = 3
 
 export type Keepwarm = MeridianIdleKeepwarm
 
-export const FRESH: Keepwarm = { on: false, session: '', stretch: 0, sent: 0, lead: 0, warned: false }
+export const FRESH: Keepwarm = { on: false, session: '', stretch: 0, sent: 0, limit: DEFAULT_PINGS, lead: 0, warned: false }
 
 export function pingText(nonce: string): string {
   return (
