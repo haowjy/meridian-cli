@@ -461,20 +461,21 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
 
 `keepwarm = true` starts every Claude primary with keepwarm on: after the cache
-warning, the Claude idle mod sends up to `keepwarm_pings` (default 3, 1–10) short prompts so the cache
-stays warm while you are away. A stretch keeps the count it started with, so a config change applies from the next stretch. Other harnesses accept the key and ignore it. The model
-cannot turn it on or off; `/keepwarm on|off` sets it for the session, and
-`/clear`, a restart or a resume returns to the configured default. A keepwarm
-ping that the model answers with exactly `stop-waiting` ends the current
-stretch's pings, and so does a compaction of the main conversation (a
-`precompute` compaction and a subagent's own do not count): the cache the pings
-protected is gone, so a ping would only pay for a fresh prefill. A ping that
-would only go out after the cache has already expired also ends the stretch's
-pings.
+warning, the Claude idle mod sends up to `keepwarm_pings` (default 3, 1–10)
+short prompts so the cache stays warm while you are away. A stretch keeps the
+count it started with, so a config change applies from the next stretch. Other
+harnesses accept the keys and ignore them. The model cannot turn keepwarm on or
+off; `/keepwarm on|off` sets it for the session, and `/clear`, a restart or a
+resume returns to the configured default. A keepwarm ping that the model answers
+with exactly `stop-waiting` ends the current stretch's pings, and so does a
+compaction of the main conversation (a `precompute` compaction and a subagent's
+own do not count): the cache the pings protected is gone, so a ping would only
+pay for a fresh prefill. A ping that would only go out after the cache has
+already expired also ends the stretch's pings.
 
-`keepwarm` and `keepwarm_pings` have no global `[idle]` counterpart; set it per harness in the file or
-through the variable in the table. The other keys resolve **precedence level
-first, then specificity**:
+`keepwarm` and `keepwarm_pings` have no global `[idle]` counterpart; set them per
+harness in the file or through the variables in the table. The other keys
+resolve **precedence level first, then specificity**:
 
 ```text
 per-harness environment > global environment

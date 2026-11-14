@@ -5,9 +5,10 @@ turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
 The one thing it does on its own is keepwarm, which is off unless
-`[harness.claude.idle] keepwarm` or `/keepwarm on` turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the cache stays warm while the
-user is away, the first when Meridian's cache warning fires and the next two on
-its own timer.
+`[harness.claude.idle] keepwarm` or `/keepwarm on` turns it on: it submits up to
+`keepwarm_pings` (default 3) short prompts so the cache stays warm while the
+user is away, the first when Meridian's cache warning fires and the rest on its
+own timer.
 
 ## What it does
 
@@ -54,17 +55,17 @@ default applies again; a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1
-when `fire warn` answers `act`, then up to `keepwarm_pings - 1` more. Core fires the warning once
-per stretch, so the mod times the later pings itself: `lead` (the gap core placed
-between the turn and the warning, taken from the arm that placed it) after each
-later main-loop arm of the same stretch, and only once the stretch's warning
-acted (`warned` in `$.state`; a warning core skipped starts no pings). A new
-main-loop arm replaces the timer and a user return cancels it. The count, its `limit` (`[harness.claude.idle] keepwarm_pings` when the stretch
-started: a config change applies from the next stretch) and `warned` are kept per
-core stretch, in `$.state`; every end of a stretch's pings, whatever the reason,
-writes `sent = limit`; the count is taken before each
-submit, so a reload can cost a ping but never add one.
-Pings send no notification.
+when `fire warn` answers `act`, then up to `keepwarm_pings - 1` more. Core fires
+the warning once per stretch, so the mod times the later pings itself: `lead`
+(the gap core placed between the turn and the warning, taken from the arm that
+placed it) after each later main-loop arm of the same stretch, and only once the
+stretch's warning acted (`warned` in `$.state`; a warning core skipped starts no
+pings). A new main-loop arm replaces the timer and a user return cancels it. A
+stretch's record keeps the `limit` it started with (`[harness.claude.idle]
+keepwarm_pings` at that moment, so a config change applies from the next
+stretch), and `warned`; every way its pings end writes `sent = limit`, and the
+count is taken before each submit, so a reload can cost a ping but never add
+one. Pings send no notification.
 
 - **Quiet box.** A ping is submitted only after the prompt box has been empty
   and untouched for 10 s. Every check before the submit stops 1 minute before
