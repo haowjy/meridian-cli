@@ -63,6 +63,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "push_seconds": 0,
         "warn_minutes": 10,
         "keepwarm": False,
+        "keepwarm_pings": 3,
     }
     armed = _json_success(
         tmp_path,

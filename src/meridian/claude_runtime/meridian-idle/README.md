@@ -5,7 +5,7 @@ turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
 The one thing it does on its own is keepwarm, which is off unless
-`[harness.claude.idle] keepwarm` or `/keepwarm on` turns it on: it submits up to three short prompts so the cache stays warm while the
+`[harness.claude.idle] keepwarm` or `/keepwarm on` turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the cache stays warm while the
 user is away, the first when Meridian's cache warning fires and the next two on
 its own timer.
 
@@ -54,13 +54,15 @@ default applies again; a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1
-when `fire warn` answers `act`, then up to two more. Core fires the warning once
-per stretch, so the mod times pings 2 and 3 itself: `lead` (the gap core placed
+when `fire warn` answers `act`, then up to `keepwarm_pings - 1` more. Core fires the warning once
+per stretch, so the mod times the later pings itself: `lead` (the gap core placed
 between the turn and the warning, taken from the arm that placed it) after each
 later main-loop arm of the same stretch, and only once the stretch's warning
 acted (`warned` in `$.state`; a warning core skipped starts no pings). A new
-main-loop arm replaces the timer and a user return cancels it. The count and
-`warned` are kept per core stretch, in `$.state`; the count is taken before each
+main-loop arm replaces the timer and a user return cancels it. The count, its `limit` (`[harness.claude.idle] keepwarm_pings` when the stretch
+started: a config change applies from the next stretch) and `warned` are kept per
+core stretch, in `$.state`; every end of a stretch's pings, whatever the reason,
+writes `sent = limit`; the count is taken before each
 submit, so a reload can cost a ping but never add one.
 Pings send no notification.
 
@@ -69,6 +71,8 @@ Pings send no notification.
   the cache would expire: the stage's scheduled time plus `warn_minutes` (from
   `idle config`) minus 1 minute. The deadline does not move when the timer runs
   late, so a late timer has less time or none. A skipped ping spends no slot.
+  When that deadline passes while a ping waits, the stretch's pings end too (the
+  deadline is the cold-cache check), so a later arm schedules none.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that

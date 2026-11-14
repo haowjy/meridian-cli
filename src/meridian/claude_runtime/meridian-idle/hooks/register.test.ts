@@ -720,3 +720,55 @@ for (const event of [{ trigger: 'precompute' }, { trigger: 'auto', agentId: 'sub
     expect(h.submitted).toHaveLength(2)
   })
 }
+
+test('keepwarm_pings in the config reply sets the limit: 1 gives exactly one ping', async ($, on) => {
+  const h = keepwarmHost()
+  h.reply.config = { enabled: true, warn_minutes: 10, keepwarm: true, keepwarm_pings: 1 }
+  const clock = install(on, h)
+
+  await startConfigured($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  await clock.advance(10 * LEAD)
+
+  expect(h.submitted).toHaveLength(1)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 1/1 pings this stretch')
+})
+
+test('a cold deadline ends the stretch\'s pings: a later arm does not ping', async ($, on) => {
+  const MINUTE = 60_000
+  const h = keepwarmHost(50 * MINUTE)
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'a draft'
+  await clock.advance(60 * MINUTE) // past dueAt + warn - 1 min: the cache would be cold
+  h.box = ''
+  await clock.advance(MINUTE)
+  expect(h.submitted).toEqual([])
+  const status = (await $.command.run({ ...IDLE_COMMAND, args: '' })).text ?? ''
+  expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
+  expect(status).toContain("pings are over: the cache would be cold")
+
+  await $.turn.start({ text: 'later', turnId: 't2' })
+  await $.turn.complete({ ...MAIN_TURN, turnId: 't2' })
+  await clock.advance(90 * MINUTE)
+  expect(h.submitted).toEqual([])
+})
+
+for (const how of ['session.end clear', 'a /clear command'] as const) {
+  test(`${how} cancels a pending chained ping`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', 'ok') // ping 2 is pending on the chained timer
+    expect(h.submitted).toHaveLength(1)
+    if (how === 'session.end clear') await $.session.end({ reason: 'clear' } as never)
+    else await $.command.run({ command: 'clear', args: '', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as never)
+    await clock.advance(10 * LEAD)
+
+    expect(h.submitted).toHaveLength(1)
+  })
+}

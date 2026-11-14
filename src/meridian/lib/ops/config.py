@@ -380,6 +380,8 @@ def _scaffold_template() -> str:
             "# [harness.claude.idle]",
             "# Start every Claude primary with keepwarm on (/keepwarm off overrides per session).",
             f"# keepwarm = {_toml_literal(defaults['harness.claude.idle.keepwarm'])}",
+            "# Keep-warm prompts per stretch, 1-10.",
+            f"# keepwarm_pings = {defaults['harness.claude.idle.keepwarm_pings']}",
             "",
             "# -- State retention --------------------------------------------------------",
             "[state]",

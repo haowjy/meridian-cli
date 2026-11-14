@@ -14,7 +14,7 @@ import {
 //   idle    a main-loop turn finished        -> `idle arm` with the work still running, then one timer per stage
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
-//   keepwarm  the cache warning fired and the user opted in -> up to three prompts that keep the cache warm (see keepwarm.ts)
+//   keepwarm  the cache warning fired and the user opted in -> up to `keepwarm_pings` prompts that keep the cache warm (see keepwarm.ts)
 // Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request. `/keepwarm` toggles or sets keepwarm.
@@ -35,6 +35,8 @@ const BACKGROUND_COMMAND_CHAR_CAP = 512
 /** The prompt box must be empty and untouched this long before a ping starts a turn under the user. */
 const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
+/** Why a ping waited past `deadline`: ends the stretch's pings. */
+const COLD = 'the cache would be cold'
 /** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
 const EXPIRY_MARGIN_MS = 60_000
 /** `$.store` key holding `{ session, text }`: the last non-ping main-loop answer, so a resume or reload keeps the notice's excerpt. */
@@ -85,7 +87,7 @@ type State = {
   policy: Policy
   armed: Armed | undefined
   timers: Timer[]
-  /** The chained ping's timer (pings 2 and 3), kept apart so a compaction can cancel it alone. */
+  /** The chained ping's timer (pings 2 and on), kept apart so a compaction can cancel it alone. */
   pingTimer: Timer | undefined
   /** A main-conversation compaction is running: no ping may start, since it would prefill a conversation about to be replaced. */
   compacting: boolean
@@ -415,14 +417,14 @@ function skipForRunningTurn($: EngineInterface, s: State): boolean {
   return true
 }
 
-/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. A running compaction pauses the wait. */
+/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. `deadline` is the one cold-cache check: `runPing` ends the stretch's pings when it wins. A running compaction pauses the wait. */
 async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<string | undefined> {
   const RETURNED = 'the user returned'
   for (;;) {
     if (s.epoch !== epoch) return RETURNED
     if (!pingsOpen(await stretchRecord($, s, armed.session, armed.stretch))) return "this stretch's pings are over or keepwarm is off"
     const now = await $.clock.now()
-    if (now >= deadline) return 'the cache would be cold'
+    if (now >= deadline) return COLD
     // A landed compaction ends the wait through the cap; a skipped one lets the ping go.
     if (!s.compacting) {
       const changedAt = await s.lastChange
@@ -463,6 +465,10 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
     const deadline = dueAt + s.policy.warnMs - EXPIRY_MARGIN_MS
     if (skipForRunningTurn($, s)) return
     const held = await holdForUser($, s, armed, epoch, deadline)
+    if (held === COLD) {
+      await enqueue(s, () => endPings($, s, armed.session, armed.stretch, COLD))
+      return
+    }
     if (held !== undefined) {
       note($, s, `ping skipped: ${held}`)
       return
@@ -497,7 +503,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
 }
 
 /**
- * Pings 2 and 3: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it.
+ * Pings 2 and on: one timer, `lead` after this arm. Any later main-loop arm replaces it and a return cancels it.
  * Only after this stretch's warning acted (`warned`), and not while a warn timer is pending: that timer sends ping 1.
  */
 async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
