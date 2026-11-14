@@ -478,7 +478,7 @@ A file that also sets a harness model must spell it `[harness.<harness>] model =
 `keepwarm = true` starts every Claude primary with keepwarm on: after the cache
 warning, the Claude idle mod sends up to three short prompts so the cache stays
 warm while you are away. Other harnesses accept the key and ignore it. In a
-session, `/keepwarm off` overrides the setting until `/clear`, after which the
+session, `/keepwarm off` overrides the setting until `/clear`, a restart or a resume, after which the
 configured default applies again. A reply of exactly `stop-waiting` ends the
 current stretch's pings, and so does a compaction of the main conversation: the
 cache the pings protected is gone, so a ping would only pay for a fresh prefill.

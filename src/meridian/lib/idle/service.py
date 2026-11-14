@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.harness_models import HarnessIdleConfig
 from meridian.lib.config.loader import OPTION_CATALOG, load_config
 from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
@@ -217,7 +218,8 @@ def effective(
         return getattr(config.idle, field)
     if specific_option is not None and profile is not None:
         return getattr(profile.idle, field)
-    return None
+    # A harness with no idle profile has no setting of its own: the field's default applies.
+    return HarnessIdleConfig.model_fields[field].default
 
 
 def resolve_policy(
@@ -227,8 +229,6 @@ def resolve_policy(
 ) -> IdlePolicyConfig:
 
     values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
-    # A harness with no idle profile has no keepwarm setting: that is off, not unknown.
-    values["keepwarm"] = values["keepwarm"] is True
     return IdlePolicyConfig.model_validate(values)
 
 
