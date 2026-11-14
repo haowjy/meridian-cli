@@ -87,6 +87,7 @@ class IdlePolicyConfig(BaseModel):
     warn_email: bool
     late_fire_tolerance_seconds: int
     ttl_seconds: int | None
+    keepwarm: bool
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class ConfigResult:
             "enabled": self.enabled,
             "push_seconds": self.policy.push_seconds,
             "warn_minutes": self.policy.warn_minutes,
+            "keepwarm": self.policy.keepwarm,
         }
         if self.reason is not None:
             payload["reason"] = self.reason

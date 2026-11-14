@@ -62,6 +62,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "enabled": True,
         "push_seconds": 0,
         "warn_minutes": 10,
+        "keepwarm": False,
     }
     armed = _json_success(
         tmp_path,
@@ -396,3 +397,16 @@ def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
     assert (result.returncode, result.stderr) == (0, "")
     assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
+
+
+@pytest.mark.integration
+def test_idle_config_keepwarm_default_from_project_file_and_env(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text("[harness.claude.idle]\nkeepwarm = true\n")
+    env = _idle_env(tmp_path)
+
+    reply = _json_success(tmp_path, env, "idle", "config", "--interactive")
+    assert isinstance(reply, dict) and reply["keepwarm"] is True
+
+    env["MERIDIAN_HARNESS_IDLE_KEEPWARM_CLAUDE"] = "false"
+    reply = _json_success(tmp_path, env, "idle", "config", "--interactive")
+    assert isinstance(reply, dict) and reply["keepwarm"] is False

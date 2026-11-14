@@ -25,6 +25,7 @@ class HarnessIdleConfig(ConfigModel):
 
     enabled: bool = True
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
+    keepwarm: bool = False
 
 
 class HarnessProfileConfig(ConfigModel):
@@ -82,6 +83,7 @@ def harness_idle_model(
     value_kinds: dict[str, ValueKind] = {
         "enabled": "bool",
         "ttl_seconds": "int",
+        "keepwarm": "bool",
     }
     for field_name, model_field in HarnessIdleConfig.model_fields.items():
         option = config_field(
