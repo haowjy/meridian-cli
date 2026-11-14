@@ -384,9 +384,11 @@ async function keepwarmLine($: EngineInterface, s: State): Promise<string> {
 /** The record as it stands for this stretch: a different session or core stretch starts the count, limit and lead over. */
 async function stretchRecord($: EngineInterface, s: State, session: string, stretch: number): Promise<Keepwarm> {
   const kw = await readKeepwarm($, s)
-  return kw.session === session && kw.stretch === stretch
-    ? kw
-    : { ...kw, session, stretch, sent: 0, limit: s.policy.pings, lead: 0, warned: false }
+  if (kw.session !== session || kw.stretch !== stretch) {
+    return { ...kw, session, stretch, sent: 0, limit: s.policy.pings, lead: 0, warned: false }
+  }
+  // A record written by an older build has no limit: give it this session's.
+  return asNumber(kw.limit) === undefined ? { ...kw, limit: s.policy.pings } : kw
 }
 
 /** The one place a stretch's pings end: the stop marker is `sent = limit`, so a changed config cannot reopen it. */
