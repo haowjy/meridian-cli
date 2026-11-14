@@ -377,7 +377,7 @@ def _scaffold_template() -> str:
             f"# warn_minutes = {defaults['idle.warn_minutes']}",
             "",
             "# Per-harness idle settings; keepwarm is read by the Claude mod only.",
-            "[harness.claude.idle]",
+            "# [harness.claude.idle]",
             "# Start every Claude primary with keepwarm on (/keepwarm off overrides per session).",
             f"# keepwarm = {_toml_literal(defaults['harness.claude.idle.keepwarm'])}",
             "",

@@ -472,6 +472,9 @@ local config. Environment always beats every file, so a per-tmux
 `MERIDIAN_IDLE_ENABLED=0` always wins, even over a
 `[harness.<harness>.idle] enabled` file setting.
 
+A file that also sets a harness model must spell it `[harness.<harness>] model = "..."`;
+`[harness] <harness> = "..."` conflicts with the idle table and makes the file invalid TOML.
+
 `keepwarm = true` starts every Claude primary with keepwarm on: after the cache
 warning, the Claude idle mod sends up to three short prompts so the cache stays
 warm while you are away. Other harnesses accept the key and ignore it. In a
