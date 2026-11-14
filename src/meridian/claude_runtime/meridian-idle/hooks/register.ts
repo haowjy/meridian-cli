@@ -400,15 +400,18 @@ function skipForRunningTurn($: EngineInterface, s: State): boolean {
   return true
 }
 
-/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended, a compaction runs or `deadline` (epoch ms) came first. */
+/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. A running compaction pauses the wait. */
 async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<string | undefined> {
   const RETURNED = 'the user returned'
   for (;;) {
     if (s.epoch !== epoch) return RETURNED
-    if (s.compacting) return 'a compaction is running'
     if (!pingsOpen(inStretch(await readKeepwarm($, s), armed.session, armed.stretch))) return "this stretch's pings are over or keepwarm is off"
     const now = await $.clock.now()
     if (now >= deadline) return 'the cache would be cold'
+    if (s.compacting) {
+      await $.clock.sleep(HOLD_POLL_MS) // a landed compaction ends the wait through the cap; a skipped one lets the ping go
+      continue
+    }
     const changedAt = await s.lastChange
     const { text } = await $.prompt.read()
     if (s.epoch !== epoch) return RETURNED

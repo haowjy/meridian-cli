@@ -679,6 +679,30 @@ test('a ping due while a compaction runs sends nothing and spends no slot', asyn
   await compaction
 })
 
+test('a ping waiting for the box through a skipped compaction goes out once it clears', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+  let finish: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { finish = resolve })
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  h.box = 'a draft'
+  await clock.advance(LEAD + 1) // ping 2 is due and waiting for the box
+  h.compact = () => gate.then(() => ({ skip: 'blocked' }))
+  const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  h.box = ''
+  await clock.advance(30_000) // quiet long enough, but the compaction holds the ping
+  expect(h.submitted).toHaveLength(1)
+  finish()
+  await compaction
+  await clock.advance(5000)
+
+  expect(h.submitted).toHaveLength(2)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 2/3')
+})
+
 for (const event of [{ trigger: 'precompute' }, { trigger: 'auto', agentId: 'sub-1' }]) {
   test(`a compaction ${JSON.stringify(event)} changes nothing`, async ($, on) => {
     const h = keepwarmHost()
