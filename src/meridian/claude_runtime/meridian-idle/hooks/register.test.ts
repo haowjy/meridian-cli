@@ -582,6 +582,22 @@ test('the config default turns keepwarm on without /keepwarm on, and /keepwarm o
   expect(h.submitted).toHaveLength(1)
 })
 
+test('/clear drops the /keepwarm off override and the config default returns', async ($, on) => {
+  const h = keepwarmHost()
+  h.reply.config = { enabled: true, warn_minutes: 10, keepwarm: true }
+  const clock = install(on, h)
+  // `$.state` outlives a hot reload but not `/clear`: hide what was written before the clear.
+  let cleared = false
+  on('state.get', (_$, e, next) => (cleared ? { value: { value: undefined } } : next(e)))
+
+  await startConfigured($, clock)
+  await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: off')
+
+  cleared = true
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on')
+})
+
 for (const config of [{ enabled: true, warn_minutes: 10, keepwarm: false }, { enabled: true, warn_minutes: 10 }]) {
   test(`keepwarm ${JSON.stringify(config)} in the config reply keeps it off`, async ($, on) => {
     const h = keepwarmHost()
