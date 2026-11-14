@@ -74,8 +74,12 @@ type State = {
   gate: Promise<boolean> | undefined
   /** `warn_minutes` from the `idle config` reply, in ms: the time left on the cache when the warning fires. */
   warnMs: number | undefined
+  /** `keepwarm` from the `idle config` reply: what `/keepwarm` has not yet overridden this session. */
+  keepwarmDefault: boolean
   armed: Armed | undefined
   timers: Timer[]
+  /** The chained ping's timer (pings 2 and 3), kept apart so a compaction can cancel it alone. */
+  pingTimer: Timer | undefined
   /** Bumped by every user return. Async work compares it to detect that the user came back meanwhile. */
   epoch: number
   /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
@@ -101,8 +105,10 @@ function newState(): State {
     inert: false,
     gate: undefined,
     warnMs: undefined,
+    keepwarmDefault: false,
     armed: undefined,
     timers: [],
+    pingTimer: undefined,
     epoch: 0,
     mayBeOpen: false,
     queue: Promise.resolve(),
@@ -149,6 +155,8 @@ function note($: EngineInterface, s: State, line: string): void {
 function cancelTimers(s: State): void {
   for (const timer of s.timers) timer.cancel()
   s.timers = []
+  s.pingTimer?.cancel()
+  s.pingTimer = undefined
 }
 
 function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
@@ -201,6 +209,7 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
   }
   const warnMinutes = asNumber(reply.warn_minutes)
   s.warnMs = warnMinutes === undefined ? undefined : warnMinutes * 60_000
+  s.keepwarmDefault = reply.keepwarm === true
   note($, s, 'active: idle enabled')
   return true
 }
@@ -328,7 +337,7 @@ async function armTask(
       return // same stretch and anchor: core absorbed this arm (a duplicate turn); keep our timers
     }
     const warnAt = asNumber(reply.warn_at)
-    await trackStretch($, session, stretch, warnAt === undefined ? undefined : warnAt - (await $.clock.now()))
+    await trackStretch($, s, session, stretch, warnAt === undefined ? undefined : warnAt - (await $.clock.now()))
     if (typeof reply.push_held === 'string') note($, s, `push held: ${reply.push_held}`)
     const at = readSchedule(reply)
     if (Object.keys(at).length === 0 && typeof reply.reason === 'string') {
@@ -346,12 +355,13 @@ async function armTask(
 
 // -- keepwarm ---------------------------------------------------------------
 
-async function readKeepwarm($: EngineInterface): Promise<Keepwarm> {
-  return (await $.state.get(IDLE_KEEPWARM)).value ?? FRESH
+/** The session's record, else core's configured default: `/keepwarm` writes the record, and `/clear` drops it. */
+async function readKeepwarm($: EngineInterface, s: State): Promise<Keepwarm> {
+  return (await $.state.get(IDLE_KEEPWARM)).value ?? { ...FRESH, on: s.keepwarmDefault }
 }
 
 async function keepwarmLine($: EngineInterface, s: State): Promise<string> {
-  const kw = await readKeepwarm($)
+  const kw = await readKeepwarm($, s)
   const armed = s.armed
   const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
   return `keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${PING_CAP} pings this stretch`
@@ -363,8 +373,8 @@ function inStretch(kw: Keepwarm, session: string, stretch: number): Keepwarm {
 }
 
 /** An arm reached core: record which stretch it belongs to and, when it placed the warning, the lead. */
-async function trackStretch($: EngineInterface, session: string, stretch: number, lead: number | undefined): Promise<void> {
-  const before = await readKeepwarm($)
+async function trackStretch($: EngineInterface, s: State, session: string, stretch: number, lead: number | undefined): Promise<void> {
+  const before = await readKeepwarm($, s)
   const kw = inStretch(before, session, stretch)
   const next = lead !== undefined && lead > 0 ? { ...kw, lead } : kw
   if (next.session !== before.session || next.stretch !== before.stretch || next.lead !== before.lead) {
@@ -383,10 +393,10 @@ function skipForRunningTurn($: EngineInterface, s: State, armed: Armed): boolean
   return true
 }
 
-/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned or `deadline` (epoch ms) came first. */
-async function holdForUser($: EngineInterface, s: State, epoch: number, deadline: number): Promise<boolean> {
+/** Resolves true once the prompt box is empty and untouched for `QUIET_MS`; false if the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. */
+async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<boolean> {
   for (;;) {
-    if (s.epoch !== epoch) return false
+    if (s.epoch !== epoch || !pingsOpen(inStretch(await readKeepwarm($, s), armed.session, armed.stretch))) return false
     const now = await $.clock.now()
     if (now >= deadline) return false
     const changedAt = await s.lastChange
@@ -403,7 +413,7 @@ function newNonce(): string {
 
 /** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, the user returned or `deadline` passed. */
 async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<number | undefined> {
-  const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+  const kw = inStretch(await readKeepwarm($, s), armed.session, armed.stretch)
   if (s.epoch !== epoch || !pingsOpen(kw) || (await $.clock.now()) >= deadline) return undefined
   await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
   return kw.sent + 1
@@ -417,7 +427,7 @@ async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: nu
  */
 async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number): Promise<void> {
   try {
-    const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+    const kw = inStretch(await readKeepwarm($, s), armed.session, armed.stretch)
     if (!pingsOpen(kw)) return
     if (s.warnMs === undefined || s.warnMs <= EXPIRY_MARGIN_MS) {
       note($, s, 'ping skipped: no usable warn_minutes from core')
@@ -425,7 +435,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
     }
     const deadline = dueAt + s.warnMs - EXPIRY_MARGIN_MS
     if (skipForRunningTurn($, s, armed)) return
-    if (!(await holdForUser($, s, epoch, deadline))) {
+    if (!(await holdForUser($, s, armed, epoch, deadline))) {
       note($, s, 'ping skipped: user is at the keyboard or the cache would be cold')
       return
     }
@@ -463,23 +473,22 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
  * Only after this stretch's warning acted (`warned`), and not while a warn timer is pending: that timer sends ping 1.
  */
 async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
-  const kw = await readKeepwarm($)
+  const kw = await readKeepwarm($, s)
   if (!pingsOpen(kw) || !kw.warned || armed.at.warn !== undefined) return
   if (kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
   const due = (await $.clock.now()) + kw.lead
   if (s.epoch !== epoch || s.armed !== armed) return
-  s.timers.push(
-    $.clock.after(kw.lead, () => {
-      void (async () => {
-        try {
-          if (s.armed !== armed || s.epoch !== epoch) return
-          await runPing($, s, armed, epoch, due)
-        } catch (err) {
-          note($, s, `ping timer error: ${describeError(err)}`)
-        }
-      })()
-    }),
-  )
+  s.pingTimer?.cancel()
+  s.pingTimer = $.clock.after(kw.lead, () => {
+    void (async () => {
+      try {
+        if (s.armed !== armed || s.epoch !== epoch) return
+        await runPing($, s, armed, epoch, due)
+      } catch (err) {
+        note($, s, `ping timer error: ${describeError(err)}`)
+      }
+    })()
+  })
   note($, s, `ping ${kw.sent + 1} in ${Math.round(kw.lead / 1000)}s`)
 }
 
@@ -487,7 +496,7 @@ async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: n
 async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
   if (reason !== 'answer') return note($, s, `ping ${ping.index} ended: ${reason}`)
   if (!isStop(answer)) return note($, s, `ping ${ping.index} continued`)
-  const kw = await readKeepwarm($)
+  const kw = await readKeepwarm($, s)
   if (kw.session === ping.session && kw.stretch === ping.stretch) await $.state.set(IDLE_KEEPWARM, { ...kw, sent: PING_CAP })
   note($, s, `ping ${ping.index} stopped`)
 }
@@ -552,7 +561,7 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
     const dueAt = armed.at.warn
     if (stage === 'warn' && reply.decision === 'act' && dueAt !== undefined) {
       await enqueue(s, async () => {
-        const kw = inStretch(await readKeepwarm($), armed.session, armed.stretch)
+        const kw = inStretch(await readKeepwarm($, s), armed.session, armed.stretch)
         await $.state.set(IDLE_KEEPWARM, { ...kw, warned: true })
       })
       void runPing($, s, armed, epoch, dueAt)
@@ -687,7 +696,8 @@ export const register: Register = on => {
     if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
     return {
       decision: 'deny',
-      reason: 'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing.',
+      reason:
+        'The user is away. meridian-idle only asked you to keep the cache warm: reply briefly and change nothing. To end the wait, reply with exactly stop-waiting.',
     }
   })
 
@@ -718,7 +728,7 @@ export const register: Register = on => {
       return { text: 'usage: /keepwarm [on|off]' }
     }
     await enqueue(s, async () => {
-      const kw = await readKeepwarm($)
+      const kw = await readKeepwarm($, s)
       await $.state.set(IDLE_KEEPWARM, { ...kw, on: word === '' ? !kw.on : word === 'on' })
     })
     return { text: await keepwarmLine($, s) }
@@ -728,6 +738,24 @@ export const register: Register = on => {
     if (!s.inert && e.command !== COMMAND && e.command !== KEEPWARM_COMMAND && isUserOrigin(e.origin)) {
       s.lastUserText = `/${e.command}${e.args ? ` ${e.args}` : ''}`
       userReturned($, s)
+    }
+    return next(e)
+  })
+
+  // A compaction replaces the conversation the pings were keeping cached, so a ping now would prefill the new summary
+  // and add a turn. `precompute` only computes a summary to keep; nothing is replaced yet. A manual /compact has already
+  // counted as a return (its command.run), so this acts on the auto and plugin compactions of a still-armed stretch.
+  on('session.compact', async ($, e, next) => {
+    const armed = s.armed
+    if (!s.inert && e.agentId === undefined && e.trigger !== 'precompute' && armed !== undefined) {
+      s.pingTimer?.cancel()
+      s.pingTimer = undefined
+      // Queued before the next reservation, so a ping waiting in holdForUser or a timer that already fired finds the cap.
+      void enqueue(s, async () => {
+        const kw = inStretch(await readKeepwarm($, s), armed.session, armed.stretch)
+        await $.state.set(IDLE_KEEPWARM, { ...kw, sent: PING_CAP })
+      })
+      note($, s, `compaction (${e.trigger}): this stretch's pings are over`)
     }
     return next(e)
   })

@@ -12,7 +12,8 @@ export const FRESH: Keepwarm = { on: false, session: '', stretch: 0, sent: 0, le
 export function pingText(nonce: string): string {
   return (
     `[meridian-idle keepwarm ${nonce}]\n\n` +
-    'Waiting for the user, keeping warm. To stop waiting for the user, reply with exactly stop-waiting and nothing else.'
+    'Waiting for the user, keeping warm. To stop, reply with exactly stop-waiting and nothing else: ' +
+    "that ends this stretch's pings, so you stop waiting for the user and accept the cache going cold before they return."
   )
 }
 
