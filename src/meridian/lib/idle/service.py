@@ -227,6 +227,8 @@ def resolve_policy(
 ) -> IdlePolicyConfig:
 
     values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
+    # A harness with no idle profile has no keepwarm setting: that is off, not unknown.
+    values["keepwarm"] = values["keepwarm"] is True
     return IdlePolicyConfig.model_validate(values)
 
 

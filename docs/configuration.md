@@ -454,6 +454,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
 | `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `keepwarm` | `false` (Claude only) | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
@@ -470,6 +471,14 @@ Within the file level, later layers win: user config, then project config, then
 local config. Environment always beats every file, so a per-tmux
 `MERIDIAN_IDLE_ENABLED=0` always wins, even over a
 `[harness.<harness>.idle] enabled` file setting.
+
+`keepwarm = true` starts every Claude primary with keepwarm on: after the cache
+warning, the Claude idle mod sends up to three short prompts so the cache stays
+warm while you are away. Other harnesses accept the key and ignore it. In a
+session, `/keepwarm off` overrides the setting until `/clear`, after which the
+configured default applies again. A reply of exactly `stop-waiting` ends the
+current stretch's pings, and so does a compaction of the main conversation: the
+cache the pings protected is gone, so a ping would only pay for a fresh prefill.
 
 ### Default behavior per harness
 

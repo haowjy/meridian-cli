@@ -4,8 +4,8 @@ A Claude Code mod that tells Meridian when a session goes idle, what work the
 turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
-The one thing it does on its own is keepwarm, which is off until the user turns
-it on: it submits up to three short prompts so the cache stays warm while the
+The one thing it does on its own is keepwarm, which is off unless
+`[harness.claude.idle] keepwarm` or `/keepwarm on` turns it on: it submits up to three short prompts so the cache stays warm while the
 user is away, the first when Meridian's cache warning fires and the next two on
 its own timer.
 
@@ -46,8 +46,11 @@ it. It does not count as a return.
 
 ## Keepwarm
 
-Off until `/keepwarm on` (or a toggle from off); the model cannot turn it on. A restart
-or `/clear` drops the setting (`$.state` is reset), a hot reload keeps it.
+Starts at `[harness.claude.idle] keepwarm` (default off), which arrives in the
+`idle config` reply; the mod reads no config itself. `/keepwarm on|off` (or a
+toggle) overrides it for the session; the model cannot turn it on. A restart or
+`/clear` drops the override (`$.state` is reset) and the configured default
+applies again; a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1
@@ -79,7 +82,14 @@ Pings send no notification.
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
   touched.
 - **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
-  quotes or backticks) ends this stretch's pings; keepwarm stays on.
+  quotes or backticks) ends this stretch's pings; keepwarm stays on. The ping
+  text and the denied-tool reason both say so, and that the cache goes cold.
+- **Compaction.** A `session.compact` of the main conversation (trigger
+  `manual`, `auto` or `plugin`, no `agentId`) during an armed stretch ends its
+  pings the same way and cancels the chained timer: the cache they protected is
+  gone, and a ping would prefill the new summary and add a turn. `precompute`
+  and a subagent's compaction change nothing. A manual `/compact` already counted
+  as a return.
 - **Your-turn push.** The ping turn's arm sends the last answer from a
   non-ping turn as `--assistant-text`, so the next notice does not read "ok".
   The answer is held in memory only: after a hot reload the next ping turn's
