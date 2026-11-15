@@ -3,14 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, MutableMapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import tomlkit
-from tomlkit.items import Table
 
 from meridian.lib.config.schema import ConfigOptionDescriptor
 from meridian.lib.platform.atomic import atomic_write_text
@@ -112,7 +111,7 @@ def set_scalar_option(
 
     primary_alias = _primary_file_alias(option)
     target_table = _ensure_table(document, primary_alias.table_path)
-    target_table[primary_alias.key] = tomlkit.item(_coerce_toml_scalar(value))  # pyright: ignore[reportUnknownMemberType]  # tomlkit's item factory is incompletely typed.
+    _write_scalar(target_table, primary_alias.key, _coerce_toml_scalar(value))
 
     return ScalarEditResult(text=_render_document(document, original_text=text), removed=False)
 
@@ -139,22 +138,28 @@ def _primary_file_alias(option: ConfigOptionDescriptor):
     return option.file_aliases[0]
 
 
-def _ensure_table(
-    document: TOMLDocument,
-    table_path: tuple[str, ...],
-) -> TOMLDocument | Table:
-    container: TOMLDocument | Table = document
+type _Container = MutableMapping[str, object]
+
+
+def _ensure_table(document: TOMLDocument, table_path: tuple[str, ...]) -> _Container:
+    container = cast("_Container", document)
     for depth, segment in enumerate(table_path):
-        child = cast("object | None", container.get(segment))  # pyright: ignore[reportUnknownMemberType]  # tomlkit container.get is incompletely typed.
+        child = container.get(segment)
         if child is None:
-            new_table = tomlkit.table(is_super_table=depth < len(table_path) - 1)
-            container[segment] = new_table
+            container[segment] = tomlkit.table(is_super_table=depth < len(table_path) - 1)
             child = container[segment]
-        if not isinstance(child, Table):
-            dotted_path = ".".join((*table_path[: depth + 1],))
+        if not isinstance(child, MutableMapping):
+            dotted_path = ".".join(table_path[: depth + 1])
             raise ValueError(f"Cannot edit config key because '{dotted_path}' is not a TOML table.")
-        container = child
+        container = cast("_Container", child)
     return container
+
+
+def _write_scalar(container: _Container, key: str, value: TomlEditableScalar) -> None:
+    # A scalar write must never replace a table: that silently drops its keys.
+    if isinstance(container.get(key), MutableMapping):
+        raise ValueError(f"Cannot set '{key}': it is a TOML table, not a scalar value.")
+    container[key] = tomlkit.item(value)  # pyright: ignore[reportUnknownMemberType]  # tomlkit's item factory is incompletely typed.
 
 
 def _remove_alias(
@@ -162,17 +167,19 @@ def _remove_alias(
     table_path: tuple[str, ...],
     key: str,
 ) -> bool:
-    container: TOMLDocument | Table = document
-    ancestors: list[tuple[TOMLDocument | Table, str, Table]] = []
+    container = cast("_Container", document)
+    ancestors: list[tuple[_Container, str, _Container]] = []
 
     for segment in table_path:
-        child = cast("object | None", container.get(segment))  # pyright: ignore[reportUnknownMemberType]  # tomlkit container.get is incompletely typed.
-        if not isinstance(child, Table):
+        child = container.get(segment)
+        if not isinstance(child, MutableMapping):
             return False
+        child = cast("_Container", child)
         ancestors.append((container, segment, child))
         container = child
 
-    if key not in container:
+    # A table is not a scalar value: a flat alias that names one must survive.
+    if key not in container or isinstance(container[key], MutableMapping):
         return False
 
     del container[key]
@@ -180,7 +187,7 @@ def _remove_alias(
     return True
 
 
-def _prune_empty_tables(ancestors: list[tuple[TOMLDocument | Table, str, Table]]) -> None:
+def _prune_empty_tables(ancestors: list[tuple[_Container, str, _Container]]) -> None:
     for parent, segment, child in reversed(ancestors):
         if len(child) != 0:
             break
