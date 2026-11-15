@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.7] - 2026-11-15
+
+### Changed
+- `keepwarm_pings = 0` (or any negative count), in `[idle]`, `[harness.<harness>.idle]` or `MERIDIAN_IDLE_KEEPWARM_PINGS`, turns keepwarm off, the same as `keepwarm = false`, wherever it wins the usual idle precedence. Before, 0 was rejected and `idle config` failed, which disabled idle handling for the session. `/keepwarm on` still turns it on for one session, with the default 3 pings.
+
 ## [0.21.6] - 2026-11-15
 
 ### Changed
