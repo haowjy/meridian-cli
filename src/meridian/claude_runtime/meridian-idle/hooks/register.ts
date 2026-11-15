@@ -39,7 +39,6 @@ const HOLD_POLL_MS = 1_000
 const COLD = 'the cache would be cold'
 /** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
 const EXPIRY_MARGIN_MS = 60_000
-/** `$.store` key holding `{ session, text }`: the last non-ping main-loop answer, so a resume or reload keeps the notice's excerpt. */
 // The host lists the state a module touches, so the reference must be literal in this file.
 const IDLE_KEEPWARM = { plugin: 'meridian-idle', key: 'keepwarm' } as const
 
