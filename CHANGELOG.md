@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.6] - 2026-11-15
+
+### Changed
+- `[idle] keepwarm_pings` (and `[harness.<harness>.idle] keepwarm_pings`) no longer has an upper bound; any count of 1 or more is accepted. Before, 11 and above were rejected. The configuration docs now give the cost break-even instead: on a one-hour Anthropic cache, beyond about 19 pings an absence costs more in pings than returning to a cold cache.
+
 ## [0.21.5] - 2026-11-15
 
 ### Fixed
