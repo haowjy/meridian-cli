@@ -6,6 +6,19 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.4] - 2026-11-15
+
+### Added
+- `[idle] keepwarm` (default `false`, `MERIDIAN_IDLE_KEEPWARM`): an interactive primary starts with keepwarm on when the project config says so, instead of waiting for `/keepwarm on` in every session. It applies wherever the harness can keep its provider's cache warm; today that is Claude, and the other harnesses accept the key and ignore it. `[harness.<harness>.idle] keepwarm` overrides it per harness.
+- `[idle] keepwarm_pings` (default `3`, 1–10, `MERIDIAN_IDLE_KEEPWARM_PINGS`): how many keep-warm prompts one stretch may send, with the same per-harness override. A stretch keeps the count it started with.
+- `meridian config init` now scaffolds `[idle]` and a commented `[harness.claude.idle]`, so the idle settings are discoverable.
+
+### Changed
+- The keepwarm ping says what stopping costs: replying `stop-waiting` means you stop waiting for the user and accept the cache going cold. The tool-deny reason during a ping turn says the same.
+- `meridian idle --help` now states the scope: idle handling runs only in an interactive primary session, and keepwarm only where the harness can keep its provider cache warm (the Claude mod today).
+- A main-conversation compaction ends the current stretch's keepwarm pings. Before, they kept going on the pre-compaction schedule, paying a fresh prefill over the rewritten context for a cache that no longer existed.
+- A keepwarm ping that would only go out after the cache has already expired ends the stretch's pings instead of being skipped.
+
 ## [0.21.3] - 2026-11-13
 
 ### Changed
