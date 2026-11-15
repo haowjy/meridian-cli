@@ -588,7 +588,6 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars unlink DIR` | Remove a link target |
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade` | Fetch latest versions and sync |
-| `meridian mars migrate [--check]` | Rewrite pre-v1 authored content to schema v1; `--check` lists the changes and exits 1 |
 | `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
 | `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
 | `meridian mars repair` | Rebuild managed state from config and dependencies |
