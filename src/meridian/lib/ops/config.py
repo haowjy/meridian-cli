@@ -378,7 +378,7 @@ def _scaffold_template() -> str:
             "# Start every primary whose harness can keep the cache warm. "
             "Off by default; Claude only today.",
             f"# keepwarm = {_toml_literal(defaults['idle.keepwarm'])}",
-            "# Keep-warm prompts per stretch, at least 1.",
+            "# Keep-warm prompts per stretch; 0 or less turns keepwarm off.",
             f"# keepwarm_pings = {defaults['idle.keepwarm_pings']}",
             "# Per-harness overrides live under [harness.<harness>.idle].",
             "",
