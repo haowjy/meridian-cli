@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import tomlkit
+from tomlkit.items import InlineTable
 
 from meridian.lib.config.schema import ConfigOptionDescriptor
 from meridian.lib.platform.atomic import atomic_write_text
@@ -146,7 +147,12 @@ def _ensure_table(document: TOMLDocument, table_path: tuple[str, ...]) -> _Conta
     for depth, segment in enumerate(table_path):
         child = container.get(segment)
         if child is None:
-            container[segment] = tomlkit.table(is_super_table=depth < len(table_path) - 1)
+            # A [table] header inside an inline table renders as invalid TOML.
+            container[segment] = (
+                tomlkit.inline_table()
+                if isinstance(container, InlineTable)
+                else tomlkit.table(is_super_table=depth < len(table_path) - 1)
+            )
             child = container[segment]
         if not isinstance(child, MutableMapping):
             dotted_path = ".".join(table_path[: depth + 1])

@@ -469,6 +469,28 @@ def test_config_set_harness_model_rewrites_flat_alias_and_keeps_other_keys(tmp_p
     assert load_config(project_root).harness.codex.model == "gpt-5.5"
 
 
+@pytest.mark.parametrize(
+    ("original", "key", "value"),
+    [
+        ('harness = { claude = { model = "cm" } }\n', "harness.claude.idle.keepwarm", "true"),
+        ('[harness]\nclaude = { model = "cm" }\n', "harness.claude.idle.keepwarm", "true"),
+        ('harness = { codex = "a" }\n', "harness.claude.model", "zz"),
+    ],
+)
+def test_config_set_under_an_inline_table_writes_valid_toml(
+    tmp_path: Path, original: str, key: str, value: str
+) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(original, encoding="utf-8")
+    root = project_root.as_posix()
+
+    config_set_sync(ConfigSetInput(project_root=root, key=key, value=value))
+
+    tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert str(config_get_sync(ConfigGetInput(project_root=root, key=key)).value).lower() == value
+
+
 def test_config_set_refuses_to_replace_a_table_and_leaves_file_unchanged(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"
