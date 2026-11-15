@@ -153,7 +153,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "config": GroupHelp(
         summary="Show resolved configuration and sources.",
-        long_help="Repository-level config (meridian.toml) for default agent, model, harness, timeouts, and output verbosity.\n\nResolved values are evaluated independently per field -- a CLI override on one field does not pull other fields from the same source. Use `meridian config show` to see each value with its source annotation.",
+        long_help="Repository-level config (meridian.toml) for default agent, model, harness, timeouts, idle notifications, and output verbosity.\n\nResolved values are evaluated independently per field -- a CLI override on one field does not pull other fields from the same source. Use `meridian config show` to see each value with its source annotation.",
         agent_notes="Resolution is per field:\nCLI flag > env var > profile > project > user > harness default\n\nA CLI model override (-m) also drives harness routing.",
         agent_subcommands=("show", "get", "set", "init"),
     ),
@@ -259,7 +259,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "idle": GroupHelp(
         summary="Manage harness idle schedules.",
-        long_help="Adapter-facing idle scheduling and safety decisions.",
+        long_help="Adapter-facing idle scheduling and safety decisions. Idle handling runs only in an interactive primary session, and keepwarm only where the harness can keep its provider cache warm: the Claude mod today.",
         agent_notes="Called by harness adapters; humans use `idle status`.",
         agent_subcommands=(
             "config",
@@ -267,7 +267,6 @@ _GROUP_HELP: dict[str, GroupHelp] = {
             "return",
             "needs-permission",
             "fire",
-            "done",
             "event",
             "status",
             "mod-path",

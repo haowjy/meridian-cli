@@ -47,12 +47,12 @@ it. It does not count as a return.
 
 ## Keepwarm
 
-Starts at `[idle] keepwarm` (default off; `[harness.claude.idle] keepwarm`
-overrides it), which arrives in the `idle config` reply; the mod reads no config
-itself. `/keepwarm on|off` (or a toggle) overrides it for the session; the model
-cannot turn it on. A restart, a resume or `/clear` drops the override
-(`$.state` is reset) and the configured default applies again; a hot reload
-keeps it.
+Runs only in an interactive primary session. Starts at `[idle] keepwarm` (default
+off; `[harness.claude.idle] keepwarm` overrides it), which arrives in the
+`idle config` reply; the mod reads no config itself. `/keepwarm on|off` (or a
+toggle) overrides it for the session; the model cannot turn it on. A restart, a
+resume or `/clear` drops the override (`$.state` is reset) and the configured
+default applies again; a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1

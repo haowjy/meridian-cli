@@ -401,14 +401,15 @@ silence only the permission notice.
 | `warn_minutes` | `10` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
-| `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start every primary with keepwarm on, where its harness supports it |
+| `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude today) |
 | `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch, 1–10 |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
 harness acts on `keepwarm` only when its adapter can keep that cache warm; today
-only Claude does, and other harnesses accept the keys and ignore them.
-`keepwarm = true` starts every such primary with keepwarm on: after the cache
+only the Claude mod does, in an interactive primary session, and the other
+harnesses accept the keys and ignore them.
+`keepwarm = true` starts every such session with keepwarm on: after the cache
 warning, the Claude idle mod sends up to `keepwarm_pings` short prompts so the
 cache stays warm while you are away. A stretch keeps the count it started with,
 so a config change applies from the next stretch. The model cannot turn keepwarm

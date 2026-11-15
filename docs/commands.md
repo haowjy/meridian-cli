@@ -474,8 +474,9 @@ Outside-Meridian adapters must pass `--interactive` on every call. An explicit
 spawn role stays disabled even with that flag. `config` always answers
 `enabled`, `push_seconds`, `warn_minutes`, `keepwarm` and `keepwarm_pings` (the
 resolved `[idle]` / `[harness.<harness>.idle]` values; only the Claude mod reads
-the keepwarm pair); it adds `reason` when it answers `enabled: false`, and
-`ttl_seconds` when the harness has a TTL for it to state.
+the keepwarm pair, and only in an interactive primary session); it adds `reason`
+when it answers `enabled: false`, and `ttl_seconds` when the harness has a TTL
+for it to state.
 
 See [configuration.md](configuration.md#notifications-and-idle-sessions) for
 notification backends, [routing and extension channels](configuration.md#routing-and-extending-notifications), idle timers, how running work affects the push,
