@@ -51,7 +51,7 @@ def _install_scratch_agents(project_root: Path, package_root: Path) -> None:
             encoding="utf-8",
         )
     (package_root / "mars.toml").write_text(
-        'schema = 1\n\n[package]\nname = "smoke-query-package"\n'
+        '[package]\nschema = 1\nname = "smoke-query-package"\n'
         'version = "0.1.0"\ndescription = "scratch agents"\n',
         encoding="utf-8",
     )
