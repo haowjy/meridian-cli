@@ -11,29 +11,34 @@ It launches, tracks and reports; orchestration belongs in agent prompts, not her
 - **The agent calling `meridian`.** It can't ask what a flag means: it reads `-h` and
   the output, and scripts parse the JSON.
 
-## Invariants
+## Engineering
 
-These hold however the code changes, but they can change too. When evidence shows one
-no longer serves the users, propose the change to Jimmy as its own step, never as a side
-effect of getting a task to pass. How the code keeps each one, what checks it and where
-it falls short: [.context/invariants.md](.context/invariants.md).
+This codebase is yours: how it's built is your call, and you'll keep building on it.
+Product decisions are Jimmy's.
 
-- **Overlay.** A session Meridian starts stays a native session in the harness's own
-  store, resumable without Meridian, so removing Meridian loses the user nothing.
-- **Crash-only.** Every write is atomic, every read survives a half-written file, and
-  recovery runs at startup. Meridian gets killed mid-write all the time; whatever it
-  reported as saved must still be there afterwards.
-- **Compatible upgrades.** A new build reads what older builds wrote, and a flag,
-  config key, hook name or JSON field keeps working for one minor release after it's
-  deprecated, so an upgrade breaks neither the user's history nor their scripts.
-- **Only what was authorized.** Meridian signals only processes it verified as its own,
-  never starts cancelled work and never widens a workspace: it runs beside the user's
-  other sessions.
-- **Private content stays put.** Secrets, a session's transcript and turn text the user
-  excluded never reach a session that wasn't meant to see them.
+**Choose the simpler system, not the smaller change.** When a case doesn't fit, change the
+design so it does instead of adding a branch, flag or special case. Judge a choice by the
+code it leaves: a bigger change, or more deletion, is the right one when less is left to
+understand. Fix structural debt in the same PR, whatever its size; a found fix too large for
+the PR gets its own PR now.
+
+**Fix the root cause.** Gather the problems a probe, a review or Jimmy finds, trace each to
+its cause, and fix the cause: no guard, retry or special case where the problem showed up.
+Several problems often share one cause. A rare edge case with no fix at its cause can be left
+as it is.
 
 ## Design Constraints
 
+- A session Meridian starts stays a native session in the harness's own store, resumable
+  without Meridian: the user can drop Meridian at any time and lose nothing.
+- Meridian gets killed mid-write all the time: every write is atomic, every read survives
+  a half-written file, and recovery runs at startup.
+- A new build reads what older builds wrote. A flag, config key, hook name or JSON field
+  keeps working for one minor release after it's deprecated.
+- Meridian signals only processes it verified as its own, never starts cancelled work and
+  never widens a workspace.
+- Secrets, a session's transcript and turn text the user excluded never reach a session
+  that wasn't meant to see them.
 - Harness specifics stay in `lib/harness/`. A new harness is one adapter plus
   registration and a new command is one module; a change that has to touch ten files
   means the abstraction is wrong, so fix the abstraction.
@@ -44,6 +49,9 @@ it falls short: [.context/invariants.md](.context/invariants.md).
 - Core operations work without git.
 - Comments only for what the code can't show and a wrong edit would break silently;
   no decision IDs.
+
+How the code keeps the first five today, what checks them and where it falls short:
+[.context/invariants.md](.context/invariants.md).
 
 ## Commands
 

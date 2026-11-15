@@ -1,8 +1,8 @@
 # Invariants: how each is kept
 
-The root `AGENTS.md` states each invariant and why users rely on it. This page says how
-the code keeps it today, what checks it, and where it falls short. The mechanisms are
-current choices; the invariant is what they serve.
+The root `AGENTS.md` states these rules under Design Constraints. This page says how the
+code keeps each one today, what checks it, and where it falls short. The mechanisms are
+current choices, open to rewriting; the rule is what they serve.
 
 ## Overlay
 
