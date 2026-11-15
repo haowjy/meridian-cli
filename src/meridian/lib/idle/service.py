@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -231,12 +231,17 @@ def resolve_policy(
 ) -> IdlePolicyConfig:
 
     values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
-    if cast("int", values["keepwarm_pings"]) <= 0:
-        # Zero or fewer pings means keepwarm off. The reply keeps a usable count so that a
-        # session's `/keepwarm on`, and any mod that reads the count alone, still behave.
-        values["keepwarm"] = False
-        values["keepwarm_pings"] = IdleConfig.model_fields["keepwarm_pings"].default
-    return IdlePolicyConfig.model_validate(values)
+    policy = IdlePolicyConfig.model_validate(values)
+    if policy.keepwarm_pings > 0:
+        return policy
+    # Zero or fewer pings means keepwarm off. The reply keeps a usable count so that a
+    # session's `/keepwarm on`, and any mod that reads the count alone, still behave.
+    return policy.model_copy(
+        update={
+            "keepwarm": False,
+            "keepwarm_pings": IdleConfig.model_fields["keepwarm_pings"].default,
+        }
+    )
 
 
 def _result_for_state(

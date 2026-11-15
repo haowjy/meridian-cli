@@ -64,8 +64,8 @@ the warning once per stretch, so the mod times the later pings itself: `lead`
 placed it) after each later main-loop arm of the same stretch, and only once the
 stretch's warning acted (`warned` in `$.state`; a warning core skipped starts no
 pings). A new main-loop arm replaces the timer and a user return cancels it. A
-stretch's record keeps the `limit` it started with (`[harness.claude.idle]
-keepwarm_pings` at that moment, so a config change applies from the next
+stretch's record keeps the `limit` it started with (the resolved
+`keepwarm_pings` at that moment, so a config change applies from the next
 stretch), and `warned`; every way its pings end writes `sent = limit`, and the
 count is taken before each submit, so a reload can cost a ping but never add
 one. Pings send no notification.
