@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
+from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import (
@@ -102,10 +103,6 @@ class SessionListOutput(BaseModel):
         return output
 
 
-# Estimated fallbacks when notification state is absent or has been garbage-collected.
-_DEFAULT_CACHE_TTL_SECONDS = {"claude": 300, "codex": 1800, "opencode": 300, "pi": 300}
-
-
 def _turn_metadata(
     harness: str,
     fallback: str,
@@ -114,14 +111,14 @@ def _turn_metadata(
 ) -> tuple[str, float | None]:
     idle_at = idle.idle_since_ms / 1000 if idle and idle.idle_since_ms else None
     last_turn = datetime.fromtimestamp(idle_at, UTC).isoformat() if live and idle_at else fallback
-    ttl = idle.ttl_seconds if idle and idle.ttl_seconds else _DEFAULT_CACHE_TTL_SECONDS.get(harness)
-    if not fallback or ttl is None:
+    if not fallback:
         return last_turn, None
     if idle_at is None and live:
         # No sensor data for a running session: staleness is unknown, not "since it started".
         return last_turn, None
     anchor = idle_at if idle_at is not None else datetime.fromisoformat(fallback).timestamp()
-    return last_turn, anchor + ttl
+    deadline = cache_deadline(harness, anchor, idle)
+    return last_turn, deadline[0] if deadline else None
 
 
 def _epoch(iso: str) -> float:

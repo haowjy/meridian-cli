@@ -184,14 +184,20 @@ meridian session log p123 --global --from 0 --limit 1           # read first ent
 meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
-`spawn list --json` rows carry `agent` (the profile), `work_id` (a primary's is
-its chat's current work item, as `spawn show` reports it) and `idle`. `idle` is
-`null` unless the spawn is active, its harness session has an open idle stretch
-and the harness isn't reporting a turn in progress; otherwise it is
-`{"since", "warm_until", "ttl_estimated"}`: ISO-8601 UTC, with `warm_until`
-`null` while the cache TTL is unknown. It is read from the same state as
-`idle status`, keyed by the row's own harness session. Whether a session is
-waiting on its user isn't recorded, so the row has no field for it.
+`spawn list --json` and `spawn children --json` rows carry `agent` (the
+profile), `work_id` (the spawn's chat's current work item, as `spawn show`
+reports it) and `idle`. `idle` is `null` unless the spawn is active, its harness
+session has an open idle stretch, and the harness isn't reporting a turn in
+progress; otherwise it is `{"since", "warm_until", "ttl_estimated"}`, ISO-8601
+UTC. The stretch opens when a user-loop turn ends and closes when the next one
+starts. Injected turns (wakes, task notifications, peer messages, keepwarm) don't
+close it, so `since` can be older than the latest model call and `warm_until`
+then understates the warm cache. Claude primaries report no per-turn activity,
+so the mid-turn check only applies to harnesses that do. `warm_until` is
+`since` plus the sensed TTL, or the harness default with `ttl_estimated: true`;
+`session list` uses the same rule for `cache_deadline`. It is read from the
+same state as `idle status`, keyed by the row's own harness session. Whether a
+session is waiting on its user isn't recorded, so the row has no field for it.
 
 Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
