@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-11-15
+
+### Changed
+- Pins Mars 0.34.3. `meridian mars version` gains `--no-tag`, which leaves tagging to CI, and `mars.toml`'s `[plugin]` gains `marketplace-repository`, which pins a plugin's Claude marketplace entry to its release tag.
+
 ## [0.22.0] - 2026-11-15
 
 ### Upgrade notes
