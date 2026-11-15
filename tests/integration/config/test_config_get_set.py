@@ -389,24 +389,138 @@ def test_config_set_spawn_deny_headless_harnesses_empty_list_round_trip(tmp_path
     assert load_config(project_root).deny_headless_harnesses == ()
 
 
-def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path: Path) -> None:
+_SIBLINGS = (
+    "wait_yield_seconds = 1200\n\n[harness.{h}.idle]\nkeepwarm_pings = 2\n\n"
+    "[harness.{h}.spawn_watch]\nenabled = false\n"
+)
+_SIBLINGS = "wait_yield_seconds = 1200\n\n[harness.{h}.idle]\nkeepwarm_pings = 2\n\n[harness.{h}.spawn_watch]\nenabled = false\n"  # noqa: E501
+
+_HARNESS_SHAPES = {
+    "table": '[notify]\nntfy_topic = "t"\n\n[harness.{h}]\nmodel = "old"\n' + _SIBLINGS,
+    "dotted": (
+        '[harness]\n{h}.model = "old"\n{h}.wait_yield_seconds = 1200\n\n[notify]\n'
+        'ntfy_topic = "t"\n\n[harness.{h}.idle]\nkeepwarm_pings = 2\n\n'
+        "[harness.{h}.spawn_watch]\nenabled = false\n"
+    ),
+    "out-of-order": (
+        '[harness]\n# per-harness overrides\n\n[notify]\nntfy_topic = "t"\n\n'
+        '[harness.{h}]\nwait_yield_seconds = 1200\nmodel = "old"\n\n'
+        "[harness.{h}.idle]\nkeepwarm_pings = 2\n\n[harness.{h}.spawn_watch]\nenabled = false\n"
+    ),
+}
+
+
+def _assert_siblings_survive(project_root: Path, harness: str) -> None:
+    data = tomllib.loads((project_root / "meridian.toml").read_text(encoding="utf-8"))
+    table = data["harness"][harness]
+    assert table["wait_yield_seconds"] == 1200
+    assert table["idle"] == {"keepwarm_pings": 2}
+    assert table["spawn_watch"] == {"enabled": False}
+    assert data["notify"] == {"ntfy_topic": "t"}
+    profile = getattr(load_config(project_root).harness, harness)
+    assert profile.wait_yield_seconds == 1200
+    assert profile.idle.keepwarm_pings == 2
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+@pytest.mark.parametrize("shape", sorted(_HARNESS_SHAPES))
+def test_config_set_and_reset_harness_model_keep_sibling_tables(
+    tmp_path: Path, harness: str, shape: str
+) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(_HARNESS_SHAPES[shape].format(h=harness), encoding="utf-8")
+    key = f"harness.{harness}.model"
+    root = project_root.as_posix()
+
+    config_set_sync(ConfigSetInput(project_root=root, key=key, value="new"))
+    assert load_config(project_root).harness.model_dump()[harness]["model"] == "new"
+    assert (
+        tomllib.loads(config_path.read_text(encoding="utf-8"))["harness"][harness]["model"] == "new"
+    )
+    _assert_siblings_survive(project_root, harness)
+
+    reset = config_reset_sync(ConfigResetInput(project_root=root, key=key))
+    assert reset.removed is True
+    assert "model" not in tomllib.loads(config_path.read_text(encoding="utf-8"))["harness"][harness]
+    assert config_get_sync(ConfigGetInput(project_root=root, key=key)).source != "file"
+    _assert_siblings_survive(project_root, harness)
+
+    again = config_reset_sync(ConfigResetInput(project_root=root, key=key))
+    assert again.removed is False
+
+
+def test_config_set_harness_model_rewrites_flat_alias_and_keeps_other_keys(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"
     config_path.write_text(
-        '[harness.codex]\nmodel = "gpt-5.4"\n\n[custom]\nvalue = "keep-me"\n',
+        '[harness]\ncodex = "gpt-5.4"\nclaude = "cm"\n\n[custom]\nvalue = "keep-me"\n',
         encoding="utf-8",
     )
 
-    result = config_set_sync(
+    config_set_sync(
         ConfigSetInput(project_root=project_root.as_posix(), key="harness.codex", value="gpt-5.5")
     )
 
-    updated = config_path.read_text(encoding="utf-8")
-
-    assert result.key == "harness.codex"
-    assert result.value == "gpt-5.5"
-    assert "[harness]" in updated
-    assert 'codex = "gpt-5.5"' in updated
-    assert "[harness.codex]" not in updated
-    assert "[custom]" in updated
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert data["harness"]["codex"] == {"model": "gpt-5.5"}
+    assert data["harness"]["claude"] == "cm"
+    assert data["custom"] == {"value": "keep-me"}
     assert load_config(project_root).harness.codex.model == "gpt-5.5"
+
+
+@pytest.mark.parametrize(
+    ("original", "key", "value"),
+    [
+        ('harness = { claude = { model = "cm" } }\n', "harness.claude.idle.keepwarm", "true"),
+        ('[harness]\nclaude = { model = "cm" }\n', "harness.claude.idle.keepwarm", "true"),
+        ('harness = { codex = "a" }\n', "harness.claude.model", "zz"),
+    ],
+)
+def test_config_set_under_an_inline_table_writes_valid_toml(
+    tmp_path: Path, original: str, key: str, value: str
+) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(original, encoding="utf-8")
+    root = project_root.as_posix()
+
+    config_set_sync(ConfigSetInput(project_root=root, key=key, value=value))
+
+    tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert str(config_get_sync(ConfigGetInput(project_root=root, key=key)).value).lower() == value
+
+
+def test_config_set_refuses_to_replace_a_table_and_leaves_file_unchanged(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    original = "[defaults.max_depth]\nx = 1\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="table"):
+        config_set_sync(
+            ConfigSetInput(
+                project_root=project_root.as_posix(), key="defaults.max_depth", value="3"
+            )
+        )
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_config_init_scaffold_with_appended_harness_idle_table_still_edits(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+    config_path = project_root / "meridian.toml"
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n[harness.claude.idle]\nkeepwarm_pings = 2\n")
+    root = project_root.as_posix()
+
+    config_set_sync(ConfigSetInput(project_root=root, key="harness.claude.model", value="cm"))
+    assert (
+        config_get_sync(ConfigGetInput(project_root=root, key="harness.claude.model")).value == "cm"
+    )
+    assert load_config(project_root).harness.claude.idle.keepwarm_pings == 2
+
+    assert config_reset_sync(
+        ConfigResetInput(project_root=root, key="harness.claude.model")
+    ).removed
+    assert load_config(project_root).harness.claude.idle.keepwarm_pings == 2

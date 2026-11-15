@@ -214,8 +214,8 @@ def harness_profile_model(
                     f"harness.{normalized}",
                     value_kind="str",
                     file_aliases=(
-                        file_alias("harness", normalized),
                         file_alias(("harness", normalized), "model"),
+                        file_alias("harness", normalized),
                     ),
                     env_vars=(f"MERIDIAN_HARNESS_MODEL_{normalized.upper()}",),
                 ),
