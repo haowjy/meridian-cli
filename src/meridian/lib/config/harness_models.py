@@ -26,7 +26,7 @@ class HarnessIdleConfig(ConfigModel):
     enabled: bool = True
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
     keepwarm: bool = False
-    keepwarm_pings: Annotated[int, Field(ge=1, le=10)] = 3
+    keepwarm_pings: Annotated[int, Field(ge=1)] = 3
 
 
 class HarnessProfileConfig(ConfigModel):
