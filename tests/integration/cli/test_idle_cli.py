@@ -411,3 +411,50 @@ def test_idle_config_keepwarm_default_from_project_file_and_env(tmp_path: Path) 
     env["MERIDIAN_HARNESS_IDLE_KEEPWARM_CLAUDE"] = "false"
     reply = _json_success(tmp_path, env, "idle", "config", "--interactive")
     assert isinstance(reply, dict) and reply["keepwarm"] is False
+
+
+def _idle_config_reply(tmp_path: Path, env: dict[str, str]) -> dict[str, object]:
+    reply = _json_success(tmp_path, env, "idle", "config", "--interactive")
+    assert isinstance(reply, dict)
+    return reply
+
+
+@pytest.mark.integration
+def test_idle_config_keepwarm_global_file_and_per_harness_override(tmp_path: Path) -> None:
+    config = tmp_path / "meridian.toml"
+    config.write_text("[idle]\nkeepwarm = true\nkeepwarm_pings = 2\n")
+    env = _idle_env(tmp_path)
+
+    reply = _idle_config_reply(tmp_path, env)
+    assert (reply["keepwarm"], reply["keepwarm_pings"]) == (True, 2)
+
+    config.write_text(
+        "[idle]\nkeepwarm = true\nkeepwarm_pings = 2\n"
+        "[harness.claude.idle]\nkeepwarm = false\nkeepwarm_pings = 5\n"
+    )
+    reply = _idle_config_reply(tmp_path, env)
+    assert (reply["keepwarm"], reply["keepwarm_pings"]) == (False, 5)
+
+
+@pytest.mark.integration
+def test_idle_config_keepwarm_global_env_and_per_harness_env_override(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text("[idle]\nkeepwarm = false\nkeepwarm_pings = 2\n")
+    env = _idle_env(tmp_path)
+    env["MERIDIAN_IDLE_KEEPWARM"] = "true"
+    env["MERIDIAN_IDLE_KEEPWARM_PINGS"] = "4"
+
+    reply = _idle_config_reply(tmp_path, env)
+    assert (reply["keepwarm"], reply["keepwarm_pings"]) == (True, 4)
+
+    env["MERIDIAN_HARNESS_IDLE_KEEPWARM_CLAUDE"] = "0"
+    env["MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_CLAUDE"] = "6"
+    reply = _idle_config_reply(tmp_path, env)
+    assert (reply["keepwarm"], reply["keepwarm_pings"]) == (False, 6)
+
+
+@pytest.mark.integration
+def test_idle_config_rejects_global_keepwarm_pings_out_of_range(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text("[idle]\nkeepwarm_pings = 0\n")
+    result = _run(tmp_path, _idle_env(tmp_path), "idle", "config", "--interactive")
+    assert result.returncode != 0
+    assert "greater than or equal to 1" in result.stdout + result.stderr

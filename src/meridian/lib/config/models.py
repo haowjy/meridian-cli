@@ -208,6 +208,25 @@ class IdleConfig(ConfigModel):
         ),
         Field(ge=0),
     ] = 120
+    keepwarm: Annotated[
+        bool,
+        config_field(
+            "idle.keepwarm",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "keepwarm"),),
+            env_vars=("MERIDIAN_IDLE_KEEPWARM",),
+        ),
+    ] = False
+    keepwarm_pings: Annotated[
+        int,
+        config_field(
+            "idle.keepwarm_pings",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "keepwarm_pings"),),
+            env_vars=("MERIDIAN_IDLE_KEEPWARM_PINGS",),
+        ),
+        Field(ge=1, le=10),
+    ] = 3
 
 
 class NotifyConfig(ConfigModel):

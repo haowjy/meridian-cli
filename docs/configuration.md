@@ -401,6 +401,24 @@ silence only the permission notice.
 | `warn_minutes` | `10` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
+| `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start every primary with keepwarm on, where its harness supports it |
+| `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch, 1–10 |
+
+The cache warning and the keep-warm pings are timed from the provider's
+prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
+harness acts on `keepwarm` only when its adapter can keep that cache warm; today
+only Claude does, and other harnesses accept the keys and ignore them.
+`keepwarm = true` starts every such primary with keepwarm on: after the cache
+warning, the Claude idle mod sends up to `keepwarm_pings` short prompts so the
+cache stays warm while you are away. A stretch keeps the count it started with,
+so a config change applies from the next stretch. The model cannot turn keepwarm
+on or off; `/keepwarm on|off` sets it for the session, and `/clear`, a restart or
+a resume returns to the configured default. A keepwarm ping that the model
+answers with exactly `stop-waiting` ends the current stretch's pings, and so does
+a compaction of the main conversation (a `precompute` compaction and a
+subagent's own do not count): the cache the pings protected is gone, so a ping
+would only pay for a fresh prefill. A ping that would only go out after the cache
+has already expired also ends the stretch's pings.
 
 When you have waited at least two minutes since your last prompt, the waiting
 push follows 60 seconds after the turn ends; after a quick or unknown-length
@@ -454,28 +472,13 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
 | `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
-| `keepwarm` | `false` (Claude only) | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
-| `keepwarm_pings` | `3` (Claude only, 1–10) | `MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_<H>` |
+| `keepwarm` | Overrides `[idle] keepwarm` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
+| `keepwarm_pings` | Overrides `[idle] keepwarm_pings` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
 
-`keepwarm = true` starts every Claude primary with keepwarm on: after the cache
-warning, the Claude idle mod sends up to `keepwarm_pings` (default 3, 1–10)
-short prompts so the cache stays warm while you are away. A stretch keeps the
-count it started with, so a config change applies from the next stretch. Other
-harnesses accept the keys and ignore them. The model cannot turn keepwarm on or
-off; `/keepwarm on|off` sets it for the session, and `/clear`, a restart or a
-resume returns to the configured default. A keepwarm ping that the model answers
-with exactly `stop-waiting` ends the current stretch's pings, and so does a
-compaction of the main conversation (a `precompute` compaction and a subagent's
-own do not count): the cache the pings protected is gone, so a ping would only
-pay for a fresh prefill. A ping that would only go out after the cache has
-already expired also ends the stretch's pings.
-
-`keepwarm` and `keepwarm_pings` have no global `[idle]` counterpart; set them per
-harness in the file or through the variables in the table. The other keys
-resolve **precedence level first, then specificity**:
+Idle keys resolve **precedence level first, then specificity**:
 
 ```text
 per-harness environment > global environment

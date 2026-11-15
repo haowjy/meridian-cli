@@ -473,7 +473,8 @@ The adapter subcommands are `config`, `arm`, `return`, `needs-permission`,
 Outside-Meridian adapters must pass `--interactive` on every call. An explicit
 spawn role stays disabled even with that flag. `config` always answers
 `enabled`, `push_seconds`, `warn_minutes`, `keepwarm` and `keepwarm_pings` (the
-`[harness.<harness>.idle]` defaults, read by the Claude mod only); it
+resolved `[idle]` / `[harness.<harness>.idle]` values; only the Claude mod reads
+the keepwarm pair); it
 adds `reason` when it answers `enabled: false`, and `ttl_seconds` when the
 harness has a TTL for it to state.
 

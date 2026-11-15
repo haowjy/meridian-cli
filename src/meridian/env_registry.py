@@ -194,6 +194,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
     _public_config("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."),
     _public_config("MERIDIAN_IDLE_LONG_TURN_SECONDS", "Idle long-turn threshold."),
+    _public_config("MERIDIAN_IDLE_KEEPWARM", "Idle keepwarm default."),
+    _public_config("MERIDIAN_IDLE_KEEPWARM_PINGS", "Idle keepwarm ping count."),
     _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
     _public_config("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."),
     _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
