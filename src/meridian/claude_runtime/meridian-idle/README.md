@@ -49,7 +49,9 @@ it. It does not count as a return.
 
 Runs only in an interactive primary session. Starts at `[idle] keepwarm` (default
 off; `[harness.claude.idle] keepwarm` overrides it), which arrives in the
-`idle config` reply; the mod reads no config itself. `/keepwarm on|off` (or a
+`idle config` reply; the mod reads no config itself. A `keepwarm_pings` of 0 or
+less arrives as `keepwarm: false` with the default count, so `/keepwarm on`
+still works for the session. `/keepwarm on|off` (or a
 toggle) overrides it for the session; the model cannot turn it on. A restart, a
 resume or `/clear` drops the override (`$.state` is reset) and the configured
 default applies again; a hot reload keeps it.

@@ -453,11 +453,15 @@ def test_idle_config_keepwarm_global_env_and_per_harness_env_override(tmp_path: 
 
 
 @pytest.mark.integration
-def test_idle_config_rejects_global_keepwarm_pings_out_of_range(tmp_path: Path) -> None:
-    (tmp_path / "meridian.toml").write_text("[idle]\nkeepwarm_pings = 0\n")
-    result = _run(tmp_path, _idle_env(tmp_path), "idle", "config", "--interactive")
-    assert result.returncode != 0
-    assert "greater than or equal to 1" in result.stdout + result.stderr
+@pytest.mark.parametrize("pings", ["0", "-2"])
+def test_idle_config_zero_or_negative_keepwarm_pings_turns_keepwarm_off(
+    tmp_path: Path, pings: str
+) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        f"[idle]\nkeepwarm = true\n\n[harness.claude.idle]\nkeepwarm_pings = {pings}\n"
+    )
+    reply = _idle_config_reply(tmp_path, _idle_env(tmp_path))
+    assert (reply["keepwarm"], reply["keepwarm_pings"]) == (False, 3)
 
 
 @pytest.mark.integration

@@ -225,7 +225,6 @@ class IdleConfig(ConfigModel):
             file_aliases=(file_alias("idle", "keepwarm_pings"),),
             env_vars=("MERIDIAN_IDLE_KEEPWARM_PINGS",),
         ),
-        Field(ge=1),
     ] = 3
 
 
