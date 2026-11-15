@@ -6,6 +6,18 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-15
+
+### Upgrade notes
+- Meridian now bundles Mars 0.34.1, which no longer reads a package whose `[package]` has no `schema` (the pre-v1 format). If a dependency in your `mars.toml` was published before schema 1, `meridian mars sync` fails with `manifest.schema-missing` and names the dependency; run `meridian mars upgrade <name>` to take a newer version. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+
+### Changed
+- No user-visible change: removes a dead comment and a cast in the idle code and corrects one README line.
+- Pins Mars 0.34.1. `mars check` now prints findings per file, and its `--json` gains `diagnostics`; the `errors` and `warnings` strings from a package's files start with `[code]`. Agent files Mars writes carry `name:`, and `mars build plugin` follows `model-policies`.
+
+### Removed
+- `meridian mars migrate`: Mars 0.34 removed it.
+
 ## [0.21.7] - 2026-11-15
 
 ### Changed
