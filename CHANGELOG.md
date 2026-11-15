@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.21.5] - 2026-11-15
+
+### Fixed
+- `meridian config set` and `config reset` on `harness.<harness>.model` no longer delete the `[harness.<harness>]` table, along with its `idle`, `spawn_watch`, `wait_yield_seconds` and comments. The model is now written as `[harness.<harness>] model = "…"`, which every build since v0.9.12 reads; a flat `[harness] <harness> = "…"` is still read. (#964)
+- `config set` and `config reset` work when `[harness]` is split across the file, the shape you get by appending `[harness.<harness>.idle]` to a `config init` scaffold. Before, every `config set harness.*` failed with `'harness' is not a TOML table`.
+- `config reset` no longer reports `already-default` while a file value is still in place.
+- A config edit refuses to overwrite a table with a scalar and leaves the file unchanged.
+- `config set` under an inline table (`claude = { model = "cm" }`) keeps the file valid TOML, writing the new table inline.
+
 ## [0.21.4] - 2026-11-15
 
 ### Added
