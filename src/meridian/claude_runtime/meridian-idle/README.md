@@ -5,10 +5,10 @@ turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
 The one thing it does on its own is keepwarm, which is off unless
-`[idle] keepwarm` (or its `[harness.claude.idle]` override) or `/keepwarm on` turns it on: it submits up to
-`keepwarm_pings` (default 3) short prompts so the cache stays warm while the
-user is away, the first when Meridian's cache warning fires and the rest on its
-own timer.
+`[idle] keepwarm` (or its `[harness.claude.idle]` override) or `/keepwarm on`
+turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the
+cache stays warm while the user is away, the first when Meridian's cache warning
+fires and the rest on its own timer.
 
 ## What it does
 
@@ -47,11 +47,12 @@ it. It does not count as a return.
 
 ## Keepwarm
 
-Starts at `[idle] keepwarm` (default off; `[harness.claude.idle] keepwarm` overrides it), which arrives in the
-`idle config` reply; the mod reads no config itself. `/keepwarm on|off` (or a
-toggle) overrides it for the session; the model cannot turn it on. A restart, a
-resume or `/clear` drops the override (`$.state` is reset) and the configured
-default applies again; a hot reload keeps it.
+Starts at `[idle] keepwarm` (default off; `[harness.claude.idle] keepwarm`
+overrides it), which arrives in the `idle config` reply; the mod reads no config
+itself. `/keepwarm on|off` (or a toggle) overrides it for the session; the model
+cannot turn it on. A restart, a resume or `/clear` drops the override
+(`$.state` is reset) and the configured default applies again; a hot reload
+keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1
