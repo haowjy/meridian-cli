@@ -68,6 +68,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.idle_store import IdleStore
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -114,6 +115,7 @@ from .models import (
     SpawnCreateInput,
     SpawnDetailOutput,
     SpawnForkInput,
+    SpawnIdle,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -261,6 +263,41 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     if not is_active_spawn_status(status):
         return None
     return normalized
+
+
+def _spawn_idle(row: SpawnRecord, session_id: str | None, activity: str | None) -> SpawnIdle | None:
+    """The row's open idle stretch: one file read keyed by its own harness session.
+
+    A running primary the harness reports as mid-turn is not idle, whatever a stretch
+    left behind by a crash says.
+    """
+
+    if (
+        not session_id
+        or not row.harness
+        or not is_active_spawn_status(row.status)
+        or activity in {"starting", "turn_active", "finalizing"}
+    ):
+        return None
+    state = IdleStore().read(row.harness, session_id)
+    if state is None or not state.stretch_open or state.idle_since_ms is None:
+        return None
+    warm_until_ms = (
+        state.idle_since_ms + state.ttl_seconds * 1000 if state.ttl_seconds is not None else None
+    )
+    return SpawnIdle(
+        since=_iso_utc_ms(state.idle_since_ms),
+        warm_until=_iso_utc_ms(warm_until_ms) if warm_until_ms is not None else None,
+        ttl_estimated=state.ttl_estimated,
+    )
+
+
+def _iso_utc_ms(epoch_ms: int) -> str:
+    return (
+        datetime.fromtimestamp(epoch_ms / 1000, UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _spawn_display_label(row: SpawnRecord) -> str | None:
@@ -743,10 +780,18 @@ def spawn_list_sync(
         managed_backend = False
         activity: str | None = None
         surfaced_activity: str | None = None
+        session_id = row.harness_session_id
+        work_id = row.work_id
         if kind == "primary":
+            # The chat's current item, as `spawn show` reports it; the row keeps launch-time.
+            chat_id = row.entry_chat_id
+            work_id = (
+                session_store.get_session_active_work_id(runtime_root, chat_id) if chat_id else None
+            )
             metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
             managed_backend = metadata.managed_backend
             activity = metadata.activity
+            session_id = metadata.harness_session_id or session_id
             surfaced_activity = _surface_primary_activity(row.status, activity)
         entries.append(
             SpawnListEntry(
@@ -756,6 +801,9 @@ def spawn_list_sync(
                     f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
                 ),
                 model=row.model or "",
+                agent=row.agent or None,
+                work_id=work_id,
+                idle=_spawn_idle(row, session_id, activity),
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
@@ -819,6 +867,8 @@ def spawn_children_sync(
             status=row.status,
             model=row.model or "",
             agent=row.agent or None,
+            work_id=row.work_id,
+            idle=_spawn_idle(row, row.harness_session_id, None),
             desc=_spawn_display_label(row),
             duration_secs=row.total_usage.duration_secs,
             cost_usd=row.total_usage.total_cost_usd,

@@ -184,6 +184,15 @@ meridian session log p123 --global --from 0 --limit 1           # read first ent
 meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
+`spawn list --json` rows carry `agent` (the profile), `work_id` (a primary's is
+its chat's current work item, as `spawn show` reports it) and `idle`. `idle` is
+`null` unless the spawn is active, its harness session has an open idle stretch
+and the harness isn't reporting a turn in progress; otherwise it is
+`{"since", "warm_until", "ttl_estimated"}`: ISO-8601 UTC, with `warm_until`
+`null` while the cache TTL is unknown. It is read from the same state as
+`idle status`, keyed by the row's own harness session. Whether a session is
+waiting on its user isn't recorded, so the row has no field for it.
+
 Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
 `session_config_dir`) is available in `spawn show --verbose` and structured
