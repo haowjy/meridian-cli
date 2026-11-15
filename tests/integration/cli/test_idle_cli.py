@@ -458,3 +458,11 @@ def test_idle_config_rejects_global_keepwarm_pings_out_of_range(tmp_path: Path) 
     result = _run(tmp_path, _idle_env(tmp_path), "idle", "config", "--interactive")
     assert result.returncode != 0
     assert "greater than or equal to 1" in result.stdout + result.stderr
+
+
+@pytest.mark.integration
+def test_idle_config_accepts_a_large_keepwarm_pings(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text("[idle]\nkeepwarm_pings = 100\n")
+    result = _run(tmp_path, _idle_env(tmp_path), "idle", "config", "--interactive")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["keepwarm_pings"] == 100

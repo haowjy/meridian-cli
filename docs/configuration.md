@@ -402,7 +402,7 @@ silence only the permission notice.
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 | `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude today) |
-| `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch, 1–10 |
+| `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch, at least 1 |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
@@ -412,7 +412,10 @@ harnesses accept the keys and ignore them.
 `keepwarm = true` starts every such session with keepwarm on: after the cache
 warning, the Claude idle mod sends up to `keepwarm_pings` short prompts so the
 cache stays warm while you are away. A stretch keeps the count it started with,
-so a config change applies from the next stretch. The model cannot turn keepwarm
+so a config change applies from the next stretch. There is no upper limit; on a
+one-hour Anthropic cache each ping keeps it warm about 50 minutes longer and
+costs roughly a twentieth of rebuilding it, so beyond about 19 pings an absence
+costs more in pings than coming back to a cold cache. The model cannot turn keepwarm
 on or off; `/keepwarm on|off` sets it for the session, and `/clear`, a restart or
 a resume returns to the configured default. A keepwarm ping that the model
 answers with exactly `stop-waiting` ends the current stretch's pings, and so does
