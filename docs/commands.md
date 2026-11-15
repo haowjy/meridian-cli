@@ -195,7 +195,7 @@ close it, so `since` can be older than the latest model call and `warm_until`
 then understates the warm cache. Claude primaries report no per-turn activity,
 so the mid-turn check only applies to harnesses that do. `warm_until` is
 `since` plus the sensed TTL, or the harness default with `ttl_estimated: true`;
-`session list` uses the same rule for `cache_deadline`. It is read from the
+`session browse --plain --json` uses the same rule for `cache_deadline`. It is read from the
 same state as `idle status`, keyed by the row's own harness session. Whether a
 session is waiting on its user isn't recorded, so the row has no field for it.
 
