@@ -12,3 +12,10 @@
 - `claude_runtime/meridian-idle`: the keepwarm skip for a warning that fires
   while a main-loop turn is running is covered by the mod tests but not seen
   live; a user prompt closes the stretch, so only an injected turn overlaps.
+- `claude_runtime/meridian-idle`: `/keepwarm off` lasts only until `/clear`,
+  since `$.state` resets and the config default takes over. Persisting it would
+  need a file the mod does not write today.
+- `lib/idle`: after a compaction, the stretch's warn and push keep the times the
+  pre-compaction TTL placed. Should they be re-placed from the new TTL? That
+  changes when the push and warning reach the user, so it needs a decision on
+  those notifications first; keepwarm stops at the compaction either way.

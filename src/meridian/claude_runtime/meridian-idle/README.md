@@ -4,10 +4,11 @@ A Claude Code mod that tells Meridian when a session goes idle, what work the
 turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
-The one thing it does on its own is keepwarm, which is off until the user turns
-it on: it submits up to three short prompts so the cache stays warm while the
-user is away, the first when Meridian's cache warning fires and the next two on
-its own timer.
+The one thing it does on its own is keepwarm, which is off unless
+`[idle] keepwarm` (or its `[harness.claude.idle]` override) or `/keepwarm on`
+turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the
+cache stays warm while the user is away, the first when Meridian's cache warning
+fires and the rest on its own timer.
 
 ## What it does
 
@@ -46,26 +47,34 @@ it. It does not count as a return.
 
 ## Keepwarm
 
-Off until `/keepwarm on` (or a toggle from off); the model cannot turn it on. A restart
-or `/clear` drops the setting (`$.state` is reset), a hot reload keeps it.
+Runs only in an interactive primary session. Starts at `[idle] keepwarm` (default
+off; `[harness.claude.idle] keepwarm` overrides it), which arrives in the
+`idle config` reply; the mod reads no config itself. `/keepwarm on|off` (or a
+toggle) overrides it for the session; the model cannot turn it on. A restart, a
+resume or `/clear` drops the override (`$.state` is reset) and the configured
+default applies again; a hot reload keeps it.
 
 With it on, the cache warning (core's `warn` stage, `idle.warn_minutes` before
 the cache expires) is followed by a prompt that keeps the cache warm: ping 1
-when `fire warn` answers `act`, then up to two more. Core fires the warning once
-per stretch, so the mod times pings 2 and 3 itself: `lead` (the gap core placed
-between the turn and the warning, taken from the arm that placed it) after each
-later main-loop arm of the same stretch, and only once the stretch's warning
-acted (`warned` in `$.state`; a warning core skipped starts no pings). A new
-main-loop arm replaces the timer and a user return cancels it. The count and
-`warned` are kept per core stretch, in `$.state`; the count is taken before each
-submit, so a reload can cost a ping but never add one.
-Pings send no notification.
+when `fire warn` answers `act`, then up to `keepwarm_pings - 1` more. Core fires
+the warning once per stretch, so the mod times the later pings itself: `lead`
+(the gap core placed between the turn and the warning, taken from the arm that
+placed it) after each later main-loop arm of the same stretch, and only once the
+stretch's warning acted (`warned` in `$.state`; a warning core skipped starts no
+pings). A new main-loop arm replaces the timer and a user return cancels it. A
+stretch's record keeps the `limit` it started with (`[harness.claude.idle]
+keepwarm_pings` at that moment, so a config change applies from the next
+stretch), and `warned`; every way its pings end writes `sent = limit`, and the
+count is taken before each submit, so a reload can cost a ping but never add
+one. Pings send no notification.
 
 - **Quiet box.** A ping is submitted only after the prompt box has been empty
   and untouched for 10 s. Every check before the submit stops 1 minute before
   the cache would expire: the stage's scheduled time plus `warn_minutes` (from
   `idle config`) minus 1 minute. The deadline does not move when the timer runs
   late, so a late timer has less time or none. A skipped ping spends no slot.
+  When that deadline passes while a ping waits, the stretch's pings end too (the
+  deadline is the cold-cache check), so a later arm schedules none.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that
@@ -79,7 +88,15 @@ Pings send no notification.
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
   touched.
 - **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
-  quotes or backticks) ends this stretch's pings; keepwarm stays on.
+  quotes or backticks) ends this stretch's pings; keepwarm stays on. The ping
+  text and the denied-tool reason both say so, and that stopping lets the cache
+  go cold before the user returns.
+- **Compaction.** A `session.compact` of the main conversation (trigger
+  `manual`, `auto` or `plugin`, no `agentId`) during an armed stretch ends its
+  pings the same way and cancels the chained timer: the cache they protected is
+  gone, and a ping would prefill the new summary and add a turn. `precompute`
+  and a subagent's compaction change nothing. A manual `/compact` already counted
+  as a return.
 - **Your-turn push.** The ping turn's arm sends the last answer from a
   non-ping turn as `--assistant-text`, so the next notice does not read "ok".
   The answer is held in memory only: after a hot reload the next ping turn's

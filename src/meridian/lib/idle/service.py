@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.harness_models import HarnessIdleConfig
 from meridian.lib.config.loader import OPTION_CATALOG, load_config
 from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
@@ -87,6 +88,8 @@ class IdlePolicyConfig(BaseModel):
     warn_email: bool
     late_fire_tolerance_seconds: int
     ttl_seconds: int | None
+    keepwarm: bool
+    keepwarm_pings: int
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,8 @@ class ConfigResult:
             "enabled": self.enabled,
             "push_seconds": self.policy.push_seconds,
             "warn_minutes": self.policy.warn_minutes,
+            "keepwarm": self.policy.keepwarm,
+            "keepwarm_pings": self.policy.keepwarm_pings,
         }
         if self.reason is not None:
             payload["reason"] = self.reason
@@ -215,7 +220,8 @@ def effective(
         return getattr(config.idle, field)
     if specific_option is not None and profile is not None:
         return getattr(profile.idle, field)
-    return None
+    # A harness with no idle profile has no setting of its own: the field's default applies.
+    return HarnessIdleConfig.model_fields[field].default
 
 
 def resolve_policy(

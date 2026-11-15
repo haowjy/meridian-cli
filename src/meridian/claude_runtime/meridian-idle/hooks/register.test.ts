@@ -15,6 +15,8 @@ type Host = {
   store: Record<string, unknown>
   /** How long `fire` takes to answer, standing in for a timer the machine ran late. */
   fireDelayMs?: number
+  /** What the host answers a compaction with; the default is a finished compaction. */
+  compact?: () => unknown
 }
 
 const START = 1_000_000
@@ -81,6 +83,8 @@ function install(on: On, h: Host) {
   on('prompt.read', () => ({ value: { text: h.box, cursor: 0 } }))
   on('tool.check', () => ({ decision: 'allow' }))
   on('command.run', () => ({ text: '' }))
+  on('session.end', () => ({ sessionId: 'sess-1' }) as never)
+  on('session.compact', () => (h.compact?.() ?? { messages: [SUMMARY] }) as never)
   return clock
 }
 
@@ -320,6 +324,8 @@ test('only permission prompts are forwarded and a failing CLI does not fail the 
 const IDLE_COMMAND = { command: 'meridian-idle', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
 const KEEPWARM_COMMAND = { command: 'keepwarm', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as const
 const LEAD = 20_000
+const SUMMARY = { role: 'user', text: 'summary', toolUses: [] } as const
+const COMPACTION = { messages: [SUMMARY] } as never
 
 /** A fake core: the first arm places the warning LEAD ahead, later arms place nothing, and a return opens a new stretch. */
 function keepwarmHost(lead = LEAD): Host {
@@ -373,7 +379,7 @@ test('ping 1 follows the warning; its turn is found by nonce, its tools are limi
   expect(calls(h, 'return')).toEqual([])
   await clock.advance(LEAD)
   expect(h.submitted).toHaveLength(1)
-  expect(h.submitted[0]).toMatch(/^\[meridian-idle keepwarm [a-z0-9]+\]\n\nWaiting for the user, keeping warm\./)
+  expect(h.submitted[0]).toMatch(/^\[meridian-idle keepwarm [a-z0-9]+\]\n\nWaiting for the user, keeping warm\. To stop, reply with exactly stop-waiting and nothing else: that ends this stretch's pings, so you stop waiting for the user and accept the cache going cold before they return\.$/)
 
   const deny = (input: object) => $.tool.check({ tool: 'Edit', input: {}, tool_use_id: 'tu-1', ...input } as never)
   expect((await deny({})).decision).toBe('allow') // before the ping turn starts
@@ -554,3 +560,215 @@ test('a stop is the whole reply, alone or in one pair of quotes', () => {
     expect(isStop(reply)).toBe(false)
   }
 })
+
+/** Like `startKeepwarm`, but without `/keepwarm on`: only core's config answer can turn it on. */
+async function startConfigured($: Engine, clock: ReturnType<typeof install>) {
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete(MAIN_TURN)
+}
+
+test('the config default turns keepwarm on without /keepwarm on, and /keepwarm off still wins', async ($, on) => {
+  const h = keepwarmHost()
+  h.reply.config = { enabled: true, warn_minutes: 10, keepwarm: true }
+  const clock = install(on, h)
+
+  await startConfigured($, clock)
+  await clock.advance(LEAD)
+  expect(h.submitted).toHaveLength(1)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 1/3')
+
+  await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
+  await pingTurn($, h, 'p1', 'ok')
+  await clock.advance(10 * LEAD)
+  expect(h.submitted).toHaveLength(1)
+})
+
+test('/clear drops the /keepwarm off override and the config default returns', async ($, on) => {
+  const h = keepwarmHost()
+  h.reply.config = { enabled: true, warn_minutes: 10, keepwarm: true }
+  const clock = install(on, h)
+  // `$.state` outlives a hot reload but not `/clear`: hide what was written before the clear.
+  let cleared = false
+  on('state.get', (_$, e, next) => (cleared ? { value: { value: undefined } } : next(e)))
+
+  await startConfigured($, clock)
+  await $.command.run({ ...KEEPWARM_COMMAND, args: 'off' })
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: off')
+
+  await $.session.end({ reason: 'clear' } as never)
+  cleared = true
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on')
+})
+
+for (const config of [{ enabled: true, warn_minutes: 10, keepwarm: false }, { enabled: true, warn_minutes: 10 }]) {
+  test(`keepwarm ${JSON.stringify(config)} in the config reply keeps it off`, async ($, on) => {
+    const h = keepwarmHost()
+    h.reply.config = config
+    const clock = install(on, h)
+
+    await startConfigured($, clock)
+    await clock.advance(LEAD)
+    expect(h.submitted).toEqual([])
+  })
+}
+
+for (const trigger of ['auto', 'plugin'] as const) {
+  test(`a main-conversation ${trigger} compaction ends the stretch's pings`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', 'ok') // ping 2 is now pending on the chained timer
+    await $.session.compact({ trigger, ...COMPACTION } as never)
+    await clock.advance(10 * LEAD)
+
+    expect(h.submitted).toHaveLength(1)
+    const status = (await $.command.run({ ...IDLE_COMMAND, args: '' })).text ?? ''
+    expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
+    expect(status).toContain(`compaction (${trigger})`)
+  })
+}
+
+test('a compaction while ping 1 waits for the box sends no ping', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'a draft'
+  await clock.advance(LEAD + 5000)
+  await $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  h.box = ''
+  await clock.advance(10 * LEAD)
+  expect(h.submitted).toEqual([])
+})
+
+test('a skipped compaction leaves the pings alone and returns the host result', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+  h.compact = () => ({ skip: 'blocked by a PreCompact hook' })
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  const result = await $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  await clock.advance(LEAD)
+
+  expect(result).toEqual({ skip: 'blocked by a PreCompact hook' })
+  expect(h.submitted).toHaveLength(2)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 2/3')
+})
+
+for (const outcome of ['skipped', 'landed'] as const) {
+  test(`a ping due while a compaction runs waits; a ${outcome} compaction ${outcome === 'skipped' ? 'lets it go out' : 'ends it'}`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+    let finish: () => void = () => undefined
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    h.compact = () => gate.then(() => (outcome === 'skipped' ? { skip: 'blocked' } : { messages: [SUMMARY] }))
+
+    await startKeepwarm($, clock)
+    await clock.advance(1) // the arm has reached core
+    const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+    await clock.advance(LEAD - 1)
+    expect(h.submitted).toEqual([])
+    expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 0/3')
+    finish()
+    await compaction
+    await clock.advance(5000)
+
+    expect(h.submitted).toHaveLength(outcome === 'skipped' ? 1 : 0)
+  })
+}
+
+test('a ping waiting for the box through a skipped compaction goes out once it clears', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+  let finish: () => void = () => undefined
+  const gate = new Promise<void>(resolve => { finish = resolve })
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  h.box = 'a draft'
+  await clock.advance(LEAD + 1) // ping 2 is due and waiting for the box
+  h.compact = () => gate.then(() => ({ skip: 'blocked' }))
+  const compaction = $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  h.box = ''
+  await clock.advance(30_000) // quiet long enough, but the compaction holds the ping
+  expect(h.submitted).toHaveLength(1)
+  finish()
+  await compaction
+  await clock.advance(5000)
+
+  expect(h.submitted).toHaveLength(2)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 2/3')
+})
+
+for (const event of [{ trigger: 'precompute' }, { trigger: 'auto', agentId: 'sub-1' }]) {
+  test(`a compaction ${JSON.stringify(event)} changes nothing`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', 'ok')
+    await $.session.compact({ ...event, ...COMPACTION } as never)
+    await clock.advance(LEAD)
+    expect(h.submitted).toHaveLength(2)
+  })
+}
+
+test('keepwarm_pings in the config reply sets the limit: 1 gives exactly one ping', async ($, on) => {
+  const h = keepwarmHost()
+  h.reply.config = { enabled: true, warn_minutes: 10, keepwarm: true, keepwarm_pings: 1 }
+  const clock = install(on, h)
+
+  await startConfigured($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'ok')
+  await clock.advance(10 * LEAD)
+
+  expect(h.submitted).toHaveLength(1)
+  expect((await $.command.run({ ...IDLE_COMMAND, args: '' })).text).toContain('keepwarm: on, 1/1 pings this stretch')
+})
+
+test('a cold deadline ends the stretch\'s pings: a later arm does not ping', async ($, on) => {
+  const MINUTE = 60_000
+  const h = keepwarmHost(50 * MINUTE)
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  h.box = 'a draft'
+  await clock.advance(60 * MINUTE) // past dueAt + warn - 1 min: the cache would be cold
+  h.box = ''
+  await clock.advance(MINUTE)
+  expect(h.submitted).toEqual([])
+  const status = (await $.command.run({ ...IDLE_COMMAND, args: '' })).text ?? ''
+  expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
+  expect(status).toContain("pings are over: the cache would be cold")
+
+  await $.turn.start({ text: 'later', turnId: 't2' })
+  await $.turn.complete({ ...MAIN_TURN, turnId: 't2' })
+  await clock.advance(90 * MINUTE)
+  expect(h.submitted).toEqual([])
+})
+
+for (const how of ['session.end clear', 'a /clear command'] as const) {
+  test(`${how} cancels a pending chained ping`, async ($, on) => {
+    const h = keepwarmHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', 'ok') // ping 2 is pending on the chained timer
+    expect(h.submitted).toHaveLength(1)
+    if (how === 'session.end clear') await $.session.end({ reason: 'clear' } as never)
+    else await $.command.run({ command: 'clear', args: '', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } } as never)
+    await clock.advance(10 * LEAD)
+
+    expect(h.submitted).toHaveLength(1)
+  })
+}
