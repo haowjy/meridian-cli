@@ -250,6 +250,18 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
     return messages
 
 
+def _extract_claude_queued_prompt(event: dict[str, object]) -> list[TranscriptMessage]:
+    """A message the user typed mid-turn: Claude stores it as an attachment, not a user event."""
+    attachment = event.get("attachment")
+    if not isinstance(attachment, dict):
+        return []
+    payload = cast("dict[str, object]", attachment)
+    if payload.get("type") != "queued_command" or payload.get("commandMode") != "prompt":
+        return []
+    text = text_from_value(payload.get("prompt"))
+    return [TranscriptMessage(role="user", content=text)] if text else []
+
+
 def _json_preview_payload(value: object) -> str:
     if isinstance(value, str):
         return value.strip()
@@ -337,6 +349,10 @@ def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscrip
     return NormalizedTranscriptEvent(messages, rendering_reason=rendering_reason)
 
 
+# Codex delivers its own context as user-role messages; they are not the user's words.
+_CODEX_INJECTED_CONTEXT_PREFIXES = ("# AGENTS.md instructions for ", "<environment_context>")
+
+
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:
     item_type = str(payload.get("type", "")).strip().lower()
     if item_type == "message":
@@ -369,18 +385,25 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
             fallback = text_from_value(payload.get("text"))
             if fallback:
                 messages.append(TranscriptMessage(role=role, content=fallback))
+        if role == "user":
+            messages = [
+                message._replace(role="system")
+                if message.content.startswith(_CODEX_INJECTED_CONTEXT_PREFIXES)
+                else message
+                for message in messages
+            ]
         return messages
 
-    if item_type == "function_call":
+    if item_type in {"function_call", "custom_tool_call"}:
         name = str(payload.get("name", "tool")).strip() or "tool"
-        arguments = text_from_value(payload.get("arguments"))
+        arguments = text_from_value(payload.get("arguments", payload.get("input")))
         tool_call = _normalize_tool(name, arguments)
         rendered = f"[tool: {name}]"
         if arguments:
             rendered = f"[tool: {name} {_preview(arguments)}]"
         return [TranscriptMessage(role="assistant", content=rendered, tool_call=tool_call)]
 
-    if item_type == "function_call_output":
+    if item_type in {"function_call_output", "custom_tool_call_output"}:
         output = text_from_value(payload.get("output"))
         if output:
             return [
@@ -484,6 +507,9 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                     is_boundary,
                 )
             return NormalizedTranscriptEvent([], is_boundary)
+
+        if event_type == "attachment":
+            return NormalizedTranscriptEvent(_extract_claude_queued_prompt(event), is_boundary)
 
         if event_type == "response_item":
             raw_payload = event.get("payload")

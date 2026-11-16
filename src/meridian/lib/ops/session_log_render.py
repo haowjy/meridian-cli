@@ -423,8 +423,8 @@ def _render_collapsed_tools(
 
         cleaned = clean_content(message.content)
         if cleaned:
-            cleaned = _truncate_preview(cleaned)
-            rendered.append(cleaned)
+            # The user's own text is short and the part a reader is looking for: never cut it.
+            rendered.append(cleaned if message.role == "user" else _truncate_preview(cleaned))
         index += 1
 
     return rendered, collapsed

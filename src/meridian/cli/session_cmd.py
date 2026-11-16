@@ -220,18 +220,34 @@ def _session_log(
             help="Show full selected segment instead of the default recent-entry window.",
         ),
     ] = False,
+    tools: Annotated[
+        bool,
+        Parameter(
+            name="--tools",
+            help=(
+                "Also show tool calls and their output. The default view is the conversation: "
+                "the user's messages and the assistant's replies."
+            ),
+        ),
+    ] = False,
     no_truncate: Annotated[
         bool,
         Parameter(
             name="--no-truncate",
-            help="Show full entry/message content (default output truncates oversized content).",
+            help=(
+                "Show full assistant replies and tool output "
+                "(default truncates oversized content; user messages are never truncated)."
+            ),
         ),
     ] = False,
     raw: Annotated[
         bool,
         Parameter(
             name="--raw",
-            help="Render raw transcript content with metadata (no readability cleanup).",
+            help=(
+                "Render everything, tools included, as raw transcript content with metadata "
+                "(no readability cleanup)."
+            ),
         ),
     ] = False,
     tail: Annotated[
@@ -296,6 +312,7 @@ def _session_log(
                 segment=segment,
                 global_scope=global_scope,
                 full=full,
+                tools=tools or raw,
                 truncate=not no_truncate,
                 tail=resolved_tail,
                 from_ordinal=from_ordinal,

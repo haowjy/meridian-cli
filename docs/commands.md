@@ -177,11 +177,12 @@ meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens inlin
 meridian spawn show p123                           # moderate summary + report body
 meridian spawn status p123                         # moderate summary without report body
 meridian spawn show p123 --verbose                 # internal diagnostics view
-meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
+meridian session log p123                          # the conversation: last 5 entries of user messages and assistant replies
+meridian session log p123 --tools                  # also tool calls and their output
 meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
 meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot
 meridian session log p123 --global --from 0 --limit 1           # read first entry in global cross-segment stream
-meridian session log p123 --full --no-truncate     # full selected segment with full message content
+meridian session log p123 --full --no-truncate     # full selected segment with full assistant replies and tool output
 ```
 
 Primary-session metadata from `primary_meta.json` (`kind`, `activity`,

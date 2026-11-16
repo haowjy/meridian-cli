@@ -25,6 +25,11 @@ or the brief names a different session, ask your caller. Begin with recent conte
 meridian session log cNNN --tail 20
 ```
 
+`session log` shows the conversation: the user's messages and the assistant's
+replies. Add `--tools` for tool calls and their output; `--tail N` counts
+conversation entries. Entry numbers skip hidden entries and mean the same in either
+view, so a number from one opens in the other.
+
 Long sessions are split into segments at each compaction; `meridian session log -h`
 covers windows, segments, and full content. Keep the `--segment N` that `Open:` and
 `Next:` lines print: a position without it counts inside the current segment, which
@@ -41,7 +46,8 @@ meridian session search "shape" --workspace
 ```
 
 Run the deterministic `Open:` command printed for a hit instead of rebuilding a
-window. For interrupted or multi-day work, list all related sessions first with
+window. It adds `--tools` when the hit may sit in an assistant step's tool output.
+For interrupted or multi-day work, list all related sessions first with
 `meridian work sessions WORK_ID --all`.
 
 ## Delegate Bulk Reading
