@@ -5,8 +5,8 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
@@ -16,7 +16,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
-from meridian.lib.launch.bundle_adapter import lookup_catalog_row
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
@@ -97,23 +96,17 @@ def enrich_finalize(
     facts: AttemptFacts,
     native_key: NativeKey | None = None,
     launch: LaunchPaths,
-    model_id: str | None = None,
     harness_id: HarnessId | str | None = None,
-    project_root: Path | None = None,
+    policy: LaunchPolicySnapshot | None = None,
     failure_reason: str | None = None,
 ) -> FinalizeExtraction:
 
     if facts.incomplete:
         structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(launch.spawn_id))
     usage = facts.usage
-    model = (model_id or "").strip()
-    if usage is not None and usage.total_cost_usd is None and model and harness_id is not None:
+    if usage is not None and usage.total_cost_usd is None and harness_id is not None:
         usage = estimate_usage_cost(
-            catalog_row=lookup_catalog_row(
-                model=model,
-                harness=str(harness_id),
-                project_root=resolve_project_root_resolution(project_root).project_root,
-            ),
+            catalog_row=policy.model_selection_catalog_row if policy is not None else None,
             usage=usage,
             harness_id=str(harness_id),
         )

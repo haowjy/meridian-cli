@@ -15,7 +15,8 @@ def project_opencode_variant_args(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
     """Return ``--variant`` for the one OpenCode path that takes it: the V1 ``run`` fallback."""
 
     effort = (spec.effort or "").strip()
-    if not effort or spec.interactive or spec.opencode_version != "v1":
+    # OpenCode documents no `none` variant, so reasoning off passes nothing.
+    if not effort or effort == "none" or spec.interactive or spec.opencode_version != "v1":
         return ()
     return ("--variant", effort)
 

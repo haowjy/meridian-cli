@@ -811,39 +811,6 @@ def request_and_resolve(
     )
 
 
-def lookup_catalog_row(*, model: str, harness: str, project_root: Path) -> dict[str, object] | None:
-    """Return the models.dev row Mars gives *model* on *harness*, or None.
-
-    Cost estimates are best effort: a Mars that cannot be run or does not know the model
-    leaves the spawn without an estimate, as a missing catalog always did.
-    """
-
-    try:
-        command = _build_bundle_command(
-            BundleRequest(
-                agent=None,
-                project_root=project_root,
-                model_override=model,
-                literal_model=True,
-                harness_override=harness,
-                no_refresh_models=True,
-            )
-        )
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            encoding="utf-8",
-            errors="replace",
-        )
-        payload = json_object(json.loads(result.stdout)) if result.returncode == 0 else None
-    except (RuntimeError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-        return None
-    routing = json_object(payload.get("routing")) if payload is not None else None
-    return json_object(routing.get("catalog_row")) if routing is not None else None
-
-
 def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     normalized = (value or "").strip().lower()
     mapping = {
@@ -962,6 +929,5 @@ __all__ = [
     "BundleResult",
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
-    "lookup_catalog_row",
     "request_and_resolve",
 ]

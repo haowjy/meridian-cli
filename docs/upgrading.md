@@ -19,12 +19,13 @@ Needs Mars 0.36.0, which this release pins.
   `mars.toml` gives it a `version`. A dependency without a `version` used to move to its
   newest release on sync. Run `meridian mars upgrade` (or `upgrade NAME`) to move one; `sync`
   names each dependency with a release waiting.
-- **Spawn cost estimates read Mars's catalog row.** Mars no longer writes
-  `.mars/models-cache.json`, so a Meridian that read it would price from a frozen file. A model
-  the catalog does not know gets no estimate, as before.
+- **Spawn cost estimates read the catalog row Mars names for the launch.** Mars no longer
+  writes `.mars/models-cache.json`. The estimate uses the row the launch's bundle returned,
+  stored with the spawn. A spawn started by an older build has no stored row and gets no
+  estimate, and so does a model the catalog does not know.
 
-A spawn already stored keeps its recorded effort; a continued Claude or Codex session whose
-stored effort is `none` runs at `low` with the warning.
+A spawn already stored keeps its recorded effort; a continued or forked Claude or Codex
+session whose stored effort is `none` runs at `low` with the warning.
 
 ## An OpenCode launch answers as strictly as the agent's native file
 

@@ -60,7 +60,8 @@ def estimate_usage_cost(
     output_per_m = _float(model.get("cost_output"))
     cache_read_per_m = _float(model.get("cost_cache_read"))
     cache_write_per_m = _float(model.get("cost_cache_write"))
-    reasoning_per_m = _float(model.get("cost_reasoning"))
+    # Mars's catalog row carries no reasoning price: reasoning tokens bill at the output rate.
+    reasoning_per_m = _float(model.get("cost_output"))
 
     if input_per_m is None and output_per_m is None:
         return usage
@@ -68,8 +69,6 @@ def estimate_usage_cost(
         cache_read_per_m = input_per_m * 0.10
     if cache_write_per_m is None:
         cache_write_per_m = input_per_m
-    if reasoning_per_m is None and output_per_m is not None:
-        reasoning_per_m = output_per_m
 
     semantics = _cost_semantics(model, harness_id)
     total = 0.0

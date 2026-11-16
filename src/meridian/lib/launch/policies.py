@@ -103,6 +103,7 @@ class ModelSelectionContext:
     harness_provenance: str
     harness_model_id: str | None = None
     provider_constraint: str | None = None
+    catalog_row: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -254,7 +255,7 @@ def _require_policy_tier(
     return tier
 
 
-_EXECUTION_POLICY_PROVENANCE_KEYS: dict[str, str] = {
+_EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
     "sandbox": "sandbox_source",
     "approval": "approval_source",
     "autocompact": "autocompact_source",
@@ -435,6 +436,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         harness_provenance=harness_provenance,
         harness_model_id=bundle_result.harness_model,
         provider_constraint=bundle_result.provider_constraint,
+        catalog_row=bundle_result.catalog_row,
     )
 
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
@@ -614,6 +616,7 @@ def _ask_mars(
     agent: str | None = None,
     model: str | None = None,
     agent_rules: tuple[ToolRule, ...] | None = None,
+    effort: str | None = None,
 ) -> bundle_adapter.BundleResult:
     return bundle_adapter.request_and_resolve(
         bundle_adapter.BundleRequest(
@@ -624,6 +627,7 @@ def _ask_mars(
             harness_override=harness,
             no_refresh_models=True,
             agent_tool_rules=agent_rules,
+            effort_override=effort,
         ),
         harness_registry=surface.harness_registry,
     )
@@ -652,6 +656,7 @@ def _with_current_bundle_rules(
     """
 
     harness = str(policy.harness)
+    effort = policy.execution_policy.effort
     agent_rules = tuple(
         rule
         for rule in policy.resolved_tool_rules
@@ -662,7 +667,9 @@ def _with_current_bundle_rules(
     )
     warning: str | None = None
     if not sendable:
-        bundle = agentless_bundle or _ask_mars(surface, harness=harness)
+        bundle = agentless_bundle or _ask_mars(
+            surface, harness=harness, model=policy.model, effort=effort
+        )
         denies = tuple(
             rule
             for rule in bundle.tool_rules
@@ -682,6 +689,7 @@ def _with_current_bundle_rules(
                     agent=agent,
                     model=policy.model,
                     agent_rules=agent_rules,
+                    effort=effort,
                 )
             except bundle_adapter.MarsAgentToolRulesUnsupportedError:
                 raise
@@ -690,15 +698,28 @@ def _with_current_bundle_rules(
                     f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
                     "project-wide tool rules without its per-agent exemptions."
                 )
-        bundle = bundle or _ask_mars(surface, harness=harness, agent_rules=agent_rules)
+        bundle = bundle or _ask_mars(
+            surface, harness=harness, model=policy.model, agent_rules=agent_rules, effort=effort
+        )
         rules = bundle.tool_rules
     warnings = policy.warnings
     if warning is not None:
         warnings = (*warnings, CompositionWarning(code="project_tool_rules_agent", message=warning))
+    execution_policy = policy.execution_policy
+    if agentless_bundle is None and effort is not None:
+        # A replayed effort goes back through Mars: a stored level the model or harness no
+        # longer takes (an older build's `none` for Claude) moves, with a warning.
+        execution_policy = execution_policy.model_copy(
+            update={"effort": bundle.execution_policy.effort}
+        )
+        moved = "\n".join(bundle.warnings).strip()
+        if moved:
+            warnings = (*warnings, CompositionWarning(code="model_warning", message=moved))
     return replace(
         policy,
         resolved_tool_rules=rules,
         platform_tool_rules=policy.platform_tool_rules or bundle.platform_tool_rules,
+        execution_policy=execution_policy,
         warnings=warnings,
     )
 
@@ -715,6 +736,7 @@ def _model_selection_from_replayed_snapshot(
         harness_provenance=replayed.harness_provenance,
         harness_model_id=replayed.harness_model_id,
         provider_constraint=replayed.provider_constraint,
+        catalog_row=replayed.catalog_row,
     )
 
 
@@ -774,7 +796,8 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             and intent.selected_token
         ):
             selected_token = intent.selected_token
-        if execution_policy.effort is not None:
+        effort_resolved = execution_policy.effort is not None
+        if effort_resolved:
             # Mars resolved the stored or given level for this model and harness.
             execution_policy = execution_policy.model_copy(
                 update={"effort": bundle.execution_policy.effort}
@@ -787,7 +810,8 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if network_given:
             explicit_sources["network_source"] = ProvenanceLevel.CLI
         with_rules = _with_current_bundle_rules(replayed, surface, snapshot, bundle)
-        bundle_warnings = "\n".join(bundle.warnings).strip()
+        # The bundle's warnings describe an effort move; with no effort sent there is none.
+        bundle_warnings = "\n".join(bundle.warnings).strip() if effort_resolved else ""
         return replace(
             with_rules,
             warnings=(
@@ -808,6 +832,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 harness_provenance=bundle.provenance.get("harness_source", "cli"),
                 harness_model_id=bundle.harness_model,
                 provider_constraint=bundle.provider_constraint,
+                catalog_row=bundle.catalog_row,
             ),
             selection_report=bundle.selection_report,
             field_provenance=replace(
