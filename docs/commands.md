@@ -178,7 +178,7 @@ meridian spawn show p123                           # moderate summary + report b
 meridian spawn status p123                         # moderate summary without report body
 meridian spawn show p123 --verbose                 # internal diagnostics view
 meridian session log p123                          # the conversation: last 5 entries of user messages and assistant replies
-meridian session log p123 --tools                  # also tool calls and their output
+meridian session log p123 --tools                  # also tool calls, their output and plugin/hook messages
 meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
 meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot
 meridian session log p123 --global --from 0 --limit 1           # read first entry in global cross-segment stream

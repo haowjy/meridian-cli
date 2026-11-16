@@ -268,7 +268,7 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
         command_id="log",
         summary=(
             "Show the conversation (user messages and assistant replies) of a chat, spawn, or "
-            "harness session; --tools adds tool calls and output."
+            "harness session; --tools adds tool calls, output and injected messages."
         ),
         handler="meridian.lib.ops.session_log:session_log",
         sync_handler="meridian.lib.ops.session_log:session_log_sync",

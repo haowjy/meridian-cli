@@ -183,19 +183,20 @@ def _normalize_message_text(value: str) -> str:
     return value.strip()
 
 
-def _extract_claude_content(role: str, content: object) -> list[TranscriptMessage]:
+def _extract_claude_content(role: str, content: object, text_role: str) -> list[TranscriptMessage]:
+    """``text_role`` labels plain text; tool calls and results keep ``role``."""
     messages: list[TranscriptMessage] = []
 
     if isinstance(content, str):
         text = _normalize_message_text(content)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
         return messages
 
     if not isinstance(content, list):
         text = text_from_value(content)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
         return messages
 
     blocks = cast("list[object]", content)
@@ -203,7 +204,7 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
         if not isinstance(item, dict):
             text = text_from_value(item)
             if text:
-                messages.append(TranscriptMessage(role=role, content=text))
+                messages.append(TranscriptMessage(role=text_role, content=text))
             continue
 
         block = cast("dict[str, object]", item)
@@ -211,7 +212,7 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
         if block_type == "text":
             text = text_from_value(block.get("text"))
             if text:
-                messages.append(TranscriptMessage(role=role, content=text))
+                messages.append(TranscriptMessage(role=text_role, content=text))
             continue
         if role == "assistant" and block_type == "tool_use":
             marker, tool_call = _tool_use_summary(block)
@@ -245,13 +246,26 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
 
         text = text_from_value(block)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
 
     return messages
 
 
+# Role of a user-role message that something other than the user wrote: a plugin, hook,
+# scheduler, task notification, peer agent or the harness. Hidden from the conversation view.
+INJECTED_ROLE = "injected"
+
+
+def _claude_injected_role(record: dict[str, object]) -> str:
+    """Claude tags who produced a user-role event: ``origin.kind`` is ``human`` for typed text."""
+    origin = record.get("origin")
+    kind = cast("dict[str, object]", origin).get("kind") if isinstance(origin, dict) else None
+    injected = record.get("isMeta") is True or (kind is not None and kind != "human")
+    return INJECTED_ROLE if injected else "user"
+
+
 def _extract_claude_queued_prompt(event: dict[str, object]) -> list[TranscriptMessage]:
-    """A message the user typed mid-turn: Claude stores it as an attachment, not a user event."""
+    """A message sent mid-turn: Claude stores it as an attachment, not a user event."""
     attachment = event.get("attachment")
     if not isinstance(attachment, dict):
         return []
@@ -259,7 +273,7 @@ def _extract_claude_queued_prompt(event: dict[str, object]) -> list[TranscriptMe
     if payload.get("type") != "queued_command" or payload.get("commandMode") != "prompt":
         return []
     text = text_from_value(payload.get("prompt"))
-    return [TranscriptMessage(role="user", content=text)] if text else []
+    return [TranscriptMessage(role=_claude_injected_role(payload), content=text)] if text else []
 
 
 def _json_preview_payload(value: object) -> str:
@@ -314,7 +328,13 @@ def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscrip
     )
     messages: list[TranscriptMessage] = []
     rendering_reason: str | None = None
-    rendered_role = "user" if role in {"custom", "toolresult", "tool_result"} else role
+    rendered_role = (
+        INJECTED_ROLE
+        if role == "custom"
+        else "user"
+        if role in {"toolresult", "tool_result"}
+        else role
+    )
     for item in blocks:
         if not isinstance(item, dict):
             rendering_reason = reason
@@ -387,7 +407,7 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
                 messages.append(TranscriptMessage(role=role, content=fallback))
         if role == "user":
             messages = [
-                message._replace(role="system")
+                message._replace(role=INJECTED_ROLE)
                 if message.content.startswith(_CODEX_INJECTED_CONTEXT_PREFIXES)
                 else message
                 for message in messages
@@ -479,20 +499,21 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
 
         if event_type in {"assistant", "user"}:
             role = event_type
+            text_role = _claude_injected_role(event) if role == "user" else role
             message = event.get("message")
             if isinstance(message, dict):
                 content = cast("dict[str, object]", message).get("content")
-                extracted = _extract_claude_content(role, content)
+                extracted = _extract_claude_content(role, content, text_role)
                 if extracted:
                     return NormalizedTranscriptEvent(extracted, is_boundary)
-            extracted = _extract_claude_content(role, event.get("content"))
+            extracted = _extract_claude_content(role, event.get("content"), text_role)
             if extracted:
                 return NormalizedTranscriptEvent(extracted, is_boundary)
             raw_text = message if isinstance(message, str) else event.get("text")
             text = text_from_value(raw_text)
             if text:
                 return NormalizedTranscriptEvent(
-                    [TranscriptMessage(role=role, content=text)], is_boundary
+                    [TranscriptMessage(role=text_role, content=text)], is_boundary
                 )
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:

@@ -13,6 +13,7 @@ from meridian.lib.harness.native_witness import Witness, file_witness
 from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
 from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
+    INJECTED_ROLE,
     ToolCall,
     TranscriptMessage,
     is_native_snapshot,
@@ -137,8 +138,20 @@ def _is_user_text(message: AbsoluteTranscriptMessage) -> bool:
     return message.role == "user" and not is_tool_message(message)
 
 
+def _is_injected(message: AbsoluteTranscriptMessage) -> bool:
+    return message.role == INJECTED_ROLE
+
+
 def _is_visible_message(message: AbsoluteTranscriptMessage) -> bool:
-    return message.role in {"assistant", "user"} or message.kind == "annotation"
+    return message.role in {"assistant", "user", INJECTED_ROLE} or message.kind == "annotation"
+
+
+def _entry_role(message: AbsoluteTranscriptMessage) -> str:
+    if message.kind == "annotation":
+        return message.role
+    if _is_user_text(message):
+        return "user"
+    return INJECTED_ROLE if _is_injected(message) else "assistant"
 
 
 def _closes_chunk(
@@ -148,7 +161,7 @@ def _closes_chunk(
         return True
     if message.kind == "annotation" or following.kind == "annotation":
         return True
-    if _is_user_text(message) != _is_user_text(following):
+    if _entry_role(message) != _entry_role(following):
         return True
     # An agent step ends once its tool results are in.
     return message.is_tool_result and not following.is_tool_result
@@ -176,13 +189,7 @@ def group_transcript_entries(
     for chunk in chunks:
         first = chunk[0]
         last = chunk[-1]
-        role = (
-            first.role
-            if first.kind == "annotation"
-            else "user"
-            if _is_user_text(first)
-            else "assistant"
-        )
+        role = _entry_role(first)
         segment_local_ordinal = local_ordinals.get(first.segment_index, 1)
         local_ordinals[first.segment_index] = segment_local_ordinal + 1
         entries.append(
@@ -206,11 +213,16 @@ def entry_in_view(entry: AbsoluteTranscriptEntry, *, tools: bool) -> AbsoluteTra
     """The entry as a view shows it, or ``None`` when the view has nothing of it to show.
 
     The conversation view is the user's text and the assistant's text; ``tools`` adds tool
-    calls and their output. Setup and annotation entries show in every view.
+    calls and their output, and messages a plugin, hook or the harness injected. Setup and
+    annotation entries show in every view.
     """
     if tools or entry.kind != "interaction":
         return entry
-    shown = tuple(message for message in entry.messages if not is_tool_message(message))
+    shown = tuple(
+        message
+        for message in entry.messages
+        if not (is_tool_message(message) or _is_injected(message))
+    )
     if not shown:
         return None
     if len(shown) == len(entry.messages):

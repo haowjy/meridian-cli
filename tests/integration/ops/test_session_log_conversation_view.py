@@ -69,7 +69,7 @@ def test_default_view_is_the_conversation_with_stable_ordinals(tmp_path: Path) -
         (3, "user", "also check the config"),
         (5, "assistant", "found the error"),
     ]
-    assert "Tool calls and output are hidden" in " ".join(output.hints)
+    assert "Tool calls, output and injected messages" in " ".join(output.hints)
 
 
 def test_tools_view_shows_tool_traffic_under_the_same_ordinals(tmp_path: Path) -> None:
@@ -138,7 +138,9 @@ def test_codex_tool_calls_are_tool_traffic_and_injected_context_is_not_the_user(
         )
 
     assert [(e.index, e.role) for e in run(tools=False).entries][1:] == [
-        (1, "user"),
-        (3, "assistant"),
+        (2, "user"),
+        (4, "assistant"),
     ]
-    assert "a.py" in run(tools=True).entries[2].content
+    with_tools = run(tools=True).entries
+    assert (with_tools[1].role, "Be terse." in with_tools[1].content) == ("injected", True)
+    assert "a.py" in with_tools[3].content

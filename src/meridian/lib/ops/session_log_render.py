@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from meridian.lib.harness.transcript import ToolCall
+from meridian.lib.harness.transcript import INJECTED_ROLE, ToolCall
 
 _CONTENT_PREVIEW_MAX_LINES = 80
 _CONTENT_PREVIEW_MAX_CHARS = 8000
@@ -255,6 +255,8 @@ def _role_label(role: str) -> str:
         return "Assistant"
     if normalized == "system":
         return "System"
+    if normalized == INJECTED_ROLE:
+        return "Injected"
     return normalized.title() or "Message"
 
 

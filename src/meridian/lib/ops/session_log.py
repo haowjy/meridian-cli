@@ -133,7 +133,10 @@ def _window_hints(
     if not (uses_absolute_window or payload.full) and payload.tail is None:
         hints.append("Use --full to show the entire selected segment.")
     if tools_hidden:
-        hints.append("Tool calls and output are hidden (entry numbers skip them); add --tools.")
+        hints.append(
+            "Tool calls, output and injected messages (plugin, hook, task notification) are hidden "
+            "(entry numbers skip them); add --tools."
+        )
     return tuple(hints)
 
 
