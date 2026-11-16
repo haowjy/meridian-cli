@@ -64,7 +64,6 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
 
 
 def _message_line(spawn_id: str | None, status: str) -> list[str]:
-    # A spawn ID follows its session across /clear; a chat ID stops resolving there.
     # Queued and finalizing spawns have no live control endpoint to take the message.
     if not spawn_id or not spawn_id.strip() or status != "running":
         return []
@@ -79,6 +78,30 @@ def _work_lines(ref: ContextRef) -> list[str]:
         # One line, so a goal can't add headings or close the block's tags.
         lines.append(f"**Work goal:** {' '.join(ref.work_goal.split())}")
     return lines
+
+
+def _catch_up_lines(chat_id: str | None, work_id: str | None) -> list[str]:
+    """Catch-up steps, cheapest first; commands only, never transcript text."""
+
+    lines = ["", "## Catch up (nothing here says what that session discussed)"]
+    step = 1
+    if work_id:
+        lines.append(
+            f"{step}. Recorded state first: `meridian work show {work_id}` names the work "
+            "item's directory; read its `AGENTS.md`, plan and status there, and check "
+            "open PRs."
+        )
+        step += 1
+    if chat_id:
+        lines.append(
+            f"{step}. The end of the old session: `meridian session log {chat_id} "
+            "--tail 20` (the owner's last messages and the replies)."
+        )
+        lines.append(
+            f"{step + 1}. Search only for what the state doesn't answer: "
+            f"`meridian session search <query> --ref {chat_id}`."
+        )
+    return lines if len(lines) > 2 else []
 
 
 def _render_context_ref(ref: ContextRef) -> str:
@@ -104,13 +127,8 @@ def _render_context_ref(ref: ContextRef) -> str:
         lines.extend(_work_lines(ref))
         if ref.task_cwd:
             lines.append(f"**Task directory:** `{ref.task_cwd}`")
-        lines.extend(
-            [
-                "",
-                "## Explore Further",
-                f"- Session transcript: `meridian session log {ref.chat_id}`",
-            ]
-        )
+        lines.extend(_catch_up_lines(ref.chat_id, ref.work_id))
+        lines.extend(["", "## Explore Further"])
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
         lines.extend(_message_line(ref.primary_spawn_id, status))
@@ -128,13 +146,15 @@ def _render_context_ref(ref: ContextRef) -> str:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
     if ref.report_text and ref.report_text.strip():
         lines.extend(["", "## Report", ref.report_text.strip()])
-    elif status not in ACTIVE_SPAWN_STATUSES:
-        lines.extend(["", "## Report", "No report available."])
+    else:
+        if status not in ACTIVE_SPAWN_STATUSES:
+            lines.extend(["", "## Report", "No report available."])
+        lines.extend(_catch_up_lines((ref.chat_id or "").strip() or None, ref.work_id))
 
     lines.append("")
     lines.append("## Explore Further")
     lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    if ref.chat_id and ref.chat_id.strip():
+    if ref.report_text and ref.report_text.strip() and ref.chat_id and ref.chat_id.strip():
         lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
     lines.extend(_message_line(ref.spawn_id, status))
     lines.append("</prior-spawn-context>")

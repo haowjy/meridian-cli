@@ -166,10 +166,7 @@ def build_capabilities_prompt(
         # `# Meridian spawn` block.
         lines.append(
             f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`); use it in names. For a handoff's `--from`, use your spawn "
-            "ID instead (`$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints it as "
-            "`spawn_id`): it follows this conversation across `/clear`, which this chat ID "
-            "does not."
+            "(`$MERIDIAN_CHAT_ID`); use it in names and as a handoff's `--from`."
         )
         # Chat IDs count per project, so the bare ID is ambiguous to a peer in
         # another repo; the command carries the project it belongs to.

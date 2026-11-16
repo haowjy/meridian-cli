@@ -54,8 +54,8 @@ def _load_report_text(project_root: Path, row: SpawnRecord) -> str | None:
 def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     """Resolve one --from value to concrete prior context payload.
 
-    A spawn ref (or selector) names that spawn's report; a chat ref or native ID
-    names that chat's own session.
+    A spawn ref (or selector) names that spawn's report; a chat ref, a primary's
+    spawn ref or a native ID names that chat's own session.
     """
 
     normalized = ref.strip()
@@ -72,7 +72,12 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
-        return _spawn_context_ref(row, project_root, root)
+        if row.kind != "primary" or not row.continue_chat_id:
+            return _spawn_context_ref(row, project_root, root)
+        # A primary's spawn is its conversation: render the chat, one form to understand.
+        located = locate(project_root, row.continue_chat_id)
+        if isinstance(located, SpawnHit | Untracked):
+            return _spawn_context_ref(row, project_root, root)
 
     chat = located.chat
     owner = chat_spawn(located)
