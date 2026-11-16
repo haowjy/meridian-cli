@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-11-16
+
+### Fixed
+- A session you launch yourself (`meridian -a NAME`) now lists the lead-only Meridian
+  skills (handoff, notify, work, messaging, escalation, prompt-authoring) whatever its
+  profile's `mode`. A spawned `subagent` profile still doesn't get them, and a
+  `mode: primary` profile still gets them when spawned.
+
 ## [0.22.1] - 2026-11-15
 
 ### Changed
