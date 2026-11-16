@@ -949,6 +949,7 @@ def _build_shared_composition(
     assert network is not None
     return build_guidance_blocks(
         profile=policy.profile,
+        kind=kind,
         loaded_skills=frozenset(
             skill.name for skill in policy.resolved_skills.loaded_skills if skill.content.strip()
         ),

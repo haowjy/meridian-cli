@@ -4,7 +4,7 @@ import shlex
 from pathlib import Path
 
 from meridian.lib.bundled_skills import list_bundled_skills
-from meridian.lib.catalog.agent import AgentMode, AgentProfile
+from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -77,14 +77,14 @@ _CHILD_CLOSE_BULLET = """\
 
 def _build_meridian_skills_prompt(
     *,
-    profile_mode: AgentMode,
+    lead: bool,
     loaded: frozenset[str],
 ) -> str:
     lines = ["# Meridian skills", ""]
     for skill in list_bundled_skills():
         if skill.name in loaded:
             continue
-        if skill.mode is not None and skill.mode != profile_mode:
+        if skill.mode == "primary" and not lead:
             continue
         description = skill.description
         if description.startswith("When "):
@@ -304,6 +304,7 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
 def build_guidance_blocks(
     *,
     profile: AgentProfile | None,
+    kind: SpawnKind,
     loaded_skills: frozenset[str],
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
@@ -311,14 +312,16 @@ def build_guidance_blocks(
 ) -> tuple[CompositionBlock, ...]:
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
-    profile_mode: AgentMode = profile.mode if profile is not None else "subagent"
+    # A root launch is the session the user steers, whatever its profile says; a
+    # spawn is a lead only when its profile says `mode: primary`.
+    lead = kind == "primary" or (profile is not None and profile.mode == "primary")
     blocks.append(
         CompositionBlock(
             "meridian-skills",
             GuidancePhase.GUIDANCE,
             4,
             _build_meridian_skills_prompt(
-                profile_mode=profile_mode,
+                lead=lead,
                 loaded=loaded_skills,
             ),
         )
