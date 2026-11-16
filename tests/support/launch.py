@@ -83,6 +83,7 @@ class FakeBundleResult:
     network: NetworkPolicy | SandboxDerivedNetwork = field(default_factory=SandboxDerivedNetwork)
     agent_source_path: str | None = None
     provider_constraint: str | None = None
+    catalog_row: dict[str, object] | None = None
     selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
     tool_rules: tuple[ToolRule, ...] = ()

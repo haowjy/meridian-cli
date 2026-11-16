@@ -35,7 +35,7 @@ from typing import cast
 
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
 from meridian.lib.harness.projections.compaction import compaction_report
-from meridian.lib.harness.projections.effort import effort_report
+from meridian.lib.harness.projections.effort import opencode_effort_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -439,7 +439,7 @@ def compile_opencode_permissions(
             harness="OpenCode",
         )
     )
-    lines.extend(effort_report(spec, harness="OpenCode"))
+    lines.extend(opencode_effort_report(spec))
     lines.extend(compaction_report(spec, harness="OpenCode"))
     return tuple(ordered), complete_report(policy, lines, harness="OpenCode")
 

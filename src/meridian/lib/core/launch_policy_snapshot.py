@@ -42,6 +42,9 @@ class LaunchPolicySnapshot(BaseModel):
     model_selection_provider_constraint: str | None = None
     model_selection_harness_provenance: str | None = None
     model_selection_harness_model_id: str | None = None
+    # The models.dev row Mars named for this launch (`routing.catalog_row`); prices the usage
+    # at finalize. Absent on snapshots an older build wrote: those get no cost estimate.
+    model_selection_catalog_row: dict[str, object] | None = None
     field_provenance: dict[str, str] = Field(default_factory=dict)
     selection_report: dict[str, object] | None = None
     # Older builds also wrote `bundle_inventory_prompt`; reads ignore it.

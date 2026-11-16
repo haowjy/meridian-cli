@@ -6,6 +6,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
@@ -95,24 +96,20 @@ def enrich_finalize(
     facts: AttemptFacts,
     native_key: NativeKey | None = None,
     launch: LaunchPaths,
-    model_id: str | None = None,
     harness_id: HarnessId | str | None = None,
-    project_root: Path | None = None,
+    policy: LaunchPolicySnapshot | None = None,
     failure_reason: str | None = None,
 ) -> FinalizeExtraction:
 
     if facts.incomplete:
         structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(launch.spawn_id))
-    usage = (
-        estimate_usage_cost(
-            model_id=(model_id or "").strip() or None,
-            usage=facts.usage,
-            project_root=project_root,
-            harness_id=str(harness_id) if harness_id is not None else None,
+    usage = facts.usage
+    if usage is not None and usage.total_cost_usd is None and harness_id is not None:
+        usage = estimate_usage_cost(
+            catalog_row=policy.model_selection_catalog_row if policy is not None else None,
+            usage=usage,
+            harness_id=str(harness_id),
         )
-        if facts.usage is not None
-        else None
-    )
     harness_session_id = facts.first_session_id
     if facts.permission_denials:
         journal = PermissionJournal(launch)

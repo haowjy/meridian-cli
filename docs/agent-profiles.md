@@ -59,7 +59,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `network` | str | sandbox-derived | Whether shell commands may open connections: `allow`, `deny`, or `allowlist`. `network-allow` and `network-deny` hold exact hosts, IPs, or wildcard hosts. Unset denies under `read-only`/`workspace-write`, allows under `danger-full-access`, and leaves an unset/default sandbox harness-native. Built-in web tools remain under `tools: web`. See [Permissions by harness](#permissions-by-harness) |
 | `network-allow` | list[str] | `[]` | Hosts permitted by `network: allowlist`. Plain lists add across policy layers; see the [merge rules](#permissions-by-harness) |
 | `network-deny` | list[str] | `[]` | Hosts denied under `allow` or `allowlist`. Plain lists add and denies win; see the [merge rules](#permissions-by-harness) |
-| `effort` | str | — | Effort level: `none` (reasoning off), `low`, `medium`, `high`, `xhigh`, or `max`. What each harness does with it: [Effort by harness](#effort-by-harness) |
+| `effort` | str | — | Effort level: `auto` (send none), `none` (reasoning off), `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Mars moves it to a level the model and harness take. What each harness does with it: [Effort by harness](#effort-by-harness) |
 | `approval` | str | — | When the harness stops to ask: `default`, `confirm`, `auto`, or `never`. Write `never`: schema v1 rejects `yolo` in a `mars.toml` overlay or an installed profile (`meridian mars migrate` rewrites authored profiles). Meridian's `--approval yolo`, `--yolo` and `MERIDIAN_APPROVAL=yolo` still mean `never`. See [Permissions by harness](#permissions-by-harness) |
 | `harness-overrides` | map | `{}` | Config for the resolved harness, plus Meridian's own `meridian-cli` namespace; see [Harness-native passthrough](#harness-native-passthrough) and [Meridian settings](#meridian-settings) |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
@@ -197,15 +197,23 @@ unsupported value or harness.
 ## Effort by harness
 
 `effort` comes from `--effort`, `MERIDIAN_EFFORT`, the profile or an overlay, a matching
-`model-policies` rule, or the model alias's `default_effort`; the [precedence](configuration/mars.md)
-decides which. `none` means reasoning off, and `max` is a level above `xhigh`. What each harness
-does with them:
+`model-policies` rule, `primary.effort` in `meridian.toml`, or the model alias's
+`default_effort`; the [precedence](configuration/mars.md) decides which. Meridian sends the
+value to Mars and launches what Mars returns. The levels run `none < minimal < low < medium <
+high < xhigh < max`; `none` means reasoning off, and `auto` sends no effort and overrides the
+lower layers.
 
-| Harness | `none` | `low` through `max` |
+Mars reads each model's levels from models.dev and the harness's own list. A level that is not
+on both moves to the nearest one that is, a tie goes up, and a move never lands on `none`
+unless `none` was asked. `meridian spawn --dry-run` and the launch print the warning, for
+example ``effort `max` → `high`: `o3` takes low, medium, high``. A model that does not reason
+gets no effort. What each harness does with the level Mars returns:
+
+| Harness | `none` | `minimal` through `max` |
 |---|---|---|
-| **Claude** | No `--effort` flag, so Claude Code's default applies: current Claude models think adaptively and cannot turn thinking off (`MAX_THINKING_TOKENS=0` stops it only on older fixed-budget models). `--dry-run` reports the omission | `--effort <level>` |
-| **Codex** | `-c model_reasoning_effort="none"`. Some Codex models reject it | `-c model_reasoning_effort="<level>"` |
-| **Pi** | `--thinking off` | `--thinking <level>`. Pi clamps the level to what the model supports |
+| **Claude** | Claude Code cannot turn thinking off, so Mars moves `none` to `low` and warns | `--effort <level>` |
+| **Codex** | `-c model_reasoning_effort="none"` on a model that takes it | `-c model_reasoning_effort="<level>"` |
+| **Pi** | `--thinking off` | `--thinking <level>` |
 | **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |
 | **Cursor** | Mars picks the model's default slug | Mars folds the level into the model slug; see [Cursor](configuration/cursor.md#effort-and-slug-resolution) |
 

@@ -1,5 +1,32 @@
 # Upgrade notes
 
+## Mars decides effort, and `mars sync` no longer upgrades
+
+Needs Mars 0.36.0, which this release pins.
+
+- **Effort moves to a level the model and harness take.** `--effort max` on a model that takes
+  up to `high` now launches at `high` and prints `effort `max` → `high`: ...`. A tie goes up. A
+  model that does not reason gets no effort. Claude Code and Codex models that cannot turn
+  reasoning off get `low` for `none`, with a warning. Before, Meridian passed the level on and
+  the harness refused or ignored it.
+- **`minimal` and `auto` are new levels.** `auto` sends no effort and overrides every lower
+  layer; `none` still means reasoning off.
+- **`primary.effort` in `meridian.toml` now beats the model alias's `default_effort`.** It used
+  to sit below it, so `primary.effort = "max"` with an alias whose `default_effort` is `high`
+  ran at `high`. It now runs at `max`. An agent profile's own `effort` still beats it. Set
+  `primary.effort = "auto"` to send none.
+- **`meridian mars sync` keeps every dependency at its locked version,** whether or not
+  `mars.toml` gives it a `version`. A dependency without a `version` used to move to its
+  newest release on sync. Run `meridian mars upgrade` (or `upgrade NAME`) to move one; `sync`
+  names each dependency with a release waiting.
+- **Spawn cost estimates read the catalog row Mars names for the launch.** Mars no longer
+  writes `.mars/models-cache.json`. The estimate uses the row the launch's bundle returned,
+  stored with the spawn. A spawn started by an older build has no stored row and gets no
+  estimate, and so does a model the catalog does not know.
+
+A spawn already stored keeps its recorded effort; a continued or forked Claude or Codex
+session whose stored effort is `none` runs at `low` with the warning.
+
 ## An OpenCode launch answers as strictly as the agent's native file
 
 Needs Mars 0.31.0, which this release pins. Mars 0.31 writes an agent's tool rules into
