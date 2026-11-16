@@ -6,6 +6,10 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.3-rc.1] - 2026-11-16
+
+None. CI-only change: workflow actions move to majors that run on Node 24; nothing a user or developer notices changes.
+
 ## [0.22.2] - 2026-11-16
 
 ### Fixed
