@@ -6,6 +6,22 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.4] - 2026-11-16
+
+### Added
+- `[idle] state_reminder` (default `true`; `MERIDIAN_IDLE_STATE_REMINDER`; per-harness
+  override under `[harness.<harness>.idle]`). When the prompt-cache warning fires in an
+  interactive Claude primary session that has a work item, the session gets one prompt
+  asking it to bring the work item's recorded state up to date in place: status,
+  decisions with their reasons, open questions, what it promised other sessions, where it
+  stopped. A later resume or `--from` then starts from current records. With keepwarm on
+  it takes ping 1's place; with keepwarm off it is one extra turn on a cache you were
+  about to lose. Set it to `false` to turn it off.
+
+### Changed
+- After a plugin reload mid-stretch, the meridian-idle mod resumes the stretch's keepwarm
+  pings (and an owed reminder) instead of dropping them.
+
 ## [0.22.3] - 2026-11-16
 
 ### Changed
