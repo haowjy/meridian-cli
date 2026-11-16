@@ -4,11 +4,13 @@ A Claude Code mod that tells Meridian when a session goes idle, what work the
 turn left running, and when the user comes back. Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
-The one thing it does on its own is keepwarm, which is off unless
+It submits two kinds of prompt on its own. The state reminder asks the model to
+record its state in the session's work item when Meridian's cache warning
+fires; Meridian decides whether to send it. Keepwarm is off unless
 `[idle] keepwarm` (or its `[harness.claude.idle]` override) or `/keepwarm on`
 turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the
-cache stays warm while the user is away, the first when Meridian's cache warning
-fires and the rest on its own timer.
+cache stays warm while the user is away, the first when the cache warning fires
+and the rest on its own timer.
 
 ## What it does
 
@@ -23,9 +25,10 @@ that common flag for readability.
 | `classic.Notification` with `notification_type = "permission_prompt"` | `meridian idle needs-permission --harness claude --message <text>` | Claude reports that a main-loop or background-subagent permission prompt is still unanswered. Meridian forwards one stateless `notify.needs_permission` notice; other notification types are ignored. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
 | timer: push, warn | `meridian idle fire push\|warn …` | Core sends the notification itself. The mod only reports that the timer fired. |
-| `fire warn` answers `act`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
-| `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's turn by its nonce, read its reply, and deny tools that change anything while it runs. |
-| `prompt.edit`, `prompt.change` | none | Remember when the user last touched the prompt box, so a ping waits for a quiet one. |
+| `fire warn` answers `act` with `remind: true` | `$.prompt.submit` (state reminder) | The cache warning fired and core wants the work item's state brought up to date. See State reminder. |
+| `fire warn` answers `act` without `remind`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
+| `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's or reminder's turn by its nonce, read its reply, and deny tools that change anything while a ping runs. |
+| `prompt.edit`, `prompt.change` | none | Remember when the user last touched the prompt box, so a ping or the reminder waits for a quiet one. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns.
@@ -44,6 +47,37 @@ and pings sent this stretch, and the last log lines. It does not count as a retu
 
 Prints the keepwarm state. With no argument it toggles first; `on` and `off` set
 it. It does not count as a return.
+
+## State reminder
+
+A lead that sits idle until its cache expires may leave its work item behind the
+conversation. When the cache warning acts, core answers `fire warn` with
+`remind: true` if `[idle] state_reminder` (default on; `[harness.claude.idle]`
+overrides it) is on and the session has a work item. Core owns that decision, so
+the mod reads no setting for it and takes `remind` as it comes. The mod then submits one
+plugin prompt, `[meridian-idle state-reminder <nonce>]`, that asks the model to
+update the work item's recorded state in place (`meridian work show`
+lists it), replacing what is stale and writing nothing if it is current, and end its turn. Non-interactive and subagent sessions
+never reach it.
+
+It is sent like a ping, with the same guards: a quiet prompt box, the cold-cache
+deadline, no running turn, no compaction, no user return. It is a plugin prompt
+without `asUser`, so the model does not read it as the user, the session log
+files it as injected, and it is not a return. It is the one prompt
+here whose turn may write: the keepwarm tool denial applies to pings only, and
+the reply `stop-waiting` means nothing to it.
+
+With keepwarm on the reminder takes ping 1's slot (its turn warms the cache
+too) and pings 2 and on follow as usual. With keepwarm off it is one unrequested
+turn and takes no slot. Core claims the warning once per stretch, so the mod
+keeps the reminder as owed in its own stretch record (`reminder` in `$.state`)
+until it is submitted. The warn timer sends it; if a main-loop turn is running
+then, or a guard holds it, the stretch's next prompt is the reminder instead of a
+ping: the next arm schedules it one `lead` later, with keepwarm on or off, and a
+reload recovers the stretch and does the same. The count and the flag are written
+before the submit, so a reload cannot send it twice. The cold-cache deadline still
+applies, and a stop, compaction or cold cache that ends the stretch's pings
+also drops it.
 
 ## Keepwarm
 
@@ -74,7 +108,7 @@ one. Pings send no notification.
   and untouched for 10 s. Every check before the submit stops 1 minute before
   the cache would expire: the stage's scheduled time plus `warn_minutes` (from
   `idle config`) minus 1 minute. The deadline does not move when the timer runs
-  late, so a late timer has less time or none. A skipped ping spends no slot.
+  late, so a late timer has less time or none. A skipped prompt spends no slot.
   When that deadline passes while a ping waits, the stretch's pings end too (the
   deadline is the cold-cache check), so a later arm schedules none.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
@@ -83,8 +117,8 @@ one. Pings send no notification.
   carries it names the ping's `turnId`, and only that turn's `turn.complete`
   with reason `answer` is read.
 - **A running turn.** If the warning or a chained timer fires while a
-  main-loop turn is in flight, no ping is sent and no slot is spent: that turn
-  refreshes the cache, and its own arm sets the next chained timer one lead
+  main-loop turn is in flight, nothing is sent and no slot is spent: that turn
+  refreshes the cache, and its own arm sets the next timer (an owed reminder or the next ping) one lead
   later (the stretch is already `warned`). A user return cancels it as usual.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not

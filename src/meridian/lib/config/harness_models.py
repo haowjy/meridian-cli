@@ -27,6 +27,7 @@ class HarnessIdleConfig(ConfigModel):
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
     keepwarm: bool = False
     keepwarm_pings: int = 3
+    state_reminder: bool = True
 
 
 class HarnessProfileConfig(ConfigModel):
@@ -86,6 +87,7 @@ def harness_idle_model(
         "ttl_seconds": "int",
         "keepwarm": "bool",
         "keepwarm_pings": "int",
+        "state_reminder": "bool",
     }
     for field_name, model_field in HarnessIdleConfig.model_fields.items():
         option = config_field(

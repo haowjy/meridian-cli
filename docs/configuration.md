@@ -403,6 +403,7 @@ silence only the permission notice.
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 | `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude today) |
 | `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch; `0` or less turns keepwarm off |
+| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there (Claude today) |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
@@ -425,6 +426,15 @@ a compaction of the main conversation (a `precompute` compaction and a
 subagent's own do not count): the cache the pings protected is gone, so a ping
 would only pay for a fresh prefill. A ping that would only go out after the cache
 has already expired also ends the stretch's pings.
+
+`state_reminder` makes the same warning ask the model to bring its work item's
+recorded state up to date (status, decisions with their reasons, open questions,
+what it promised other sessions, where it stopped), so a resume or handoff days
+later starts from current records. It is sent once per stretch, only when the
+session has a work item, and under the same guards as a ping (empty prompt box,
+no running turn, cache not yet cold). Unlike a ping its turn may write files.
+With keepwarm on it takes ping 1's place; with keepwarm off it is one extra turn
+on the cache you were about to lose, so set `state_reminder = false` to avoid it.
 
 When you have waited at least two minutes since your last prompt, the waiting
 push follows 60 seconds after the turn ends; after a quick or unknown-length
@@ -480,6 +490,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 | `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 | `keepwarm` | Overrides `[idle] keepwarm` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
 | `keepwarm_pings` | Overrides `[idle] keepwarm_pings` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_<H>` |
+| `state_reminder` | Overrides `[idle] state_reminder` | `MERIDIAN_HARNESS_IDLE_STATE_REMINDER_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.

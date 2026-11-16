@@ -380,6 +380,9 @@ def _scaffold_template() -> str:
             f"# keepwarm = {_toml_literal(defaults['idle.keepwarm'])}",
             "# Keep-warm prompts per stretch; 0 or less turns keepwarm off.",
             f"# keepwarm_pings = {defaults['idle.keepwarm_pings']}",
+            "# At the cache warning, ask a primary with a work item to record its state there. "
+            "Claude only today.",
+            f"# state_reminder = {_toml_literal(defaults['idle.state_reminder'])}",
             "# Per-harness overrides live under [harness.<harness>.idle].",
             "",
             "# -- State retention --------------------------------------------------------",

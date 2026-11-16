@@ -226,6 +226,15 @@ class IdleConfig(ConfigModel):
             env_vars=("MERIDIAN_IDLE_KEEPWARM_PINGS",),
         ),
     ] = 3
+    state_reminder: Annotated[
+        bool,
+        config_field(
+            "idle.state_reminder",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "state_reminder"),),
+            env_vars=("MERIDIAN_IDLE_STATE_REMINDER",),
+        ),
+    ] = True
 
 
 class NotifyConfig(ConfigModel):
