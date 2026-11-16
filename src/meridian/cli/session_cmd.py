@@ -225,8 +225,9 @@ def _session_log(
         Parameter(
             name="--tools",
             help=(
-                "Also show tool calls, their output and messages a plugin, hook or the harness "
-                "injected (labelled Injected). The default view is the conversation: the "
+                "Also show tool calls, their output and messages a plugin, hook, peer, Meridian "
+                "or the harness injected (labelled Injected). The default view is the "
+                "conversation: the "
                 "user's messages and the assistant's replies."
             ),
         ),

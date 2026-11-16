@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.harness.injected_marker import marked
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.streaming.completion_contracts import (
     COMPLETION_NUDGE_INTERVAL_SECONDS,
@@ -547,6 +548,27 @@ def nudge_text(
     active_turn: bool,
 ) -> str:
     """The text of the ask `decide` just asked for, with `state` as it left it."""
+    return marked(
+        _ask_body(
+            state,
+            blockers,
+            wake,
+            has_candidate=has_candidate,
+            skips_ask=skips_ask,
+            active_turn=active_turn,
+        )
+    )
+
+
+def _ask_body(
+    state: HoldState,
+    blockers: Sequence[DiagnosticBlocker],
+    wake: tuple[FinishedChild, ...],
+    *,
+    has_candidate: bool,
+    skips_ask: bool,
+    active_turn: bool,
+) -> str:
     if state.answer is not None and not active_turn:
         return _the_ask(blockers, wake)
     descendants, tasks, awaiting = _running_lines(blockers)

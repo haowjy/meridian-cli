@@ -27,8 +27,8 @@ meridian session log cNNN --tail 20
 
 `session log` shows the conversation: the user's messages and the assistant's
 replies. Add `--tools` for tool calls and their output and for messages a plugin,
-hook, task notification or peer injected (labelled Injected, so a keepwarm ping or a
-spawn-watch delivery never reads as the user); `--tail N` counts
+hook, task notification, peer or Meridian itself injected (labelled Injected, so a
+keepwarm ping, a peer message or an idle nudge never reads as the user); `--tail N` counts
 conversation entries. Entry numbers skip hidden entries and mean the same in either
 view, so a number from one opens in the other.
 

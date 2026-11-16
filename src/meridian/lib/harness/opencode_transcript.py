@@ -310,7 +310,9 @@ def _message_events(
             if not isinstance(text, str):
                 reason = malformed
             elif text.strip():
-                events.append({"role": role, "content": text.strip()})
+                # Text the harness or a plugin added to the user's turn, not typed by the user.
+                injected = role == "user" and (part.get("synthetic") or part.get("ignored"))
+                events.append({"role": "injected" if injected else role, "content": text.strip()})
         elif kind == "tool":
             state = part.get("state")
             name = part.get("tool")

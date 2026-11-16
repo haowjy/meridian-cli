@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
+from meridian.lib.harness.injected_marker import marked
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import consume_spawn_signal
 from meridian.lib.streaming.completion_contracts import (
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
-PI_COMPLETION_NUDGE_MESSAGE = (
+PI_COMPLETION_NUDGE_MESSAGE = marked(
     "If you are finished, run `meridian spawn done`; your reply to this message is the "
     "report, so make it complete."
 )

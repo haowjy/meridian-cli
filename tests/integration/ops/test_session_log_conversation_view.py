@@ -144,3 +144,62 @@ def test_codex_tool_calls_are_tool_traffic_and_injected_context_is_not_the_user(
     with_tools = run(tools=True).entries
     assert (with_tools[1].role, "Be terse." in with_tools[1].content) == ("injected", True)
     assert "a.py" in with_tools[3].content
+
+
+def test_claude_user_events_split_into_the_user_and_everything_else(tmp_path: Path) -> None:
+    def user(text: str, **fields: Any) -> dict[str, Any]:
+        return {**_text("user", text), **fields}
+
+    events = [
+        {"type": "summary", "sessionId": "s1"},
+        user("typed by the user", origin={"kind": "human"}),
+        user("a plugin spoke", origin={"kind": "plugin"}),
+        user("a meta message", isMeta=True),
+        user("[Meridian] Message from spawn p1; it has no reply route here.\n\nhi"),
+        user("Before this spawn closes, confirm whether you are actually finished."),
+        user("a brief with no origin"),
+        {
+            "type": "attachment",
+            "attachment": {
+                "type": "queued_command",
+                "commandMode": "task-notification",
+                "prompt": "<task-notification>done</task-notification>",
+            },
+        },
+        {"type": "system", "subtype": "compact_boundary"},
+        user("This session is being continued from a previous conversation", isCompactSummary=True),
+        user("after the compaction", origin={"kind": "human"}),
+    ]
+    path = tmp_path / "claude.jsonl"
+    path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+    def run(*, tools: bool, segment: int) -> list[tuple[str, str]]:
+        output = session_log_sync(
+            SessionLogInput(
+                file_path=path.as_posix(),
+                project_root=tmp_path.as_posix(),
+                full=True,
+                tools=tools,
+                segment=str(segment),
+            )
+        )
+        return [(e.role, e.content.split("\n")[0][:30]) for e in output.entries]
+
+    assert run(tools=False, segment=0)[1:] == [
+        ("user", "typed by the user"),
+        ("user", "a brief with no origin"),
+    ]
+    # Consecutive injected messages share an entry; the first holds the plugin, meta, Meridian
+    # message and nudge, the last the queued task notification.
+    assert [role for role, _ in run(tools=True, segment=0)] == [
+        "system",
+        "user",
+        "injected",
+        "user",
+        "injected",
+    ]
+    # The compaction summary is the segment's entry 0, not a user entry.
+    assert run(tools=True, segment=1) == [
+        ("system", "This session is being continue"),
+        ("user", "after the compaction"),
+    ]

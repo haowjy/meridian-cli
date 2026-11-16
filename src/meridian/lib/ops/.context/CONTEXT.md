@@ -17,7 +17,12 @@ A session-log entry is the user's text, an injected message, or one agent step: 
 tool calls and results. Only text the user typed has role `user`; a user-role message a
 plugin, hook, scheduler, task notification or peer wrote gets role `injected` (Claude:
 `origin.kind` other than `human`, or `isMeta`; Pi `custom_message`; Codex's injected
-context). Tool traffic is a message with a call or a result, whatever role the harness
+context; OpenCode `synthetic` text parts). Text Meridian injects itself (peer messages,
+idle nudges) carries the `[Meridian]` marker from `harness/injected_marker.py`, which every
+producer builds with and the shared normalizer reads for every harness; the module also
+lists the opening of the pre-marker nudges so older transcripts classify. A new producer of
+user-turn text must use it. Claude's `isCompactSummary` message is the segment's entry-0
+handoff, not a user entry. Tool traffic is a message with a call or a result, whatever role the harness
 stored it under; each adapter sets that where it parses (`harness/transcript.py`), the
 renderer never sniffs text. Views choose parts: the default shows user and assistant
 text, `--tools` adds tool traffic and injected messages. Entry ordinals come from the full transcript and

@@ -566,7 +566,6 @@ __all__ = [
     "entry_in_view",
     "flatten_transcript_segments",
     "group_transcript_entries",
-    "is_tool_message",
     "parse_session_target",
     "read_session_transcript",
 ]

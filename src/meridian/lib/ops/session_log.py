@@ -134,7 +134,7 @@ def _window_hints(
         hints.append("Use --full to show the entire selected segment.")
     if tools_hidden:
         hints.append(
-            "Tool calls, output and injected messages (plugin, hook, task notification) are hidden "
+            "Tool calls, output and injected messages (plugin, hook, peer, Meridian) are hidden "
             "(entry numbers skip them); add --tools."
         )
     return tuple(hints)
@@ -250,8 +250,15 @@ def _segment_boundary_commands(
     previous_segment_command: str | None = None
     if touches_top and segment_index > 0:
         previous_segment_index = segment_index - 1
-        previous_segment_total = len(segment_entries_by_index[previous_segment_index])
-        previous_start = max(previous_segment_total - window_size, 0)
+        # Count the entries this view shows, as `_window_at` does for `previous_from`.
+        shown = [
+            entry
+            for entry in segment_entries_by_index[previous_segment_index]
+            if entry_in_view(entry, tools=payload.tools) is not None
+        ]
+        previous_start = (
+            _entry_local_ordinal(shown[max(len(shown) - window_size, 0)]) if shown else 0
+        )
         previous_segment_command = build_session_log_command(
             parsed_route,
             segment_index=previous_segment_index,
