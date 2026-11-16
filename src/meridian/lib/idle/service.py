@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -34,6 +35,7 @@ from meridian.lib.idle.wake import expected_wake
 from meridian.lib.notify import RouteReport
 from meridian.lib.notify.emit import emit
 from meridian.lib.notify.label import build_session_label
+from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state.idle_store import (
     IdleSchedule,
     IdleState,
@@ -90,6 +92,7 @@ class IdlePolicyConfig(BaseModel):
     ttl_seconds: int | None
     keepwarm: bool
     keepwarm_pings: int
+    state_reminder: bool
 
 
 @dataclass(frozen=True)
@@ -146,9 +149,14 @@ class ReturnResult:
 class FireResult:
     decision: DecisionKind
     reason: str
+    # The adapter should ask the model to record its state in the session's work item.
+    remind: bool = False
 
     def to_wire(self) -> dict[str, object]:
-        return {"decision": self.decision, "reason": self.reason}
+        payload: dict[str, object] = {"decision": self.decision, "reason": self.reason}
+        if self.remind:
+            payload["remind"] = True
+        return payload
 
 
 def _default_now_ms() -> int:
@@ -505,6 +513,13 @@ class IdleService:
             return claimed_state, (result, claimed_state)
 
         result, claimed_state = self.store.mutate(harness, session, transition)
+        if (
+            stage == "warn"
+            and result.decision == "act"
+            and policy.state_reminder
+            and self._has_work_item()
+        ):
+            result = replace(result, remind=True)
         if result.decision == "act" and claimed_state is not None:
             self._send_stage_notice(
                 stage,
@@ -515,6 +530,12 @@ class IdleService:
                 policy=policy,
             )
         return result
+
+    def _has_work_item(self) -> bool:
+        try:
+            return resolve_active_work_id(self.project_root, environ=self.env) is not None
+        except (OSError, ValueError, sqlite3.Error):
+            return False
 
     def _send_stage_notice(
         self,

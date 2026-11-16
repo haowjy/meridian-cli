@@ -18,3 +18,13 @@ does a ping that would go out after the cache is already cold.
 Do not make core re-claim `warn` per anchor to carry them: every ping would then
 send another notice, and remembering the single notice needs a new `IdleState`
 field, which older builds cannot read back (`extra="forbid"`).
+
+The state reminder (`[idle] state_reminder`, default on, same `[harness.claude.idle]`
+override) is decided here, not in the mod: `fire warn` answers `remind: true` when
+the warning acts, the setting is on and the session has a work item (resolved the
+way every "current item" is, so a `work switch` counts). The mod only submits the
+prompt, so the `idle config` reply carries no setting for it. It rides the same
+single warning as ping 1, for the same reason: re-claiming `warn` would send
+another notice, and remembering the reminder needs an `IdleState` field older
+builds cannot read. The cost is that a reminder a guard skips is not retried in
+that stretch.

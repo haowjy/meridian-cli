@@ -5,6 +5,7 @@ import {
   FRESH,
   isStop,
   pingText,
+  reminderText,
   type Keepwarm,
 } from './keepwarm'
 
@@ -15,6 +16,7 @@ import {
 //   return  the user typed or sent something -> `idle return`, timers cancelled
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
 //   keepwarm  the cache warning fired and the user opted in -> up to `keepwarm_pings` prompts that keep the cache warm (see keepwarm.ts)
+//   reminder  the cache warning fired and core said `remind` -> one prompt asking the model to record its state; it takes ping 1's place
 // Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request. `/keepwarm` toggles or sets keepwarm.
@@ -55,9 +57,14 @@ type Armed = {
   fired: Partial<Record<Stage, string>>
 }
 
+type PromptKind = 'ping' | 'reminder'
+
 /** The ping that was submitted and has not completed. Only one exists at a time. */
 type Ping = {
   nonce: string
+  /** A reminder is a prompt too, but asks for writes and has no stop reply. */
+  kind: PromptKind
+  /** The keepwarm slot taken, or 0 for a reminder sent without one (keepwarm off or its pings used up). */
   index: number
   session: string
   stretch: number
@@ -411,19 +418,24 @@ function pingsOpen(kw: Keepwarm): boolean {
   return kw.on && kw.sent < kw.limit
 }
 
-/** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a ping now would queue behind it. */
-function skipForRunningTurn($: EngineInterface, s: State): boolean {
+/** A ping needs keepwarm on and a slot left. A reminder needs only that the stretch's pings are not ended (`sent = limit`: a compaction, a cold cache or a stop). */
+function mayStart(kw: Keepwarm, kind: PromptKind): boolean {
+  return kind === 'ping' ? pingsOpen(kw) : kw.sent < kw.limit
+}
+
+/** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a prompt now would queue behind it. */
+function skipForRunningTurn($: EngineInterface, s: State, kind: PromptKind): boolean {
   if (!s.running) return false
-  note($, s, 'ping skipped: a turn is running; its arm schedules the next one')
+  note($, s, `${kind} skipped: a turn is running; its arm schedules the next ping`)
   return true
 }
 
 /** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. `deadline` is the one cold-cache check: `runPing` ends the stretch's pings when it wins. A running compaction pauses the wait. */
-async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<string | undefined> {
+async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number, kind: PromptKind): Promise<string | undefined> {
   const RETURNED = 'the user returned'
   for (;;) {
     if (s.epoch !== epoch) return RETURNED
-    if (!pingsOpen(await stretchRecord($, s, armed.session, armed.stretch))) return "this stretch's pings are over or keepwarm is off"
+    if (!mayStart(await stretchRecord($, s, armed.session, armed.stretch), kind)) return "this stretch's pings are over or keepwarm is off"
     const now = await $.clock.now()
     if (now >= deadline) return COLD
     // A landed compaction ends the wait through the cap; a skipped one lets the ping go.
@@ -441,44 +453,49 @@ function newNonce(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** Takes the next ping slot of this stretch; undefined when keepwarm is off, the pings are used up, the user returned or `deadline` passed. */
-async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number): Promise<number | undefined> {
+/**
+ * Takes the next ping slot of this stretch; undefined when the prompt must not go (a compaction, the user returned,
+ * `deadline` passed, a ping with keepwarm off or its slots used up). A reminder with no slot to take gets 0.
+ */
+async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number, kind: PromptKind): Promise<number | undefined> {
   const kw = await stretchRecord($, s, armed.session, armed.stretch)
-  if (s.compacting || s.epoch !== epoch || !pingsOpen(kw) || (await $.clock.now()) >= deadline) return undefined
+  if (s.compacting || s.epoch !== epoch || !mayStart(kw, kind) || (await $.clock.now()) >= deadline) return undefined
+  if (!pingsOpen(kw)) return 0
   await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.sent + 1 })
   return kw.sent + 1
 }
 
 /**
- * Sends one keep-warm prompt for `armed`'s stretch, once the box has been quiet. `dueAt` is when the stage's timer
+ * Sends one keep-warm prompt (or the state reminder, which takes ping 1's place) for `armed`'s stretch, once the box has been quiet. `dueAt` is when the stage's timer
  * was scheduled to fire: `warn_minutes` of cache remain then, so the ping gives up at `dueAt + warn_minutes - margin`
  * however late the timer ran. The count is taken before the submit so that a reload or a failure can only cost a
  * ping, never add one.
  */
-async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number): Promise<void> {
+async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number, kind: PromptKind): Promise<void> {
   try {
     const kw = await stretchRecord($, s, armed.session, armed.stretch)
-    if (!pingsOpen(kw)) return
+    if (!mayStart(kw, kind)) return
     if (s.policy.warnMs === undefined || s.policy.warnMs <= EXPIRY_MARGIN_MS) {
-      note($, s, 'ping skipped: no usable warn_minutes from core')
+      note($, s, `${kind} skipped: no usable warn_minutes from core`)
       return
     }
     const deadline = dueAt + s.policy.warnMs - EXPIRY_MARGIN_MS
-    if (skipForRunningTurn($, s)) return
-    const held = await holdForUser($, s, armed, epoch, deadline)
+    if (skipForRunningTurn($, s, kind)) return
+    const held = await holdForUser($, s, armed, epoch, deadline, kind)
     if (held === COLD) {
       await enqueue(s, () => endPings($, s, armed.session, armed.stretch, COLD))
       return
     }
     if (held !== undefined) {
-      note($, s, `ping skipped: ${held}`)
+      note($, s, `${kind} skipped: ${held}`)
       return
     }
-    if (skipForRunningTurn($, s)) return // a turn started while the ping waited
-    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline))
+    if (skipForRunningTurn($, s, kind)) return // a turn started while the prompt waited
+    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline, kind))
     if (typeof index !== 'number' || s.epoch !== epoch) return
     const ping: Ping = {
       nonce: newNonce(),
+      kind,
       index,
       session: armed.session,
       stretch: armed.stretch,
@@ -486,20 +503,20 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       turnId: undefined,
       userCame: false,
     }
-    // A ping still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
+    // A prompt still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
     s.ping = ping
     try {
-      const result = await $.prompt.submit({ text: pingText(ping.nonce) })
+      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce) })
       if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
         s.ping = undefined
-        note($, s, `ping ${ping.index} dropped: ${result.drop}`)
+        note($, s, `${label(ping)} dropped: ${result.drop}`)
       }
     } catch (err) {
       if (s.ping === ping && ping.phase === 'submitted') s.ping = undefined
-      note($, s, `ping ${ping.index} failed: ${describeError(err)}`)
+      note($, s, `${label(ping)} failed: ${describeError(err)}`)
     }
   } catch (err) {
-    note($, s, `ping error: ${describeError(err)}`)
+    note($, s, `${kind} error: ${describeError(err)}`)
   }
 }
 
@@ -518,7 +535,7 @@ async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: n
     void (async () => {
       try {
         if (s.armed !== armed || s.epoch !== epoch) return
-        await runPing($, s, armed, epoch, due)
+        await runPing($, s, armed, epoch, due, 'ping')
       } catch (err) {
         note($, s, `ping timer error: ${describeError(err)}`)
       }
@@ -527,10 +544,15 @@ async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: n
   note($, s, `ping ${kw.sent + 1} in ${Math.round(kw.lead / 1000)}s`)
 }
 
+function label(ping: Ping): string {
+  return ping.kind === 'ping' ? `ping ${ping.index}` : 'state reminder'
+}
+
 /** The ping's own turn ended: record how it went and, on a stop, end this stretch's pings. */
 async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
-  if (reason !== 'answer') return note($, s, `ping ${ping.index} ended: ${reason}`)
-  if (!isStop(answer)) return note($, s, `ping ${ping.index} continued`)
+  if (reason !== 'answer') return note($, s, `${label(ping)} ended: ${reason}`)
+  // Only a ping's reply can stop the pings; the reminder asks for no such reply.
+  if (ping.kind === 'reminder' || !isStop(answer)) return note($, s, `${label(ping)} continued`)
   await endPings($, s, ping.session, ping.stretch, `ping ${ping.index} replied stop-waiting`)
 }
 
@@ -597,7 +619,8 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
         const kw = await stretchRecord($, s, armed.session, armed.stretch)
         await $.state.set(IDLE_KEEPWARM, { ...kw, warned: true })
       })
-      void runPing($, s, armed, epoch, dueAt)
+      // Core says `remind` when the session has a work item and `[idle] state_reminder` is on; the reminder then takes ping 1's place.
+      void runPing($, s, armed, epoch, dueAt, reply.remind === true ? 'reminder' : 'ping')
     }
   } catch (err) {
     note($, s, `timer ${stage} error: ${describeError(err)}`)
@@ -726,7 +749,8 @@ export const register: Register = on => {
   on('tool.check', async ($, e, next) => {
     const ping = s.ping
     // Other plugins' permission queries carry no tool_use_id and are not calls to deny.
-    if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.userCame) return next(e)
+    // The reminder turn must write the work item, so only a ping's turn is denied.
+    if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.kind !== 'ping' || ping.userCame) return next(e)
     return {
       decision: 'deny',
       reason:

@@ -17,6 +17,17 @@ export function pingText(nonce: string): string {
   )
 }
 
+/** The state reminder: the model writes what only the conversation knows into the work item, then ends its turn. Never mentions stop-waiting: it is not a ping. */
+export function reminderText(nonce: string): string {
+  return (
+    `[meridian-idle state-reminder ${nonce}]\n\n` +
+    "The user is away and this session's prompt cache is about to expire. Bring the work item's recorded state up to date, " +
+    'so a later resume or handoff starts from what you know now. Run `meridian work show` to see what is recorded, then add what only ' +
+    'this conversation holds: status, decisions with their reasons, open questions, what you promised other sessions, and where you stopped. ' +
+    'Change nothing else, then end your turn with a one-line reply.'
+  )
+}
+
 const STOP = 'stop-waiting'
 const QUOTES: ReadonlyArray<readonly [string, string]> = [
   ["'", "'"],

@@ -471,6 +471,9 @@ cache warning should still be sent. Humans normally use only:
 
 The adapter subcommands are `config`, `arm`, `return`, `needs-permission`,
 `fire`, and `event`; run `meridian idle --help` for their typed contract.
+`fire warn` adds `remind: true` to an `act` answer when the adapter should ask
+the model to record its state in the session's work item (`[idle] state_reminder`
+on and a work item attached).
 Outside-Meridian adapters must pass `--interactive` on every call. An explicit
 spawn role stays disabled even with that flag. `config` always answers
 `enabled`, `push_seconds`, `warn_minutes`, `keepwarm` and `keepwarm_pings` (the
