@@ -45,6 +45,7 @@ class TranscriptWindow:
             SessionLogInput(
                 ref=self._ref,
                 global_scope=True,
+                tools=True,
                 limit=PAGE,
                 before_ordinal=before,
                 from_ordinal=start,

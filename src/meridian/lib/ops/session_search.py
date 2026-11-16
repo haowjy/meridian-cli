@@ -283,6 +283,7 @@ def _build_open_command_for_match(
         segment_index=entry.segment_index,
         around_ordinal=entry.ordinal,
         context=_OPEN_CONTEXT,
+        tools=entry.role != "user",
     )
 
 
@@ -354,6 +355,7 @@ def _render_match(
         limit=1 if row.kind == "setup" else None,
         around_ordinal=row.ordinal if row.kind != "setup" else None,
         context=_OPEN_CONTEXT if row.kind != "setup" else None,
+        tools=row.role != "user",
     )
     if scope.runtime_root != runtime_root:
         command = (

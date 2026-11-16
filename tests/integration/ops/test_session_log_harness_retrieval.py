@@ -282,6 +282,7 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
             ref="p1",
             project_root=project_root.as_posix(),
             full=True,
+            tools=True,
             truncate=False,
         )
     )
@@ -366,8 +367,9 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
         SessionLogInput(
             ref="p1",
             project_root=project_root.as_posix(),
-            from_ordinal=1,
+            from_ordinal=2,
             limit=1,
+            tools=True,
         )
     )
     rendered = output.format_text()

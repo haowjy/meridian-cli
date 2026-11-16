@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
@@ -17,45 +18,43 @@ class SessionWindow(NamedTuple):
     next_from: int | None
 
 
-def _window_bounds(
-    entries: list[AbsoluteTranscriptEntry],
-    *,
+def _ordinals(
+    entries: Sequence[AbsoluteTranscriptEntry],
     ordinal_getter: Callable[[AbsoluteTranscriptEntry], int],
-) -> tuple[int, int]:
-    if not entries:
-        return (0, 0)
-    return (ordinal_getter(entries[0]), ordinal_getter(entries[-1]))
+) -> list[int]:
+    return [ordinal_getter(entry) for entry in entries]
 
 
-def _window_with_navigation(
+def _window_at(
+    entries: Sequence[AbsoluteTranscriptEntry],
     *,
-    all_entries: Sequence[AbsoluteTranscriptEntry],
-    selected: list[AbsoluteTranscriptEntry],
+    start: int,
+    end: int,
     ordinal_getter: Callable[[AbsoluteTranscriptEntry], int],
-    first_ordinal: int = 1,
     nav_limit: int | None = None,
 ) -> SessionWindow:
-    total_entries = len(all_entries)
-    start_ordinal, end_ordinal = _window_bounds(selected, ordinal_getter=ordinal_getter)
-    max_ordinal = first_ordinal + max(total_entries - 1, 0)
-    has_previous = bool(selected) and start_ordinal > first_ordinal
-    has_next = bool(selected) and end_ordinal < max_ordinal
+    """Entries ``[start, end)`` of ``entries``, which hold only what the view shows.
 
-    if selected:
-        window_size = nav_limit if nav_limit is not None else len(selected)
-    else:
-        window_size = nav_limit if nav_limit is not None else 0
+    Ordinals are the entries' own, so hidden entries leave gaps and every position printed
+    here is one any other view accepts.
+    """
+    selected = list(entries[start:end])
+    start_ordinal = ordinal_getter(selected[0]) if selected else 0
+    end_ordinal = ordinal_getter(selected[-1]) if selected else 0
+    has_previous = bool(selected) and start > 0
+    has_next = bool(selected) and end < len(entries)
+    window_size = nav_limit if nav_limit is not None else len(selected)
 
     previous_from: int | None = None
     next_from: int | None = None
     if has_previous and window_size > 0:
-        previous_from = max(start_ordinal - window_size, first_ordinal)
+        previous_from = ordinal_getter(entries[max(start - window_size, 0)])
     if has_next and window_size > 0:
         next_from = end_ordinal + 1
 
     return SessionWindow(
         entries=selected,
-        total_entries=total_entries,
+        total_entries=len(entries),
         start_ordinal=start_ordinal,
         end_ordinal=end_ordinal,
         has_previous=has_previous,
@@ -69,19 +68,12 @@ def window_from_tail(
     entries: Sequence[AbsoluteTranscriptEntry],
     *,
     tail: int | None,
-    first_ordinal: int = 1,
     ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
     if tail is not None and tail < 0:
         raise ValueError("--tail must be >= 0.")
-
-    selected = list(entries) if tail is None else (list(entries[-tail:]) if tail > 0 else [])
-    return _window_with_navigation(
-        all_entries=entries,
-        selected=selected,
-        ordinal_getter=ordinal_getter,
-        first_ordinal=first_ordinal,
-    )
+    start = 0 if tail is None else (max(len(entries) - tail, 0) if tail > 0 else len(entries))
+    return _window_at(entries, start=start, end=len(entries), ordinal_getter=ordinal_getter)
 
 
 def window_from_from_limit(
@@ -96,14 +88,9 @@ def window_from_from_limit(
         raise ValueError(f"--from expects an entry ordinal >= {first_ordinal}.")
     if limit < 0:
         raise ValueError("--limit must be >= 0.")
-    start_index = start_ordinal - first_ordinal
-    selected = list(entries[start_index : start_index + limit])
-    return _window_with_navigation(
-        all_entries=entries,
-        selected=selected,
-        ordinal_getter=ordinal_getter,
-        first_ordinal=first_ordinal,
-        nav_limit=limit,
+    start = bisect_left(_ordinals(entries, ordinal_getter), start_ordinal)
+    return _window_at(
+        entries, start=start, end=start + limit, ordinal_getter=ordinal_getter, nav_limit=limit
     )
 
 
@@ -119,15 +106,9 @@ def window_from_before_limit(
         raise ValueError(f"--before expects an entry ordinal >= {first_ordinal}.")
     if limit < 0:
         raise ValueError("--limit must be >= 0.")
-    end_index = max(before_ordinal - first_ordinal, 0)
-    start_index = max(end_index - limit, 0)
-    selected = list(entries[start_index:end_index])
-    return _window_with_navigation(
-        all_entries=entries,
-        selected=selected,
-        ordinal_getter=ordinal_getter,
-        first_ordinal=first_ordinal,
-        nav_limit=limit,
+    end = bisect_left(_ordinals(entries, ordinal_getter), before_ordinal)
+    return _window_at(
+        entries, start=max(end - limit, 0), end=end, ordinal_getter=ordinal_getter, nav_limit=limit
     )
 
 
@@ -137,31 +118,31 @@ def window_from_around_context(
     around_ordinal: int,
     context: int,
     first_ordinal: int = 1,
+    last_ordinal: int,
     ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
+    """``context`` shown entries each side; ``last_ordinal`` bounds the whole transcript."""
     if context < 0:
         raise ValueError("--context must be >= 0.")
     if around_ordinal < first_ordinal:
         raise ValueError(f"--around expects an entry ordinal >= {first_ordinal}.")
-    if not entries:
+    if last_ordinal < first_ordinal:
         raise ValueError("--around is out of range (transcript has no entries).")
-    max_ordinal = first_ordinal + len(entries) - 1
-    if around_ordinal > max_ordinal:
+    if around_ordinal > last_ordinal:
         raise ValueError(
             f"--around {around_ordinal} out of range "
-            f"(transcript has entries {first_ordinal}-{max_ordinal})."
+            f"(transcript has entries {first_ordinal}-{last_ordinal})."
         )
-    center_index = around_ordinal - first_ordinal
-    start_index = max(center_index - context, 0)
-    end_index = min(center_index + context + 1, len(entries))
-    selected = list(entries[start_index:end_index])
-    window_size = context * 2 + 1
-    return _window_with_navigation(
-        all_entries=entries,
-        selected=selected,
+    ordinals = _ordinals(entries, ordinal_getter)
+    center = bisect_left(ordinals, around_ordinal)
+    # A hidden center entry leaves a gap: take ``context`` shown entries on each side of it.
+    shown_center = center < len(ordinals) and ordinals[center] == around_ordinal
+    return _window_at(
+        entries,
+        start=max(center - context, 0),
+        end=center + context + (1 if shown_center else 0),
         ordinal_getter=ordinal_getter,
-        first_ordinal=first_ordinal,
-        nav_limit=window_size,
+        nav_limit=context * 2 + 1,
     )
 
 
