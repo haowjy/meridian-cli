@@ -21,11 +21,9 @@ export function pingText(nonce: string): string {
 export function reminderText(nonce: string): string {
   return (
     `[meridian-idle state-reminder ${nonce}]\n\n` +
-    "The user is away and this session's prompt cache is about to expire. Bring the work item's recorded state up to date, " +
-    'so a later resume or handoff starts from what you know now. Run `meridian work show` to see what is recorded, then update it in place: ' +
-    'replace what is stale and put in what only this conversation holds (status, decisions with their reasons, open questions, what you promised ' +
-    'other sessions, where you stopped), without appending a new block. Change nothing else. If nothing changed, write nothing. ' +
-    'End your turn with a one-line reply.'
+    'The user is away and your prompt cache is about to expire. Run `meridian work show` and update the ' +
+    "work item's recorded state in place: status, decisions with their reasons, open questions, promises " +
+    'to other sessions, where you stopped. If nothing changed, write nothing. End your turn with one line.'
   )
 }
 
