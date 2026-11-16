@@ -67,8 +67,9 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 ## `mode`
 
 Marks a lead. `meridian spawn subagents` tags primary-mode agents `(primary)`; see
-[Which agents a caller sees](#which-agents-a-caller-sees). Primary-mode profiles also
-receive the lead-only bundled skill triggers, including when launched as a spawn; see
+[Which agents a caller sees](#which-agents-a-caller-sees). A root launch (the session you
+steer) receives the lead-only bundled skill triggers whatever its profile's mode, and so
+does a primary-mode profile launched as a spawn; see
 [Skills](#skills-and-skill-variants).
 
 ```yaml
@@ -272,8 +273,8 @@ trigger only when needed with
 loaded skill gets, naming its installed folder; `meridian skills list` shows the same
 catalog, with structured entries under `--json`. These binary-owned skills may name
 the concrete Meridian commands and flags they explain. Bundled skill frontmatter may
-set `metadata.mode: primary`; its trigger then appears only when the agent profile declares
-`mode: primary`, even when that profile is launched as a spawn. Handoff, notification,
+set `metadata.mode: primary`; its trigger then appears in a root launch whatever its profile's mode, and in a spawn
+only when the agent profile declares `mode: primary`. Handoff, notification,
 messaging, work-item, privilege-escalation, and prompt-authoring guidance use this
 lead-only gate, while session mining and Markdown validation remain visible to every
 profile. Bundled skills are named
