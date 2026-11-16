@@ -6,6 +6,31 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-11-16
+
+### Changed
+- `meridian session log` shows the conversation by default: the user's messages and the
+  assistant's replies. Add `--tools` to show tool calls and output, and messages a
+  plugin, hook, task notification, peer session or Meridian injected (labelled
+  `Injected`); `--raw` still shows everything. Entry numbers are the same in every view
+  and skip hidden entries, so a position printed by one view opens in the other;
+  `--tail N` gives the last N shown entries. User messages are never truncated.
+- Entry numbers differ from earlier builds: a user message and an injected message are
+  now entries of their own. Open commands from an older `session search` may land on a
+  neighbouring entry; search indexes rebuild on their own.
+- Messages Meridian injects into a session (peer messages from `spawn message`, idle and
+  close nudges) start with `[Meridian]`.
+
+### Fixed
+- `meridian session log` labelled most entries `Mixed` (an agent step together with its
+  tool results); entries are now the user's text or one agent step.
+- A message sent to Claude Code mid-turn was missing from `session log`; typed messages
+  sent mid-turn now show as the user's.
+- Meridian's own peer messages and nudges, Claude's compaction summary, Codex's injected
+  AGENTS.md and environment context, and OpenCode's synthetic notes showed as messages
+  from the user. Claude's compaction summary is now the segment's opening (entry 0).
+- Codex `custom_tool_call` calls and their output were missing from `session log`.
+
 ## [0.22.3-rc.1] - 2026-11-16
 
 None. CI-only change: workflow actions move to majors that run on Node 24; nothing a user or developer notices changes.
