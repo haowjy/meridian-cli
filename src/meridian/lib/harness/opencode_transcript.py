@@ -761,7 +761,9 @@ def interpret_opencode_v2_record(
         # as their own `synthetic` rows, with the same `text` shape.
         is_user = message_type == "user"
         text = _text_from_value(data_payload.get("text"))
-        events = [{"role": "user" if is_user else "injected", "content": text}] if text else []
+        events: list[dict[str, object]] = (
+            [{"role": "user" if is_user else "injected", "content": text}] if text else []
+        )
         return events, is_user, None
     if message_type == "assistant":
         parts = _v2_content_parts(data_payload.get("content"))
