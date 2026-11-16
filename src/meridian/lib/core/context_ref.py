@@ -81,94 +81,75 @@ def _work_lines(ref: ContextRef) -> list[str]:
     return lines
 
 
-def _catch_up_lines(chat_id: str | None, work_id: str | None) -> list[str]:
-    """Catch-up steps, cheapest first; commands only, never transcript text."""
+def _catch_up_steps(chat_id: str | None, work_id: str | None) -> list[str]:
+    """Numbered steps, cheapest first; commands only, never transcript text."""
 
-    lines = ["", "## Catch up: this block does not say what that session discussed"]
-    step = 1
+    steps: list[str] = []
     if work_id:
-        lines.append(
-            f"{step}. Recorded state first: `meridian work show {work_id}` names the work "
+        steps.append(
+            f"Recorded state first: `meridian work show {work_id}` names the work "
             "item's directory; read its `AGENTS.md`, plan and status there, and check "
             "open PRs."
         )
-        step += 1
     if chat_id:
-        lines.append(
-            f"{step}. The end of the old session: `meridian session log {chat_id} "
+        steps.append(
+            f"The end of the old session: `meridian session log {chat_id} "
             "--tail 20` (the user's last messages and the replies)."
         )
-        lines.append(
-            f"{step + 1}. Then search, only for what is still missing: "
+        steps.append(
+            "Then search, only for what is still missing: "
             f"`meridian session search <query> --ref {chat_id}`."
         )
-    return lines if len(lines) > 2 else []
-
-
-def _report_lines(
-    report_text: str | None, status: str, chat_id: str | None, work_id: str | None
-) -> list[str]:
-    """The report when there is one; else the catch-up steps for a source that has none."""
-
-    if report_text and report_text.strip():
-        return ["", "## Report", report_text.strip()]
-    lines = ["", "## Report", "No report available."] if status not in ACTIVE_SPAWN_STATUSES else []
-    return lines + _catch_up_lines(chat_id, work_id)
+    return [f"{n}. {step}" for n, step in enumerate(steps, 1)]
 
 
 def _render_context_ref(ref: ContextRef) -> str:
     status = ref.status or "unknown"
     agent = ref.agent or "n/a"
-
     if ref.ref_kind == "session":
-        tag_attrs = f'chat="{ref.chat_id}"'
-        if ref.primary_spawn_id:
-            tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
-        lines = [
-            f"<prior-session-context {tag_attrs}>",
-            f"# Session {ref.chat_id}",
-            f"**Status:** {status} | **Agent:** {agent}",
-        ]
-        if ref.primary_spawn_id:
-            lines[2] = f"**Primary spawn:** {ref.primary_spawn_id} | {lines[2]}"
-        if ref.harness_session_id and ref.harness_session_id.strip():
-            lines.append(
-                f"**Harness:** {ref.harness or 'n/a'} | "
-                f"**Harness session:** {ref.harness_session_id}"
-            )
-        lines.extend(_work_lines(ref))
-        if ref.task_cwd:
-            lines.append(f"**Task directory:** `{ref.task_cwd}`")
-        lines.extend(_report_lines(ref.report_text, status, ref.chat_id, ref.work_id))
-        lines.extend(["", "## Explore Further"])
-        if ref.primary_spawn_id:
-            lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        if ref.report_text and ref.report_text.strip():
-            lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
-        lines.extend(_message_line(ref.chat_id if ref.primary_spawn_id else None, status))
-        lines.append("</prior-session-context>")
-        return "\n".join(lines)
+        chat_id = ref.chat_id
+        spawn_id = ref.primary_spawn_id
+        tag = f'<prior-session-context chat="{chat_id}"'
+        tag += f' primary_spawn="{spawn_id}">' if spawn_id else ">"
+        header = [tag, f"# Session {chat_id}"]
+        status_line = f"**Status:** {status} | **Agent:** {agent}"
+        if spawn_id:
+            status_line = f"**Primary spawn:** {spawn_id} | {status_line}"
+        close = "</prior-session-context>"
+    else:
+        chat_id = (ref.chat_id or "").strip() or None
+        spawn_id = ref.spawn_id
+        header = [f'<prior-spawn-context spawn="{spawn_id}">', f"# Spawn {spawn_id}"]
+        status_line = f"**Status:** {status} | **Agent:** {agent} | **Desc:** {ref.desc or 'n/a'}"
+        close = "</prior-spawn-context>"
 
-    desc = ref.desc or "n/a"
-    lines = [
-        f'<prior-spawn-context spawn="{ref.spawn_id}">',
-        f"# Spawn {ref.spawn_id}",
-        f"**Status:** {status} | **Agent:** {agent} | **Desc:** {desc}",
-    ]
+    lines = [*header, status_line]
+    if ref.harness_session_id and ref.harness_session_id.strip():
+        lines.append(
+            f"**Harness:** {ref.harness or 'n/a'} | **Harness session:** {ref.harness_session_id}"
+        )
     lines.extend(_work_lines(ref))
     if ref.task_cwd:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
-    lines.extend(
-        _report_lines(ref.report_text, status, (ref.chat_id or "").strip() or None, ref.work_id)
-    )
 
-    lines.append("")
-    lines.append("## Explore Further")
-    lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    if ref.report_text and ref.report_text.strip() and ref.chat_id and ref.chat_id.strip():
-        lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
-    lines.extend(_message_line(ref.spawn_id, status))
-    lines.append("</prior-spawn-context>")
+    has_report = bool(ref.report_text and ref.report_text.strip())
+    if ref.report_text and has_report:
+        lines.extend(["", "## Report", ref.report_text.strip()])
+        commands: list[str] = []
+    else:
+        if status not in ACTIVE_SPAWN_STATUSES:
+            lines.extend(["", "## Report", "No report available."])
+        commands = _catch_up_steps(chat_id, ref.work_id)
+    if spawn_id:
+        commands.append(f"- Details: `meridian spawn show {spawn_id}`")
+    if has_report and chat_id:
+        commands.append(f"- Session transcript: `meridian session log {chat_id}`")
+    # A session ref reaches its primary spawn through the chat ID.
+    message_target = spawn_id if ref.ref_kind == "spawn" else chat_id if spawn_id else None
+    commands.extend(_message_line(message_target, status))
+    if commands:
+        lines.extend(["", "## Catch up", *commands])
+    lines.append(close)
     return "\n".join(lines)
 
 
