@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-from meridian.lib.catalog.mars_roots import resolve_mars_roots
-from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId
 
@@ -25,50 +21,6 @@ def _float(value: object) -> float | None:
     return None
 
 
-def _pricing_value(model: dict[str, object], *keys: str) -> float | None:
-    # Mars cache uses flat keys like cost_input, cost_output, cost_cache_read
-    for key in keys:
-        value = _float(model.get(key))
-        if value is not None:
-            return value
-    # Fallback: nested cost/pricing objects
-    candidates: list[dict[str, object]] = []
-    pricing = model.get("pricing")
-    if isinstance(pricing, dict):
-        candidates.append(cast("dict[str, object]", pricing))
-    cost = model.get("cost")
-    if isinstance(cost, dict):
-        candidates.append(cast("dict[str, object]", cost))
-    for source in candidates:
-        for key in keys:
-            value = _float(source.get(key))
-            if value is not None:
-                return value
-    return None
-
-
-def _load_model(model_id: str, project_root: Path | None = None) -> dict[str, object] | None:
-    root = resolve_project_root_resolution(project_root).project_root
-    path = resolve_mars_roots(root).primary / ".mars" / "models-cache.json"
-    try:
-        raw_obj: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(raw_obj, dict):
-        return None
-    raw = cast("dict[str, object]", raw_obj)
-    models_obj = raw.get("models")
-    if not isinstance(models_obj, list):
-        return None
-    for item_obj in cast("list[object]", models_obj):
-        if not isinstance(item_obj, dict):
-            continue
-        item = cast("dict[str, object]", item_obj)
-        if str(item.get("id", "")).strip() == model_id:
-            return item
-    return None
-
-
 def _cost_semantics(model: dict[str, object], harness_id: str | None) -> CostSemantics:
     """Return token bucket semantics for catalog-based estimation.
 
@@ -83,7 +35,7 @@ def _cost_semantics(model: dict[str, object], harness_id: str | None) -> CostSem
     if normalized_harness == HarnessId.CODEX.value:
         return "openai_inclusive"
 
-    provider = str(model.get("provider", "")).strip().lower()
+    provider = str(model.get("provider_key", "")).strip().lower()
     if provider == "openai":
         return "openai_inclusive"
     return "additive"
@@ -91,34 +43,24 @@ def _cost_semantics(model: dict[str, object], harness_id: str | None) -> CostSem
 
 def estimate_usage_cost(
     *,
-    model_id: str | None,
+    catalog_row: dict[str, object] | None,
     usage: TokenUsage,
-    project_root: Path | None = None,
     harness_id: str | None = None,
 ) -> TokenUsage:
-    """Return usage with estimated total cost when catalog pricing is available.
+    """Return usage with estimated total cost from a Mars ``routing.catalog_row``.
 
-    Catalog prices are expected per million tokens. If cache-read pricing is absent,
+    Catalog prices are per million tokens. If cache-read pricing is absent,
     cached input falls back to 10% of normal input cost.
     """
-    if usage.total_cost_usd is not None or not model_id:
+    if usage.total_cost_usd is not None or catalog_row is None:
         return usage
-    model = _load_model(model_id, project_root)
-    if model is None:
-        return usage
+    model = catalog_row
 
-    # Mars cache keys: cost_input, cost_output, cost_cache_read, cost_cache_write, cost_reasoning
-    input_per_m = _pricing_value(model, "cost_input", "input_cost_per_million", "input")
-    output_per_m = _pricing_value(model, "cost_output", "output_cost_per_million", "output")
-    cache_read_per_m = _pricing_value(
-        model, "cost_cache_read", "cache_read_input_cost_per_million", "cache_read"
-    )
-    cache_write_per_m = _pricing_value(
-        model, "cost_cache_write", "cache_creation_input_cost_per_million", "cache_write"
-    )
-    reasoning_per_m = _pricing_value(
-        model, "cost_reasoning", "reasoning_cost_per_million", "reasoning"
-    )
+    input_per_m = _float(model.get("cost_input"))
+    output_per_m = _float(model.get("cost_output"))
+    cache_read_per_m = _float(model.get("cost_cache_read"))
+    cache_write_per_m = _float(model.get("cost_cache_write"))
+    reasoning_per_m = _float(model.get("cost_reasoning"))
 
     if input_per_m is None and output_per_m is None:
         return usage

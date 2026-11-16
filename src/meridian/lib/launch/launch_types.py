@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -35,6 +35,36 @@ class TerminalSurfaceMode(StrEnum):
 
     PTY_MEDIATED = "pty_mediated"
     NATIVE_INHERIT = "native_inherit"
+
+
+class ProvenanceLevel(Enum):
+    CLI = "cli"
+    ENV = "env"
+    OVERLAY_MODEL_POLICY = "overlay-model-policy"
+    OVERLAY = "overlay"
+    SETTINGS_MODEL_POLICY = "settings-model-policy"
+    MATCHED_POLICY_RULE = "matched_policy_rule"
+    PROFILE_MODEL_POLICY = "profile-model-policy"
+    PROFILE_DEFAULT = "profile-default"
+    CONFIG_DEFAULT = "config-default"
+    ALIAS_DEFAULT = "alias-default"
+    UNSET = "unset"
+
+
+@dataclass(frozen=True)
+class FieldProvenance:
+    """Records where each effective field value came from."""
+
+    model_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    harness_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    effort_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    approval_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    sandbox_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    network_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    autocompact_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    autocompact_pct_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    timeout_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    resident_rearm_budget_source: ProvenanceLevel = ProvenanceLevel.UNSET
 
 
 class CompositionWarning(BaseModel):

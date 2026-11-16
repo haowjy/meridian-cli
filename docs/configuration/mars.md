@@ -248,6 +248,12 @@ Per-field, strongest to weakest:
 6. Config-level defaults
 7. Model alias defaults
 
+Effort follows this order inside Mars, not in Meridian: Meridian sends `--effort` and
+`MERIDIAN_EFFORT` as `--effort`, and `primary.effort` from `meridian.toml` as
+`--config-effort`, which sits above the alias's `default_effort`. Mars then moves the
+result to a level the model and harness take and warns when it moves
+([Effort by harness](../agent-profiles.md#effort-by-harness)).
+
 Local Mars overrides win over project Mars config for overlay values, and the Mars user
 `config.toml` sits below both: `config.toml < mars.toml < mars.local.toml < CLI`
 (file locations: [User `config.toml`](../upgrading.md#user-configtoml-now-applies-mars-0233)).

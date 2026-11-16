@@ -52,6 +52,7 @@ from meridian.lib.launch.launch_types import (
     PreparedLaunchContent,
     PreparedLaunchRuntimeSeeds,
     PreparedPromptPayload,
+    ProvenanceLevel,
     ResolvedLaunchBinding,
     ResolvedLaunchEnvironment,
     ResolvedLaunchSpec,
@@ -96,7 +97,6 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
-from .compiler import ProvenanceLevel
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,

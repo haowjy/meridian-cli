@@ -37,9 +37,10 @@ from meridian.lib.catalog.mars_roots import (
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
 from meridian.lib.core.route_report import AssessmentReport, RouteDecisionReport
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
+    FieldProvenance,
+    ProvenanceLevel,
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
@@ -62,9 +63,10 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release with project-wide tool denies, the map form of agent tool
-# overlays and ``launch-bundle --agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.30.0"
+# First Mars release that resolves effort to a level the model and harness take
+# (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
+# project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
+_MARS_BUNDLE_MIN_VERSION = "0.36.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -82,6 +84,8 @@ class BundleRequest:
     harness_override: str | None = None
     excluded_harnesses: tuple[HarnessId, ...] = ()
     effort_override: str | None = None
+    # The caller's own configured effort (``primary.effort``): below the agent's, above the alias's.
+    config_effort: str | None = None
     approval_override: str | None = None
     sandbox_override: str | None = None
     network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
@@ -110,6 +114,8 @@ class BundleResult:
     provider_constraint: str | None
     harness: HarnessId
     harness_model: str | None
+    # models.dev row of the model the harness runs; None when the catalog has no such model.
+    catalog_row: dict[str, object] | None
     execution_policy: ResolvedExecutionPolicy
     network: NetworkPolicy | SandboxDerivedNetwork
     provenance: dict[str, str]
@@ -404,6 +410,8 @@ def _build_bundle_command(
         command.extend(["--exclude-harness", harness.value])
     if request.effort_override:
         command.extend(["--effort", request.effort_override])
+    if request.config_effort:
+        command.extend(["--config-effort", request.config_effort])
     if request.approval_override:
         command.extend(["--approval", request.approval_override])
     if request.sandbox_override:
@@ -721,6 +729,7 @@ def _parse_bundle_payload(
         provider_constraint=_normalize_str(routing.get("provider_constraint")) or None,
         harness=harness,
         harness_model=harness_model,
+        catalog_row=json_object(routing.get("catalog_row")),
         execution_policy=execution_policy,
         network=network,
         provenance=provenance,
@@ -800,6 +809,39 @@ def request_and_resolve(
             for warning in bundle.warnings
         ),
     )
+
+
+def lookup_catalog_row(*, model: str, harness: str, project_root: Path) -> dict[str, object] | None:
+    """Return the models.dev row Mars gives *model* on *harness*, or None.
+
+    Cost estimates are best effort: a Mars that cannot be run or does not know the model
+    leaves the spawn without an estimate, as a missing catalog always did.
+    """
+
+    try:
+        command = _build_bundle_command(
+            BundleRequest(
+                agent=None,
+                project_root=project_root,
+                model_override=model,
+                literal_model=True,
+                harness_override=harness,
+                no_refresh_models=True,
+            )
+        )
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        )
+        payload = json_object(json.loads(result.stdout)) if result.returncode == 0 else None
+    except (RuntimeError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    routing = json_object(payload.get("routing")) if payload is not None else None
+    return json_object(routing.get("catalog_row")) if routing is not None else None
 
 
 def _map_provenance_level(value: str | None) -> ProvenanceLevel:
@@ -920,5 +962,6 @@ __all__ = [
     "BundleResult",
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
+    "lookup_catalog_row",
     "request_and_resolve",
 ]

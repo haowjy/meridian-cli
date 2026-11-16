@@ -91,7 +91,7 @@ NativeConfigValue = Annotated[
 class ResolvedExecutionPolicy(BaseModel):
     """Typed execution-policy carrier passed through non-consuming boundaries.
 
-    Only the compiler (precedence resolution) and harness adapters (env/flag
+    Only launch policy resolution and harness adapters (env/flag
     injection) should access individual fields. Everything else carries this
     as an opaque object.
     """

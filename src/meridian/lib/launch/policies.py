@@ -29,13 +29,10 @@ from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
-from .compiler import (
-    FieldProvenance,
-    ProvenanceLevel,
-    match_model_policy,
-)
 from .launch_types import (
     CompositionWarning,
+    FieldProvenance,
+    ProvenanceLevel,
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
     TerminalSurfaceMode,
@@ -257,8 +254,7 @@ def _require_policy_tier(
     return tier
 
 
-_EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
-    "effort": "effort_source",
+_EXECUTION_POLICY_PROVENANCE_KEYS: dict[str, str] = {
     "sandbox": "sandbox_source",
     "approval": "approval_source",
     "autocompact": "autocompact_source",
@@ -340,29 +336,23 @@ def _resolve_bundle_execution_policy(
     bundle_execution_policy: RuntimeOverrides,
     profile_overrides: RuntimeOverrides,
 ) -> tuple[RuntimeOverrides, dict[str, str]]:
-    config_policy = surface.config_overrides.execution_policy_scope(
-        surface.supported_execution_policy_fields
-    )
+    # Effort is Mars's: the bundle already holds the level the model and harness take, so
+    # it has no layer here.
+    fields: frozenset[ExecutionPolicyField] = surface.supported_execution_policy_fields - {"effort"}
+    config_policy = surface.config_overrides.execution_policy_scope(fields)
     policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
-        (
-            "cli",
-            surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
-        (
-            "env",
-            surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
+        ("cli", surface.cli_overrides.execution_policy_scope(fields)),
+        ("env", surface.env_overrides.execution_policy_scope(fields)),
         ("bundle", bundle_execution_policy),
-        (
-            "profile-default",
-            profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
+        ("profile-default", profile_overrides.execution_policy_scope(fields)),
         ("config-default", config_policy),
     )
     resolved = resolve_policy_fields(tuple(layer for _, layer in policy_layers))
+    if "effort" in surface.supported_execution_policy_fields:
+        resolved = resolved.model_copy(update={"effort": bundle_execution_policy.effort})
 
     provenance_overrides: dict[str, str] = {}
-    for field_name in surface.supported_execution_policy_fields:
+    for field_name in fields:
         for source, layer in policy_layers:
             if getattr(layer, field_name) is None:
                 continue
@@ -413,6 +403,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         harness_override=bundle_harness_override,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
         effort_override=explicit_user_overrides.effort,
+        config_effort=surface.config_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
         network_overrides=surface.network_overrides,
@@ -783,6 +774,11 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             and intent.selected_token
         ):
             selected_token = intent.selected_token
+        if execution_policy.effort is not None:
+            # Mars resolved the stored or given level for this model and harness.
+            execution_policy = execution_policy.model_copy(
+                update={"effort": bundle.execution_policy.effort}
+            )
         if recompute_network:
             execution_policy = execution_policy.model_copy(
                 update={"network": resolve_network_policy(bundle.network, execution_policy.sandbox)}
@@ -790,8 +786,18 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         explicit_sources = {f"{name}_source": ProvenanceLevel.CLI for name in changed}
         if network_given:
             explicit_sources["network_source"] = ProvenanceLevel.CLI
+        with_rules = _with_current_bundle_rules(replayed, surface, snapshot, bundle)
+        bundle_warnings = "\n".join(bundle.warnings).strip()
         return replace(
-            _with_current_bundle_rules(replayed, surface, snapshot, bundle),
+            with_rules,
+            warnings=(
+                (
+                    *with_rules.warnings,
+                    CompositionWarning(code="model_warning", message=bundle_warnings),
+                )
+                if bundle_warnings
+                else with_rules.warnings
+            ),
             execution_policy=execution_policy,
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
@@ -837,7 +843,6 @@ __all__ = [
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "SurfacePolicyInput",
-    "match_model_policy",
     "resolve_launch_policy",
     "resolve_policy_fields",
     "validate_harness_compatibility",

@@ -5,6 +5,7 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.spawn_lifecycle import (
@@ -15,6 +16,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
+from meridian.lib.launch.bundle_adapter import lookup_catalog_row
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.paths import LaunchPaths
@@ -103,16 +105,18 @@ def enrich_finalize(
 
     if facts.incomplete:
         structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(launch.spawn_id))
-    usage = (
-        estimate_usage_cost(
-            model_id=(model_id or "").strip() or None,
-            usage=facts.usage,
-            project_root=project_root,
-            harness_id=str(harness_id) if harness_id is not None else None,
+    usage = facts.usage
+    model = (model_id or "").strip()
+    if usage is not None and usage.total_cost_usd is None and model and harness_id is not None:
+        usage = estimate_usage_cost(
+            catalog_row=lookup_catalog_row(
+                model=model,
+                harness=str(harness_id),
+                project_root=resolve_project_root_resolution(project_root).project_root,
+            ),
+            usage=usage,
+            harness_id=str(harness_id),
         )
-        if facts.usage is not None
-        else None
-    )
     harness_session_id = facts.first_session_id
     if facts.permission_denials:
         journal = PermissionJournal(launch)

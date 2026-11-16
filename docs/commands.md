@@ -583,11 +583,11 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
 | `meridian mars remove NAME` | Remove a dependency and prune its installed items |
-| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
+| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
 | `meridian mars unlink DIR` | Remove a link target |
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
-| `meridian mars upgrade` | Fetch latest versions and sync |
+| `meridian mars upgrade [NAME]` | Move dependencies to their newest compatible release and sync. The only command that does |
 | `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
 | `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
 | `meridian mars repair` | Rebuild managed state from config and dependencies |
