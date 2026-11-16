@@ -63,11 +63,11 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
-def _message_line(spawn_id: str | None, status: str) -> list[str]:
+def _message_line(target: str | None, status: str) -> list[str]:
     # Queued and finalizing spawns have no live control endpoint to take the message.
-    if not spawn_id or not spawn_id.strip() or status != "running":
+    if not target or not target.strip() or status != "running":
         return []
-    return [f'- Still running; message it: `meridian spawn message {spawn_id} --message "..."`']
+    return [f'- Still running; message it: `meridian spawn message {target} --message "..."`']
 
 
 def _work_lines(ref: ContextRef) -> list[str]:
@@ -83,7 +83,7 @@ def _work_lines(ref: ContextRef) -> list[str]:
 def _catch_up_lines(chat_id: str | None, work_id: str | None) -> list[str]:
     """Catch-up steps, cheapest first; commands only, never transcript text."""
 
-    lines = ["", "## Catch up (nothing here says what that session discussed)"]
+    lines = ["", "## Catch up: this block does not say what that session discussed"]
     step = 1
     if work_id:
         lines.append(
@@ -98,7 +98,7 @@ def _catch_up_lines(chat_id: str | None, work_id: str | None) -> list[str]:
             "--tail 20` (the owner's last messages and the replies)."
         )
         lines.append(
-            f"{step + 1}. Search only for what the state doesn't answer: "
+            f"{step + 1}. Then search, only for what is still missing: "
             f"`meridian session search <query> --ref {chat_id}`."
         )
     return lines if len(lines) > 2 else []
@@ -131,7 +131,7 @@ def _render_context_ref(ref: ContextRef) -> str:
         lines.extend(["", "## Explore Further"])
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        lines.extend(_message_line(ref.primary_spawn_id, status))
+        lines.extend(_message_line(ref.chat_id if ref.primary_spawn_id else None, status))
         lines.append("</prior-session-context>")
         return "\n".join(lines)
 

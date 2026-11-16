@@ -27,7 +27,7 @@ meridian -C /absolute/project -a AGENT \
 ```
 
 Write every reference as its concrete value because the user's new terminal does not
-inherit this session's shell variables. `-C` is the project that holds the spawn and
+inherit this session's shell variables. `-C` is the project that holds the chat and
 work IDs; `--task-dir` is the source checkout, when it is a worktree or sibling checkout.
 Pass your chat ID as `--from`: `$MERIDIAN_CHAT_ID`, which a restricted shell can't
 expand, so copy it from your capabilities block. The new lead's prompt then lists how
