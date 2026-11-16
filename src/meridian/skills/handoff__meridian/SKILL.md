@@ -23,15 +23,20 @@ meridian -C /absolute/project -a AGENT \
   --work WORK_ID \
   --task-dir /absolute/source/checkout \
   --prompt-file /absolute/work/directory/prompts/handoff.md \
-  --from pNNN
+  --from cNNN
 ```
 
 Write every reference as its concrete value because the user's new terminal does not
-inherit this session's shell variables. `-C` is the project that holds the spawn and
+inherit this session's shell variables. `-C` is the project that holds the chat and
 work IDs; `--task-dir` is the source checkout, when it is a worktree or sibling checkout.
-Pass your spawn ID as `--from`: `meridian task-dir --json` prints it as `spawn_id` (a
-restricted shell can't expand `$MERIDIAN_SPAWN_ID`). A chat ID would instead seed the new
-lead with that chat's transcript from before a `/clear`.
+Pass your chat ID as `--from`: `$MERIDIAN_CHAT_ID`, which a restricted shell can't
+expand, so copy it from your capabilities block. The new lead's prompt then lists how
+to catch up on this session: its work item, the end of its log, search.
+
+Chat and spawn IDs count per project, so under `meridian -C <other project>` a bare
+`cNNN` names nothing or a different chat. For a handoff to a lead in another project,
+leave `--from` and `--work` out (neither resolves there) and have the brief name the origin with
+`meridian -C <origin project> session log cNNN --tail 20`.
 
 `--from` attaches the new lead to this session's work item; `--work` names another
 existing item instead. A lead on separate work has no item yet: leave `--work` out, and

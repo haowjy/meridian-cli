@@ -40,7 +40,7 @@ LAUNCH_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("meridian --continue c123", "Resume from ref"),
     ("meridian --fork p123", "Fork from ref"),
     ("meridian --fork-fresh p123 -m MODEL", "Fork and switch identity"),
-    ("meridian --from p123", "Fresh session with prior context"),
+    ("meridian --from c123", "Fresh session with prior context"),
     ("meridian --task-dir PATH", "Launch against a different edit directory"),
 )
 
