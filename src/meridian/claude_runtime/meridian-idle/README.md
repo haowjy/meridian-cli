@@ -56,8 +56,8 @@ conversation. When the cache warning acts, core answers `fire warn` with
 overrides it) is on and the session has a work item. Core owns that decision, so
 the mod reads no setting for it and takes `remind` as it comes. The mod then submits one
 plugin prompt, `[meridian-idle state-reminder <nonce>]`, that asks the model to
-add what only the conversation holds to the work item (`meridian work show`
-lists what is recorded) and end its turn. Non-interactive and subagent sessions
+update the work item's recorded state in place (`meridian work show`
+lists it), replacing what is stale and writing nothing if it is current, and end its turn. Non-interactive and subagent sessions
 never reach it.
 
 It is sent like a ping, with the same guards: a quiet prompt box, the cold-cache
@@ -69,9 +69,15 @@ the reply `stop-waiting` means nothing to it.
 
 With keepwarm on the reminder takes ping 1's slot (its turn warms the cache
 too) and pings 2 and on follow as usual. With keepwarm off it is one unrequested
-turn and takes no slot. Core claims the warning once per stretch, so the reminder
-is sent once per stretch: a reload after the claim recovers no warn timer, and a
-reminder skipped by a guard is not retried.
+turn and takes no slot. Core claims the warning once per stretch, so the mod
+keeps the reminder as owed in its own stretch record (`reminder` in `$.state`)
+until it is submitted. The warn timer sends it; if a main-loop turn is running
+then, or a guard holds it, the stretch's next prompt is the reminder instead of a
+ping: the next arm schedules it one `lead` later, with keepwarm on or off, and a
+reload recovers the stretch and does the same. The count and the flag are written
+before the submit, so a reload cannot send it twice. The cold-cache deadline still
+applies, and a stop, compaction or cold cache that ends the stretch's pings
+also drops it.
 
 ## Keepwarm
 
@@ -102,7 +108,7 @@ one. Pings send no notification.
   and untouched for 10 s. Every check before the submit stops 1 minute before
   the cache would expire: the stage's scheduled time plus `warn_minutes` (from
   `idle config`) minus 1 minute. The deadline does not move when the timer runs
-  late, so a late timer has less time or none. A skipped ping spends no slot.
+  late, so a late timer has less time or none. A skipped prompt spends no slot.
   When that deadline passes while a ping waits, the stretch's pings end too (the
   deadline is the cold-cache check), so a later arm schedules none.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
@@ -111,8 +117,8 @@ one. Pings send no notification.
   carries it names the ping's `turnId`, and only that turn's `turn.complete`
   with reason `answer` is read.
 - **A running turn.** If the warning or a chained timer fires while a
-  main-loop turn is in flight, no ping is sent and no slot is spent: that turn
-  refreshes the cache, and its own arm sets the next chained timer one lead
+  main-loop turn is in flight, nothing is sent and no slot is spent: that turn
+  refreshes the cache, and its own arm sets the next timer (an owed reminder or the next ping) one lead
   later (the stretch is already `warned`). A user return cancels it as usual.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not

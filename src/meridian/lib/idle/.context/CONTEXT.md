@@ -26,5 +26,6 @@ way every "current item" is, so a `work switch` counts). The mod only submits th
 prompt, so the `idle config` reply carries no setting for it. It rides the same
 single warning as ping 1, for the same reason: re-claiming `warn` would send
 another notice, and remembering the reminder needs an `IdleState` field older
-builds cannot read. The cost is that a reminder a guard skips is not retried in
-that stretch.
+builds cannot read. So the mod keeps the reminder owed in its own `$.state`
+stretch record until it submits it, and a turn running at the warning only
+delays it. The notice goes out before `remind` is decided.

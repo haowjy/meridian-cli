@@ -513,13 +513,6 @@ class IdleService:
             return claimed_state, (result, claimed_state)
 
         result, claimed_state = self.store.mutate(harness, session, transition)
-        if (
-            stage == "warn"
-            and result.decision == "act"
-            and policy.state_reminder
-            and self._has_work_item()
-        ):
-            result = replace(result, remind=True)
         if result.decision == "act" and claimed_state is not None:
             self._send_stage_notice(
                 stage,
@@ -529,12 +522,20 @@ class IdleService:
                 state=claimed_state,
                 policy=policy,
             )
+        if (
+            stage == "warn"
+            and result.decision == "act"
+            and policy.state_reminder
+            and self._has_work_item()
+        ):
+            result = replace(result, remind=True)
         return result
 
     def _has_work_item(self) -> bool:
         try:
             return resolve_active_work_id(self.project_root, environ=self.env) is not None
-        except (OSError, ValueError, sqlite3.Error):
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            logger.warning("idle state reminder: work item lookup failed: %s", exc)
             return False
 
     def _send_stage_notice(
