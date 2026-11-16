@@ -11,7 +11,7 @@ from pathlib import Path
 from meridian.lib.core.native_identity import NativeKey
 
 SCHEMA_VERSION = 1
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 INDEX_FILENAME = f"native-search-v{SCHEMA_VERSION}.sqlite3"
 MINIMUM_SQLITE_VERSION = (3, 43, 0)
 

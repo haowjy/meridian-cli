@@ -383,7 +383,9 @@ def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscrip
 
 
 # Codex delivers its own context as user-role messages; they are not the user's words.
-_CODEX_INJECTED_CONTEXT_PREFIXES = ("# AGENTS.md instructions for ", "<environment_context>")
+# Codex writes "# AGENTS.md instructions for <dir>" for a project file, and the bare
+# heading for the global one when the cwd has none.
+_CODEX_INJECTED_CONTEXT_PREFIXES = ("# AGENTS.md instructions", "<environment_context>")
 
 
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:

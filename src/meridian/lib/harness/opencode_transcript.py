@@ -756,9 +756,13 @@ def interpret_opencode_v2_record(
     if not isinstance(data, dict):
         return [], False, reason
     data_payload = cast("dict[str, object]", data)
-    if message_type == "user":
+    if message_type in {"user", "synthetic"}:
+        # OpenCode writes the notes it adds to a user turn (an opened file, a selection)
+        # as their own `synthetic` rows, with the same `text` shape.
+        is_user = message_type == "user"
         text = _text_from_value(data_payload.get("text"))
-        return ([{"role": "user", "content": text}] if text else []), True, None
+        events = [{"role": "user" if is_user else "injected", "content": text}] if text else []
+        return events, is_user, None
     if message_type == "assistant":
         parts = _v2_content_parts(data_payload.get("content"))
         material, material_reason = _message_events(role="assistant", parts=parts)
