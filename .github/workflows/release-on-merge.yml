@@ -19,7 +19,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout main
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -418,7 +418,7 @@ jobs:
 
       - name: Set up Node.js
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
