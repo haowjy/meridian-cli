@@ -47,6 +47,7 @@ class SessionContextRef(BaseModel):
     agent: str
     model: str
     harness: str
+    report_text: str | None = None
     harness_session_id: str | None = None
     work_id: str | None = None
     work_goal: str | None = None
@@ -95,13 +96,24 @@ def _catch_up_lines(chat_id: str | None, work_id: str | None) -> list[str]:
     if chat_id:
         lines.append(
             f"{step}. The end of the old session: `meridian session log {chat_id} "
-            "--tail 20` (the owner's last messages and the replies)."
+            "--tail 20` (the user's last messages and the replies)."
         )
         lines.append(
             f"{step + 1}. Then search, only for what is still missing: "
             f"`meridian session search <query> --ref {chat_id}`."
         )
     return lines if len(lines) > 2 else []
+
+
+def _report_lines(
+    report_text: str | None, status: str, chat_id: str | None, work_id: str | None
+) -> list[str]:
+    """The report when there is one; else the catch-up steps for a source that has none."""
+
+    if report_text and report_text.strip():
+        return ["", "## Report", report_text.strip()]
+    lines = ["", "## Report", "No report available."] if status not in ACTIVE_SPAWN_STATUSES else []
+    return lines + _catch_up_lines(chat_id, work_id)
 
 
 def _render_context_ref(ref: ContextRef) -> str:
@@ -127,10 +139,12 @@ def _render_context_ref(ref: ContextRef) -> str:
         lines.extend(_work_lines(ref))
         if ref.task_cwd:
             lines.append(f"**Task directory:** `{ref.task_cwd}`")
-        lines.extend(_catch_up_lines(ref.chat_id, ref.work_id))
+        lines.extend(_report_lines(ref.report_text, status, ref.chat_id, ref.work_id))
         lines.extend(["", "## Explore Further"])
         if ref.primary_spawn_id:
             lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
+        if ref.report_text and ref.report_text.strip():
+            lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
         lines.extend(_message_line(ref.chat_id if ref.primary_spawn_id else None, status))
         lines.append("</prior-session-context>")
         return "\n".join(lines)
@@ -144,12 +158,9 @@ def _render_context_ref(ref: ContextRef) -> str:
     lines.extend(_work_lines(ref))
     if ref.task_cwd:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
-    if ref.report_text and ref.report_text.strip():
-        lines.extend(["", "## Report", ref.report_text.strip()])
-    else:
-        if status not in ACTIVE_SPAWN_STATUSES:
-            lines.extend(["", "## Report", "No report available."])
-        lines.extend(_catch_up_lines((ref.chat_id or "").strip() or None, ref.work_id))
+    lines.extend(
+        _report_lines(ref.report_text, status, (ref.chat_id or "").strip() or None, ref.work_id)
+    )
 
     lines.append("")
     lines.append("## Explore Further")

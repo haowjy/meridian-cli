@@ -101,7 +101,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `-f FILE` | Attach context file (repeatable) |
 | `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage; with no report to show (a chat, a primary's spawn, a spawn without a report), the block lists the catch-up steps: the work item's recorded state, `session log <chat> --tail 20`, then `session search`. Also inherits the source's work item as a fallback (see Work Precedence below). |
+| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage; a chat or a primary's spawn shows the session, with the report of the spawn that ran it; with no report to show, the block lists the catch-up steps: the work item's recorded state, `session log <chat> --tail 20`, then `session search`. Also inherits the source's work item as a fallback (see Work Precedence below). |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item (overrides ambient and --from inheritance) |
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |

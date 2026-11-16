@@ -55,7 +55,8 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     """Resolve one --from value to concrete prior context payload.
 
     A spawn ref (or selector) names that spawn's report; a chat ref, a primary's
-    spawn ref or a native ID names that chat's own session.
+    spawn ref or a native ID names that chat's session, with the report of the spawn
+    that ran it when it has one.
     """
 
     normalized = ref.strip()
@@ -74,10 +75,12 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
             raise RefNotFound(located.spawn.id, "spawn")
         if row.kind != "primary" or not row.continue_chat_id:
             return _spawn_context_ref(row, project_root, root)
-        # A primary's spawn is its conversation: render the chat, one form to understand.
-        located = locate(project_root, row.continue_chat_id)
-        if isinstance(located, SpawnHit | Untracked):
+        # A primary's spawn is its conversation: show the session form, built from the
+        # row the caller named so its status, report and ID stay theirs.
+        chat_hit = locate(project_root, row.continue_chat_id, runtime_root=root)
+        if isinstance(chat_hit, SpawnHit | Untracked):
             return _spawn_context_ref(row, project_root, root)
+        return _session_context_ref(row, chat_hit.chat, project_root, root)
 
     chat = located.chat
     owner = chat_spawn(located)
@@ -139,6 +142,7 @@ def _session_context_ref(
         agent=primary_row.agent or "",
         model=primary_row.model or "",
         harness=primary_row.harness or "",
+        report_text=_load_report_text(project_root, primary_row),
         harness_session_id=(record.harness_session_id or "").strip() or None,
         work_id=work_id,
         work_goal=_work_goal(project_root, work_id),

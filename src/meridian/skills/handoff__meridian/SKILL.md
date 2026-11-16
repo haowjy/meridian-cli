@@ -35,7 +35,7 @@ to catch up on this session: its work item, the end of its log, search.
 
 Chat and spawn IDs count per project, so under `meridian -C <other project>` a bare
 `cNNN` names nothing or a different chat. For a handoff to a lead in another project,
-leave `--from` out and have the brief name the origin with
+leave `--from` and `--work` out (neither resolves there) and have the brief name the origin with
 `meridian -C <origin project> session log cNNN --tail 20`.
 
 `--from` attaches the new lead to this session's work item; `--work` names another
