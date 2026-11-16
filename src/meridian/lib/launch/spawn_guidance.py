@@ -55,13 +55,13 @@ when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
 _PRIMARY_WAIT_BULLET = """\
-- Drain every --bg spawn with no-arg `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn. It finds
-  running and owed spawns by session; re-invoke to keep waiting. The wait
-  itself can run in your native background execution to keep working
-  while it blocks — it's the launch, not the wait, that must never be
-  background-wrapped. Do not pipe or truncate its output. Un-waited
-  background spawns are lost."""
+- Launch spawns with --bg and collect their results with
+  `meridian spawn wait`; with no arg it finds your running and owed spawns.
+  Run the wait in your harness's background execution, so you keep working
+  and can reply while it blocks; re-invoke it to keep waiting. If your
+  harness doesn't tell you when a background command finishes, read what
+  the wait returned before you end your turn. Do not pipe or truncate its
+  output."""
 
 _CHILD_WAIT_BULLET = """\
 - To wait for --bg spawns, end your turn. You stay open while they run,
