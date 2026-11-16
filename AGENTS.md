@@ -51,7 +51,7 @@ as it is.
   no decision IDs.
 
 How the code keeps the first five today, what checks them and where it falls short:
-[.context/invariants.md](.context/invariants.md).
+[.context/design-constraints.md](.context/design-constraints.md).
 
 ## Commands
 

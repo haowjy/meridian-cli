@@ -1,4 +1,4 @@
-# Invariants: how each is kept
+# Design constraints: how each is kept
 
 The root `AGENTS.md` states these rules under Design Constraints. This page says how the
 code keeps each one today, what checks it, and where it falls short. The mechanisms are
