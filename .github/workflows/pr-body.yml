@@ -38,7 +38,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The gate reads CHANGELOG.md as the base branch has it, which needs
           # history deeper than the merge commit.
