@@ -6,6 +6,22 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-17
+
+### Upgrade notes
+- Effort now resolves in Mars: a level the model or harness does not take moves to the nearest one that is (a tie goes up). Meridian prints Mars's warning, for example ``effort `max` → `high` ``, only when you typed the level with `--effort` or `MERIDIAN_EFFORT`; a level from a profile, an alias, `primary.effort` or a stored spawn moves silently. `minimal` and `auto` are new levels; `auto` sends no effort. `primary.effort` in `meridian.toml` now beats the model alias's `default_effort` (it used to lose to it). See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-decides-effort-and-mars-sync-no-longer-upgrades).
+- `meridian mars sync` keeps every dependency at its locked version, with or without a `version` in `mars.toml`. Run `meridian mars upgrade` to move one. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-decides-effort-and-mars-sync-no-longer-upgrades).
+
+### Changed
+- Pins `mars-agents==0.36.0`; Meridian requires Mars 0.36.0 or newer.
+- `--effort`, `MERIDIAN_EFFORT` and `primary.effort` accept `minimal` and `auto`.
+- The "effort `max` → `high`" warning prints only when you typed the level (`--effort` or `MERIDIAN_EFFORT`). A level from an agent profile, a model alias's `default_effort`, `primary.effort` or a stored spawn moves to the nearest level the model takes without a warning; the resolved level shows in `--dry-run` and `--json`.
+- `meridian --continue <spawn> --effort <level>` (the primary continue; `meridian spawn --continue` still rejects `--effort`) launches the level Mars resolved for the model, and shows Mars's effort warning. A forked session's stored effort goes through Mars the same way, without a warning.
+- The cost estimate of a finished spawn reads the models.dev row Mars returned in that spawn's launch bundle, stored with the spawn, not a project `.mars/models-cache.json` that Mars no longer writes. A spawn an older build stored has no row and gets no estimate.
+
+### Removed
+- Meridian's own effort clamp for Claude (`none` left out of `--effort`); Mars resolves it now.
+
 ## [0.22.4] - 2026-11-16
 
 ### Added
