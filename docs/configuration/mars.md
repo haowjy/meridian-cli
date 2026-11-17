@@ -251,7 +251,8 @@ Per-field, strongest to weakest:
 Effort follows this order inside Mars, not in Meridian: Meridian sends `--effort` and
 `MERIDIAN_EFFORT` as `--effort`, and `primary.effort` from `meridian.toml` as
 `--config-effort`, which sits above the alias's `default_effort`. Mars then moves the
-result to a level the model and harness take and warns when it moves
+result to a level the model and harness take. Meridian prints the move only when the level
+came from `--effort` or `MERIDIAN_EFFORT`
 ([Effort by harness](../agent-profiles.md#effort-by-harness)).
 
 Local Mars overrides win over project Mars config for overlay values, and the Mars user

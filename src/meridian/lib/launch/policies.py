@@ -477,7 +477,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         project_root=project_root,
     )
 
-    bundle_model_warning = "\n".join(bundle_result.warnings).strip() or None
+    bundle_model_warning = (
+        "\n".join(bundle_adapter.warnings_to_print(bundle_result)).strip() or None
+    )
     policy_warnings = list(
         _policy_warnings(
             profile_warning=profile_warning,
@@ -712,7 +714,8 @@ def _with_current_bundle_rules(
         execution_policy = execution_policy.model_copy(
             update={"effort": bundle.execution_policy.effort}
         )
-        moved = "\n".join(bundle.warnings).strip()
+        # A replayed level was not typed now, so its move is silent.
+        moved = "\n".join(bundle_adapter.warnings_to_print(bundle, effort_typed=False)).strip()
         if moved:
             warnings = (*warnings, CompositionWarning(code="model_warning", message=moved))
     return replace(
@@ -810,8 +813,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if network_given:
             explicit_sources["network_source"] = ProvenanceLevel.CLI
         with_rules = _with_current_bundle_rules(replayed, surface, snapshot, bundle)
-        # The bundle's warnings describe an effort move; with no effort sent there is none.
-        bundle_warnings = "\n".join(bundle.warnings).strip() if effort_resolved else ""
+        # Only a level given on this continue is typed; a stored one moves silently.
+        bundle_warnings = "\n".join(
+            bundle_adapter.warnings_to_print(bundle, effort_typed="effort" in changed)
+        ).strip()
         return replace(
             with_rules,
             warnings=(
