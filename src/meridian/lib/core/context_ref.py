@@ -47,6 +47,7 @@ class SessionContextRef(BaseModel):
     agent: str
     model: str
     harness: str
+    report_text: str | None = None
     harness_session_id: str | None = None
     work_id: str | None = None
     work_goal: str | None = None
@@ -63,12 +64,11 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
-def _message_line(spawn_id: str | None, status: str) -> list[str]:
-    # A spawn ID follows its session across /clear; a chat ID stops resolving there.
+def _message_line(target: str | None, status: str) -> list[str]:
     # Queued and finalizing spawns have no live control endpoint to take the message.
-    if not spawn_id or not spawn_id.strip() or status != "running":
+    if not target or not target.strip() or status != "running":
         return []
-    return [f'- Still running; message it: `meridian spawn message {spawn_id} --message "..."`']
+    return [f'- Still running; message it: `meridian spawn message {target} --message "..."`']
 
 
 def _work_lines(ref: ContextRef) -> list[str]:
@@ -81,63 +81,75 @@ def _work_lines(ref: ContextRef) -> list[str]:
     return lines
 
 
+def _catch_up_steps(chat_id: str | None, work_id: str | None) -> list[str]:
+    """Numbered steps, cheapest first; commands only, never transcript text."""
+
+    steps: list[str] = []
+    if work_id:
+        steps.append(
+            f"Recorded state first: `meridian work show {work_id}` names the work "
+            "item's directory; read its `AGENTS.md`, plan and status there, and check "
+            "open PRs."
+        )
+    if chat_id:
+        steps.append(
+            f"The end of the old session: `meridian session log {chat_id} "
+            "--tail 20` (the user's last messages and the replies)."
+        )
+        steps.append(
+            "Then search, only for what is still missing: "
+            f"`meridian session search <query> --ref {chat_id}`."
+        )
+    return [f"{n}. {step}" for n, step in enumerate(steps, 1)]
+
+
 def _render_context_ref(ref: ContextRef) -> str:
     status = ref.status or "unknown"
     agent = ref.agent or "n/a"
-
     if ref.ref_kind == "session":
-        tag_attrs = f'chat="{ref.chat_id}"'
-        if ref.primary_spawn_id:
-            tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
-        lines = [
-            f"<prior-session-context {tag_attrs}>",
-            f"# Session {ref.chat_id}",
-            f"**Status:** {status} | **Agent:** {agent}",
-        ]
-        if ref.primary_spawn_id:
-            lines[2] = f"**Primary spawn:** {ref.primary_spawn_id} | {lines[2]}"
-        if ref.harness_session_id and ref.harness_session_id.strip():
-            lines.append(
-                f"**Harness:** {ref.harness or 'n/a'} | "
-                f"**Harness session:** {ref.harness_session_id}"
-            )
-        lines.extend(_work_lines(ref))
-        if ref.task_cwd:
-            lines.append(f"**Task directory:** `{ref.task_cwd}`")
-        lines.extend(
-            [
-                "",
-                "## Explore Further",
-                f"- Session transcript: `meridian session log {ref.chat_id}`",
-            ]
-        )
-        if ref.primary_spawn_id:
-            lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
-        lines.extend(_message_line(ref.primary_spawn_id, status))
-        lines.append("</prior-session-context>")
-        return "\n".join(lines)
+        chat_id = ref.chat_id
+        spawn_id = ref.primary_spawn_id
+        tag = f'<prior-session-context chat="{chat_id}"'
+        tag += f' primary_spawn="{spawn_id}">' if spawn_id else ">"
+        header = [tag, f"# Session {chat_id}"]
+        status_line = f"**Status:** {status} | **Agent:** {agent}"
+        if spawn_id:
+            status_line = f"**Primary spawn:** {spawn_id} | {status_line}"
+        close = "</prior-session-context>"
+    else:
+        chat_id = (ref.chat_id or "").strip() or None
+        spawn_id = ref.spawn_id
+        header = [f'<prior-spawn-context spawn="{spawn_id}">', f"# Spawn {spawn_id}"]
+        status_line = f"**Status:** {status} | **Agent:** {agent} | **Desc:** {ref.desc or 'n/a'}"
+        close = "</prior-spawn-context>"
 
-    desc = ref.desc or "n/a"
-    lines = [
-        f'<prior-spawn-context spawn="{ref.spawn_id}">',
-        f"# Spawn {ref.spawn_id}",
-        f"**Status:** {status} | **Agent:** {agent} | **Desc:** {desc}",
-    ]
+    lines = [*header, status_line]
+    if ref.harness_session_id and ref.harness_session_id.strip():
+        lines.append(
+            f"**Harness:** {ref.harness or 'n/a'} | **Harness session:** {ref.harness_session_id}"
+        )
     lines.extend(_work_lines(ref))
     if ref.task_cwd:
         lines.append(f"**Task directory:** `{ref.task_cwd}`")
-    if ref.report_text and ref.report_text.strip():
-        lines.extend(["", "## Report", ref.report_text.strip()])
-    elif status not in ACTIVE_SPAWN_STATUSES:
-        lines.extend(["", "## Report", "No report available."])
 
-    lines.append("")
-    lines.append("## Explore Further")
-    lines.append(f"- Full details: `meridian spawn show {ref.spawn_id}`")
-    if ref.chat_id and ref.chat_id.strip():
-        lines.append(f"- Session transcript: `meridian session log {ref.chat_id}`")
-    lines.extend(_message_line(ref.spawn_id, status))
-    lines.append("</prior-spawn-context>")
+    has_report = bool(ref.report_text and ref.report_text.strip())
+    if ref.report_text and has_report:
+        lines.extend(["", "## Report", ref.report_text.strip()])
+        commands: list[str] = []
+    else:
+        if status not in ACTIVE_SPAWN_STATUSES:
+            lines.extend(["", "## Report", "No report available."])
+        commands = _catch_up_steps(chat_id, ref.work_id)
+    if spawn_id:
+        commands.append(f"- Details: `meridian spawn show {spawn_id}`")
+    if has_report and chat_id:
+        commands.append(f"- Session transcript: `meridian session log {chat_id}`")
+    # A session ref reaches its primary spawn through the chat ID.
+    message_target = spawn_id if ref.ref_kind == "spawn" else chat_id if spawn_id else None
+    commands.extend(_message_line(message_target, status))
+    if commands:
+        lines.extend(["", "## Catch up", *commands])
+    lines.append(close)
     return "\n".join(lines)
 
 

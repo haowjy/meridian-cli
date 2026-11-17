@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from meridian.lib.harness.transcript import ToolCall
+from meridian.lib.harness.transcript import INJECTED_ROLE, ToolCall
 
 _CONTENT_PREVIEW_MAX_LINES = 80
 _CONTENT_PREVIEW_MAX_CHARS = 8000
@@ -255,6 +255,8 @@ def _role_label(role: str) -> str:
         return "Assistant"
     if normalized == "system":
         return "System"
+    if normalized == INJECTED_ROLE:
+        return "Injected"
     return normalized.title() or "Message"
 
 
@@ -423,8 +425,8 @@ def _render_collapsed_tools(
 
         cleaned = clean_content(message.content)
         if cleaned:
-            cleaned = _truncate_preview(cleaned)
-            rendered.append(cleaned)
+            # The user's own text is short and the part a reader is looking for: never cut it.
+            rendered.append(cleaned if message.role == "user" else _truncate_preview(cleaned))
         index += 1
 
     return rendered, collapsed

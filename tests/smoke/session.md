@@ -59,7 +59,7 @@ uv run meridian session repair --help
 - [ ] Exit 0
 - [ ] `repair` appears in output (case-insensitive)
 
-## Log readability — clean default, raw escape hatch, expanded tool output
+## Log readability — conversation default, tools, raw escape hatch, expanded tool output
 
 Create a deterministic transcript with XML chrome and a tool call/result pair:
 
@@ -77,7 +77,14 @@ uv run meridian session log --file "$SCRATCH/session-log-readable.jsonl" --full
 ```
 - [ ] Exit 0
 - [ ] Output starts with a clean session header (`# Session`)
-- [ ] Role headers look like `**System**` / `**Mixed**`, not raw segment metadata
+- [ ] Role headers look like `**User**` / `**Assistant**`, not raw segment metadata, never `**Mixed**`
+- [ ] The assistant's text shows; the tool call (`$ printf hi`) does not
+- [ ] A hint says tool calls are hidden and to add `--tools`
+
+```bash
+uv run meridian session log --file "$SCRATCH/session-log-readable.jsonl" --full --tools
+```
+- [ ] Exit 0
 - [ ] XML chrome is removed: no `<local-command-caveat>` or `<system-reminder>`
 - [ ] Command input is readable (`$ echo hi`)
 - [ ] Tool action is collapsed (`  $ printf hi`)
@@ -85,7 +92,7 @@ uv run meridian session log --file "$SCRATCH/session-log-readable.jsonl" --full
 - [ ] Footer hints mention `Use --no-truncate to expand tool outputs`
 
 ```bash
-uv run meridian session log --file "$SCRATCH/session-log-readable.jsonl" --full --no-truncate
+uv run meridian session log --file "$SCRATCH/session-log-readable.jsonl" --full --tools --no-truncate
 ```
 - [ ] Exit 0
 - [ ] Tool output expands inline (`  hi`)

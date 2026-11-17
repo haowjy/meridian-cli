@@ -14,6 +14,7 @@ from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS, DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
@@ -55,12 +56,12 @@ def framed_message(
     """
 
     if sender_spawn_id is None:
-        provenance = "[Meridian] Message with no sender identity; it has no reply address."
+        provenance = f"{MARKER} Message with no sender identity; it has no reply address."
     elif sender is None or not can_reply:
         where = f"spawn {sender_spawn_id}"
         if sender is not None and sender.continue_chat_id:
             where += f" (chat {sender.continue_chat_id})"
-        provenance = f"[Meridian] Message from {where}; it has no reply route here."
+        provenance = f"{MARKER} Message from {where}; it has no reply route here."
     else:
         # The sender's current chat: after a /clear the entry chat is a past session.
         address = sender.continue_chat_id or sender.id
@@ -71,7 +72,7 @@ def framed_message(
         if sender.continue_chat_id:
             where += f" (chat {sender.continue_chat_id})"
         provenance = (
-            f"[Meridian] Message from {where}. To answer, run "
+            f"{MARKER} Message from {where}. To answer, run "
             f'`meridian {via}spawn message {address} --message "..."`.'
         )
     return f"{provenance}\n\n{message}"

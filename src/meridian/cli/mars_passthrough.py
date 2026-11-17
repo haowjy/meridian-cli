@@ -35,7 +35,6 @@ _MUTATING_COMMANDS = frozenset(
         "version",
         "repair",
         "resolve",
-        "migrate",
         "provide",
     }
 )
@@ -106,8 +105,6 @@ def _mars_subcommand(args: Sequence[str]) -> str | None:
 
 def _is_mars_mutation(args: Sequence[str]) -> bool:
     commands = tuple(token for token in args if not token.startswith("-"))
-    if commands[:1] == ("migrate",) and "--check" in args:
-        return False  # reports what needs migrating and writes nothing
     return bool(
         commands and (commands[0] in _MUTATING_COMMANDS or commands[:2] in _MUTATING_COMMAND_PAIRS)
     )

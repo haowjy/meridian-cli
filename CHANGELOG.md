@@ -6,6 +6,92 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-17
+
+### Upgrade notes
+- Effort now resolves in Mars: a level the model or harness does not take moves to the nearest one that is (a tie goes up). Meridian prints Mars's warning, for example ``effort `max` → `high` ``, only when you typed the level with `--effort` or `MERIDIAN_EFFORT`; a level from a profile, an alias, `primary.effort` or a stored spawn moves silently. `minimal` and `auto` are new levels; `auto` sends no effort. `primary.effort` in `meridian.toml` now beats the model alias's `default_effort` (it used to lose to it). See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-decides-effort-and-mars-sync-no-longer-upgrades).
+- `meridian mars sync` keeps every dependency at its locked version, with or without a `version` in `mars.toml`. Run `meridian mars upgrade` to move one. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-decides-effort-and-mars-sync-no-longer-upgrades).
+
+### Changed
+- Pins `mars-agents==0.36.0`; Meridian requires Mars 0.36.0 or newer.
+- `--effort`, `MERIDIAN_EFFORT` and `primary.effort` accept `minimal` and `auto`.
+- The "effort `max` → `high`" warning prints only when you typed the level (`--effort` or `MERIDIAN_EFFORT`). A level from an agent profile, a model alias's `default_effort`, `primary.effort` or a stored spawn moves to the nearest level the model takes without a warning; the resolved level shows in `--dry-run` and `--json`.
+- `meridian --continue <spawn> --effort <level>` (the primary continue; `meridian spawn --continue` still rejects `--effort`) launches the level Mars resolved for the model, and shows Mars's effort warning. A forked session's stored effort goes through Mars the same way, without a warning.
+- The cost estimate of a finished spawn reads the models.dev row Mars returned in that spawn's launch bundle, stored with the spawn, not a project `.mars/models-cache.json` that Mars no longer writes. A spawn an older build stored has no row and gets no estimate.
+
+### Removed
+- Meridian's own effort clamp for Claude (`none` left out of `--effort`); Mars resolves it now.
+
+## [0.22.4] - 2026-11-16
+
+### Added
+- `[idle] state_reminder` (default `true`; `MERIDIAN_IDLE_STATE_REMINDER`; per-harness
+  override under `[harness.<harness>.idle]`). When the prompt-cache warning fires in an
+  interactive Claude primary session that has a work item, the session gets one prompt
+  asking it to bring the work item's recorded state up to date in place: status,
+  decisions with their reasons, open questions, what it promised other sessions, where it
+  stopped. A later resume or `--from` then starts from current records. With keepwarm on
+  it takes ping 1's place; with keepwarm off it is one extra turn on a cache you were
+  about to lose. Set it to `false` to turn it off.
+
+### Changed
+- After a plugin reload mid-stretch, the meridian-idle mod resumes the stretch's keepwarm
+  pings (and an owed reminder) instead of dropping them.
+
+## [0.22.3] - 2026-11-16
+
+### Changed
+- `meridian session log` shows the conversation by default: the user's messages and the
+  assistant's replies. Add `--tools` to show tool calls and output, and messages a
+  plugin, hook, task notification, peer session or Meridian injected (labelled
+  `Injected`); `--raw` still shows everything. Entry numbers are the same in every view
+  and skip hidden entries, so a position printed by one view opens in the other;
+  `--tail N` gives the last N shown entries. User messages are never truncated.
+- Entry numbers differ from earlier builds: a user message and an injected message are
+  now entries of their own. Open commands from an older `session search` may land on a
+  neighbouring entry; search indexes rebuild on their own.
+- Messages Meridian injects into a session (peer messages from `spawn message`, idle and
+  close nudges) start with `[Meridian]`.
+
+### Fixed
+- `meridian session log` labelled most entries `Mixed` (an agent step together with its
+  tool results); entries are now the user's text or one agent step.
+- A message sent to Claude Code mid-turn was missing from `session log`; typed messages
+  sent mid-turn now show as the user's.
+- Meridian's own peer messages and nudges, Claude's compaction summary, Codex's injected
+  AGENTS.md and environment context, and OpenCode's synthetic notes showed as messages
+  from the user. Claude's compaction summary is now the segment's opening (entry 0).
+- Codex `custom_tool_call` calls and their output were missing from `session log`.
+
+## [0.22.3-rc.1] - 2026-11-16
+
+None. CI-only change: workflow actions move to majors that run on Node 24; nothing a user or developer notices changes.
+
+## [0.22.2] - 2026-11-16
+
+### Fixed
+- A session you launch yourself (`meridian -a NAME`) now lists the lead-only Meridian
+  skills (handoff, notify, work, messaging, escalation, prompt-authoring) whatever its
+  profile's `mode`. A spawned `subagent` profile still doesn't get them, and a
+  `mode: primary` profile still gets them when spawned.
+
+## [0.22.1] - 2026-11-15
+
+### Changed
+- Pins Mars 0.34.3. `meridian mars version` gains `--no-tag`, which leaves tagging to CI, and `mars.toml`'s `[plugin]` gains `marketplace-repository`, which pins a plugin's Claude marketplace entry to its release tag.
+
+## [0.22.0] - 2026-11-15
+
+### Upgrade notes
+- Meridian now bundles Mars 0.34.1, which no longer reads a package whose `[package]` has no `schema` (the pre-v1 format). If a dependency in your `mars.toml` was published before schema 1, `meridian mars sync` fails with `manifest.schema-missing` and names the dependency; run `meridian mars upgrade <name>` to take a newer version. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+
+### Changed
+- No user-visible change: removes a dead comment and a cast in the idle code and corrects one README line.
+- Pins Mars 0.34.1. `mars check` now prints findings per file, and its `--json` gains `diagnostics`; the `errors` and `warnings` strings from a package's files start with `[code]`. Agent files Mars writes carry `name:`, and `mars build plugin` follows `model-policies`.
+
+### Removed
+- `meridian mars migrate`: Mars 0.34 removed it.
+
 ## [0.21.7] - 2026-11-15
 
 ### Changed

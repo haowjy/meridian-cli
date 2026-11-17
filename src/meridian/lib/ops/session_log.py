@@ -24,6 +24,7 @@ from meridian.lib.ops.session_transcript import (
     ParsedSessionTranscript,
     SessionLogRoute,
     build_session_log_command,
+    entry_in_view,
     read_session_transcript,
 )
 
@@ -35,6 +36,7 @@ class SessionLogInput(BaseModel):
     segment: str | None = None
     global_scope: bool = False
     full: bool = False
+    tools: bool = False
     truncate: bool = True
     tail: int | None = None
     from_ordinal: int | None = None
@@ -124,12 +126,18 @@ class SessionLogOutput(BaseModel):
         return f"{self.view_label}\n{text}" if self.view_label else text
 
 
-def _window_hints(payload: SessionLogInput, *, uses_absolute_window: bool) -> tuple[str, ...]:
-    if uses_absolute_window or payload.full:
-        return ()
-    if payload.tail is None:
-        return ("Use --full to show the entire selected segment.",)
-    return ()
+def _window_hints(
+    payload: SessionLogInput, *, uses_absolute_window: bool, tools_hidden: bool
+) -> tuple[str, ...]:
+    hints: list[str] = []
+    if not (uses_absolute_window or payload.full) and payload.tail is None:
+        hints.append("Use --full to show the entire selected segment.")
+    if tools_hidden:
+        hints.append(
+            "Tool calls, output and injected messages (plugin, hook, peer, Meridian) are hidden "
+            "(entry numbers skip them); add --tools."
+        )
+    return tuple(hints)
 
 
 def _resolve_segment_index(*, total_segments: int, segment: str | None) -> int:
@@ -235,25 +243,28 @@ def _segment_boundary_commands(
         return (None, None)
 
     segment_index = address_space.segment_index
-    max_ordinal = (
-        address_space.ordinal_getter(address_space.entries[-1])
-        if address_space.entries
-        else address_space.first_ordinal
-    )
     touches_top = page.start_ordinal == address_space.first_ordinal
-    touches_bottom = page.end_ordinal == max_ordinal
+    touches_bottom = not page.has_next
     window_size = _window_navigation_size(payload)
 
     previous_segment_command: str | None = None
     if touches_top and segment_index > 0:
         previous_segment_index = segment_index - 1
-        previous_segment_total = len(segment_entries_by_index[previous_segment_index])
-        previous_start = max(previous_segment_total - window_size, 0)
+        # Count the entries this view shows, as `_window_at` does for `previous_from`.
+        shown = [
+            entry
+            for entry in segment_entries_by_index[previous_segment_index]
+            if entry_in_view(entry, tools=payload.tools) is not None
+        ]
+        previous_start = (
+            _entry_local_ordinal(shown[max(len(shown) - window_size, 0)]) if shown else 0
+        )
         previous_segment_command = build_session_log_command(
             parsed_route,
             segment_index=previous_segment_index,
             from_ordinal=previous_start,
             limit=window_size,
+            tools=payload.tools,
         )
 
     next_segment_command: str | None = None
@@ -263,6 +274,7 @@ def _segment_boundary_commands(
             segment_index=segment_index + 1,
             from_ordinal=0,
             limit=window_size,
+            tools=payload.tools,
         )
 
     return (previous_segment_command, next_segment_command)
@@ -346,47 +358,54 @@ def select_session_log_window(
             segment_entries=selected_segment_entries,
         )
 
+    in_view = [entry_in_view(entry, tools=payload.tools) for entry in address_space.entries]
+    view_entries = tuple(entry for entry in in_view if entry is not None)
+    tools_hidden = any(
+        shown is not entry for shown, entry in zip(in_view, address_space.entries, strict=True)
+    )
+    ordinal_getter = address_space.ordinal_getter
+    first_ordinal = address_space.first_ordinal
+
     resolved_tail: int | None = None
     if not uses_window_selectors:
-        interaction_entries = [entry for entry in address_space.entries if entry.kind != "setup"]
         resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
         page = window_from_tail(
-            address_space.entries if payload.full else interaction_entries,
+            view_entries
+            if payload.full
+            else tuple(entry for entry in view_entries if entry.kind != "setup"),
             tail=resolved_tail,
-            first_ordinal=address_space.first_ordinal if payload.full else 1,
-            ordinal_getter=address_space.ordinal_getter,
+            ordinal_getter=ordinal_getter,
         )
     elif payload.from_ordinal is not None:
-        limit = payload.limit if payload.limit is not None else 0
         page = window_from_from_limit(
-            address_space.entries,
+            view_entries,
             start_ordinal=payload.from_ordinal,
-            limit=limit,
-            first_ordinal=address_space.first_ordinal,
-            ordinal_getter=address_space.ordinal_getter,
+            limit=payload.limit if payload.limit is not None else 0,
+            first_ordinal=first_ordinal,
+            ordinal_getter=ordinal_getter,
         )
     elif payload.before_ordinal is not None:
-        limit = payload.limit if payload.limit is not None else 0
         page = window_from_before_limit(
-            address_space.entries,
+            view_entries,
             before_ordinal=payload.before_ordinal,
-            limit=limit,
-            first_ordinal=address_space.first_ordinal,
-            ordinal_getter=address_space.ordinal_getter,
+            limit=payload.limit if payload.limit is not None else 0,
+            first_ordinal=first_ordinal,
+            ordinal_getter=ordinal_getter,
         )
     else:
-        around_ordinal = (
-            payload.around_ordinal
-            if payload.around_ordinal is not None
-            else address_space.first_ordinal
-        )
-        context = payload.context if payload.context is not None else 0
         page = window_from_around_context(
-            address_space.entries,
-            around_ordinal=around_ordinal,
-            context=context,
-            first_ordinal=address_space.first_ordinal,
-            ordinal_getter=address_space.ordinal_getter,
+            view_entries,
+            around_ordinal=(
+                payload.around_ordinal if payload.around_ordinal is not None else first_ordinal
+            ),
+            context=payload.context if payload.context is not None else 0,
+            first_ordinal=first_ordinal,
+            last_ordinal=(
+                ordinal_getter(address_space.entries[-1])
+                if address_space.entries
+                else first_ordinal - 1
+            ),
+            ordinal_getter=ordinal_getter,
         )
 
     previous_command: str | None = None
@@ -404,6 +423,7 @@ def select_session_log_window(
                 global_scope=payload.global_scope,
                 from_ordinal=page.previous_from,
                 limit=nav_limit,
+                tools=payload.tools,
             )
         if page.next_from is not None:
             next_command = build_session_log_command(
@@ -412,6 +432,7 @@ def select_session_log_window(
                 global_scope=payload.global_scope,
                 from_ordinal=page.next_from,
                 limit=nav_limit,
+                tools=payload.tools,
             )
     elif page.has_previous:
         nav_limit = resolved_tail if resolved_tail is not None else 5
@@ -421,6 +442,7 @@ def select_session_log_window(
                 segment_index=address_space.segment_index,
                 from_ordinal=page.previous_from,
                 limit=nav_limit,
+                tools=payload.tools,
             )
 
     previous_segment_command, next_segment_command = _segment_boundary_commands(
@@ -463,7 +485,10 @@ def select_session_log_window(
         previous_segment_command=previous_segment_command,
         next_segment_command=next_segment_command,
         hints=(
-            _window_hints(payload, uses_absolute_window=uses_window_selectors) + parsed.read_reasons
+            _window_hints(
+                payload, uses_absolute_window=uses_window_selectors, tools_hidden=tools_hidden
+            )
+            + parsed.read_reasons
         ),
         truncate=payload.truncate,
     )

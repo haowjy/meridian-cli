@@ -52,6 +52,7 @@ from meridian.lib.launch.launch_types import (
     PreparedLaunchContent,
     PreparedLaunchRuntimeSeeds,
     PreparedPromptPayload,
+    ProvenanceLevel,
     ResolvedLaunchBinding,
     ResolvedLaunchEnvironment,
     ResolvedLaunchSpec,
@@ -96,7 +97,6 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
-from .compiler import ProvenanceLevel
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
@@ -949,6 +949,7 @@ def _build_shared_composition(
     assert network is not None
     return build_guidance_blocks(
         profile=policy.profile,
+        kind=kind,
         loaded_skills=frozenset(
             skill.name for skill in policy.resolved_skills.loaded_skills if skill.content.strip()
         ),

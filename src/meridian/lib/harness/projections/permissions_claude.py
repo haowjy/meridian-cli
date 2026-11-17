@@ -16,7 +16,6 @@ from fnmatch import fnmatchcase
 from typing import Literal
 
 from meridian.lib.harness.projections.compaction import compaction_report
-from meridian.lib.harness.projections.effort import effort_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.harness.projections.network_claude import (
     CLAUDE_NETWORK_ALLOW_DOMAINS,
@@ -885,7 +884,6 @@ def compile_claude_permissions(
         )
     )
     lines.extend(unsupported_native_config_report(spec.native_config, harness="Claude"))
-    lines.extend(effort_report(spec, harness="Claude"))
     lines.extend(compaction_report(spec, harness="Claude"))
     return permissions, complete_report(
         policy,

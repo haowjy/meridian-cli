@@ -101,7 +101,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `-f FILE` | Attach context file (repeatable) |
 | `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. Also inherits the source's work item as a fallback (see Work Precedence below). |
+| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage; a chat or a primary's spawn shows the session, with the report of the spawn that ran it; with no report to show, the block lists the catch-up steps: the work item's recorded state, `session log <chat> --tail 20`, then `session search`. Also inherits the source's work item as a fallback (see Work Precedence below). |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item (overrides ambient and --from inheritance) |
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
@@ -177,11 +177,12 @@ meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens inlin
 meridian spawn show p123                           # moderate summary + report body
 meridian spawn status p123                         # moderate summary without report body
 meridian spawn show p123 --verbose                 # internal diagnostics view
-meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
+meridian session log p123                          # the conversation: last 5 entries of user messages and assistant replies
+meridian session log p123 --tools                  # also tool calls, their output and plugin/hook messages
 meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
 meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot
 meridian session log p123 --global --from 0 --limit 1           # read first entry in global cross-segment stream
-meridian session log p123 --full --no-truncate     # full selected segment with full message content
+meridian session log p123 --full --no-truncate     # full selected segment with full assistant replies and tool output
 ```
 
 `spawn list --json` and `spawn children --json` rows carry `agent` (the
@@ -485,6 +486,9 @@ cache warning should still be sent. Humans normally use only:
 
 The adapter subcommands are `config`, `arm`, `return`, `needs-permission`,
 `fire`, and `event`; run `meridian idle --help` for their typed contract.
+`fire warn` adds `remind: true` to an `act` answer when the adapter should ask
+the model to record its state in the session's work item (`[idle] state_reminder`
+on and a work item attached).
 Outside-Meridian adapters must pass `--interactive` on every call. An explicit
 spawn role stays disabled even with that flag. `config` always answers
 `enabled`, `push_seconds`, `warn_minutes`, `keepwarm` and `keepwarm_pings` (the
@@ -598,12 +602,11 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
 | `meridian mars remove NAME` | Remove a dependency and prune its installed items |
-| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
+| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
 | `meridian mars unlink DIR` | Remove a link target |
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
-| `meridian mars upgrade` | Fetch latest versions and sync |
-| `meridian mars migrate [--check]` | Rewrite pre-v1 authored content to schema v1; `--check` lists the changes and exits 1 |
+| `meridian mars upgrade [NAME]` | Move dependencies to their newest compatible release and sync. The only command that does |
 | `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
 | `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
 | `meridian mars repair` | Rebuild managed state from config and dependencies |

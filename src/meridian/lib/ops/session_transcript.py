@@ -13,6 +13,7 @@ from meridian.lib.harness.native_witness import Witness, file_witness
 from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
 from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
+    INJECTED_ROLE,
     ToolCall,
     TranscriptMessage,
     is_native_snapshot,
@@ -128,83 +129,67 @@ def flatten_transcript_segments(
     return tuple(flattened)
 
 
-def _is_tool_result_message(message: AbsoluteTranscriptMessage) -> bool:
-    return message.role == "user" and message.content.startswith("[tool_result]")
+def is_tool_message(message: AbsoluteTranscriptMessage) -> bool:
+    """Tool traffic: a call, or its result, whatever role the harness stored it under."""
+    return message.tool_call is not None or message.is_tool_result
 
 
-def _is_plain_user_message(message: AbsoluteTranscriptMessage) -> bool:
-    return message.role == "user" and not _is_tool_result_message(message)
+def _is_user_text(message: AbsoluteTranscriptMessage) -> bool:
+    return message.role == "user" and not is_tool_message(message)
+
+
+def _is_injected(message: AbsoluteTranscriptMessage) -> bool:
+    return message.role == INJECTED_ROLE
 
 
 def _is_visible_message(message: AbsoluteTranscriptMessage) -> bool:
-    return message.role in {"assistant", "user"} or message.kind == "annotation"
+    return message.role in {"assistant", "user", INJECTED_ROLE} or message.kind == "annotation"
+
+
+def _entry_role(message: AbsoluteTranscriptMessage) -> str:
+    if message.kind == "annotation":
+        return message.role
+    if _is_user_text(message):
+        return "user"
+    return INJECTED_ROLE if _is_injected(message) else "assistant"
+
+
+def _closes_chunk(
+    message: AbsoluteTranscriptMessage, following: AbsoluteTranscriptMessage | None
+) -> bool:
+    if following is None or following.segment_index != message.segment_index:
+        return True
+    if message.kind == "annotation" or following.kind == "annotation":
+        return True
+    if _entry_role(message) != _entry_role(following):
+        return True
+    # An agent step ends once its tool results are in.
+    return message.is_tool_result and not following.is_tool_result
 
 
 def group_transcript_entries(
     messages: tuple[AbsoluteTranscriptMessage, ...],
 ) -> tuple[AbsoluteTranscriptEntry, ...]:
+    """Entries are the user's text, or one agent step: its text, tool calls and results."""
     interaction_messages = tuple(message for message in messages if _is_visible_message(message))
-    if not interaction_messages:
-        return ()
-
-    user_leads_to_tool_result = [False] * len(interaction_messages)
-    seen_tool_result = False
-    for index in range(len(interaction_messages) - 1, -1, -1):
-        message = interaction_messages[index]
-        if message.kind == "annotation":
-            seen_tool_result = False
-            continue
-        if _is_tool_result_message(message):
-            seen_tool_result = True
-            continue
-        if _is_plain_user_message(message):
-            user_leads_to_tool_result[index] = seen_tool_result
-            seen_tool_result = False
 
     chunks: list[list[AbsoluteTranscriptMessage]] = []
     current: list[AbsoluteTranscriptMessage] = []
-
     for index, message in enumerate(interaction_messages):
-        if current and (
-            message.segment_index != current[-1].segment_index
-            or _is_plain_user_message(message)
-            or message.kind == "annotation"
-        ):
-            chunks.append(current)
-            current = []
-
         current.append(message)
-
-        next_message = (
+        following = (
             interaction_messages[index + 1] if index + 1 < len(interaction_messages) else None
         )
-        should_close = False
-        if message.kind == "annotation":
-            should_close = True
-        elif _is_tool_result_message(message):
-            should_close = next_message is None or not _is_tool_result_message(next_message)
-        elif _is_plain_user_message(message):
-            should_close = not user_leads_to_tool_result[index]
-        elif (
-            next_message is None
-            or message.segment_index != next_message.segment_index
-            or _is_plain_user_message(next_message)
-        ):
-            should_close = True
-
-        if should_close:
+        if _closes_chunk(message, following):
             chunks.append(current)
             current = []
-
-    if current:
-        chunks.append(current)
 
     entries: list[AbsoluteTranscriptEntry] = []
     local_ordinals: dict[int, int] = {}
     for chunk in chunks:
         first = chunk[0]
         last = chunk[-1]
-        role = first.role if all(message.role == first.role for message in chunk) else "mixed"
+        role = _entry_role(first)
         segment_local_ordinal = local_ordinals.get(first.segment_index, 1)
         local_ordinals[first.segment_index] = segment_local_ordinal + 1
         entries.append(
@@ -222,6 +207,27 @@ def group_transcript_entries(
         )
 
     return tuple(entries)
+
+
+def entry_in_view(entry: AbsoluteTranscriptEntry, *, tools: bool) -> AbsoluteTranscriptEntry | None:
+    """The entry as a view shows it, or ``None`` when the view has nothing of it to show.
+
+    The conversation view is the user's text and the assistant's text; ``tools`` adds tool
+    calls and their output, and messages a plugin, hook or the harness injected. Setup and
+    annotation entries show in every view.
+    """
+    if tools or entry.kind != "interaction":
+        return entry
+    shown = tuple(
+        message
+        for message in entry.messages
+        if not (is_tool_message(message) or _is_injected(message))
+    )
+    if not shown:
+        return None
+    if len(shown) == len(entry.messages):
+        return entry
+    return entry._replace(messages=shown, content="\n\n".join(message.content for message in shown))
 
 
 def _setup_content_for_segment(
@@ -513,12 +519,15 @@ def build_session_log_command(
     limit: int | None = None,
     around_ordinal: int | None = None,
     context: int | None = None,
+    tools: bool = False,
 ) -> str:
     command: list[str] = ["meridian", "session", "log"]
     if route.mode == "file":
         command.extend(["--file", route.value])
     else:
         command.append(route.value)
+    if tools:
+        command.append("--tools")
     if global_scope:
         if segment_index is not None:
             raise ValueError("--global cannot be combined with --segment.")
@@ -554,6 +563,7 @@ __all__ = [
     "SessionLogRoute",
     "build_segment_entries",
     "build_session_log_command",
+    "entry_in_view",
     "flatten_transcript_segments",
     "group_transcript_entries",
     "parse_session_target",

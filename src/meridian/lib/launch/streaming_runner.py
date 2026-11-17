@@ -1151,9 +1151,8 @@ async def execute_with_streaming(
                         facts=facts,
                         native_key=native_run.entry.complete(),
                         launch=launch,
-                        model_id=run.model,
                         harness_id=resolved_harness_id,
-                        project_root=project_root,
+                        policy=launch_context.resolved_request.launch_policy_snapshot,
                         failure_reason=conclusion.failure_reason,
                     )
                     conclusion.extracted = extraction

@@ -4,9 +4,10 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
-concurrency:
-  group: pr-body-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+# No concurrency group: opening a labelled PR, or pushing and editing the body together,
+# fires several runs at once, and a cancelled run shows as a failing check. Each run
+# reads the PR's current body and labels from the API instead of the event payload, so
+# an older run can't judge a stale body.
 
 jobs:
   # A minor or major label on a PR to main cuts its own release on merge, so it belongs only
@@ -15,13 +16,16 @@ jobs:
     if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    permissions: {}
+    permissions:
+      pull-requests: read
     steps:
       - name: Minor and major releases come from a release branch
         env:
-          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
+          LABELS_JSON="$(gh pr view "${PR_URL}" --json labels --jq '[.labels[].name]')"
           if [[ "${HEAD_REF}" == release/* ]]; then
             exit 0
           fi
@@ -36,9 +40,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The gate reads CHANGELOG.md as the base branch has it, which needs
           # history deeper than the merge commit.
@@ -46,7 +51,8 @@ jobs:
 
       - name: Check the changelog section
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
           # pull_request.base.sha is the base as of the PR's last head push, and
           # an edited event keeps it. Once the base branch moves (a release
           # commit), comparing the merge commit against it blames the PR for
@@ -55,7 +61,7 @@ jobs:
         run: |
           body_file="${RUNNER_TEMP}/pr-body.md"
           base_file="${RUNNER_TEMP}/base-changelog.md"
-          printf '%s' "${PR_BODY}" > "${body_file}"
+          gh pr view "${PR_URL}" --json body --jq .body > "${body_file}"
           git show "origin/${BASE_REF}:CHANGELOG.md" > "${base_file}"
           python3 scripts/changelog-notes.py validate \
             --notes-file "${body_file}" \

@@ -554,7 +554,10 @@ def _spawn_create(
         Parameter(
             name="--effort",
             group=ADVANCED_PARAMS,
-            help="Effort level: none, low, medium, high, xhigh, max. Overrides agent profile.",
+            help=(
+                "Effort level: auto, none, minimal, low, medium, high, xhigh, max. Overrides "
+                "agent profile. Mars moves it to a level the model and harness take."
+            ),
         ),
     ] = None,
     sandbox: Annotated[

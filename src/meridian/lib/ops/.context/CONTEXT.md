@@ -12,3 +12,21 @@ Only offer a runnable relocate command when both endpoints are known.
 A chat transcript uses its recorded native binding. A missing binding or source
 is unavailable, not permission to substitute a different transcript or runner
 output. KB `state/native-session-binding.md` explains the identity choice.
+
+A session-log entry is the user's text, an injected message, or one agent step: its text,
+tool calls and results. Only text the user typed has role `user`; a user-role message a
+plugin, hook, scheduler, task notification or peer wrote gets role `injected` (Claude:
+`origin.kind` other than `human`, or `isMeta`; Pi `custom_message`; Codex's injected
+context; OpenCode `synthetic` text parts). Text Meridian injects itself (peer messages,
+idle nudges) carries the `[Meridian]` marker from `harness/injected_marker.py`, which every
+producer builds with and the shared normalizer reads for every harness; the module also
+lists the opening of the pre-marker nudges so older transcripts classify. A new producer of
+user-turn text must use it. Claude's `isCompactSummary` message is the segment's entry-0
+handoff, not a user entry. Tool traffic is a message with a call or a result, whatever role the harness
+stored it under; each adapter sets that where it parses (`harness/transcript.py`), the
+renderer never sniffs text. Views choose parts: the default shows user and assistant
+text, `--tools` adds tool traffic and injected messages. Entry ordinals come from the full transcript and
+hidden entries leave gaps, so a printed position opens in any view, and window
+selection (`session_render.py`) works on the shown entries by ordinal. Changing
+grouping or what the parsers emit means bumping `PARSER_VERSION` in
+`state/native_search_index.py`.

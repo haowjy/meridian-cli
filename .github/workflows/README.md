@@ -8,7 +8,10 @@ nightly schedule.
 - PRs get a non-blocking release-label warning.
 - `pr-body.yml` validates the PR body's `## Changelog` section on open, edit,
   synchronize, reopen, ready-for-review and label changes, and fails the PR when it is missing
-  or malformed. Drafts are skipped (the integration PR opens as a draft). The
+  or malformed. Drafts are skipped (the integration PR opens as a draft). Each run
+  reads the PR's current body and labels from the API, so the workflow has no
+  concurrency group: runs that fire together all finish instead of one showing as
+  cancelled. The
   same step compares `CHANGELOG.md` with the base branch's copy, so a PR that
   adds content under `## [Unreleased]` or a release heading (`## [X]`) fails
   before merge; `CHANGELOG.md` belongs to the release job.

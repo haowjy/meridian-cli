@@ -197,6 +197,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_IDLE_KEEPWARM", "Idle keepwarm default."),
     _public_config("MERIDIAN_IDLE_KEEPWARM_PINGS", "Idle keepwarm ping count."),
     _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
+    _public_config("MERIDIAN_IDLE_STATE_REMINDER", "Idle state-reminder default."),
     _public_config("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."),
     _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
     _public_config("MERIDIAN_IDLE_WARN_MINUTES", "Idle cache warning lead time."),

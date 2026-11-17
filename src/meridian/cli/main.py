@@ -378,7 +378,13 @@ def root(
     ] = None,
     effort: Annotated[
         str | None,
-        Parameter(name="--effort", help="Effort level: none, low, medium, high, xhigh, max."),
+        Parameter(
+            name="--effort",
+            help=(
+                "Effort level: auto, none, minimal, low, medium, high, xhigh, max. Mars moves "
+                "it to a level the model and harness take."
+            ),
+        ),
     ] = None,
     sandbox: Annotated[
         str | None,

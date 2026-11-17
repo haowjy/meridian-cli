@@ -267,7 +267,8 @@ OP_DECLARATIONS: tuple[OpDeclaration, ...] = (
         extension_id="meridian.session",
         command_id="log",
         summary=(
-            "Show readable conversation/progress messages for a chat, spawn, or harness session."
+            "Show the conversation (user messages and assistant replies) of a chat, spawn, or "
+            "harness session; --tools adds tool calls, output and injected messages."
         ),
         handler="meridian.lib.ops.session_log:session_log",
         sync_handler="meridian.lib.ops.session_log:session_log_sync",

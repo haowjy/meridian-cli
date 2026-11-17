@@ -55,8 +55,8 @@ Two fields change that guidance:
   spawns, and permission to run `meridian spawn`. The list scopes that command's default
   view; it does not stop the agent from launching an unlisted agent by name.
 - `mode: primary` marks a lead. The triggers for Meridian's lead-only skills, such as
-  handoff and notification, reach only primary-mode profiles, also when one runs as a
-  spawn. Leave workers on the default `subagent`, so they report to their caller instead.
+  handoff and notification, reach every root launch, and a spawn only when its profile is
+  primary-mode. Leave workers on the default `subagent`, so they report to their caller instead.
 
 Bodies and skills don't restate any of this. They say what to delegate, what to pass,
 and what the report holds when it differs from the default; Meridian supplies the how,

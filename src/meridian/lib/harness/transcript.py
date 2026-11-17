@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple, Protocol, cast
 
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
+from meridian.lib.harness.injected_marker import is_marked
 from meridian.lib.harness.opencode_transcript import (
     OpenCodeStorageTranscriptProvider,
     OpenCodeV2StorageTranscriptProvider,
@@ -183,19 +184,20 @@ def _normalize_message_text(value: str) -> str:
     return value.strip()
 
 
-def _extract_claude_content(role: str, content: object) -> list[TranscriptMessage]:
+def _extract_claude_content(role: str, content: object, text_role: str) -> list[TranscriptMessage]:
+    """``text_role`` labels plain text; tool calls and results keep ``role``."""
     messages: list[TranscriptMessage] = []
 
     if isinstance(content, str):
         text = _normalize_message_text(content)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
         return messages
 
     if not isinstance(content, list):
         text = text_from_value(content)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
         return messages
 
     blocks = cast("list[object]", content)
@@ -203,7 +205,7 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
         if not isinstance(item, dict):
             text = text_from_value(item)
             if text:
-                messages.append(TranscriptMessage(role=role, content=text))
+                messages.append(TranscriptMessage(role=text_role, content=text))
             continue
 
         block = cast("dict[str, object]", item)
@@ -211,7 +213,7 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
         if block_type == "text":
             text = text_from_value(block.get("text"))
             if text:
-                messages.append(TranscriptMessage(role=role, content=text))
+                messages.append(TranscriptMessage(role=text_role, content=text))
             continue
         if role == "assistant" and block_type == "tool_use":
             marker, tool_call = _tool_use_summary(block)
@@ -245,9 +247,46 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
 
         text = text_from_value(block)
         if text:
-            messages.append(TranscriptMessage(role=role, content=text))
+            messages.append(TranscriptMessage(role=text_role, content=text))
 
     return messages
+
+
+# Role of a user-role message that something other than the user wrote: a plugin, hook,
+# scheduler, task notification, peer agent or the harness. Hidden from the conversation view.
+INJECTED_ROLE = "injected"
+
+
+def _claude_injected_role(record: dict[str, object]) -> str:
+    """Claude tags who produced a user-role event: ``origin.kind`` is ``human`` for typed text."""
+    origin = record.get("origin")
+    kind = cast("dict[str, object]", origin).get("kind") if isinstance(origin, dict) else None
+    injected = record.get("isMeta") is True or (kind is not None and kind != "human")
+    return INJECTED_ROLE if injected else "user"
+
+
+def _classify_marked(messages: list[TranscriptMessage]) -> list[TranscriptMessage]:
+    """A user-role message Meridian sent in carries its marker, whatever the harness."""
+    return [
+        message._replace(role=INJECTED_ROLE)
+        if message.role == "user" and not message.is_tool_result and is_marked(message.content)
+        else message
+        for message in messages
+    ]
+
+
+def _extract_claude_queued_prompt(event: dict[str, object]) -> list[TranscriptMessage]:
+    """A message sent mid-turn: Claude stores it as an attachment, not a user event."""
+    attachment = event.get("attachment")
+    if not isinstance(attachment, dict):
+        return []
+    payload = cast("dict[str, object]", attachment)
+    mode = payload.get("commandMode")
+    if payload.get("type") != "queued_command" or mode not in {"prompt", "task-notification"}:
+        return []
+    text = text_from_value(payload.get("prompt"))
+    role = _claude_injected_role(payload) if mode == "prompt" else INJECTED_ROLE
+    return [TranscriptMessage(role=role, content=text)] if text else []
 
 
 def _json_preview_payload(value: object) -> str:
@@ -302,7 +341,13 @@ def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscrip
     )
     messages: list[TranscriptMessage] = []
     rendering_reason: str | None = None
-    rendered_role = "user" if role in {"custom", "toolresult", "tool_result"} else role
+    rendered_role = (
+        INJECTED_ROLE
+        if role == "custom"
+        else "user"
+        if role in {"toolresult", "tool_result"}
+        else role
+    )
     for item in blocks:
         if not isinstance(item, dict):
             rendering_reason = reason
@@ -337,6 +382,12 @@ def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscrip
     return NormalizedTranscriptEvent(messages, rendering_reason=rendering_reason)
 
 
+# Codex delivers its own context as user-role messages; they are not the user's words.
+# Codex writes "# AGENTS.md instructions for <dir>" for a project file, and the bare
+# heading for the global one when the cwd has none.
+_CODEX_INJECTED_CONTEXT_PREFIXES = ("# AGENTS.md instructions", "<environment_context>")
+
+
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:
     item_type = str(payload.get("type", "")).strip().lower()
     if item_type == "message":
@@ -369,18 +420,25 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
             fallback = text_from_value(payload.get("text"))
             if fallback:
                 messages.append(TranscriptMessage(role=role, content=fallback))
+        if role == "user":
+            messages = [
+                message._replace(role=INJECTED_ROLE)
+                if message.content.startswith(_CODEX_INJECTED_CONTEXT_PREFIXES)
+                else message
+                for message in messages
+            ]
         return messages
 
-    if item_type == "function_call":
+    if item_type in {"function_call", "custom_tool_call"}:
         name = str(payload.get("name", "tool")).strip() or "tool"
-        arguments = text_from_value(payload.get("arguments"))
+        arguments = text_from_value(payload.get("arguments", payload.get("input")))
         tool_call = _normalize_tool(name, arguments)
         rendered = f"[tool: {name}]"
         if arguments:
             rendered = f"[tool: {name} {_preview(arguments)}]"
         return [TranscriptMessage(role="assistant", content=rendered, tool_call=tool_call)]
 
-    if item_type == "function_call_output":
+    if item_type in {"function_call_output", "custom_tool_call_output"}:
         output = text_from_value(payload.get("output"))
         if output:
             return [
@@ -456,20 +514,21 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
 
         if event_type in {"assistant", "user"}:
             role = event_type
+            text_role = _claude_injected_role(event) if role == "user" else role
             message = event.get("message")
             if isinstance(message, dict):
                 content = cast("dict[str, object]", message).get("content")
-                extracted = _extract_claude_content(role, content)
+                extracted = _extract_claude_content(role, content, text_role)
                 if extracted:
                     return NormalizedTranscriptEvent(extracted, is_boundary)
-            extracted = _extract_claude_content(role, event.get("content"))
+            extracted = _extract_claude_content(role, event.get("content"), text_role)
             if extracted:
                 return NormalizedTranscriptEvent(extracted, is_boundary)
             raw_text = message if isinstance(message, str) else event.get("text")
             text = text_from_value(raw_text)
             if text:
                 return NormalizedTranscriptEvent(
-                    [TranscriptMessage(role=role, content=text)], is_boundary
+                    [TranscriptMessage(role=text_role, content=text)], is_boundary
                 )
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:
@@ -484,6 +543,9 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                     is_boundary,
                 )
             return NormalizedTranscriptEvent([], is_boundary)
+
+        if event_type == "attachment":
+            return NormalizedTranscriptEvent(_extract_claude_queued_prompt(event), is_boundary)
 
         if event_type == "response_item":
             raw_payload = event.get("payload")
@@ -509,7 +571,7 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             )
 
         role = str(event.get("role", "")).strip().lower()
-        if role in {"assistant", "user", "system"}:
+        if role in {"assistant", "user", "system", INJECTED_ROLE}:
             text = text_from_value(event.get("content"))
             if text:
                 return NormalizedTranscriptEvent(
@@ -662,7 +724,7 @@ def _extract_claude_follow_on_handoff(
 ) -> str | None:
     if normalize_harness_event_type(event) != "user":
         return None
-    if not bool(event.get("isSynthetic")):
+    if not (event.get("isSynthetic") or event.get("isCompactSummary")):
         return None
     return _join_message_content(extracted_messages)
 
@@ -739,7 +801,7 @@ class TranscriptNormalizer:
                 consumed_setup |= normalized.consumed_setup
             return NormalizedTranscriptEvent(messages, boundary, consumed_setup)
         extracted = parser.parse(event)
-        messages, parser_boundary = extracted.messages, extracted.boundary
+        messages, parser_boundary = _classify_marked(extracted.messages), extracted.boundary
         self.rendering_reason = extracted.rendering_reason or self.rendering_reason
         event_type = normalized_event.get("type")
         if (
@@ -814,11 +876,11 @@ class TranscriptNormalizer:
             )
             return NormalizedTranscriptEvent([], boundary=True)
 
-        if self.pending_summary is not None:
+        if self.pending_summary is not None or normalized_event.get("isCompactSummary"):
             setup = (
-                _extract_claude_follow_on_handoff(normalized_event, messages)
-                if self.pending_summary == "claude"
-                else _extract_opencode_follow_on_handoff(normalized_event, messages)
+                _extract_opencode_follow_on_handoff(normalized_event, messages)
+                if self.pending_summary == "opencode"
+                else _extract_claude_follow_on_handoff(normalized_event, messages)
             )
             self.pending_summary = None
             if setup:

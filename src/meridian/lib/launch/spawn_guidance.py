@@ -4,7 +4,7 @@ import shlex
 from pathlib import Path
 
 from meridian.lib.bundled_skills import list_bundled_skills
-from meridian.lib.catalog.agent import AgentMode, AgentProfile
+from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -55,13 +55,13 @@ when the caller asks or the work needs more depth or a capability the defaults
 lack. To get more depth, change the model, not the agent."""
 
 _PRIMARY_WAIT_BULLET = """\
-- Drain every --bg spawn with no-arg `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn. It finds
-  running and owed spawns by session; re-invoke to keep waiting. The wait
-  itself can run in your native background execution to keep working
-  while it blocks — it's the launch, not the wait, that must never be
-  background-wrapped. Do not pipe or truncate its output. Un-waited
-  background spawns are lost."""
+- Launch spawns with --bg and collect their results with
+  `meridian spawn wait`; with no arg it finds your running and owed spawns.
+  Run the wait in your harness's background execution, so you keep working
+  and can reply while it blocks; re-invoke it to keep waiting. If your
+  harness doesn't tell you when a background command finishes, read what
+  the wait returned before you end your turn. Do not pipe or truncate its
+  output."""
 
 _CHILD_WAIT_BULLET = """\
 - To wait for --bg spawns, end your turn. You stay open while they run,
@@ -77,14 +77,14 @@ _CHILD_CLOSE_BULLET = """\
 
 def _build_meridian_skills_prompt(
     *,
-    profile_mode: AgentMode,
+    lead: bool,
     loaded: frozenset[str],
 ) -> str:
     lines = ["# Meridian skills", ""]
     for skill in list_bundled_skills():
         if skill.name in loaded:
             continue
-        if skill.mode is not None and skill.mode != profile_mode:
+        if skill.mode == "primary" and not lead:
             continue
         description = skill.description
         if description.startswith("When "):
@@ -166,10 +166,7 @@ def build_capabilities_prompt(
         # `# Meridian spawn` block.
         lines.append(
             f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`); use it in names. For a handoff's `--from`, use your spawn "
-            "ID instead (`$MERIDIAN_SPAWN_ID`; `meridian task-dir --json` prints it as "
-            "`spawn_id`): it follows this conversation across `/clear`, which this chat ID "
-            "does not."
+            "(`$MERIDIAN_CHAT_ID`); use it in names and as a handoff's `--from`."
         )
         # Chat IDs count per project, so the bare ID is ambiguous to a peer in
         # another repo; the command carries the project it belongs to.
@@ -304,6 +301,7 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
 def build_guidance_blocks(
     *,
     profile: AgentProfile | None,
+    kind: SpawnKind,
     loaded_skills: frozenset[str],
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
@@ -311,14 +309,16 @@ def build_guidance_blocks(
 ) -> tuple[CompositionBlock, ...]:
     blocks: list[CompositionBlock] = []
     spawn_capable = has_spawn_capability(profile)
-    profile_mode: AgentMode = profile.mode if profile is not None else "subagent"
+    # A root launch is the session the user steers, whatever its profile says; a
+    # spawn is a lead only when its profile says `mode: primary`.
+    lead = kind == "primary" or (profile is not None and profile.mode == "primary")
     blocks.append(
         CompositionBlock(
             "meridian-skills",
             GuidancePhase.GUIDANCE,
             4,
             _build_meridian_skills_prompt(
-                profile_mode=profile_mode,
+                lead=lead,
                 loaded=loaded_skills,
             ),
         )

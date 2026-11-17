@@ -21,7 +21,7 @@ meridian cursor spawn -m composer -p "task"
 
 Mars resolves `model + effort` to `routing.harness_model` in the launch bundle.
 Meridian passes that resolved harness model to Cursor as the effective `--model`.
-Cursor model slugs encode effort as a suffix (e.g. `gpt-5.5-high`).
+Cursor model slugs encode effort as a suffix (e.g. `gpt-5.5-high`). A level the model has no slug for moves to the nearest slug, with a warning, and the bare slug counts as `medium`.
 
 ```bash
 meridian spawn --harness cursor -m gpt-5.5 --effort high   # → effective --model gpt-5.5-high (bundle-resolved)
