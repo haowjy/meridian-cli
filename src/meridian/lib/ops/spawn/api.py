@@ -2,7 +2,7 @@ import asyncio
 import os
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,6 +39,7 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
+from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.launch.continue_launch import (
     ContinueHold,
     begin_continue,
@@ -68,6 +69,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.idle_store import IdleStore
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -114,6 +116,7 @@ from .models import (
     SpawnCreateInput,
     SpawnDetailOutput,
     SpawnForkInput,
+    SpawnIdle,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -261,6 +264,57 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     if not is_active_spawn_status(status):
         return None
     return normalized
+
+
+def _spawn_idle(row: SpawnRecord, session_id: str | None, activity: str | None) -> SpawnIdle | None:
+    """The row's open idle stretch: one file read keyed by its own harness session.
+
+    A stretch closes when a user-loop turn starts, so injected turns (wakes, task
+    notifications, peer messages, keepwarm) leave it open. A primary whose harness
+    reports it mid-turn is not idle, whatever a crashed session's stretch says.
+    """
+
+    if (
+        not session_id
+        or not row.harness
+        or not is_active_spawn_status(row.status)
+        or activity in {"starting", "turn_active", "finalizing"}
+    ):
+        return None
+    try:
+        state = IdleStore().read(row.harness, session_id)
+    except ValueError:  # a session id the store refuses as a filename
+        return None
+    if state is None or not state.stretch_open or state.idle_since_ms is None:
+        return None
+    deadline = cache_deadline(row.harness, state.idle_since_ms / 1000, state)
+    return SpawnIdle(
+        since=_iso_utc_ms(state.idle_since_ms),
+        warm_until=_iso_utc_ms(round(deadline[0] * 1000)) if deadline else None,
+        ttl_estimated=deadline[1] if deadline else True,
+    )
+
+
+def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str, str | None]:
+    """Each row's chat's current work item, as `spawn show` reports it (the row keeps launch-time).
+
+    One pass over the session store for all rows.
+    """
+
+    return {
+        record.chat_id: record.active_work_id
+        for record in session_store.get_session_records(
+            runtime_root, {row.entry_chat_id for row in rows if row.entry_chat_id}
+        )
+    }
+
+
+def _iso_utc_ms(epoch_ms: int) -> str:
+    return (
+        datetime.fromtimestamp(epoch_ms / 1000, UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _spawn_display_label(row: SpawnRecord) -> str | None:
@@ -737,16 +791,19 @@ def spawn_list_sync(
         selected = spawns[:limit]
 
     truncated = total_count > len(selected)
+    chat_work = _chat_work_ids(runtime_root, selected)
     entries: list[SpawnListEntry] = []
     for row in selected:
         kind = "primary" if (row.kind or "").strip() == "primary" else None
         managed_backend = False
         activity: str | None = None
         surfaced_activity: str | None = None
+        session_id = row.harness_session_id
         if kind == "primary":
             metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
             managed_backend = metadata.managed_backend
             activity = metadata.activity
+            session_id = metadata.harness_session_id or session_id
             surfaced_activity = _surface_primary_activity(row.status, activity)
         entries.append(
             SpawnListEntry(
@@ -756,6 +813,9 @@ def spawn_list_sync(
                     f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
                 ),
                 model=row.model or "",
+                agent=row.agent or None,
+                work_id=chat_work.get(row.entry_chat_id or ""),
+                idle=_spawn_idle(row, session_id, activity),
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
@@ -813,12 +873,15 @@ def spawn_children_sync(
             )
         )
     )
+    chat_work = _chat_work_ids(runtime_root, children)
     entries = tuple(
         SpawnListEntry(
             spawn_id=row.id,
             status=row.status,
             model=row.model or "",
             agent=row.agent or None,
+            work_id=chat_work.get(row.entry_chat_id or ""),
+            idle=_spawn_idle(row, row.harness_session_id, None),
             desc=_spawn_display_label(row),
             duration_secs=row.total_usage.duration_secs,
             cost_usd=row.total_usage.total_cost_usd,

@@ -711,6 +711,16 @@ class SpawnStatsOutput(BaseModel):
         return "\n".join(lines)
 
 
+class SpawnIdle(BaseModel):
+    """An open idle stretch, as ``spawn list --json`` shows it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    since: str
+    warm_until: str | None
+    ttl_estimated: bool
+
+
 class SpawnListEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -720,6 +730,8 @@ class SpawnListEntry(BaseModel):
     model: str
     agent: str | None = None
     desc: str | None = None
+    work_id: str | None = None
+    idle: SpawnIdle | None = None
     kind: str | None = None
     activity: str | None = None
     managed_backend: bool = False
@@ -780,6 +792,8 @@ class SpawnListOutput(BaseModel):
                 "status": entry.status,
                 "agent": entry.agent,
                 "desc": entry.desc,
+                "work_id": entry.work_id,
+                "idle": entry.idle.model_dump() if entry.idle is not None else None,
                 "model": entry.model,
                 "duration_secs": entry.duration_secs,
                 "cost_usd": entry.cost_usd,
