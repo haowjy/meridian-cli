@@ -81,9 +81,11 @@ area. `meridian mars sync` rewrites `.claude/`, `.codex/`, `.cursor/`, `.opencod
 
 A fix restores intended behavior; changing what users are meant to see is a feature.
 A change that doesn't affect what Meridian does when it runs (docs, comments,
-`AGENTS.md`) goes straight to `main`. Everything else goes through a PR, and merging
-one into `main` takes Jimmy's approval in this conversation, per PR, unless your global
-instructions grant your model more. A change that crosses a boundary others depend on
-(CLI commands, flags or output, a config or profile format, files under `~/.meridian/`,
-the harness adapter seam, the Mars package contract) needs his approval before it
-starts. Before opening a PR or merging, read [docs/releasing.md](docs/releasing.md).
+`AGENTS.md`) goes straight to `main`. Everything else goes through a PR. A PR that breaks
+nothing (`release:patch`, `release:rc` or `release:skip`) is yours to merge once it meets
+the checks in [docs/releasing.md](docs/releasing.md), whether it is a fix, a refactor or a
+feature. Two kinds wait for Jimmy's approval in this conversation, per PR: a release that
+breaks existing behavior (`release:minor`/`release:major`), and a change that crosses a
+boundary others depend on (CLI commands, flags or output, a config or profile format,
+files under `~/.meridian/`, the harness adapter seam, the Mars package contract), which
+also needs his approval before it starts. Before opening a PR or merging, read [docs/releasing.md](docs/releasing.md).
