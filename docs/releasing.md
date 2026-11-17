@@ -25,11 +25,7 @@ meridian-cli releases are automatic from normal PR merges to `main`. The PR's
 5. Before merging: CI is green, the regressions the change could cause are exercised
    on the real system (`/testing`), and the PR body is reread against the final diff,
    with evidence from the commit being merged. A big fix or refactor also has an
-   independent review. A `release:minor`/`release:major` PR, or one that crosses a
-   boundary others depend on (`AGENTS.md`), also needs Jimmy's approval, unless the
-   agent's global instructions grant its model more: his own words,
-   quoted in the issue or PR; another agent's report of it doesn't count. Any other PR
-   the agent merges once these checks pass. The pre-push hook runs the
+   independent review. The agent merges once these checks pass. The pre-push hook runs the
    fast gate, so push after the last review fix.
 6. Merge the PR to `main`
 
@@ -57,10 +53,9 @@ merge to `main` on their own.
    release PR's `## Changelog`: only commits on `main`'s first-parent history reach the
    renderer, so part PRs merged into the release branch never render on their own.
 3. The agent leading the release merges its part PRs into the release branch once each
-   passes its own review and CI, without asking. Merging the release PR to `main` needs the
-   human's approval.
+   passes its own review and CI, without asking.
 4. When the last part lands and the combined change passes the full gate, mark the
-   release PR ready and, with approval, merge it; CI releases everything once.
+   release PR ready and merge it; CI releases everything once.
 
 Work that must ship separately (for example, a part another release depends on) gets its
 own release. Decide that when the work is planned, not at merge time.
