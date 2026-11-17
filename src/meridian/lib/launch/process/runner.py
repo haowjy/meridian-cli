@@ -17,6 +17,7 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
@@ -527,8 +528,7 @@ def _finalize_lifecycle(
     launch: LaunchPaths | None,
     exit_code: int,
     harness_adapter: Any,
-    project_root: Path,
-    model_id: str | None,
+    policy: LaunchPolicySnapshot | None,
     primary_started: float,
     spawn_service: SpawnApplicationService,
     facts: AttemptFacts,
@@ -546,9 +546,8 @@ def _finalize_lifecycle(
             facts=facts,
             native_key=native_key,
             launch=launch,
-            model_id=model_id,
             harness_id=harness_adapter.id,
-            project_root=project_root,
+            policy=policy,
         )
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
         durable_report_completion = extraction.durable_report_completion
@@ -1181,8 +1180,7 @@ def run_harness_process(
                             launch=launch,
                             exit_code=exit_code,
                             harness_adapter=harness_adapter,
-                            project_root=control_root,
-                            model_id=session_metadata.model,
+                            policy=runtime_context.resolved_request.launch_policy_snapshot,
                             primary_started=primary_started,
                             spawn_service=spawn_service,
                             facts=facts,

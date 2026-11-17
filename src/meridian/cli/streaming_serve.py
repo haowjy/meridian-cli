@@ -267,9 +267,8 @@ async def streaming_serve(
                     facts=facts,
                     native_key=native_key,
                     launch=prepared.launch,
-                    model_id=prepared.resolved_model,
                     harness_id=harness_id,
-                    project_root=project_root,
+                    policy=launch_ctx.resolved_request.launch_policy_snapshot,
                     failure_reason=failure_message,
                 )
                 usage = extraction.usage

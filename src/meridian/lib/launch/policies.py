@@ -29,13 +29,10 @@ from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
-from .compiler import (
-    FieldProvenance,
-    ProvenanceLevel,
-    match_model_policy,
-)
 from .launch_types import (
     CompositionWarning,
+    FieldProvenance,
+    ProvenanceLevel,
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
     TerminalSurfaceMode,
@@ -106,6 +103,7 @@ class ModelSelectionContext:
     harness_provenance: str
     harness_model_id: str | None = None
     provider_constraint: str | None = None
+    catalog_row: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -258,7 +256,6 @@ def _require_policy_tier(
 
 
 _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
-    "effort": "effort_source",
     "sandbox": "sandbox_source",
     "approval": "approval_source",
     "autocompact": "autocompact_source",
@@ -340,29 +337,23 @@ def _resolve_bundle_execution_policy(
     bundle_execution_policy: RuntimeOverrides,
     profile_overrides: RuntimeOverrides,
 ) -> tuple[RuntimeOverrides, dict[str, str]]:
-    config_policy = surface.config_overrides.execution_policy_scope(
-        surface.supported_execution_policy_fields
-    )
+    # Effort is Mars's: the bundle already holds the level the model and harness take, so
+    # it has no layer here.
+    fields: frozenset[ExecutionPolicyField] = surface.supported_execution_policy_fields - {"effort"}
+    config_policy = surface.config_overrides.execution_policy_scope(fields)
     policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
-        (
-            "cli",
-            surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
-        (
-            "env",
-            surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
+        ("cli", surface.cli_overrides.execution_policy_scope(fields)),
+        ("env", surface.env_overrides.execution_policy_scope(fields)),
         ("bundle", bundle_execution_policy),
-        (
-            "profile-default",
-            profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
+        ("profile-default", profile_overrides.execution_policy_scope(fields)),
         ("config-default", config_policy),
     )
     resolved = resolve_policy_fields(tuple(layer for _, layer in policy_layers))
+    if "effort" in surface.supported_execution_policy_fields:
+        resolved = resolved.model_copy(update={"effort": bundle_execution_policy.effort})
 
     provenance_overrides: dict[str, str] = {}
-    for field_name in surface.supported_execution_policy_fields:
+    for field_name in fields:
         for source, layer in policy_layers:
             if getattr(layer, field_name) is None:
                 continue
@@ -413,6 +404,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         harness_override=bundle_harness_override,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
         effort_override=explicit_user_overrides.effort,
+        config_effort=surface.config_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
         network_overrides=surface.network_overrides,
@@ -444,6 +436,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         harness_provenance=harness_provenance,
         harness_model_id=bundle_result.harness_model,
         provider_constraint=bundle_result.provider_constraint,
+        catalog_row=bundle_result.catalog_row,
     )
 
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
@@ -484,7 +477,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         project_root=project_root,
     )
 
-    bundle_model_warning = "\n".join(bundle_result.warnings).strip() or None
+    bundle_model_warning = (
+        "\n".join(bundle_adapter.warnings_to_print(bundle_result)).strip() or None
+    )
     policy_warnings = list(
         _policy_warnings(
             profile_warning=profile_warning,
@@ -623,6 +618,7 @@ def _ask_mars(
     agent: str | None = None,
     model: str | None = None,
     agent_rules: tuple[ToolRule, ...] | None = None,
+    effort: str | None = None,
 ) -> bundle_adapter.BundleResult:
     return bundle_adapter.request_and_resolve(
         bundle_adapter.BundleRequest(
@@ -633,6 +629,7 @@ def _ask_mars(
             harness_override=harness,
             no_refresh_models=True,
             agent_tool_rules=agent_rules,
+            effort_override=effort,
         ),
         harness_registry=surface.harness_registry,
     )
@@ -661,6 +658,7 @@ def _with_current_bundle_rules(
     """
 
     harness = str(policy.harness)
+    effort = policy.execution_policy.effort
     agent_rules = tuple(
         rule
         for rule in policy.resolved_tool_rules
@@ -671,7 +669,9 @@ def _with_current_bundle_rules(
     )
     warning: str | None = None
     if not sendable:
-        bundle = agentless_bundle or _ask_mars(surface, harness=harness)
+        bundle = agentless_bundle or _ask_mars(
+            surface, harness=harness, model=policy.model, effort=effort
+        )
         denies = tuple(
             rule
             for rule in bundle.tool_rules
@@ -691,6 +691,7 @@ def _with_current_bundle_rules(
                     agent=agent,
                     model=policy.model,
                     agent_rules=agent_rules,
+                    effort=effort,
                 )
             except bundle_adapter.MarsAgentToolRulesUnsupportedError:
                 raise
@@ -699,15 +700,29 @@ def _with_current_bundle_rules(
                     f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
                     "project-wide tool rules without its per-agent exemptions."
                 )
-        bundle = bundle or _ask_mars(surface, harness=harness, agent_rules=agent_rules)
+        bundle = bundle or _ask_mars(
+            surface, harness=harness, model=policy.model, agent_rules=agent_rules, effort=effort
+        )
         rules = bundle.tool_rules
     warnings = policy.warnings
     if warning is not None:
         warnings = (*warnings, CompositionWarning(code="project_tool_rules_agent", message=warning))
+    execution_policy = policy.execution_policy
+    if agentless_bundle is None and effort is not None:
+        # A replayed effort goes back through Mars: a stored level the model or harness no
+        # longer takes (an older build's `none` for Claude) moves, with a warning.
+        execution_policy = execution_policy.model_copy(
+            update={"effort": bundle.execution_policy.effort}
+        )
+        # A replayed level was not typed now, so its move is silent.
+        moved = "\n".join(bundle_adapter.warnings_to_print(bundle, effort_typed=False)).strip()
+        if moved:
+            warnings = (*warnings, CompositionWarning(code="model_warning", message=moved))
     return replace(
         policy,
         resolved_tool_rules=rules,
         platform_tool_rules=policy.platform_tool_rules or bundle.platform_tool_rules,
+        execution_policy=execution_policy,
         warnings=warnings,
     )
 
@@ -724,6 +739,7 @@ def _model_selection_from_replayed_snapshot(
         harness_provenance=replayed.harness_provenance,
         harness_model_id=replayed.harness_model_id,
         provider_constraint=replayed.provider_constraint,
+        catalog_row=replayed.catalog_row,
     )
 
 
@@ -783,6 +799,12 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             and intent.selected_token
         ):
             selected_token = intent.selected_token
+        effort_resolved = execution_policy.effort is not None
+        if effort_resolved:
+            # Mars resolved the stored or given level for this model and harness.
+            execution_policy = execution_policy.model_copy(
+                update={"effort": bundle.execution_policy.effort}
+            )
         if recompute_network:
             execution_policy = execution_policy.model_copy(
                 update={"network": resolve_network_policy(bundle.network, execution_policy.sandbox)}
@@ -790,8 +812,21 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         explicit_sources = {f"{name}_source": ProvenanceLevel.CLI for name in changed}
         if network_given:
             explicit_sources["network_source"] = ProvenanceLevel.CLI
+        with_rules = _with_current_bundle_rules(replayed, surface, snapshot, bundle)
+        # Only a level given on this continue is typed; a stored one moves silently.
+        bundle_warnings = "\n".join(
+            bundle_adapter.warnings_to_print(bundle, effort_typed="effort" in changed)
+        ).strip()
         return replace(
-            _with_current_bundle_rules(replayed, surface, snapshot, bundle),
+            with_rules,
+            warnings=(
+                (
+                    *with_rules.warnings,
+                    CompositionWarning(code="model_warning", message=bundle_warnings),
+                )
+                if bundle_warnings
+                else with_rules.warnings
+            ),
             execution_policy=execution_policy,
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
@@ -802,6 +837,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 harness_provenance=bundle.provenance.get("harness_source", "cli"),
                 harness_model_id=bundle.harness_model,
                 provider_constraint=bundle.provider_constraint,
+                catalog_row=bundle.catalog_row,
             ),
             selection_report=bundle.selection_report,
             field_provenance=replace(
@@ -837,7 +873,6 @@ __all__ = [
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "SurfacePolicyInput",
-    "match_model_policy",
     "resolve_launch_policy",
     "resolve_policy_fields",
     "validate_harness_compatibility",

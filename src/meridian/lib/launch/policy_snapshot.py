@@ -29,6 +29,9 @@ class SnapshotModelSelection(Protocol):
     @property
     def harness_model_id(self) -> str | None: ...
 
+    @property
+    def catalog_row(self) -> dict[str, object] | None: ...
+
 
 class ContinueModelSelectionOverlay(Protocol):
     """Shape needed to copy continue routing fields onto a snapshot working copy."""
@@ -51,6 +54,9 @@ class ContinueModelSelectionOverlay(Protocol):
     @property
     def provider_constraint(self) -> str | None: ...
 
+    @property
+    def catalog_row(self) -> dict[str, object] | None: ...
+
 
 @dataclass(frozen=True)
 class ReplayedModelSelection:
@@ -62,6 +68,7 @@ class ReplayedModelSelection:
     harness_provenance: str
     harness_model_id: str | None = None
     provider_constraint: str | None = None
+    catalog_row: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,7 @@ def overlay_continue_selection(
             "model_selection_harness_model_id": model_selection.harness_model_id,
             "model_selection_harness_provenance": model_selection.harness_provenance,
             "model_selection_provider_constraint": model_selection.provider_constraint,
+            "model_selection_catalog_row": model_selection.catalog_row,
             "execution_policy": execution_policy,
             "selection_report": selection_report,
             "field_provenance": field_provenance,
@@ -160,6 +168,9 @@ def build_launch_policy_snapshot(
         model_selection_harness_provenance=request.model_selection_harness_provenance,
         model_selection_harness_model_id=(
             model_selection.harness_model_id if model_selection is not None else None
+        ),
+        model_selection_catalog_row=(
+            model_selection.catalog_row if model_selection is not None else None
         ),
         matched_policy_rule=request.matched_policy_rule,
         selection_report=request.selection_report,
@@ -235,6 +246,7 @@ def _snapshot_model_selection(
         harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
         harness_model_id=snapshot.model_selection_harness_model_id,
         provider_constraint=snapshot.model_selection_provider_constraint,
+        catalog_row=snapshot.model_selection_catalog_row,
     )
 
 

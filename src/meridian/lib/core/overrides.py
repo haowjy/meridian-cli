@@ -34,8 +34,11 @@ EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
-# ``none`` is reasoning off; each harness lowers it in its own projection.
-KNOWN_EFFORT_VALUES = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+# Input validation only: Mars resolves the level the model and harness take. ``none`` is
+# reasoning off and ``auto`` sends no effort.
+KNOWN_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
+)
 
 
 def _validate_autocompact_value(v: object) -> object:

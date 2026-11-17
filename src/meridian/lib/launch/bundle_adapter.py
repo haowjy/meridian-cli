@@ -37,9 +37,10 @@ from meridian.lib.catalog.mars_roots import (
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
 from meridian.lib.core.route_report import AssessmentReport, RouteDecisionReport
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
+    FieldProvenance,
+    ProvenanceLevel,
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
@@ -62,9 +63,10 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release with project-wide tool denies, the map form of agent tool
-# overlays and ``launch-bundle --agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.30.0"
+# First Mars release that resolves effort to a level the model and harness take
+# (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
+# project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
+_MARS_BUNDLE_MIN_VERSION = "0.36.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -82,6 +84,8 @@ class BundleRequest:
     harness_override: str | None = None
     excluded_harnesses: tuple[HarnessId, ...] = ()
     effort_override: str | None = None
+    # The caller's own configured effort (``primary.effort``): below the agent's, above the alias's.
+    config_effort: str | None = None
     approval_override: str | None = None
     sandbox_override: str | None = None
     network_overrides: NetworkOverrides = field(default_factory=NetworkOverrides)
@@ -110,6 +114,8 @@ class BundleResult:
     provider_constraint: str | None
     harness: HarnessId
     harness_model: str | None
+    # models.dev row of the model the harness runs; None when the catalog has no such model.
+    catalog_row: dict[str, object] | None
     execution_policy: ResolvedExecutionPolicy
     network: NetworkPolicy | SandboxDerivedNetwork
     provenance: dict[str, str]
@@ -404,6 +410,8 @@ def _build_bundle_command(
         command.extend(["--exclude-harness", harness.value])
     if request.effort_override:
         command.extend(["--effort", request.effort_override])
+    if request.config_effort:
+        command.extend(["--config-effort", request.config_effort])
     if request.approval_override:
         command.extend(["--approval", request.approval_override])
     if request.sandbox_override:
@@ -721,6 +729,7 @@ def _parse_bundle_payload(
         provider_constraint=_normalize_str(routing.get("provider_constraint")) or None,
         harness=harness,
         harness_model=harness_model,
+        catalog_row=json_object(routing.get("catalog_row")),
         execution_policy=execution_policy,
         network=network,
         provenance=provenance,
@@ -827,6 +836,25 @@ def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None
     return provenance.get(f"{field_name}_source") or provenance.get(field_name)
 
 
+def warnings_to_print(bundle: BundleResult, *, effort_typed: bool | None = None) -> tuple[str, ...]:
+    """The bundle's warnings worth showing the user.
+
+    Mars words an effort it moved to a level the model takes as ``effort `max` → `high`: ...``.
+    That line shows only when the user typed the level: ``--effort`` or ``MERIDIAN_EFFORT``
+    (sent to Mars as ``--effort``, so its provenance is ``cli``). A level from a profile, an alias
+    or ``primary.effort`` moves silently. Other warnings always show. A caller that replays a
+    level it did not type passes ``effort_typed=False``; the default reads Mars's provenance.
+    """
+    if effort_typed is None:
+        effort_typed = _map_provenance_level(_provenance_value(bundle.provenance, "effort")) in (
+            ProvenanceLevel.CLI,
+            ProvenanceLevel.ENV,
+        )
+    if effort_typed:
+        return bundle.warnings
+    return tuple(w for w in bundle.warnings if not w.startswith("effort `"))
+
+
 def bundle_to_resolved_policy(
     *,
     bundle: BundleResult,
@@ -921,4 +949,5 @@ __all__ = [
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
     "request_and_resolve",
+    "warnings_to_print",
 ]
