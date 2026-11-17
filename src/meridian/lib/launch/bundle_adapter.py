@@ -836,6 +836,25 @@ def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None
     return provenance.get(f"{field_name}_source") or provenance.get(field_name)
 
 
+def warnings_to_print(bundle: BundleResult, *, effort_typed: bool | None = None) -> tuple[str, ...]:
+    """The bundle's warnings worth showing the user.
+
+    Mars words an effort it moved to a level the model takes as ``effort `max` → `high`: ...``.
+    That line shows only when the user typed the level: ``--effort`` or ``MERIDIAN_EFFORT``
+    (sent to Mars as ``--effort``, so its provenance is ``cli``). A level from a profile, an alias
+    or ``primary.effort`` moves silently. Other warnings always show. A caller that replays a
+    level it did not type passes ``effort_typed=False``; the default reads Mars's provenance.
+    """
+    if effort_typed is None:
+        effort_typed = _map_provenance_level(_provenance_value(bundle.provenance, "effort")) in (
+            ProvenanceLevel.CLI,
+            ProvenanceLevel.ENV,
+        )
+    if effort_typed:
+        return bundle.warnings
+    return tuple(w for w in bundle.warnings if not w.startswith("effort `"))
+
+
 def bundle_to_resolved_policy(
     *,
     bundle: BundleResult,
@@ -930,4 +949,5 @@ __all__ = [
     "LoadedSkillEntry",
     "bundle_to_resolved_policy",
     "request_and_resolve",
+    "warnings_to_print",
 ]

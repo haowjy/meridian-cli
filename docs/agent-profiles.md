@@ -205,13 +205,16 @@ lower layers.
 
 Mars reads each model's levels from models.dev and the harness's own list. A level that is not
 on both moves to the nearest one that is, a tie goes up, and a move never lands on `none`
-unless `none` was asked. `meridian spawn --dry-run` and the launch print the warning, for
-example ``effort `max` → `high`: `o3` takes low, medium, high``. A model that does not reason
+unless `none` was asked. `meridian spawn --dry-run` and the launch print a warning when the level came from
+`--effort` or `MERIDIAN_EFFORT`, for example ``effort `max` → `high`: `o3` takes low, medium,
+high``. A level from an agent profile, a model alias's `default_effort`, `primary.effort` or a
+stored spawn moves without a warning; the resolved level shows in the dry-run command and
+`--json`. A model that does not reason
 gets no effort. What each harness does with the level Mars returns:
 
 | Harness | `none` | `minimal` through `max` |
 |---|---|---|
-| **Claude** | Claude Code cannot turn thinking off, so Mars moves `none` to `low` and warns | `--effort <level>` |
+| **Claude** | Claude Code cannot turn thinking off, so Mars moves `none` to `low` | `--effort <level>` |
 | **Codex** | `-c model_reasoning_effort="none"` on a model that takes it | `-c model_reasoning_effort="<level>"` |
 | **Pi** | `--thinking off` | `--thinking <level>` |
 | **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |

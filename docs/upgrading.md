@@ -5,9 +5,11 @@
 Needs Mars 0.36.0, which this release pins.
 
 - **Effort moves to a level the model and harness take.** `--effort max` on a model that takes
-  up to `high` now launches at `high` and prints `effort `max` → `high`: ...`. A tie goes up. A
-  model that does not reason gets no effort. Claude Code and Codex models that cannot turn
-  reasoning off get `low` for `none`, with a warning. Before, Meridian passed the level on and
+  up to `high` now launches at `high`. A tie goes up. A model that does not reason gets no
+  effort. Claude Code and Codex models that cannot turn reasoning off get `low` for `none`.
+  When you typed the level (`--effort` or `MERIDIAN_EFFORT`), Meridian prints
+  `effort `max` → `high`: ...`; a level from an agent profile, an alias's `default_effort`,
+  `primary.effort` or a stored spawn moves silently. Before, Meridian passed the level on and
   the harness refused or ignored it.
 - **`minimal` and `auto` are new levels.** `auto` sends no effort and overrides every lower
   layer; `none` still means reasoning off.
@@ -25,7 +27,7 @@ Needs Mars 0.36.0, which this release pins.
   estimate, and so does a model the catalog does not know.
 
 A spawn already stored keeps its recorded effort; a continued or forked Claude or Codex
-session whose stored effort is `none` runs at `low` with the warning.
+session whose stored effort is `none` runs at `low`, without a warning.
 
 ## An OpenCode launch answers as strictly as the agent's native file
 
