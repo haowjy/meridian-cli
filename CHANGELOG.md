@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-17
+
+### Added
+- `meridian spawn list --json` and `meridian spawn children --json` rows carry `work_id` (the spawn's chat's current work item, as `spawn show` reports it) and `idle`: `null`, or `{"since", "warm_until", "ttl_estimated"}` while the harness session has an open idle stretch. `warm_until` is `since` plus the sensed cache TTL, or the harness default with `ttl_estimated: true`, the same rule `session browse --plain --json` uses for `cache_deadline`.
+
+### Fixed
+- `meridian spawn list --json` showed `agent: null` for every row; it now gives the agent profile, as `spawn show` does.
+
 ## [0.23.0] - 2026-11-17
 
 ### Upgrade notes
