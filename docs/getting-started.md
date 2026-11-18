@@ -26,7 +26,8 @@ cache, adding input cost and latency.
 | Harness | Cache behavior | What to configure |
 | --- | --- | --- |
 | Claude Code primary session | 1 hour within subscription usage; otherwise 5 minutes by default | Set `ENABLE_PROMPT_CACHING_1H=1` in `~/.claude/settings.json` |
-| Meridian-spawned Claude agent | 5 minutes at launch | Use shorter wait yields when the spawned agent waits for children |
+| Meridian-spawned Claude agent, `mode: subagent` or no profile | 5 minutes at launch | Use shorter wait yields when the spawned agent waits for children |
+| Meridian-spawned Claude agent, `mode: primary` | The TTL its session inherits | Nothing; a `1h` session setting applies to it |
 | Codex CLI, signed in | Cache is retained across old-conversation resumes without a cache penalty | No Meridian wait-yield tuning is needed for cache warmth |
 | Codex/API-key usage | Follows the API model and request's prompt-cache policy | Configure caching in the API client; it is independent of Meridian's wait checkpoint |
 
@@ -42,10 +43,14 @@ cache, adding input cost and latency.
 
 This opts the primary session into the 1-hour prompt-cache TTL so Meridian's
 default 50-minute `spawn wait` yield interval stays inside the warm window.
-Meridian overrides the main-conversation TTL to five minutes for Claude spawns,
-including continued spawns, to avoid the higher one-hour cache-write rate.
+Meridian overrides the main-conversation TTL to five minutes for Claude spawns of
+`mode: subagent` agents and of sessions with no agent profile, to avoid the higher
+one-hour cache-write rate. A `mode: primary` spawn gets no override: its TTL is
+whatever the child environment resolves to, or Claude's default when no variable is
+set. The rationale is that these roles can wait on children longer than five
+minutes, so a short TTL can make them re-cache on a wake.
 See [Claude prompt caching](harness-integration.md#claude-prompt-caching) for
-scope and precedence.
+the settings, their precedence, and the `settings.json` exception.
 
 For a harness whose cache TTL remains shorter than the wait interval, lower
 Meridian's yield interval instead:

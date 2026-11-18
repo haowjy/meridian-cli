@@ -7,23 +7,28 @@ For 0.7 upgrade and unbound-chat repair steps, see
 
 If long-running spawns feel expensive or slow to resume, the harness prompt cache may be going cold while Meridian waits.
 
-**Root cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If
+**A common cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If
 the waiting agent's prompt-cache TTL is shorter than that, its next turn may
-reprocess the full context. The wait checkpoint and a child's completion deadline
-are operational bounds, not promises about provider cache retention.
+reprocess the full context. Confirm misses from the cache-read and
+cache-creation token counts in `meridian spawn show --verbose` before acting; a
+high creation count beside a low read count means the cache was rebuilt. The wait
+checkpoint and a child's completion deadline are operational bounds, not promises
+about provider cache retention.
 A wait yield returns control to the waiting agent even if its children are still running.
 
 | Harness   | Cache TTL | Fix |
 |-----------|-----------|-----|
 | Claude Code primary session | 1 hour within subscription usage; otherwise 5 minutes by default | Extend to 1 hour via `~/.claude/settings.json` (see [Getting Started](getting-started.md)) |
-| Meridian-spawned Claude agent | 5 minutes at launch, including continued spawns | Lower the wait yield below five minutes; inherited `1h` and Meridian `--env` values are overridden (see [scope](harness-integration.md#claude-prompt-caching)) |
+| Meridian-spawned Claude agent, `mode: subagent` or no profile | 5 minutes at launch, including continued spawns, unless Claude's `settings.json` `env` block sets a TTL | Lower the wait yield below five minutes; inherited `1h` and Meridian `--env` values are overridden (see [scope](harness-integration.md#claude-prompt-caching)). If `settings.json` forces a TTL, remove or raise that entry |
+| Meridian-spawned Claude agent, `mode: primary` | Child environment or Claude's default (1h in subscription usage, otherwise 5m) | Confirm with `meridian mars agents show <agent>` (look for `mode: primary`); if the TTL is too short, set `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` in Meridian's `[env]` config or `--env` (see [scope](harness-integration.md#claude-prompt-caching)) |
 | Codex CLI, signed in | Retained across old-conversation resumes without a cache penalty | No cache-specific wait-yield change needed |
 | Codex/API-key usage | Depends on the API model and request | Use the API's prompt-cache settings; Meridian does not select them |
 | OpenCode | Harness-dependent | Check OpenCode docs for cache behavior |
 
 If a Claude spawn still writes a one-hour cache, check Claude's `settings.json`
 `env` block for `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. Claude applies that after
-Meridian's launch environment; remove the entry to use the five-minute policy.
+Meridian's launch environment; remove the entry to use the five-minute policy for
+subagent-mode spawns.
 
 **Quick workarounds:**
 

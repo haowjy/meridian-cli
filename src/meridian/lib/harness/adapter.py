@@ -19,6 +19,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from meridian.lib.catalog.agent import AgentMode
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.core.native_identity import (
     LaunchIntent,
@@ -202,6 +203,9 @@ class SpawnParams(BaseModel):
     autocompact_pct: AutocompactPctValue = None
     skills: tuple[str, ...] = ()
     agent: str | None = None
+    # The profile's declared lifetime, not the interactive flag: a primary-mode agent can
+    # be spawned non-interactively. None means no profile was resolved.
+    agent_mode: AgentMode | None = None
     adhoc_agent_payload: str = ""
     extra_args: tuple[str, ...] = ()
     control_root: str | None = None

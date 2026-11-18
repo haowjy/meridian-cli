@@ -34,6 +34,7 @@ def write_agent(
     skills: list[str] | tuple[str, ...] = (),
     subagents: list[str] | tuple[str, ...] = (),
     harness: str | None = None,
+    mode: str | None = None,
     sandbox: str | None = None,
     tools: list[str] | tuple[str, ...] | None = None,
     body: str | None = None,
@@ -50,6 +51,8 @@ def write_agent(
         lines.append(f"subagents: [{', '.join(subagents)}]")
     if harness is not None:
         lines.append(f"harness: {harness}")
+    if mode is not None:
+        lines.append(f"mode: {mode}")
     if sandbox is not None:
         lines.append(f"sandbox: {sandbox}")
     if tools is not None:

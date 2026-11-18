@@ -234,6 +234,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "skills",
             "agent",
+            "agent_mode",
             "adhoc_agent_payload",
             "model_override_explicit",
             "reference_items",

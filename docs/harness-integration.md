@@ -117,10 +117,24 @@ guards, extractor wiring, then cross-adapter field accounting.
 
 ## Claude: prompt caching
 
-Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for every non-interactive
-Claude spawn, including resumes via `meridian spawn --continue`. This is a process-environment override:
-it replaces inherited values and Meridian `--env` / `[env]` values. Interactive
-primary sessions keep their existing environment and Claude cache settings.
+Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for a non-interactive Claude spawn
+whose agent profile says `mode: subagent`, or that runs no agent profile,
+including resumes via `meridian spawn --continue`. This is a process-environment
+override: it replaces inherited values and Meridian `--env` / `[env]` values. A
+primary-mode spawn resumed with `--continue` is no different: the snapshot records
+the agent name, and the mode is re-read from that profile at each launch, so the
+exemption follows the profile's current `mode`.
+
+A spawn of a `mode: primary` agent gets no TTL variable from Meridian. Its effective
+TTL is whatever the child resolves on its own: the launching environment plus any
+`--env` / `[env]` value, or, when no variable is set, Claude's own default (one hour
+within subscription usage, five minutes otherwise). Claude's `settings.json` `env`
+block is reapplied after launch and can override this too, as described below.
+The rationale for leaving the choice to the session is that primary-mode roles
+orchestrate for hours and can wait on children longer than five minutes; a wake
+inside the TTL does not rebuild the cache, but one past it does.
+Interactive primary sessions keep their existing environment and Claude cache
+settings.
 
 Claude reapplies its own `settings.json` `env` block after launch. An entry there
 setting `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` overrides Meridian's injected value.
@@ -128,9 +142,9 @@ Remove that entry to use Meridian's spawn policy; use Claude's `promptCacheTtl`
 setting for a primary-session preference instead.
 
 Claude treats `claude -p` as a main conversation, which can otherwise use the
-more expensive one-hour cache on a subscription. Five-minute caching avoids
-that write premium for short-lived agents, but a spawned agent that waits
-longer than five minutes may need to rebuild its cache. This does not change
+more expensive one-hour cache on a subscription. For subagent-mode and unprofiled
+spawns, five-minute caching avoids that write premium, but such an agent that
+waits longer than five minutes may need to rebuild its cache. This does not change
 Claude's built-in subagent TTL (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) or enable
 caching when it is disabled. The main-conversation TTL variable requires
 Claude Code 2.1.242 or later. See

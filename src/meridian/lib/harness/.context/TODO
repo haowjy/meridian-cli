@@ -1,5 +1,6 @@
 # Harness follow-ups
 
+- Native Claude subagents are launched by Claude Code itself, so no agent-profile field can set their prompt-cache TTL. A `mode: primary` spawn keeps its cache TTL only when Meridian launches it; long-lived native subagents can still rebuild their cache after an idle gap. Needs an upstream Claude Code setting to fix per agent.
 - `pi_idle.py`: Revisit the estimated `openai-codex` 1800-second TTL if the backend publishes one or observed cache hits fall. Local data showed 90% hits after 20–30 minute idle gaps.
 - `extractors/opencode.py`: Native denials use OpenCode's generic reason and unavailable tools produce no attempted-call event. Reporting Meridian's reason or the missing calls needs an upstream seam or a mediating hook.
 - `transcript.py`: Claude compaction setup currently captures the boundary text while the summary lands in the next entry. Once the summary fills the setup slot, narrow the sessions skill's read from two entries to one.
