@@ -60,5 +60,4 @@ def test_profile_mode_reaches_claude_launch_env(
         dry_run=True,
     )
 
-    assert context.binding.spec.agent_mode == mode
     assert context.binding.environment.final_env.get(_TTL_ENV) == expected_ttl

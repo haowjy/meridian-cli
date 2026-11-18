@@ -60,7 +60,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "skills",
             "agent",
-            "agent_mode",
             "adhoc_agent_payload",
             "control_root",
             "appended_system_prompt",

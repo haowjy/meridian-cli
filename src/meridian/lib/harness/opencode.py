@@ -328,7 +328,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "agent_mode",
         }
     )
 
@@ -478,7 +477,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
+        primary_mode: bool = False,
     ) -> dict[str, str]:
+        _ = primary_mode
         permissions, _ = compile_opencode_permissions(spec)
         config = project_opencode_launch_config(
             env.get(OPENCODE_CONFIG_CONTENT_ENV),

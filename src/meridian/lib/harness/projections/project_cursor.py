@@ -34,7 +34,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "effort",
         "agent_name",
-        "agent_mode",
         "appended_system_prompt",
         "agents_payload",
         "claude_runtime",

@@ -234,7 +234,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "skills",
             "agent",
-            "agent_mode",
             "adhoc_agent_payload",
             "model_override_explicit",
             "reference_items",
@@ -531,6 +530,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
+        primary_mode: bool = False,
     ) -> dict[str, str]:
         """Pass the bound policy, the evaluator that reads it, and the launch-prompt flag to
         Pi's extensions.
@@ -539,7 +539,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         when its variable is unset; both names carry the policy.
         """
 
-        _ = system_prompt_path, env
+        _ = system_prompt_path, env, primary_mode
         permissions, _ = compile_pi_permissions(spec)
         policy = permissions.extension_policy
         overrides: dict[str, str] = {}

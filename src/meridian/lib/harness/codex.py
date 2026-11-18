@@ -288,7 +288,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "skills",
-            "agent_mode",
             "model_override_explicit",
             "reference_items",
             "task_cwd",
@@ -408,8 +407,10 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
+        primary_mode: bool = False,
     ) -> dict[str, str]:
         """Hand the shell rules to the launch's PreToolUse hook, which reads them from env."""
+        _ = primary_mode
 
         _ = system_prompt_path, env
         hook = compile_codex_permissions(spec)[0].tool_hook

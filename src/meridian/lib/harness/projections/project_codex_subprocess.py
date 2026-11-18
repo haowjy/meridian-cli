@@ -44,7 +44,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity",
         "agent_name",
-        "agent_mode",
         "agents_payload",
         "claude_runtime",
         "codex_runtime",
