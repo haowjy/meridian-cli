@@ -45,10 +45,12 @@ This opts the primary session into the 1-hour prompt-cache TTL so Meridian's
 default 50-minute `spawn wait` yield interval stays inside the warm window.
 Meridian overrides the main-conversation TTL to five minutes for Claude spawns of
 `mode: subagent` agents and of sessions with no agent profile, to avoid the higher
-one-hour cache-write rate; a `mode: primary` agent keeps the TTL its session has,
-because it waits on children for longer than five minutes at a time.
+one-hour cache-write rate. A `mode: primary` spawn gets no override: its TTL is
+whatever the child environment resolves to, or Claude's default when no variable is
+set. The rationale is that these roles can wait on children longer than five
+minutes, so a short TTL can make them re-cache on a wake.
 See [Claude prompt caching](harness-integration.md#claude-prompt-caching) for
-scope and precedence.
+the settings, their precedence, and the `settings.json` exception.
 
 For a harness whose cache TTL remains shorter than the wait interval, lower
 Meridian's yield interval instead:
