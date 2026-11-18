@@ -530,7 +530,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
-        primary_mode: bool = False,
+        primary_mode: bool,
     ) -> dict[str, str]:
         """Pass the bound policy, the evaluator that reads it, and the launch-prompt flag to
         Pi's extensions.

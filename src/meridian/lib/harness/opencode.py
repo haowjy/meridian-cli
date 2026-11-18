@@ -477,7 +477,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
-        primary_mode: bool = False,
+        primary_mode: bool,
     ) -> dict[str, str]:
         _ = primary_mode
         permissions, _ = compile_opencode_permissions(spec)

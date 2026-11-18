@@ -534,7 +534,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
-        primary_mode: bool = False,
+        primary_mode: bool,
     ) -> dict[str, str]:
         _ = env
         overrides: dict[str, str] = {}
