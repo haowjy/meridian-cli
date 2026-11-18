@@ -408,7 +408,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
-        primary_mode: bool = False,
+        primary_mode: bool,
     ) -> dict[str, str]: ...
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
@@ -810,7 +810,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         spec: ResolvedLaunchSpec,
         system_prompt_path: Path,
         env: Mapping[str, str],
-        primary_mode: bool = False,
+        primary_mode: bool,
     ) -> dict[str, str]:
         """Env overrides that deliver the bound prompt, model, roots and permissions.
 

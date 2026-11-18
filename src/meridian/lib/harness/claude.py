@@ -543,8 +543,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 system_prompt_path.with_name(LAUNCH_FILE_NAMES.starting_prompt)
             )
         if not spec.interactive and not primary_mode:
-            # A primary-mode agent is a long-lived orchestrator that idles past five
-            # minutes waiting on children, so it keeps the session's own TTL instead.
+            # The profile's mode, not the session surface: a primary-mode profile can be
+            # spawned non-interactively. Such an agent idles past five minutes waiting on
+            # children, so it keeps the session's own TTL instead of forcing a short one.
             overrides["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"
         if spec.autocompact_pct is not None:
             overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(spec.autocompact_pct)

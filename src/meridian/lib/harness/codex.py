@@ -410,9 +410,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         primary_mode: bool = False,
     ) -> dict[str, str]:
         """Hand the shell rules to the launch's PreToolUse hook, which reads them from env."""
-        _ = primary_mode
 
-        _ = system_prompt_path, env
+        _ = system_prompt_path, env, primary_mode
         hook = compile_codex_permissions(spec)[0].tool_hook
         return {TOOL_POLICY_ENV: hook.model_dump_json()} if hook is not None else {}
 
