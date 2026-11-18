@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-11-18
+
+### Changed
+- A `mode: primary` agent spawned on Claude keeps the prompt-cache TTL its session has
+  instead of Meridian's forced five minutes, so a lead that waits on its children no longer
+  re-caches its whole context on every wake. Subagent-mode and unprofiled spawns still get
+  five minutes.
+
 ## [0.23.1] - 2026-11-17
 
 ### Added
