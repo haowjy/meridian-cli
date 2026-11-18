@@ -63,7 +63,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "task_cwd",
         "user_turn_content",
         "opencode_version",
-        "agent_mode",
     }
 )
 

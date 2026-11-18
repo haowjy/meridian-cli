@@ -52,7 +52,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "report_output_path",
         "skills",
         "task_cwd",
-        "agent_mode",
     }
 )
 

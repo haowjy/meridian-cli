@@ -46,7 +46,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "continue_fork",
         "harness",
         "agent_name",
-        "agent_mode",
         "agents_payload",
         "claude_runtime",
         "codex_runtime",

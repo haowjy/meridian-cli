@@ -60,5 +60,30 @@ def test_profile_mode_reaches_claude_launch_env(
         dry_run=True,
     )
 
-    assert context.binding.spec.agent_mode == mode
     assert context.binding.environment.final_env.get(_TTL_ENV) == expected_ttl
+
+
+def test_spawn_without_agent_profile_forces_short_ttl(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="haiku", harness=HarnessId.CLAUDE)
+
+    context = build_launch_context(
+        spawn_id="p-cache-no-profile",
+        request=SpawnRequest(
+            prompt="test",
+            model="haiku",
+            harness=HarnessId.CLAUDE.value,
+        ),
+        runtime=LaunchRuntime(
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert context.binding.environment.final_env.get(_TTL_ENV) == "5m"
