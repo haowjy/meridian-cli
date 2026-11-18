@@ -6,6 +6,12 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-11-18
+
+### Changed
+- Native harness agent copies are no longer emitted from this project; delegation goes
+  through `meridian spawn` instead of the harness's native `Agent()` tool.
+
 ## [0.23.2] - 2026-11-18
 
 ### Changed
