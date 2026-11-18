@@ -77,9 +77,9 @@ mode: primary    # top-level orchestrators, primary sessions
 mode: subagent   # spawned workers (default)
 ```
 
-A primary-mode spawn also keeps the prompt-cache TTL it inherits, because it waits on
-its children for longer than Meridian's five-minute spawn default; see
-[Claude prompt caching](harness-integration.md#claude-prompt-caching).
+On Claude, a primary-mode spawn also keeps the prompt-cache TTL it inherits. The
+rationale is that these roles can wait on children longer than Meridian's
+five-minute spawn default; see [Claude prompt caching](harness-integration.md#claude-prompt-caching).
 
 ## `model-policies`
 

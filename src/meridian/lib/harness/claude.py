@@ -544,7 +544,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 system_prompt_path.with_name(LAUNCH_FILE_NAMES.starting_prompt)
             )
         if not spec.interactive and spec.agent_mode != "primary":
-            # Do not let a primary's inherited one-hour TTL become the spawn default.
             # A primary-mode agent is a long-lived orchestrator that idles past five
             # minutes waiting on children, so it keeps the session's own TTL instead.
             overrides["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"

@@ -121,10 +121,11 @@ Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for a non-interactive Claude spa
 whose agent profile says `mode: subagent`, or that runs no agent profile,
 including resumes via `meridian spawn --continue`. This is a process-environment
 override: it replaces inherited values and Meridian `--env` / `[env]` values. A
-spawn of a `mode: primary` agent keeps the TTL it inherits instead, because it
-orchestrates for hours and waits on its children for longer than five minutes at
-a time. Interactive primary sessions keep their existing environment and Claude
-cache settings.
+spawn of a `mode: primary` agent keeps the TTL it inherits instead. The rationale
+is that these roles orchestrate for hours and can wait on children for longer
+than five minutes, so a short TTL would make them re-cache on every wake.
+Interactive primary sessions keep their existing environment and Claude cache
+settings.
 
 Claude reapplies its own `settings.json` `env` block after launch. An entry there
 setting `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` overrides Meridian's injected value.

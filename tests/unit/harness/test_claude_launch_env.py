@@ -20,7 +20,7 @@ _TTL_ENV = "CLAUDE_CODE_PROMPT_CACHE_TTL"
         (False, "primary", None),
         (False, "subagent", "5m"),
         (False, None, "5m"),
-        (True, "primary", None),
+        (True, "subagent", None),
     ],
 )
 def test_prompt_cache_ttl_override_follows_agent_lifetime(
