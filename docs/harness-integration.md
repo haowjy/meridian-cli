@@ -120,8 +120,8 @@ guards, extractor wiring, then cross-adapter field accounting.
 Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for a non-interactive Claude spawn
 whose agent profile says `mode: subagent`, or that runs no agent profile,
 including resumes via `meridian spawn --continue`. This is a process-environment
-override: it replaces inherited values and Meridian `--env` / `[env]` values. The
-same holds for a primary-mode spawn resumed with `--continue`: the snapshot records
+override: it replaces inherited values and Meridian `--env` / `[env]` values. A
+primary-mode spawn resumed with `--continue` is no different: the snapshot records
 the agent name, and the mode is re-read from that profile at each launch, so the
 exemption follows the profile's current `mode`.
 
@@ -143,7 +143,7 @@ setting for a primary-session preference instead.
 
 Claude treats `claude -p` as a main conversation, which can otherwise use the
 more expensive one-hour cache on a subscription. For subagent-mode and unprofiled
-spawns, five-minute caching avoids that write premium, but a spawned agent that
+spawns, five-minute caching avoids that write premium, but such an agent that
 waits longer than five minutes may need to rebuild its cache. This does not change
 Claude's built-in subagent TTL (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) or enable
 caching when it is disabled. The main-conversation TTL variable requires
