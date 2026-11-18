@@ -146,6 +146,8 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Harness-level agent identity. Codex also shows it in the managed bootstrap turn.
     agent_name: str | None = None
+    # The profile's declared lifetime; None when no profile was resolved.
+    agent_mode: Literal["primary", "subagent"] | None = None
     appended_system_prompt: str | None = None
 
     agents_payload: str | None = None

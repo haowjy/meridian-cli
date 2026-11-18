@@ -246,6 +246,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "autocompact_pct",
             "skills",
             "agent",
+            "agent_mode",
             "adhoc_agent_payload",
             "extra_args",
             "control_root",
@@ -512,6 +513,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             appended_system_prompt=run.appended_system_prompt,
             agents_payload=build_claude_adhoc_agent_json(name=run.agent or "") or None,
             agent_name=run.agent,
+            agent_mode=run.agent_mode,
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
             claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
@@ -541,8 +543,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             overrides[FIRST_TURN_PATH_ENV] = str(
                 system_prompt_path.with_name(LAUNCH_FILE_NAMES.starting_prompt)
             )
-        if not spec.interactive:
+        if not spec.interactive and spec.agent_mode != "primary":
             # Do not let a primary's inherited one-hour TTL become the spawn default.
+            # A primary-mode agent is a long-lived orchestrator that idles past five
+            # minutes waiting on children, so it keeps the session's own TTL instead.
             overrides["CLAUDE_CODE_PROMPT_CACHE_TTL"] = "5m"
         if spec.autocompact_pct is not None:
             overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(spec.autocompact_pct)

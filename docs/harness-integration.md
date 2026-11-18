@@ -117,10 +117,14 @@ guards, extractor wiring, then cross-adapter field accounting.
 
 ## Claude: prompt caching
 
-Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for every non-interactive
-Claude spawn, including resumes via `meridian spawn --continue`. This is a process-environment override:
-it replaces inherited values and Meridian `--env` / `[env]` values. Interactive
-primary sessions keep their existing environment and Claude cache settings.
+Meridian sets `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` for a non-interactive Claude spawn
+whose agent profile says `mode: subagent`, or that runs no agent profile,
+including resumes via `meridian spawn --continue`. This is a process-environment
+override: it replaces inherited values and Meridian `--env` / `[env]` values. A
+spawn of a `mode: primary` agent keeps the TTL it inherits instead, because it
+orchestrates for hours and waits on its children for longer than five minutes at
+a time. Interactive primary sessions keep their existing environment and Claude
+cache settings.
 
 Claude reapplies its own `settings.json` `env` block after launch. An entry there
 setting `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` overrides Meridian's injected value.

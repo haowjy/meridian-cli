@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from pydantic import ValidationError
 
+from meridian.lib.catalog.agent import AgentMode
 from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
@@ -283,6 +284,7 @@ class PreparedLaunchSurface:
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tool_rules: tuple[ToolRule, ...]
+    agent_mode: AgentMode | None
     has_spawn_capability: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
@@ -498,6 +500,7 @@ def materialize_launch_artifacts(
     autocompact_pct: int | None,
     skills: tuple[str, ...],
     agent: str | None,
+    agent_mode: AgentMode | None,
     prompt_payload: PreparedPromptPayload,
     extra_args: tuple[str, ...] = (),
     control_root: str | None = None,
@@ -522,6 +525,7 @@ def materialize_launch_artifacts(
         autocompact_pct=autocompact_pct,
         skills=skills,
         agent=agent,
+        agent_mode=agent_mode,
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         extra_args=extra_args,
         control_root=control_root,
@@ -1424,6 +1428,7 @@ def prepare_launch_surface(
             seed_session_args=seed_session_args,
         ),
         profile_tool_rules=profile_tool_rules,
+        agent_mode=profile.mode if profile is not None else None,
         has_spawn_capability=has_spawn_capability(profile),
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
@@ -1747,6 +1752,7 @@ def bind_launch_context(
         autocompact_pct=resolved_request.execution_policy.autocompact_pct,
         skills=resolved_request.skills,
         agent=resolved_request.agent,
+        agent_mode=prepared.agent_mode,
         prompt_payload=prompt_payload,
         extra_args=tuple(resolved_request.extra_args),
         control_root=resolved_control_root.as_posix(),

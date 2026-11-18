@@ -77,6 +77,10 @@ mode: primary    # top-level orchestrators, primary sessions
 mode: subagent   # spawned workers (default)
 ```
 
+A primary-mode spawn also keeps the prompt-cache TTL it inherits, because it waits on
+its children for longer than Meridian's five-minute spawn default; see
+[Claude prompt caching](harness-integration.md#claude-prompt-caching).
+
 ## `model-policies`
 
 Per-model override rules applied when the resolved model matches a selector. Use this when one profile should behave differently depending on which model runs it — for example, setting higher effort for a weaker model, or a read-only sandbox for an unfamiliar one.
