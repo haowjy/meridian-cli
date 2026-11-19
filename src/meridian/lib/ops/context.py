@@ -467,12 +467,22 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
 _SYNCED_OUTCOMES = frozenset({"success", "nothing_to_sync"})
 
 
-def _sync_status_for_context(remote: str | None, *, runtime_root: Path) -> str | None:
-    """Sync line for a context; autosync state is keyed by the clone of its remote."""
+def _sync_status_for_context(
+    remote: str | None, path: Path | None, *, runtime_root: Path
+) -> str | None:
+    """Sync line for a context.
 
-    if remote is None or not remote.strip():
+    Autosync state is keyed by the clone of the context's remote, or by its resolved path
+    for a local-only `path` row.
+    """
+
+    if remote is not None and remote.strip():
+        sync_root = resolve_clone_path(remote.strip())
+    elif path is not None:
+        sync_root = path.expanduser().resolve()
+    else:
         return None
-    status = read_status(resolve_clone_path(remote.strip()), runtime_root=runtime_root)
+    status = read_status(sync_root, runtime_root=runtime_root)
     if status.state is None and not status.unresolved_conflicts:
         return None
 
@@ -495,6 +505,8 @@ def _sync_status_for_context(remote: str | None, *, runtime_root: Path) -> str |
             ]
         )
 
+    if status.state is not None and status.state.outcome == "conflict_detected":
+        return "ok (conflict resolved, waiting for next sync)"
     if status.state is not None and status.state.outcome not in _SYNCED_OUTCOMES:
         error = f": {status.state.error.splitlines()[0]}" if status.state.error else ""
         return f"failed ({state_info}){error}"
@@ -517,14 +529,18 @@ def context_sync(input: ContextInput) -> ContextOutput:
     sync_status: dict[str, str] = {}
 
     work_sync = (
-        _sync_status_for_context(context_config.work.remote, runtime_root=runtime_root)
+        _sync_status_for_context(
+            context_config.work.remote, resolved_paths.work_root, runtime_root=runtime_root
+        )
         if runtime_root is not None
         else None
     )
     if work_sync is not None:
         sync_status["work"] = work_sync
     kb_sync = (
-        _sync_status_for_context(context_config.kb.remote, runtime_root=runtime_root)
+        _sync_status_for_context(
+            context_config.kb.remote, resolved_paths.kb_root, runtime_root=runtime_root
+        )
         if runtime_root is not None
         else None
     )
@@ -542,7 +558,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
             resolved=path.as_posix(),
         )
         extra_sync = (
-            _sync_status_for_context(config_entry.remote, runtime_root=runtime_root)
+            _sync_status_for_context(config_entry.remote, path, runtime_root=runtime_root)
             if runtime_root is not None
             else None
         )

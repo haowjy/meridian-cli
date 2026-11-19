@@ -58,6 +58,7 @@ _DIFF_TIMEOUT_SECS = 30
 _MAX_ERROR_CHARS = 500
 _LOCK_TIMEOUT_SECS = 60.0
 _SIGTERM_GRACE_SECS = 60.0
+_KILL_WAIT_SECS = 5.0
 
 _GIT_LOCAL_ENV_VARS: tuple[str, ...] = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -119,12 +120,24 @@ def _run_timed(
             try:
                 proc.communicate(timeout=_SIGTERM_GRACE_SECS)
             except subprocess.TimeoutExpired:
+                git_alive = proc.poll() is None
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGKILL)
-                proc.communicate()
+                # Bounded: a process that left the group may still hold the pipes, so
+                # drop unread output instead of waiting for it.
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=_KILL_WAIT_SECS)
+                for pipe in (proc.stdout, proc.stderr):
+                    if pipe is not None:
+                        pipe.close()
+                if git_alive:
+                    raise subprocess.SubprocessError(
+                        f"{argv[0]} ignored SIGTERM for {_SIGTERM_GRACE_SECS:.0f}s and was "
+                        "killed; it may have left .git/index.lock"
+                    ) from None
                 raise subprocess.SubprocessError(
-                    f"{argv[0]} ignored SIGTERM for {_SIGTERM_GRACE_SECS:.0f}s and was "
-                    "killed; it may have left .git/index.lock"
+                    f"{argv[0]} exited but a process it started held its output open for "
+                    f"{_SIGTERM_GRACE_SECS:.0f}s; output dropped"
                 ) from None
             raise
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
@@ -627,20 +640,28 @@ class GitAutosync:
             )
 
     def _off_default_branch(self, clone_path: str) -> str | None:
-        """Return why HEAD is not on the branch origin/HEAD names, or None when it is."""
+        """Return why HEAD is not on the remote's default branch, or None when it is."""
 
-        head = self._run_git(
-            clone_path,
-            ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-            timeout=5,
-        )
+        ref = ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+        head = self._run_git(clone_path, ref, timeout=5)
         if head.returncode != 0:
-            return self._format_git_error("cannot resolve origin/HEAD", head)
+            # `git clone` creates origin/HEAD; clones made another way have none.
+            auto = self._run_git(
+                clone_path, ["remote", "set-head", "origin", "--auto"], timeout=_FETCH_TIMEOUT_SECS
+            )
+            if auto.returncode != 0:
+                return self._format_git_error("remote has no default branch yet", auto)
+            head = self._run_git(clone_path, ref, timeout=5)
+            if head.returncode != 0:
+                return self._format_git_error("remote has no default branch yet", head)
         default_branch = head.stdout.strip().removeprefix("origin/")
         current = self._get_current_branch(clone_path)
         if current == default_branch:
             return None
-        return f"HEAD is on {current or 'a detached commit'}, not {default_branch}"
+        return (
+            f"HEAD is on {current or 'a detached commit'}, not {default_branch}. If the remote "
+            f"renamed its default branch, run: git -C {clone_path} remote set-head origin --auto"
+        )
 
     def _get_current_branch(self, clone_path: str) -> str | None:
         result = self._run_git(clone_path, ["branch", "--show-current"], timeout=5)
