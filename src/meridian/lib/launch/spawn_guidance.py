@@ -25,7 +25,7 @@ from meridian.plugin_api.types import SpawnKind
 _GENERAL_CAPABILITIES = ("- Project guidance graph: `meridian qi graph`.",)
 
 _SPAWN_CAPABILITIES = (
-    "- Delegate to an `@agent`: `meridian spawn`; write the brief under the work directory's "
+    "- Delegate to an agent: `meridian spawn`; write the brief under the work directory's "
     "`prompts/` with `meridian work path`, pass its absolute path to `--prompt-file`, attach "
     "skills with `--skills`, pass files or a folder with `-f`, carry a prior run with "
     "`--from`, choose its checkout with `--task-dir`, or override its model with `-m`.\n"
