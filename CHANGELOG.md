@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.5] - 2026-11-19
+
+### Changed
+- The spawn guidance Meridian adds to a session's prompt says "Delegate to an agent" instead of "Delegate to an `@agent`", and the bundled `prompt-authoring__meridian` skill tells authors to name agents in backticks, not with `@`: in Claude Code a bare `@path` in a skill or `AGENTS.md` loads that file.
+
 ## [0.23.4] - 2026-11-18
 
 None. Internal structure change; user-visible behavior is identical to v0.23.2.
