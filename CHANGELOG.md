@@ -6,6 +6,19 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.11] - 2026-11-19
+
+### Added
+- Every install now includes `meridian-sync`, a small binary that does nothing yet beyond
+  `meridian-sync version`. It ships as its own wheel, pinned to meridian-cli's exact
+  version, and will become the context-sync daemon (#691). Installing from a checkout or
+  an sdist compiles it (maturin fetches a Rust toolchain if none is installed). Windows
+  gets no wheel.
+
+### Changed
+- Installing a meridian-cli release candidate needs uv 0.12 or newer: older uv refuses the
+  pinned `meridian-sync` pre-release once stable versions exist.
+
 ## [0.23.10] - 2026-11-19
 
 ### Fixed
