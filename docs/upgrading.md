@@ -6,8 +6,7 @@ Needs `meridian-sync`, which every install now carries.
 
 - **Every git context starts syncing, including ones that never had a hook row.** A
   `[context.<name>]` with `source = "git"` now syncs its clone by default; before, only a
-  context with a `[[hooks]] builtin = "git-autosync"` row did. This repo's
-  `[context.strategy]` is one. A clone you manage yourself (a `[git."<url>"].path` override)
+  context with a `[[hooks]] builtin = "git-autosync"` row did. A clone you manage yourself (a `[git."<url>"].path` override)
   stays off unless you set `autosync = true`. To keep one context from syncing, add
   `autosync = false` to its table (in `meridian.local.toml` for each project that names the
   clone, if you don't want to commit it).

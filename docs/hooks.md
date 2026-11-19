@@ -109,6 +109,8 @@ event   = "spawn.finished"
 | `builtin` | str | one of `builtin`/`command` | — | Use a builtin hook |
 | `command` | str | one of `builtin`/`command` | — | Shell command to run |
 | `event` | str | yes (unless builtin supplies defaults) | builtin default | Event that triggers the hook |
+| `remote` | str | no | — | Deprecated: the removed `git-autosync` hook's shorthand; carried, unused, removed in the next minor release |
+| `exclude` | array[str] | no | — | Deprecated: the removed `git-autosync` hook's file patterns; carried, unused, removed in the next minor release |
 | `enabled` | bool | no | `true` | Set to `false` to disable without removing |
 | `priority` | int | no | `0` | Higher values run first within the same source |
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
@@ -248,7 +250,7 @@ Git contexts now sync through the `meridian-sync` daemon, which watches each clo
 needs no hook row: see [Context Sync](commands.md#context-sync) and the `autosync` key in
 [context configuration](configuration/context.md). A `[[hooks]] builtin = "git-autosync"`
 row still loads, does nothing, and warns each time it would have run; delete it. `remote`,
-`exclude` and `options.*` on such a row are ignored. A row with `options.path` also made
+`exclude` and `options.*` on such a row are ignored (the two top-level keys are removed with the stub). A row with `options.path` also made
 local-only commits, which nothing replaces now. The stub is removed one minor release
 after this one.
 

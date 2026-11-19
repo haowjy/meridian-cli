@@ -62,7 +62,7 @@ def test_a_registered_project_is_synced_and_read_back(
     try:
 
         def synced() -> bool:
-            [status] = autosync.context_sync(
+            [status] = autosync.clone_syncs(
                 contexts,
                 running=autosync.daemon_running(),
                 service_is_off=False,

@@ -15,7 +15,6 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
     ContextConfig,
     ContextSourceType,
-    extra_contexts,
 )
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.config.loader import (
@@ -27,7 +26,7 @@ from meridian.lib.config.loader import (
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
-from meridian.lib.context.resolver import resolve_context_paths
+from meridian.lib.context.resolver import ResolvedContextPaths, resolve_context_paths
 from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
@@ -604,35 +603,15 @@ def _missing_continue_session_error(source_ref: str | None) -> str:
     )
 
 
-def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:
-
-    if config is None:
-        return ()
-
-    roots: list[Path] = []
-
-    def add_root(*, source: ContextSourceType, remote: str | None) -> None:
-        if source != ContextSourceType.GIT:
-            return
-        normalized_remote = (remote or "").strip()
-        if not normalized_remote:
-            return
-        roots.append(resolve_clone_path(normalized_remote))
-
-    add_root(source=config.work.source, remote=config.work.remote)
-    add_root(source=config.kb.source, remote=config.kb.remote)
-
-    for parsed in extra_contexts(config).values():
-        add_root(source=parsed.source, remote=parsed.remote)
-
-    return tuple(roots)
+def _collect_git_context_clone_roots(resolved: ResolvedContextPaths) -> tuple[Path, ...]:
+    return tuple(
+        resolve_clone_path(c.remote.strip())
+        for c in resolved.contexts
+        if c.source == ContextSourceType.GIT and c.remote and c.remote.strip()
+    )
 
 
-def _collect_context_projection_roots(
-    project_root: Path, config: ContextConfig | None
-) -> tuple[Path, ...]:
-    effective = config or ContextConfig()
-    resolved = resolve_context_paths(project_root, effective)
+def _collect_context_projection_roots(resolved: ResolvedContextPaths) -> tuple[Path, ...]:
     builtins = (
         ("work", resolved.work_root),
         ("work_archive", resolved.work_archive),
@@ -1447,10 +1426,11 @@ def bind_launch_context(
     workspace_snapshot = resolve_workspace_snapshot_for_launch(project_paths.project_root)
     workspace_roots = get_projectable_roots(workspace_snapshot)
     context_config = load_context_config(project_paths.project_root)
-    git_context_roots = _collect_git_context_clone_roots(context_config)
-    context_projection_roots = _collect_context_projection_roots(
-        project_paths.project_root, context_config
+    resolved_contexts = resolve_context_paths(
+        project_paths.project_root, context_config or ContextConfig()
     )
+    git_context_roots = _collect_git_context_clone_roots(resolved_contexts)
+    context_projection_roots = _collect_context_projection_roots(resolved_contexts)
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     socket_roots = (socket_directory(),) if IS_POSIX else ()

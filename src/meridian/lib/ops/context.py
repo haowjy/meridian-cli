@@ -9,7 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.mars_roots import mars_fallback_label
-from meridian.lib.config.context_config import ContextConfig, extra_contexts
+from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolver import (
+    ResolvedContext as ResolvedContextEntry,
+)
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
     context_env_key,
@@ -113,9 +116,12 @@ class ContextOutput(BaseModel):
 
         from meridian.lib.config.context_config import ContextSourceType
 
-        extra: dict[str, tuple[Path, ContextSourceType]] = {}
-        for name, entry in self.extra_contexts.items():
-            extra[name] = (Path(entry.resolved), ContextSourceType(entry.source))
+        extras = tuple(
+            ResolvedContextEntry(
+                name, ContextSourceType(entry.source), None, Path(entry.resolved), entry.path, None
+            )
+            for name, entry in self.extra_contexts.items()
+        )
         return ResolvedContextPaths(
             work_root=Path(self.work_resolved) if self.work_resolved is not None else None,
             work_archive=(
@@ -124,7 +130,7 @@ class ContextOutput(BaseModel):
             work_source=ContextSourceType(self.work_source),
             kb_root=Path(self.kb_resolved) if self.kb_resolved is not None else None,
             kb_source=ContextSourceType(self.kb_source),
-            extra=extra,
+            contexts=extras,
         )
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -461,19 +467,13 @@ def context_sync(input: ContextInput) -> ContextOutput:
     )
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
-    extra_config = {name.strip().lower(): c for name, c in extra_contexts(context_config).items()}
-    extra_entries: dict[str, ContextEntryOutput] = {}
-
-    for name, (path, source) in resolved_paths.extra.items():
-        normalized = name.strip().lower()
-        config_entry = extra_config.get(normalized)
-        if config_entry is None:
-            continue
-        extra_entries[normalized] = ContextEntryOutput(
-            source=source.value,
-            path=config_entry.path,
-            resolved=path.as_posix(),
+    extra_entries = {
+        c.name: ContextEntryOutput(
+            source=c.source.value, path=c.path_spec, resolved=c.path.as_posix()
         )
+        for c in resolved_paths.extra_contexts
+        if c.path is not None
+    }
 
     mars_roots = authority.mars_roots
     return ContextOutput(

@@ -26,7 +26,7 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   worktree. Only a clone's one worker runs passes on it, inside the one process holding
   `daemon.lock`; there is no clone lock.
 - `conflict`: `SYNC-CONFLICT.md`. A worker writes it into each context directory of a
-  conflicted clone and deletes it after a pass that ends `synced` (a failed fetch changes
+  conflicted clone and deletes it after a pass that ends `synced`, when its clone goes off and when a directory leaves the clone's contexts (a failed fetch changes
   nothing). `pass` excludes it from `git add` and `status` by pathspec, because the docs
   clone's allowlist `.gitignore` re-includes `*.md` over any exclude file; `watch` ignores it.
 - `records`: reads `<home>/autosync/roots/*.json`, which Python writes, and groups contexts

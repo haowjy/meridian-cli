@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 class ContextSourceType(StrEnum):
@@ -22,7 +21,7 @@ class _ContextEntry(BaseModel):
 
     source: ContextSourceType = ContextSourceType.LOCAL
     remote: str | None = None  # Git remote URL when source = "git"
-    autosync: bool | None = None
+    autosync: StrictBool | None = None
 
     @model_validator(mode="after")
     def _autosync_needs_a_clone(self) -> _ContextEntry:
@@ -65,16 +64,5 @@ class ContextConfig(BaseModel):
 
     work: WorkContextConfig = Field(default_factory=WorkContextConfig)
     kb: KbContextConfig = Field(default_factory=KbContextConfig)
-
-
-def extra_contexts(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
-    """The named contexts beyond `work` and `kb`, validated, in config order."""
-
-    raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
-    return {
-        name: value
-        if isinstance(value, ArbitraryContextConfig)
-        else ArbitraryContextConfig.model_validate(value)
-        for name, value in extras.items()
-    }
+    # The named contexts beyond `work` and `kb`, validated when the config loads.
+    __pydantic_extra__: dict[str, ArbitraryContextConfig] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]

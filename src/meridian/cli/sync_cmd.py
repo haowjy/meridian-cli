@@ -63,7 +63,8 @@ def register_sync_commands(app: App) -> None:
 
         Asks the running daemon for a pass and waits up to 60 s for it, so an edit made
         just before is included. Exits non-zero unless every clone ended `synced`.
-        With no daemon running it says so; start one with `meridian sync run`.
+        With no daemon running it says so and how to start one: `meridian sync service install`
+        where the machine has a service manager, else `meridian sync run`.
         """
 
         from meridian.lib.ops.sync_daemon import sync_now_sync
@@ -117,13 +118,31 @@ def register_sync_commands(app: App) -> None:
     service_app.command(service_install, name="install")
     service_app.command(service_uninstall, name="uninstall")
 
-    def _conflict_removed(*_conflict_id: str) -> None:
-        """Removed. Conflicts show in `meridian sync status`; resolve with `meridian sync now`."""
-
+    def _conflict_removed(*, fails: bool) -> None:
         from meridian.lib.ops.sync_daemon import conflict_removed_sync
 
         emit(conflict_removed_sync())
+        # `show` and `resolve` must not look like they worked to a script.
+        if fails:
+            raise SystemExit(1)
 
-    # Kept for one minor release so a script that calls them gets a pointer, not an error.
-    for name in ("list", "show", "resolve"):
-        conflict_app.command(_conflict_removed, name=name)
+    # Kept for one minor release: `list` answers with no conflicts, the others fail with a
+    # pointer.
+    def conflict_list() -> None:
+        """Removed. Conflicts show in `meridian sync status`."""
+
+        _conflict_removed(fails=False)
+
+    def conflict_show(*_conflict_id: str) -> None:
+        """Removed. Conflicts show in `meridian sync status` and `meridian sync now`."""
+
+        _conflict_removed(fails=True)
+
+    def conflict_resolve(*_conflict_id: str) -> None:
+        """Removed. Resolve in the clone, then run `meridian sync now <context>`."""
+
+        _conflict_removed(fails=True)
+
+    conflict_app.command(conflict_list, name="list")
+    conflict_app.command(conflict_show, name="show")
+    conflict_app.command(conflict_resolve, name="resolve")

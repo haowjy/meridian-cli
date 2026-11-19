@@ -6,7 +6,7 @@ import os
 import signal
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -65,10 +65,10 @@ class ConflictOutput(BaseModel):
     files: tuple[ConflictFileOutput, ...] = ()
 
 
-class SyncContextOutput(BaseModel):
+class CloneSyncOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    name: str
+    contexts: tuple[str, ...]
     clone_key: str
     clone_path: str
     state: str
@@ -91,7 +91,7 @@ class SyncContextOutput(BaseModel):
     conflict: ConflictOutput | None = None
 
     def line(self) -> str:
-        return f"{self.name}: {self.summary()}"
+        return f"{', '.join(self.contexts)}: {self.summary()}"
 
     def conflict_sides(self) -> list[str]:
         """Each conflicting file with the local and the remote content."""
@@ -137,7 +137,7 @@ class SyncContextOutput(BaseModel):
         return "\n    ".join(part for item in lines for part in item.split("\n"))
 
 
-def _context_output(sync: autosync.ContextSync) -> SyncContextOutput:
+def _clone_output(sync: autosync.CloneSync) -> CloneSyncOutput:
     e: Mapping[str, Any] = sync.entry or {}
 
     def text(field: str) -> str | None:
@@ -150,8 +150,8 @@ def _context_output(sync: autosync.ContextSync) -> SyncContextOutput:
 
     repair = cast("Mapping[str, Any] | None", e.get("last_repair"))
     conflict = cast("Mapping[str, Any] | None", e.get("conflict"))
-    return SyncContextOutput(
-        name=sync.name,
+    return CloneSyncOutput(
+        contexts=sync.contexts,
         clone_key=sync.clone_key,
         clone_path=sync.clone_path,
         state=sync.state,
@@ -197,7 +197,7 @@ class DaemonOutput(BaseModel):
 
     running: bool
     service_off: bool
-    service: str
+    service: autosync_service.ServiceStatus
     binary: str | None
     meridian_version: str
     pid: int | None = None
@@ -212,7 +212,7 @@ class SyncStatusOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     daemon: DaemonOutput
-    contexts: tuple[SyncContextOutput, ...]
+    clones: tuple[CloneSyncOutput, ...]
     skipped_records: tuple[SkippedRecordOutput, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -232,14 +232,14 @@ class SyncStatusOutput(BaseModel):
             daemon = f"not running. {autosync.not_running_fix()}"
         pairs: list[tuple[str, str | None]] = [
             ("daemon", daemon),
-            ("service", d.service),
+            ("service", d.service.text()),
             ("binary", d.binary or "meridian-sync is not installed"),
             ("meridian", d.meridian_version),
             ("state.json", d.problem),
         ]
         blocks = [kv_block(pairs)]
-        blocks.extend(c.line() for c in self.contexts)
-        if not self.contexts:
+        blocks.extend(c.line() for c in self.clones)
+        if not self.clones:
             blocks.append("This project has no git contexts.")
         for skipped in self.skipped_records:
             blocks.append(f"skipped record {skipped.file}: {skipped.error}")
@@ -250,12 +250,12 @@ class SyncNowOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     ok: bool
-    contexts: tuple[SyncContextOutput, ...]
+    clones: tuple[CloneSyncOutput, ...]
     timed_out: bool = False
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         lines: list[str] = []
-        for c in self.contexts:
+        for c in self.clones:
             lines.append(c.line())
             lines.extend(c.conflict_sides())
         if self.timed_out:
@@ -272,7 +272,7 @@ def _daemon_output(file: autosync.DaemonFile, *, running: bool) -> DaemonOutput:
     return DaemonOutput(
         running=running,
         service_off=autosync.service_off(),
-        service=autosync_service.describe(),
+        service=autosync_service.service_status(),
         binary=installed_executable("meridian-sync"),
         meridian_version=_meridian_version(),
         pid=pid if isinstance(pid, int) else None,
@@ -290,11 +290,13 @@ def _meridian_version() -> str:
     return __version__
 
 
-def _project_states(root: Path) -> tuple[bool, autosync.DaemonFile, list[autosync.ContextSync]]:
+def _project_states(
+    root: Path, contexts: Sequence[autosync.GitContext] | None = None
+) -> tuple[bool, autosync.DaemonFile, list[autosync.CloneSync]]:
     running = autosync.daemon_running()
     file = autosync.read_daemon_file()
-    states = autosync.context_sync(
-        autosync.git_contexts(root),
+    states = autosync.clone_syncs(
+        autosync.git_contexts(root) if contexts is None else contexts,
         running=running,
         service_is_off=autosync.service_off(),
         file=file,
@@ -305,21 +307,21 @@ def _project_states(root: Path) -> tuple[bool, autosync.DaemonFile, list[autosyn
 
 
 def project_sync_summaries(root: Path) -> dict[str, str]:
-    """`meridian context`'s Sync section: each git context's state, by name. A config that
-    doesn't load has no git contexts to show."""
+    """`meridian context`'s Sync section: each clone's state, by the names of the contexts
+    in it. A config that doesn't load has no git contexts to show."""
 
     try:
         _, _, states = _project_states(root)
     except ValueError:
         return {}
-    return {s.name: _context_output(s).summary() for s in states}
+    return {s.names: _clone_output(s).summary() for s in states}
 
 
 def sync_status_sync() -> SyncStatusOutput:
     running, file, states = _project_states(_project_root())
     return SyncStatusOutput(
         daemon=_daemon_output(file, running=running),
-        contexts=tuple(_context_output(s) for s in states),
+        clones=tuple(_clone_output(s) for s in states),
         skipped_records=tuple(
             SkippedRecordOutput(
                 file=str(r.get("file", "")),
@@ -358,7 +360,7 @@ def _show(clone: str, sha: str, path: str) -> str | None:
     return "\n".join(lines)
 
 
-def _with_conflict_sides(out: SyncContextOutput) -> SyncContextOutput:
+def _with_conflict_sides(out: CloneSyncOutput) -> CloneSyncOutput:
     c = out.conflict
     if c is None or not c.local_sha or not c.remote_sha:
         return out
@@ -373,7 +375,7 @@ def _with_conflict_sides(out: SyncContextOutput) -> SyncContextOutput:
     return out.model_copy(update={"conflict": c.model_copy(update={"files": files})})
 
 
-def _settled(sync: autosync.ContextSync, written_at: str) -> bool:
+def _settled(sync: autosync.CloneSync, written_at: str) -> bool:
     if sync.entry is None:
         return sync.note != autosync.STARTING_NOTE
     if sync.state == "off":
@@ -387,8 +389,8 @@ def sync_now_sync(context: str | None) -> SyncNowOutput:
 
     root = _project_root()
     all_contexts = autosync.git_contexts(root)
-    selected = [c for c in all_contexts if context is None or c.name == context.strip().lower()]
-    if not selected:
+    wanted = None if context is None else context.strip().lower()
+    if wanted is not None and wanted not in {c.name for c in all_contexts}:
         if not all_contexts:
             raise ValueError("This project has no git contexts.")
         names = ", ".join(c.name for c in all_contexts)
@@ -403,20 +405,25 @@ def sync_now_sync(context: str | None) -> SyncNowOutput:
     while True:
         running = autosync.daemon_running()
         file = autosync.read_daemon_file()
-        states = autosync.context_sync(
-            selected,
-            running=running,
-            service_is_off=autosync.service_off(),
-            file=file,
-            written_at=written_at,
-            record_file=record_file,
-        )
+        # Every context decides its clone's `autosync`, so the rows come from all of them.
+        states = [
+            s
+            for s in autosync.clone_syncs(
+                all_contexts,
+                running=running,
+                service_is_off=autosync.service_off(),
+                file=file,
+                written_at=written_at,
+                record_file=record_file,
+            )
+            if wanted is None or wanted in s.contexts
+        ]
         done = not running or all(_settled(s, written_at) for s in states)
         timed_out = not done and time.monotonic() >= deadline
         if done or timed_out:
             return SyncNowOutput(
                 ok=all(s.state == "synced" for s in states),
-                contexts=tuple(_with_conflict_sides(_context_output(s)) for s in states),
+                clones=tuple(_with_conflict_sides(_clone_output(s)) for s in states),
                 timed_out=timed_out,
             )
         time.sleep(_POLL_S)
@@ -460,80 +467,63 @@ def run_daemon_sync() -> int:
 # ---- The service, and what a launch says --------------------------------------------
 
 
-class ServiceOutput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    action: str
-    unit: str | None = None
-    binary: str | None = None
-    reason: str | None = None
-
-    def format_text(self, ctx: FormatContext | None = None) -> str:
-        unit = f" `{self.unit}`" if self.unit else ""
-        if self.action == "skipped":
-            return f"Nothing done: {self.reason}."
-        if self.action == "removed":
-            return (
-                f"Removed the service{unit}. Autosync is off on this machine until "
-                "`meridian sync service install`."
-            )
-        verb = {
-            "installed": "Installed",
-            "updated": "Rewrote",
-            "started": "Started",
-            "unchanged": "Already running:",
-        }[self.action]
-        binary = f" ({self.binary})" if self.binary else ""
-        return f"{verb} the service{unit}{binary}."
+def service_install_sync() -> autosync_service.ServiceResult:
+    return autosync_service.install_service()
 
 
-def service_install_sync() -> ServiceOutput:
-    return ServiceOutput(**autosync_service.install_service().__dict__)
+def service_uninstall_sync() -> autosync_service.ServiceResult:
+    return autosync_service.uninstall_service()
 
 
-def service_uninstall_sync() -> ServiceOutput:
-    return ServiceOutput(**autosync_service.uninstall_service().__dict__)
+def _stopped_line(s: autosync.CloneSync) -> str:
+    """One line: the clone's contexts, why it stopped and what to do."""
+
+    out = _clone_output(s)
+    why = out.reason or out.outcome or out.note
+    since = f" since {relative_time(out.stopped_since)}" if out.stopped_since else ""
+    fix = f" {out.fix}" if out.fix else ""
+    return f"{s.names}: STOPPED{since}{f', {why}' if why else ''}.{fix}"
 
 
 def startup_notices(project_root: Path, registration: autosync.Registration) -> list[str]:
-    """What a human's primary launch prints before the harness starts: the service
-    installing itself or failing to, one line per stopped clone, or that no daemon is
-    running. Nothing when all is well or off. Never raises: syncing is not the launch."""
+    """What a human's primary launch prints before the harness starts. When the service was
+    just installed or started, that and nothing else: the daemon needs a moment to take
+    its lock and a probe now would only guess. Otherwise one line per stopped clone, or one
+    that no daemon is running. Nothing when all is well or off. Never raises: syncing is
+    not the launch."""
 
-    contexts = [c for c in registration.contexts if c.autosync]
-    if not contexts:
+    if not any(c.autosync for c in registration.contexts):
         return []
-    notices: list[str] = []
     try:
         result = autosync_service.ensure_service(auto=True)
     except (autosync_service.ServiceError, OSError) as exc:
         return [f"autosync: the sync service could not be started: {exc}"]
     if result.action == "installed":
-        notices.append(
+        return [
             f"autosync: installed the sync service `{result.unit}` for your git contexts. "
             "Turn it off with `meridian sync service uninstall`."
-        )
-    running = autosync.daemon_running()
-    if not running:
-        if not autosync.service_off():
-            notices.append(f"autosync: daemon not running. {autosync.not_running_fix()}")
-        return notices
-    states = autosync.context_sync(
-        contexts,
-        running=True,
-        service_is_off=False,
-        file=autosync.read_daemon_file(),
-        written_at=registration.written_at,
-        record_file=autosync.record_path(project_root).name,
-    )
-    notices.extend(f"autosync: {_context_output(s).line()}" for s in states if s.state == "stopped")
+        ]
+    if result.action in ("updated", "started"):
+        return [
+            f"autosync: started the sync service `{result.unit}`; if this repeats, "
+            f"look at `{result.log}`."
+        ]
+    _, _, states = _project_states(project_root, registration.contexts)
+    # The record was just written; `written_at` is what the daemon must have answered.
+    notices = [f"autosync: {_stopped_line(s)}" for s in states if s.state == "stopped"]
+    if any(s.note == autosync.NOT_RUNNING_NOTE for s in states):
+        notices.append(f"autosync: daemon not running. {autosync.not_running_fix()}")
     return notices
 
 
 class ConflictRemovedOutput(BaseModel):
+    """What `meridian sync conflict ...` prints until the next minor release removes it."""
+
     model_config = ConfigDict(frozen=True)
 
     removed: bool = True
+    # What `list` returned: always none, so a script's loop over it does nothing.
+    conflicts: tuple[()] = ()
     message: str = (
         "`meridian sync conflict` was removed and will be dropped from the next minor release. "
         "A conflict now stops the clone: see it with `meridian sync status`, then run "
@@ -550,8 +540,7 @@ def conflict_removed_sync() -> ConflictRemovedOutput:
 
 def doctor_findings(root: Path) -> tuple[str | None, list[tuple[str, str]]]:
     """`meridian doctor`'s view of autosync: a one-line status (`None` when the project has
-    no git contexts) and `(code, message)` problems. `service.off` is a status, not a
-    problem."""
+    no git contexts) and `(code, message)` problems, all read from the clone rows."""
 
     try:
         contexts = autosync.git_contexts(root)
@@ -559,36 +548,34 @@ def doctor_findings(root: Path) -> tuple[str | None, list[tuple[str, str]]]:
         return None, []
     if not contexts:
         return None, []
-    running, file, states = _project_states(root)
+    running, file, states = _project_states(root, contexts)
     problems: list[tuple[str, str]] = []
     if not running:
         if autosync.service_off():
             return "off (autosync/service.off exists)", []
-        problems.append(
-            (
-                "autosync_daemon_not_running",
-                f"The sync daemon is not running. {autosync.not_running_fix()}",
-            )
-        )
-        if (
-            autosync_service.manager() is not None
-            and "not installed" in autosync_service.describe()
-        ):
-            problems.append(("autosync_service_missing", "The sync service is not installed."))
-        return "daemon not running", problems
-    for s in states:
-        out = _context_output(s)
-        if s.state == "stopped":
-            problems.append(("autosync_stopped", out.line()))
-        if out.reason in ("git_missing", "git_too_old"):
+        if any(s.note == autosync.NOT_RUNNING_NOTE for s in states):
             problems.append(
-                ("autosync_git", f"{out.name}: {out.reason}. {out.error or ''}".strip())
+                (
+                    "autosync_daemon_not_running",
+                    f"The sync daemon is not running. {autosync.not_running_fix()}",
+                )
             )
+            service = autosync_service.service_status()
+            if service.manager is not None and not service.installed:
+                problems.append(("autosync_service_missing", "The sync service is not installed."))
+            return "daemon not running", problems
+        return "off (no context has autosync on)", []
+    for s in states:
+        out = _clone_output(s)
+        if s.state == "stopped":
+            problems.append(("autosync_stopped", _stopped_line(s)))
+        if out.reason in ("git_missing", "git_too_old"):
+            problems.append(("autosync_git", f"{s.names}: {out.reason}. {out.error or ''}".strip()))
         if out.watch == "polling":
             problems.append(
                 (
                     "autosync_polling",
-                    f"{out.name}: watching by polling (too many directories or "
+                    f"{s.names}: watching by polling (too many directories or "
                     "the inotify limit); changes sync up to 15 s late.",
                 )
             )

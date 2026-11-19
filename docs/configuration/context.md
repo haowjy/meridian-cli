@@ -70,6 +70,13 @@ fetches, merges and pushes; see [Context Sync](../commands.md#context-sync).
   in `meridian.local.toml` for each project that names it.
 - `autosync = true` on `source = "local"`, or with no `remote`, is a config error.
 - **Machine-wide off:** `meridian sync service uninstall`.
+- **The service needs an ssh agent the user service manager can see.** It starts outside
+  your shell, so a `SSH_AUTH_SOCK` set only in a login shell isn't there. Where the clone's
+  remote uses ssh and the agent is missing, `meridian sync status` shows `fetch_failed` with
+  git's `Permission denied (publickey)`, and after 15 minutes the clone stops. Fix it by
+  making the agent known to the manager (`systemctl --user import-environment
+  SSH_AUTH_SOCK`, or a socket-activated agent) and run `meridian sync now`; or use an https
+  remote with a credential helper.
 
 ### Path resolution
 

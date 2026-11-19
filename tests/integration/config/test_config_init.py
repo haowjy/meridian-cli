@@ -114,7 +114,7 @@ def test_runtime_bootstrap_skips_context_dirs_for_git_backed_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Git-backed context directories are created by git-autosync hooks, not bootstrap.
+    """Git-backed context directories are created by the sync daemon, not bootstrap.
 
     Bootstrap should skip creating these directories because:
     1. The clone doesn't exist yet (lazy clone approach)
