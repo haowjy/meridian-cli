@@ -533,7 +533,7 @@ async function runPrompt($: EngineInterface, s: State, armed: Armed, epoch: numb
     s.prompt = prompt
     try {
       // `stop-waiting` is offered only with keepwarm on, which is when the reminder took a slot.
-      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(prompt.nonce) : reminderText(prompt.nonce, index > 0) })
+      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(prompt.nonce) : reminderText(prompt.nonce, index > 0 /* a slot is taken exactly when keepwarm is on */) })
       if (result.drop !== undefined && s.prompt === prompt && prompt.phase === 'submitted') {
         s.prompt = undefined
         note($, s, `${label(prompt)} dropped: ${result.drop}`)
@@ -585,12 +585,11 @@ async function finishPrompt($: EngineInterface, s: State, prompt: Prompt, reason
     note($, s, `${label(prompt)} ended: ${reason}`)
     return undefined
   }
-  const choice = parseChoice(answer)
-  if (choice === 'stop-waiting') {
-    await endPrompts($, s, prompt.session, prompt.stretch, `${label(prompt)} replied stop-waiting`)
-  } else if (choice === 'compact-now' && prompt.kind === 'reminder') {
-    await endPrompts($, s, prompt.session, prompt.stretch, 'compact-now')
-  } else note($, s, `${label(prompt)} continued`)
+  const parsed = parseChoice(answer)
+  // A ping cannot record state, so its compact-now does not count.
+  const choice = parsed === 'compact-now' && prompt.kind !== 'reminder' ? undefined : parsed
+  if (choice === undefined) note($, s, `${label(prompt)} continued`)
+  else await endPrompts($, s, prompt.session, prompt.stretch, `${label(prompt)} replied ${choice}`)
   return choice
 }
 
@@ -786,7 +785,7 @@ export const register: Register = on => {
         const choice = prompt !== undefined ? await finishPrompt($, s, prompt, e.reason, e.answer) : undefined
         // The prompt's reply must not become the your-turn notice's excerpt.
         await armTask($, s, epoch, prompt !== undefined ? s.lastAnswer : e.answer, tasks)
-        if (prompt !== undefined && prompt.kind === 'reminder' && choice === 'compact-now') void compactNow($, s, prompt, epoch)
+        if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch)
       })
     }
     return next(e)
