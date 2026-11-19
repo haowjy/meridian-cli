@@ -13,6 +13,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long output is still read after git has exited, for what a grandchild or the
@@ -135,6 +137,7 @@ pub struct Git<'a> {
     timeouts: Timeouts,
     ssh_command: Option<String>,
     env: Vec<(OsString, OsString)>,
+    cancel: Option<Arc<AtomicBool>>,
     observer: &'a mut dyn FnMut(&StepEvent),
 }
 
@@ -154,8 +157,14 @@ impl<'a> Git<'a> {
             timeouts,
             ssh_command: None,
             env: env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            cancel: None,
             observer,
         }
+    }
+
+    /// A call running when `cancel` becomes true is sent SIGTERM, as at its deadline.
+    pub fn set_cancel(&mut self, cancel: Option<Arc<AtomicBool>>) {
+        self.cancel = cancel;
     }
 
     pub fn timeouts(&self) -> Timeouts {
@@ -255,6 +264,7 @@ impl<'a> Git<'a> {
 
         let deadline = Instant::now() + timeout;
         let mut timed_out = false;
+        let mut terminated = false;
         let mut exited = None;
         let mut abandon_at = None;
         loop {
@@ -269,8 +279,13 @@ impl<'a> Git<'a> {
                     err.pump();
                 }
             }
-            if exited.is_none() && !timed_out && Instant::now() >= deadline {
-                timed_out = true;
+            let cancelled = self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed));
+            if exited.is_none() && !terminated && (cancelled || Instant::now() >= deadline) {
+                terminated = true;
+                timed_out = !cancelled;
                 let group = -(pid as libc::pid_t);
                 // SAFETY: `pid` is our own child, and its process group is its pid. A
                 // stopped process holds SIGTERM pending until it is continued.

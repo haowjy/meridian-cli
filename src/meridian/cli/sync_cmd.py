@@ -1,4 +1,4 @@
-"""CLI command handlers for sync conflict operations."""
+"""CLI command handlers for the context sync daemon and autosync conflicts."""
 
 from __future__ import annotations
 
@@ -30,6 +30,56 @@ def register_sync_commands(app: App) -> None:
     )
     sync_app.command(conflict_app, name="conflict")
     app.command(sync_app, name="sync")
+
+    def sync_run() -> None:
+        """Run the sync daemon in the foreground until it is stopped.
+
+        Keeps every git context's clone in sync with its remote: commits local edits,
+        fetches, merges and pushes. Restarts itself after an upgrade. Exits 1 with
+        "already running (pid N)" when a daemon holds the lock. Stop it with Ctrl-C.
+        """
+
+        from meridian.lib.ops.sync_daemon import run_daemon_sync
+
+        raise SystemExit(run_daemon_sync())
+
+    def sync_now(
+        context: Annotated[
+            str | None,
+            Parameter(
+                help="Context name (work, kb, or a named context). Default: all git contexts."
+            ),
+        ] = None,
+    ) -> None:
+        """Sync this project's git contexts now and report each clone's state.
+
+        Asks the running daemon for a pass and waits up to 60 s for it, so an edit made
+        just before is included. Exits non-zero unless every clone ended `synced`.
+        With no daemon running it says so; start one with `meridian sync run`.
+        """
+
+        from meridian.lib.ops.sync_daemon import sync_now_sync
+
+        result = sync_now_sync(context)
+        emit(result)
+        if not result.ok:
+            raise SystemExit(1)
+
+    def sync_status() -> None:
+        """Show the sync daemon and each of this project's git contexts.
+
+        Per context: state (synced, retrying, stopped, pending, off), branch, ahead and
+        behind, last success, the reason and the fix when stopped. `--json` prints the
+        same for scripts, plus the daemon's `alive_at` and any skipped records.
+        """
+
+        from meridian.lib.ops.sync_daemon import sync_status_sync
+
+        emit(sync_status_sync())
+
+    sync_app.command(sync_run, name="run")
+    sync_app.command(sync_now, name="now")
+    sync_app.command(sync_status, name="status")
 
     def conflict_list() -> None:
         """List unresolved autosync conflicts across all sync roots."""

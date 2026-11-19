@@ -26,6 +26,20 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
 - `records`: reads `<home>/autosync/roots/*.json`, which Python writes, and groups contexts
   by `clone_key` (it names the lock): records disagreeing on the path for a key lose to the
   newest and are listed in `skipped`.
+- `watch`: `notify` plus the `ignore` crate; a hint only, `git status` inside the pass decides.
+  Linux takes one non-recursive watch per unignored directory (over 20,000, or the kernel
+  limit, falls back to polling); macOS takes one recursive stream and filters with the root
+  ignore files, which is untested here.
+- `state`: `state.json`'s model, its atomic write, and `Tracker`, the judge. Every duration
+  is an `Instant` passed in, so the stopped rules are unit-tested with an injected clock.
+  A tracker restored mid-pass doesn't count the restarted worker's steps as progress until a
+  pass finishes: that is what lets a restart loop around a hung git still reach the
+  15-minute stop.
+- `daemon`: the lock, one worker thread per clone, and the main thread, the only writer of
+  `state.json`. Shutdown cancels git through `PassEnv::cancel` (SIGTERM, as at a timeout)
+  rather than signalling pids. Exit 0 stops for good, 75 asks for a restart.
+- `meridian-sync version` prints Python's spelling (`0.24.0rc1`); `state.json`'s `version`
+  and `meridian sync status` use it too.
 - `tests/pass.rs` runs real git against a bare remote in a temp dir. A test that edits the
   clone mid-pass does it from the `StepEvent` observer, which runs on the pass's thread
   right after a git call starts.

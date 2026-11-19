@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Generator, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
@@ -78,6 +78,7 @@ from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequir
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import is_project_scoped_env_name
+from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
@@ -1004,6 +1005,28 @@ def _maybe_schedule_background_repairs(
     schedule_background_repairs(project_root, repair_orphans=not continues_spawn)
 
 
+def _publish_autosync_record(
+    *,
+    startup_class: StartupClass,
+    project_root: Path | None,
+    skipped: bool,
+) -> None:
+    """Tell the sync daemon what this project's git contexts are: the one record write.
+
+    Every primary launch rewrites the record, which asks the daemon for a pass; other
+    commands rewrite it only when the contexts changed. A config that fails to load or a
+    home that can't be written leaves the record alone and the command unaffected.
+    """
+
+    if skipped or project_root is None or not is_root_side_effect_process():
+        return
+
+    from meridian.lib.autosync.state import register_project
+
+    with suppress(ValueError, OSError):
+        register_project(project_root, force=startup_class == StartupClass.PRIMARY_LAUNCH)
+
+
 def _print_agent_root_help() -> None:
     print(render_root_help(agent_mode=True), end="")
 
@@ -1215,6 +1238,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 cleaned_args,
                 command_path=descriptor.command_path if descriptor is not None else None,
             ),
+        )
+        _publish_autosync_record(
+            startup_class=startup_class,
+            project_root=project_root,
+            skipped=bootstrap_skipped or launch_dry_run,
         )
         _emit_usage_command_invoked(cleaned_args)
 

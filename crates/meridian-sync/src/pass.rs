@@ -9,8 +9,10 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
+use crate::clock::iso_now;
 use crate::git::{Availability, Git, Output, StepEvent, Timeouts};
 use crate::records::CloneGroup;
 
@@ -122,6 +124,8 @@ pub struct PassEnv {
     pub timeouts: Timeouts,
     /// Variables added to every git call, over the daemon's own environment.
     pub git_env: Vec<(String, String)>,
+    /// Set when the daemon is stopping: a running git is sent SIGTERM and the pass ends.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +158,26 @@ pub struct PassResult {
     pub behind: u64,
     pub conflict: Option<Conflict>,
     pub repair: Option<Repair>,
+}
+
+impl PassResult {
+    /// What a worker records for a pass whose thread panicked.
+    pub fn internal_error(message: &str, clone: &Path) -> PassResult {
+        let mut result = PassResult {
+            outcome: Outcome::Failed,
+            reason: Some(Reason::InternalError),
+            error: Some(trim(message.to_string())),
+            fix: None,
+            default_branch: None,
+            current_branch: None,
+            ahead: 0,
+            behind: 0,
+            conflict: None,
+            repair: None,
+        };
+        result.fix = fix_text(&result, clone);
+        result
+    }
 }
 
 /// Why a pass ended early.
@@ -203,6 +227,34 @@ pub fn ensure_clone(
     (result.outcome != Outcome::Synced).then_some(result)
 }
 
+/// Whether `git status` shows anything to commit: the cheap check behind the polling
+/// fallback. Read-only, so it takes no clone lock.
+pub fn has_local_changes(
+    spec: &CloneSpec,
+    env: &PassEnv,
+    observer: &mut dyn FnMut(&StepEvent),
+) -> bool {
+    let parent = spec.clone_path.parent().unwrap_or(Path::new("/"));
+    let mut git = Git::new(
+        &spec.clone_path,
+        parent,
+        env.timeouts,
+        &env.git_env,
+        observer,
+    );
+    git.set_cancel(env.cancel.clone());
+    let args = [
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "--",
+        CONFLICT_FILE_EXCLUDE,
+    ];
+    let other = env.timeouts.other;
+    git.run("status", other, &args)
+        .is_ok_and(|o| o.ok() && !o.stdout.trim().is_empty())
+}
+
 fn run(
     spec: &CloneSpec,
     env: &PassEnv,
@@ -214,9 +266,11 @@ fn run(
         .parent()
         .unwrap_or(Path::new("/"))
         .to_path_buf();
+    let mut git = Git::new(&parent, &parent, env.timeouts, &env.git_env, observer);
+    git.set_cancel(env.cancel.clone());
     let mut pass = Pass {
         spec,
-        git: Git::new(&parent, &parent, env.timeouts, &env.git_env, observer),
+        git,
         default_branch: None,
         current_branch: None,
         ahead: 0,
@@ -830,34 +884,6 @@ fn trim(text: String) -> String {
     }
 }
 
-/// `2026-11-19T14:00:00Z`, from the system clock.
-fn iso_now() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    iso(secs)
-}
-
-fn iso(secs: i64) -> String {
-    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rem / 3_600,
-        rem % 3_600 / 60,
-        rem % 60
-    )
-}
-
 /// An exclusive `flock` on `<home>/locks/clone-<key>.lock`, the lock the `git-autosync`
 /// hook takes on the same file. Held until dropped.
 struct CloneLock(#[allow(dead_code)] File);
@@ -907,13 +933,6 @@ impl CloneLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn iso_time_formats_known_instants() {
-        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
-        assert_eq!(iso(951_782_400 + 86_399), "2000-02-29T23:59:59Z");
-        assert_eq!(iso(1_795_096_800), "2026-11-19T14:00:00Z");
-    }
 
     #[test]
     fn merge_tree_output_parses() {

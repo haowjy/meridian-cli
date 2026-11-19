@@ -85,6 +85,7 @@ impl World {
                 home: root.join("home"),
                 timeouts: Timeouts::default(),
                 git_env: git_env(),
+                cancel: None,
             },
             spec: CloneSpec {
                 clone_path: clone.clone(),
@@ -608,6 +609,7 @@ fn an_empty_remote_gets_its_first_commit() {
         home: tmp.path().join("home"),
         timeouts: Timeouts::default(),
         git_env: git_env(),
+        cancel: None,
     };
     let r = run_pass(&spec, &env, &mut |_| {});
     assert_eq!(r.outcome, Outcome::Synced, "{r:?}");

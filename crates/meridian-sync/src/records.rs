@@ -65,7 +65,7 @@ pub struct Skipped {
     pub error: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Scan {
     pub clones: Vec<CloneGroup>,
     pub skipped: Vec<Skipped>,

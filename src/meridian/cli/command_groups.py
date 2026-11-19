@@ -204,8 +204,12 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         ),
     ),
     "sync": GroupHelp(
-        summary="Sync operations and autosync conflict management.",
-        long_help="Sync operations and autosync conflict management.",
+        summary="Context sync daemon and autosync conflict management.",
+        long_help=(
+            "Keep git contexts in sync with their remotes.\n\n"
+            "`run` starts the sync daemon in the foreground; `now` syncs this project's "
+            "contexts and waits; `status` shows each clone's state."
+        ),
     ),
     "models": GroupHelp(
         summary="Model catalog commands.",
