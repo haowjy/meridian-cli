@@ -1077,12 +1077,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     # Bootstrap and dispatch enter separate invocation scopes; one warning cache
     # spans both so a command warns once per key.
-    caller_cwd = Path.cwd()
-    try:
-        with meridian_managed_env_default(), warning_cache_scope():
-            _main_impl(argv=argv)
-    finally:
-        os.chdir(caller_cwd)
+    with meridian_managed_env_default(), warning_cache_scope():
+        _main_impl(argv=argv)
 
 
 def _main_impl(argv: Sequence[str] | None = None) -> None:
@@ -1132,8 +1128,10 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         render_mode=options.render_mode,
     )
     suppress_events = effective_agent_mode and options.explicit_format is None
-    # Like ``git -C``: the -C directory is the caller's cwd for everything below,
+    # Like ``git -C``: the -C directory is the process's cwd from here until exit,
     # so no cwd-derived tier (task cwd, relative paths) lands in the shell's directory.
+    # Nothing restores the old cwd: the process exits after the command, and the
+    # command may have removed that directory (``work done`` run from inside the item).
     if (
         options.directory_explicit
         and options.project_root is not None
