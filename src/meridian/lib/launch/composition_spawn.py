@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
@@ -36,6 +37,7 @@ def compose_spawn_launch_surface(
         if runtime.resolved_requested_task_cwd is not None
         else Path(runtime.resolved_control_root).expanduser().resolve()
     )
+    require_outside_clone(resolved_requested_task_cwd)
     project_paths = ProjectConfigPaths(
         project_root=resolved_config_root,
         execution_cwd=resolved_requested_task_cwd,

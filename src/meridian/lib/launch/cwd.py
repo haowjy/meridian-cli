@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.autosync.clones import enclosing_clone
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state import work_store
 from meridian.lib.state.spawn_scope import read_spawn_scope
@@ -204,6 +205,9 @@ def _infer_caller_cwd_outside_project(
     if _path_is_within(resolved_caller, resolved_authority):
         return None
     if not resolved_caller.is_dir():
+        return None
+    # Agents cd into KB/docs clones routinely; skipping keeps the spawn out of the clone.
+    if enclosing_clone(resolved_caller) is not None:
         return None
     return resolved_caller
 

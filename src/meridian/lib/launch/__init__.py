@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -90,6 +91,7 @@ def launch_primary(
     the next launch to it instead of creating a spawn.
     """
 
+    from meridian.lib.autosync.clones import clone_launch_warning, enclosing_clone
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
@@ -142,6 +144,10 @@ def launch_primary(
         ambient_work_id=ambient_work_id,
         caller_cwd=Path.cwd(),
     )
+    launch_task_dir = launch_resolution.task_cwd_resolution.task_cwd
+    launch_clone = enclosing_clone(launch_task_dir)
+    if launch_clone is not None:
+        print(clone_launch_warning(launch_task_dir, launch_clone), file=sys.stderr)
     preview_work_id = _preview_work_id_for_launch(
         request,
         context_work_id=launch_resolution.context_work_id,

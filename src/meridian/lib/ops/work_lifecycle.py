@@ -5,6 +5,7 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.session_links import Execution, execution_owners
@@ -45,6 +46,7 @@ def _validate_task_dir_path(task_dir: str) -> Path:
         raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
     if not resolved_task_dir.is_dir():
         raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+    require_outside_clone(resolved_task_dir)
     return resolved_task_dir
 
 
