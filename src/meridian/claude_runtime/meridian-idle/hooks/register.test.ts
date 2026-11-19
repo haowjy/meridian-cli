@@ -864,21 +864,71 @@ test('a ping answering compact-now compacts nothing', async ($, on) => {
   expect(h.submitted).toHaveLength(2)
 })
 
-for (const how of ['returned', 'draft'] as const) {
-  test(`compact-now is skipped when ${how === 'returned' ? 'the user came back during the turn' : 'the box holds a draft'}`, async ($, on) => {
+test('compact-now waits QUIET_MS after the turn, and after a later prompt change', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(9000)
+  expect(h.compactions).toEqual([])
+  // A draft typed and deleted restarts the quiet window.
+  await $.prompt.edit({ text: 'x', cursor: 1, origin: COMPOSER } as never)
+  await clock.advance(9000)
+  expect(h.compactions).toEqual([])
+  await clock.advance(2000)
+  expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
+})
+
+test('compact-now waits while the box holds a draft and goes once it clears', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  h.box = 'a draft'
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(60_000)
+  expect(h.compactions).toEqual([])
+  h.box = ''
+  await clock.advance(20_000)
+  expect(h.compactions).toHaveLength(1)
+})
+
+test('compact-now is skipped when a main-loop turn is running at the end of the wait', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(5000)
+  await $.turn.start({ text: 'task notification', turnId: 't9' })
+  await clock.advance(20_000)
+
+  expect(h.compactions).toEqual([])
+  expect(await statusOf($)).toContain('compact-now skipped: a turn is running')
+})
+
+for (const during of ['turn', 'wait'] as const) {
+  test(`compact-now is skipped when the user came back during the ${during}`, async ($, on) => {
     const h = reminderHost()
     const clock = install(on, h)
 
     await startKeepwarm($, clock)
     await clock.advance(LEAD)
     await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
-    if (how === 'returned') await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
-    else h.box = 'a draft'
+    if (during === 'turn') await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
     await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: 'compact-now' })
+    if (during === 'wait') {
+      await clock.advance(3000)
+      await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+    }
     await clock.advance(LEAD)
 
     expect(h.compactions).toEqual([])
-    expect(await statusOf($)).toContain(how === 'returned' ? 'user came back' : 'box is not empty')
+    expect(await statusOf($)).toContain('user came back')
   })
 }
 

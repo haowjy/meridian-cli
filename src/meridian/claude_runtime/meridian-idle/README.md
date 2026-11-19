@@ -95,18 +95,20 @@ Without a work item core sends no reminder, so there is no compaction either.
 
 On `turn.complete` of the reminder's turn (reason `answer`) with `compact-now`
 the mod ends the stretch's pings first (so no ping or chained timer races the
-compaction, and a vetoed compaction does not restart them), lets the turn's arm
-reach core, then calls `$.session.compact` with instructions to keep what the
-work item does not hold (the user's latest requests, what is not yet recorded,
-where the conversation stopped). The call runs outside the CLI queue, since it
-can take a minute. It is skipped, with the reason in the log, when the user came
-back during the turn or the prompt box is not empty. The log ends `compacted`,
-`compaction skipped: <why>` (a hook vetoed it) or `compaction failed: <error>`.
-The host runs `$.session.compact` through every hook but the calling one, and on a
-real session the mod's own `session.compact` hook did not see it (one "pings are
-over" log line, not two); the pings are already ended either way. The host
-accepted the call about 1 s after `turn.complete` (once the turn's arm had
-finished), so it counts as between turns and needs no retry or delay. `state_reminder = false` turns all of this off.
+compaction, and a vetoed compaction does not restart them). It then waits for
+the same quiet box a ping waits for: empty and untouched for 10 s, counted from
+the later of the turn's end and the last prompt change. That wait is what puts
+the call between turns. It has no deadline, since the reminder turn just warmed
+the cache, and it gives up, with the reason in the log, when the user came back
+or a main-loop turn is running (a task notification woke the session). Then it
+calls `$.session.compact` with instructions to keep what the work item does not
+hold (the user's latest requests, what is not yet recorded, where the
+conversation stopped). The call runs outside the CLI queue, since it can take a
+minute. The log ends `compacted`, `compaction skipped: <why>` (a hook vetoed it)
+or `compaction failed: <error>`. The host runs `$.session.compact` through every
+hook but the calling one, and on a real session the mod's own `session.compact`
+hook did not see it (one "pings are over" log line, not two); the pings are
+already ended either way. `state_reminder = false` turns all of this off.
 
 ## Keepwarm
 

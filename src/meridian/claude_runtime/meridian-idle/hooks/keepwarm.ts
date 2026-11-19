@@ -27,7 +27,7 @@ export function pingText(nonce: string): string {
 export function reminderText(nonce: string, keepwarmOn: boolean): string {
   return (
     `[meridian-idle state-reminder ${nonce}]\n\n` +
-    'This is a keepwarm turn: the user is away and this turn keeps your prompt cache warm, which is about to expire. ' +
+    'This turn keeps your prompt cache warm while the user is away; it is about to expire. ' +
     'Run `meridian work show` and update the work item\'s recorded state in place: status, decisions with their reasons, ' +
     'open questions, promises to other sessions, where you stopped. If nothing changed, write nothing. ' +
     'Then end your reply with a last line that is exactly one of:\n' +
