@@ -6,7 +6,7 @@ about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
 It submits two kinds of prompt on its own. The state reminder asks the model to
 record its state in the session's work item when Meridian's cache warning
-fires; Meridian decides whether to send it. Keepwarm is off unless
+fires, then to choose whether to compact now; Meridian decides whether to send it. Keepwarm is off unless
 `[idle] keepwarm` (or its `[harness.claude.idle]` override) or `/keepwarm on`
 turns it on: it submits up to `keepwarm_pings` (default 3) short prompts so the
 cache stays warm while the user is away, the first when the cache warning fires
@@ -65,7 +65,7 @@ deadline, no running turn, no compaction, no user return. It is a plugin prompt
 without `asUser`, so the model does not read it as the user, the session log
 files it as injected, and it is not a return. It is the one prompt
 here whose turn may write: the keepwarm tool denial applies to pings only, and
-the reply `stop-waiting` means nothing to it.
+its reply ends with the model's choice (below).
 
 With keepwarm on the reminder takes ping 1's slot (its turn warms the cache
 too) and pings 2 and on follow as usual. With keepwarm off it is one unrequested
@@ -78,6 +78,38 @@ reload recovers the stretch and does the same. The count and the flag are writte
 before the submit, so a reload cannot send it twice. The cold-cache deadline still
 applies, and a stop, compaction or cold cache that ends the stretch's pings
 also drops it.
+
+The reminder says its turn keeps the cache warm while the user is away, and asks
+the reply to end with a last line that is exactly one of:
+
+- `compact-now`: the work item holds what is needed to resume. The mod compacts
+  the conversation while the cache is warm, so the user returns to a small
+  context. The reminder says to choose it only after the update.
+- `stop-waiting`: offered only with keepwarm on. Ends the stretch's pings, as on
+  a ping.
+- anything else: keep waiting.
+
+Pings do not offer `compact-now` and ignore it: they change nothing, so the
+state the model weighed at the reminder is the state it would weigh again.
+Without a work item core sends no reminder, so there is no compaction either.
+
+On `turn.complete` of the reminder's turn (reason `answer`) with `compact-now`
+the mod ends the stretch's pings first (so no ping or chained timer races the
+compaction, and a vetoed compaction does not restart them). It then waits for
+the same quiet box a ping waits for: empty and untouched for 10 s, counted from
+the later of the last main-loop turn's end and the last prompt change. That wait
+is what puts the call between turns. It has no deadline, since the reminder turn
+just warmed the cache, and it gives up, with the reason in the log, when the user
+came back, the box holds a draft, a main-loop turn is running (a task
+notification woke the session) or another compaction is. Then it calls
+`$.session.compact` with instructions to keep what the work item does not
+hold (the user's latest requests, what is not yet recorded, where the
+conversation stopped). The call runs outside the CLI queue, since it can take a
+minute. The log ends `compacted`, `compaction skipped: <why>` (a hook vetoed it)
+or `compaction failed: <error>`. The host runs `$.session.compact` through every
+hook but the calling one, and on a real session the mod's own `session.compact`
+hook did not see it (one "pings are over" log line, not two); the pings are
+already ended either way. `state_reminder = false` turns all of this off.
 
 ## Keepwarm
 
@@ -123,8 +155,9 @@ one. Pings send no notification.
 - **Tools.** While the ping's turn runs, main-loop tool calls that are not
   `isReadOnly` are denied. Subagent loops and the rest of the session are not
   touched.
-- **Stop.** A reply that is exactly `stop-waiting` (alone or in one pair of
-  quotes or backticks) ends this stretch's pings; keepwarm stays on. The ping
+- **Stop.** A reply whose last non-empty line is `stop-waiting` (alone or in one
+  pair of quotes or backticks; a reply that is only that word counts) ends this
+  stretch's pings; keepwarm stays on. The reminder's reply is read the same way. The ping
   text and the denied-tool reason both say so, and that stopping lets the cache
   go cold before the user returns.
 - **Compaction.** A `session.compact` of the main conversation (trigger

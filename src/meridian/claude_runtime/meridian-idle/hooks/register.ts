@@ -1,9 +1,10 @@
 import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
 import {
+  COMPACT_INSTRUCTIONS,
   DEFAULT_PINGS,
   FRESH,
-  isStop,
+  parseChoice,
   pingText,
   reminderText,
   type Keepwarm,
@@ -66,6 +67,8 @@ type Ping = {
   kind: PromptKind
   /** The keepwarm slot taken, or 0 for a reminder sent without one (keepwarm off or its pings used up). */
   index: number
+  /** `stop-waiting` was offered, and so counts: always for a ping, for a reminder only with keepwarm on. Set once, beside `index`. */
+  offersStop: boolean
   session: string
   stretch: number
   /** `submitted`: no main-loop turn carrying the nonce has started yet. `running`: that turn is in flight (`turnId`). */
@@ -115,6 +118,8 @@ type State = {
   lastAnswer: string | undefined
   /** When the prompt box was last touched, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
   lastChange: Promise<number>
+  /** When the last main-loop turn ended, kept like `lastChange`: a compaction waits `QUIET_MS` after any turn, however short. */
+  lastTurnEnd: Promise<number>
 }
 
 function newState(): State {
@@ -136,6 +141,7 @@ function newState(): State {
     running: false,
     lastAnswer: undefined,
     lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
+    lastTurnEnd: Promise.resolve(Number.NEGATIVE_INFINITY),
   }
 }
 
@@ -501,6 +507,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       nonce: newNonce(),
       kind,
       index,
+      offersStop: kind === 'ping' || index > 0,
       session: armed.session,
       stretch: armed.stretch,
       phase: 'submitted',
@@ -510,7 +517,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
     // A prompt still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
     s.ping = ping
     try {
-      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce) })
+      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce, ping.offersStop) })
       if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
         s.ping = undefined
         note($, s, `${label(ping)} dropped: ${result.drop}`)
@@ -553,12 +560,52 @@ function label(ping: Ping): string {
   return ping.kind === 'ping' ? `ping ${ping.index}` : 'state reminder'
 }
 
-/** The ping's own turn ended: record how it went and, on a stop, end this stretch's pings. */
-async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
-  if (reason !== 'answer') return note($, s, `${label(ping)} ended: ${reason}`)
-  // Only a ping's reply can stop the pings; the reminder asks for no such reply.
-  if (ping.kind === 'reminder' || !isStop(answer)) return note($, s, `${label(ping)} continued`)
-  await endPings($, s, ping.session, ping.stretch, `ping ${ping.index} replied stop-waiting`)
+/**
+ * The ping's or reminder's own turn ended: record how it went, and on a stop end this stretch's pings. True when the reminder chose
+ * `compact-now`: the pings are already ended, so nothing races the compaction, and a vetoed one does not restart them.
+ */
+async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<boolean> {
+  if (reason !== 'answer') {
+    note($, s, `${label(ping)} ended: ${reason}`)
+    return false
+  }
+  const choice = parseChoice(answer)
+  if (choice === 'compact-now' && ping.kind === 'reminder') {
+    await endPings($, s, ping.session, ping.stretch, 'compact-now')
+    return true
+  }
+  if (choice === 'stop-waiting' && ping.offersStop) {
+    await endPings($, s, ping.session, ping.stretch, `${label(ping)} replied stop-waiting`)
+  } else note($, s, `${label(ping)} continued`)
+  return false
+}
+
+/**
+ * Compacts the conversation the reminder just brought up to date, once the box has been quiet for `QUIET_MS` after the last main-loop turn's end and the last
+ * prompt change: the call must land between turns, and the arm's latency is not what guarantees that. No deadline: the reminder turn just warmed the cache.
+ * Gives up when the user came back, the box holds a draft (someone is there, and an unbounded wait could compact a cold cache), or a main-loop turn is running. Runs outside the CLI queue:
+ * a compaction takes a minute and must not hold `return` or `fire` behind it.
+ */
+async function compactNow($: EngineInterface, s: State, ping: Ping, epoch: number): Promise<void> {
+  try {
+    for (;;) {
+      if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
+      if (s.running) return note($, s, 'compact-now skipped: a turn is running')
+      if (s.compacting) return note($, s, 'compact-now skipped: another compaction is running')
+      const now = await $.clock.now()
+      const changedAt = await s.lastChange
+      const turnEnd = await s.lastTurnEnd
+      const { text } = await $.prompt.read()
+      if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
+      if (text !== '') return note($, s, 'compact-now skipped: the prompt box holds a draft')
+      if (now - Math.max(changedAt, turnEnd) >= QUIET_MS) break
+      await $.clock.sleep(HOLD_POLL_MS)
+    }
+    const result = await $.session.compact({ instructions: COMPACT_INSTRUCTIONS })
+    note($, s, result.skip === undefined ? 'compacted' : `compaction skipped: ${result.skip}`)
+  } catch (err) {
+    note($, s, `compaction failed: ${describeError(err)}`)
+  }
 }
 
 // -- return ----------------------------------------------------------------
@@ -718,7 +765,11 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     // A subagent's turn carries agentId; only the main loop's end is the user-visible idle.
-    if (e.agentId === undefined) s.running = false
+    if (e.agentId === undefined) {
+      s.running = false
+      s.lastTurnEnd = $.clock.now()
+      void s.lastTurnEnd.catch(() => undefined)
+    }
     if (e.agentId === undefined && !s.inert) {
       const epoch = s.epoch
       const tasks = s.stopTasks
@@ -727,9 +778,10 @@ export const register: Register = on => {
       if (ping !== undefined) s.ping = undefined
       else s.lastAnswer = e.answer
       void enqueue(s, async () => {
-        if (ping !== undefined) await finishPing($, s, ping, e.reason, e.answer)
+        const compact = ping !== undefined && (await finishPing($, s, ping, e.reason, e.answer))
         // The ping's reply must not become the your-turn notice's excerpt.
         await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
+        if (compact && ping !== undefined) void compactNow($, s, ping, epoch)
       })
     }
     return next(e)

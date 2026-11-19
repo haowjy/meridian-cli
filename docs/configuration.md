@@ -381,9 +381,10 @@ every invalid row.
 ### `[idle]`
 
 Idle handling sends two notices, independently: the waiting push ("your turn")
-and a cache-expiry warning. Meridian does not compact idle sessions; harnesses
-that compact on their own (Claude Code 2.1.299+, Codex, OpenCode, Pi) keep doing
-so, and Meridian leaves those settings alone.
+and a cache-expiry warning. Meridian does not compact idle sessions on its own;
+harnesses that compact on their own (Claude Code 2.1.299+, Codex, OpenCode, Pi)
+keep doing so, and Meridian leaves those settings alone. The one exception is a
+Claude session's own choice at the state reminder (see `state_reminder`).
 
 Claude also reports a permission prompt that remains unanswered long enough for
 Claude's own notification to fire. Meridian forwards that signal once as
@@ -403,7 +404,7 @@ silence only the permission notice.
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 | `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude today) |
 | `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch; `0` or less turns keepwarm off |
-| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there (Claude today) |
+| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there, then end its reply with `compact-now` (compact while the cache is warm), `stop-waiting` (keepwarm on only) or anything else to keep waiting (Claude today) |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
