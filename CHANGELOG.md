@@ -6,6 +6,13 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.8] - 2026-11-19
+
+### Changed
+- A draft left in the prompt box no longer cancels the idle state reminder's `compact-now`
+  outright: the Claude idle mod waits for the box to clear, and gives up only when the
+  cache would go cold.
+
 ## [0.23.7] - 2026-11-19
 
 ### Added
