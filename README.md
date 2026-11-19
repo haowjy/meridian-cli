@@ -42,6 +42,9 @@ cd meridian-cli
 uv tool install --force . --no-cache --reinstall
 ```
 
+A checkout install compiles the `meridian-sync` Rust crate; maturin fetches a Rust toolchain
+if none is installed.
+
 </details>
 
 You need at least one harness installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), or [OpenCode](https://opencode.ai).

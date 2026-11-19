@@ -59,7 +59,7 @@ LOCATIONS: tuple[Location, ...] = (
     ),
     Location(
         "crates/meridian-sync/Cargo.toml",
-        re.compile(r'^version = "([^"]+)"$', re.M),
+        re.compile(r'^\[package\]\n(?:(?!\[).*\n)*?version = "([^"]+)"$', re.M),
         cargo_spelling=True,
     ),
     Location(

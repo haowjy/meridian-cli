@@ -41,6 +41,10 @@ cd meridian-cli
 uv tool install --force . --no-cache --reinstall
 ```
 
+A checkout install compiles the `meridian-sync` Rust crate; maturin fetches a Rust toolchain
+if none is installed. Installing a release candidate (`meridian-cli==X.Y.ZrcN`) needs uv 0.12
+or newer.
+
 Verify the CLI is available:
 
 ```bash

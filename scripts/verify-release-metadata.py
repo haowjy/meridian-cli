@@ -10,8 +10,8 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
-# The newest core metadata the PyPI publish action accepts. hatchling 1.27 writes 2.4 and
-# maturin writes 2.1; both are fine, a newer one is rejected at upload.
+# The newest core metadata the PyPI publish action accepts. hatchling and maturin write
+# 2.4 or older; a newer one is rejected at upload.
 _NEWEST_ACCEPTED = (2, 4)
 
 

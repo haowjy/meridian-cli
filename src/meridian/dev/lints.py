@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
-from meridian.dev.versions import disagreements
+from meridian.dev.versions import LOCATIONS, disagreements
 from meridian.env_registry import is_registered_env_name
 from meridian.lib.state.paths import LaunchPaths
 
@@ -688,6 +688,9 @@ def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
 def version_location_violations(sources: Sources) -> list[Violation]:
     """Reject a release version that differs between the places `versions.LOCATIONS` lists."""
 
+    # A `--source-root` without the repo around it has no version files to compare.
+    if not all((sources.repo_root / location.path).is_file() for location in LOCATIONS):
+        return []
     # Paths sit outside `src/`; `..` keeps `_display` pointing at the file.
     return [
         Violation(f"../{path}", 0, message) for path, message in disagreements(sources.repo_root)

@@ -101,7 +101,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.9.18"
+          version: "0.13.9"
 
       - name: Smoke-test the wheel
         run: uv run --isolated --no-project --with crates/meridian-sync/dist/*.whl meridian-sync version
@@ -151,7 +151,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.9.18"
+          version: "0.13.9"
 
       - name: Set up Python
         uses: actions/setup-python@v6
