@@ -100,12 +100,11 @@ the mod ends the stretch's prompts first (so no ping or chained timer races the
 compaction, and a vetoed compaction does not restart them). It then waits like a
 prompt does: the same quiet box, measured from the later of the last main-loop
 turn's end and the last prompt change. That wait is what puts the call between
-turns. It stops at the reminder's own cold-cache deadline (kept on the in-memory
-prompt record, so a hot reload drops it and nothing compacts), a draft in the box
-holds it until then, and another compaction pauses it. It gives up, with the
-reason in the log, when the user came back (also during the reminder's turn) or a
-main-loop turn is running (a task notification woke the session), before or after
-the wait. Then it calls
+turns. The reminder's turn has just warmed the cache, so the wait ends a chained prompt's
+`lead + warn_minutes - margin` after that turn; a draft in the box holds it until then
+and another compaction pauses it. It gives up, with the reason in the log, when the
+user came back (also during the reminder's turn), a main-loop turn is running (a task
+notification woke the session), or another compaction landed meanwhile. Then it calls
 `$.session.compact` with instructions to keep what the work item does not
 hold (the user's latest requests, what is not yet recorded, where the
 conversation stopped). The call runs outside the CLI queue, since it can take a
