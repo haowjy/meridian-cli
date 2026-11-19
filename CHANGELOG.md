@@ -6,6 +6,18 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.10] - 2026-11-19
+
+### Fixed
+- git-autosync no longer SIGKILLs a slow git, which left `.git/index.lock` behind and
+  silently stopped every later sync. Git gets SIGTERM on timeout; SIGKILL follows only
+  after 60 s, for a git that ignores SIGTERM, and is reported.
+- git-autosync stops with `off_branch` instead of committing when a clone is not on the
+  remote's default branch. A clone with no local `origin/HEAD` refreshes it first and
+  syncs normally.
+- `meridian context` shows the Sync line for git contexts, including failures, which it
+  never found before.
+
 ## [0.23.9] - 2026-11-19
 
 ### Changed
