@@ -1,8 +1,8 @@
 /**
- * Keepwarm's session-wide state, in `$.state` so a hot reload keeps it (a restart, a resume or `/clear` drops it, and the config default applies again).
+ * The session's record of this stretch's injected prompts, in `$.state` under the key `keepwarm` so a hot reload keeps it and a record written by an older build reads back (a restart, a resume or `/clear` drops it, and the config default applies again).
  * `sent`, `warned` and `reminder` belong to `session` and core's `stretch`; a different pair starts them over.
  */
-export type MeridianIdleKeepwarm = {
+export type MeridianIdleStretch = {
   on: boolean
   session: string
   stretch: number
@@ -20,6 +20,6 @@ export type MeridianIdleKeepwarm = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'meridian-idle': { keepwarm: MeridianIdleKeepwarm }
+    'meridian-idle': { keepwarm: MeridianIdleStretch }
   }
 }

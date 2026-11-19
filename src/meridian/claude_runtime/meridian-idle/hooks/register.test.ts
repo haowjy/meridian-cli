@@ -755,7 +755,7 @@ test('a cold deadline ends the stretch\'s pings: a later arm does not ping', asy
   expect(h.submitted).toEqual([])
   const status = (await $.command.run({ ...IDLE_COMMAND, args: '' })).text ?? ''
   expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
-  expect(status).toContain("pings are over: the cache would be cold")
+  expect(status).toContain("prompts are over: the cache would be cold")
 
   await $.turn.start({ text: 'later', turnId: 't2' })
   await $.turn.complete({ ...MAIN_TURN, turnId: 't2' })
@@ -881,7 +881,7 @@ test('compact-now waits QUIET_MS after the turn, and after a later prompt change
   expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
 })
 
-test('compact-now is skipped when the box holds a draft', async ($, on) => {
+test("compact-now gives up on a draft at the reminder's cold-cache deadline", async ($, on) => {
   const h = reminderHost()
   const clock = install(on, h)
 
@@ -889,10 +889,39 @@ test('compact-now is skipped when the box holds a draft', async ($, on) => {
   await clock.advance(LEAD)
   h.box = 'a draft'
   await pingTurn($, h, 'p1', 'compact-now')
-  await clock.advance(5000)
+  await clock.advance(20 * 60_000)
   h.box = ''
   await clock.advance(20_000)
   expect(h.compactions).toEqual([])
+  expect(await statusOf($)).toContain('compact-now skipped: the cache would be cold')
+})
+
+test("compact-now's deadline runs from the end of the reminder's turn, however long that turn took", async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await $.turn.start({ text: h.submitted.at(-1) ?? '', turnId: 'p1' })
+  await clock.advance(9 * 60_000) // warn_minutes is 10: the reminder's own deadline is long gone
+  await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: 'compact-now' } as never)
+  await clock.advance(20_000)
+
+  expect(h.compactions).toHaveLength(1)
+})
+
+test('compact-now compacts nothing when another compaction lands during its wait', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(1000)
+  await $.session.compact({ trigger: 'auto', ...COMPACTION } as never)
+  await clock.advance(30_000)
+
+  expect(h.compactions).toHaveLength(1) // the auto one
 })
 
 test('compact-now is skipped when a main-loop turn is running at the end of the wait', async ($, on) => {
@@ -926,26 +955,20 @@ test('compact-now waits QUIET_MS after a turn shorter than the poll', async ($, 
   expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
 })
 
-for (const during of ['turn', 'wait'] as const) {
-  test(`compact-now is skipped when the user came back during the ${during}`, async ($, on) => {
-    const h = reminderHost()
-    const clock = install(on, h)
+test('compact-now is skipped when the user came back during the reminder turn', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
 
-    await startKeepwarm($, clock)
-    await clock.advance(LEAD)
-    await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
-    if (during === 'turn') await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
-    await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: 'compact-now' })
-    if (during === 'wait') {
-      await clock.advance(3000)
-      await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
-    }
-    await clock.advance(LEAD)
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
+  await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+  await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: 'compact-now' })
+  await clock.advance(LEAD)
 
-    expect(h.compactions).toEqual([])
-    expect(await statusOf($)).toContain('user came back')
-  })
-}
+  expect(h.compactions).toEqual([])
+  expect(await statusOf($)).toContain('compact-now skipped: the user returned')
+})
 
 for (const how of ['vetoed', 'rejected'] as const) {
   test(`a ${how} compaction is logged and leaves the pings ended`, async ($, on) => {

@@ -5,9 +5,10 @@ import {
   DEFAULT_PINGS,
   FRESH,
   parseChoice,
+  type Choice,
   pingText,
   reminderText,
-  type Keepwarm,
+  type Stretch,
 } from './keepwarm'
 
 // Meridian's Claude idle sensor.
@@ -35,15 +36,15 @@ const EXCERPT_CHAR_CAP = 4_000
 // JSON's longest escape, well clear of Linux's 128 KiB per-argument limit.
 const BACKGROUND_TASK_LIMIT = 16
 const BACKGROUND_COMMAND_CHAR_CAP = 512
-/** The prompt box must be empty and untouched this long before a ping starts a turn under the user. */
+/** The box must be empty and untouched, and no turn ended, this long before a prompt starts a turn under the user. */
 const QUIET_MS = 10_000
 const HOLD_POLL_MS = 1_000
-/** Why a ping waited past `deadline`: ends the stretch's pings. */
+/** Why a prompt waited past `deadline`: ends the stretch's prompts. */
 const COLD = 'the cache would be cold'
-/** A ping gives up this long before the cache expires: a ping sent then would rebuild a cold cache. */
+/** A prompt gives up this long before the cache expires: one sent then would rebuild a cold cache. */
 const EXPIRY_MARGIN_MS = 60_000
-// The host lists the state a module touches, so the reference must be literal in this file.
-const IDLE_KEEPWARM = { plugin: 'meridian-idle', key: 'keepwarm' } as const
+// The host lists the state a module touches, so the reference must be literal in this file. The key keeps its old name: stored records live under it.
+const IDLE_STRETCH = { plugin: 'meridian-idle', key: 'keepwarm' } as const
 
 type Json = Record<string, unknown>
 type BackgroundTask = NonNullable<ClassicHookInputs['Stop']['background_tasks']>[number]
@@ -60,21 +61,19 @@ type Armed = {
 
 type PromptKind = 'ping' | 'reminder'
 
-/** The ping that was submitted and has not completed. Only one exists at a time. */
-type Ping = {
+/** The prompt that was submitted and has not completed. Only one exists at a time. */
+type Prompt = {
   nonce: string
-  /** A reminder is a prompt too, but asks for writes and has no stop reply. */
+  /** A reminder asks for writes, so its turn's tools are not denied. */
   kind: PromptKind
-  /** The keepwarm slot taken, or 0 for a reminder sent without one (keepwarm off or its pings used up). */
+  /** The keepwarm slot taken, or 0 for a reminder sent with keepwarm off. */
   index: number
-  /** `stop-waiting` was offered, and so counts: always for a ping, for a reminder only with keepwarm on. Set once, beside `index`. */
-  offersStop: boolean
   session: string
   stretch: number
   /** `submitted`: no main-loop turn carrying the nonce has started yet. `running`: that turn is in flight (`turnId`). */
   phase: 'submitted' | 'running'
   turnId: string | undefined
-  /** The user typed during the ping turn: tools are theirs to steer again. */
+  /** The user typed during the prompt's turn: tools are theirs to steer again. */
   userCame: boolean
 }
 
@@ -96,10 +95,12 @@ type State = {
   policy: Policy
   armed: Armed | undefined
   timers: Timer[]
-  /** The chained ping's timer (pings 2 and on), kept apart so a compaction can cancel it alone. */
-  pingTimer: Timer | undefined
-  /** A main-conversation compaction is running: no ping may start, since it would prefill a conversation about to be replaced. */
+  /** The chained prompt's timer (pings 2 and on), kept apart so a compaction can cancel it alone. */
+  promptTimer: Timer | undefined
+  /** A main-conversation compaction is running: no prompt may start, since it would prefill a conversation about to be replaced. */
   compacting: boolean
+  /** Main-conversation compactions that have landed; a wait that began before one is no longer due. */
+  compactions: number
   /** Bumped by every user return. Async work compares it to detect that the user came back meanwhile. */
   epoch: number
   /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
@@ -111,15 +112,13 @@ type State = {
   lastUserText: string | undefined
   /** The main loop's in-flight background work, from the `Stop` that precedes its `turn.complete`. */
   stopTasks: BackgroundTask[] | undefined
-  ping: Ping | undefined
+  prompt: Prompt | undefined
   /** A main-loop turn is in flight (from its `turn.start` to its `turn.complete`). */
   running: boolean
-  /** The last main-loop answer that was not a ping's: a ping turn's arm sends it, so the your-turn notice never reads the ping's reply. */
+  /** The last main-loop answer that was not a prompt's: a prompt turn's arm sends it, so the your-turn notice never reads the prompt's reply. */
   lastAnswer: string | undefined
-  /** When the prompt box was last touched, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
-  lastChange: Promise<number>
-  /** When the last main-loop turn ended, kept like `lastChange`: a compaction waits `QUIET_MS` after any turn, however short. */
-  lastTurnEnd: Promise<number>
+  /** When the prompt box was last touched or a main-loop turn last ended, as `$.clock.now()` answered it; kept as the pending answer so hooks never wait on it. */
+  lastActivity: Promise<number>
 }
 
 function newState(): State {
@@ -129,19 +128,19 @@ function newState(): State {
     policy: { keepwarm: false, warnMs: undefined, pings: DEFAULT_PINGS },
     armed: undefined,
     timers: [],
-    pingTimer: undefined,
+    promptTimer: undefined,
     compacting: false,
+    compactions: 0,
     epoch: 0,
     mayBeOpen: false,
     queue: Promise.resolve(),
     log: [],
     lastUserText: undefined,
     stopTasks: undefined,
-    ping: undefined,
+    prompt: undefined,
     running: false,
     lastAnswer: undefined,
-    lastChange: Promise.resolve(Number.NEGATIVE_INFINITY),
-    lastTurnEnd: Promise.resolve(Number.NEGATIVE_INFINITY),
+    lastActivity: Promise.resolve(Number.NEGATIVE_INFINITY),
   }
 }
 
@@ -178,8 +177,14 @@ function note($: EngineInterface, s: State, line: string): void {
 function cancelTimers(s: State): void {
   for (const timer of s.timers) timer.cancel()
   s.timers = []
-  s.pingTimer?.cancel()
-  s.pingTimer = undefined
+  s.promptTimer?.cancel()
+  s.promptTimer = undefined
+}
+
+/** Records now as the last activity, without making the hook wait for the clock. */
+function touched($: EngineInterface, s: State): void {
+  s.lastActivity = $.clock.now()
+  void s.lastActivity.catch(() => undefined)
 }
 
 function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
@@ -306,7 +311,7 @@ async function recover($: EngineInterface, s: State, session: string, epoch: num
   s.mayBeOpen = true
   const armed: Armed = { session, stretch, anchor, at, fired: {} }
   await adopt($, s, armed, epoch)
-  await schedulePing($, s, armed, epoch) // a reload with a reminder owed (or pings left) resumes the stretch's prompts
+  await schedulePrompt($, s, armed, epoch) // a reload with a prompt owed resumes the stretch's prompts
 }
 
 /** Core's name for each kind of host background task. Core decides what each means for the push and the warning. */
@@ -375,7 +380,7 @@ async function armTask(
     }
     const armed: Armed = { session, stretch, anchor, at, fired: {} }
     await adopt($, s, armed, epoch)
-    await schedulePing($, s, armed, epoch)
+    await schedulePrompt($, s, armed, epoch)
   } catch (err) {
     note($, s, `arm error: ${describeError(err)}`)
   }
@@ -384,20 +389,20 @@ async function armTask(
 // -- keepwarm ---------------------------------------------------------------
 
 /** The session's record, else core's configured default: `/keepwarm` writes the record, and `/clear` drops it. */
-async function readKeepwarm($: EngineInterface, s: State): Promise<Keepwarm> {
-  return (await $.state.get(IDLE_KEEPWARM)).value ?? { ...FRESH, on: s.policy.keepwarm, limit: s.policy.pings }
+async function readRecord($: EngineInterface, s: State): Promise<Stretch> {
+  return (await $.state.get(IDLE_STRETCH)).value ?? { ...FRESH, on: s.policy.keepwarm, limit: s.policy.pings }
 }
 
 async function keepwarmLine($: EngineInterface, s: State): Promise<string> {
-  const kw = await readKeepwarm($, s)
+  const kw = await readRecord($, s)
   const armed = s.armed
   const sent = armed !== undefined && kw.session === armed.session && kw.stretch === armed.stretch ? kw.sent : 0
   return `keepwarm: ${kw.on ? 'on' : 'off'}, ${sent}/${kw.limit} pings this stretch`
 }
 
 /** The record as it stands for this stretch: a different session or core stretch starts the count, limit and lead over. */
-async function stretchRecord($: EngineInterface, s: State, session: string, stretch: number): Promise<Keepwarm> {
-  const kw = await readKeepwarm($, s)
+async function stretchRecord($: EngineInterface, s: State, session: string, stretch: number): Promise<Stretch> {
+  const kw = await readRecord($, s)
   if (kw.session !== session || kw.stretch !== stretch) {
     return { ...kw, session, stretch, sent: 0, limit: s.policy.pings, lead: 0, warned: false, reminder: false }
   }
@@ -405,53 +410,60 @@ async function stretchRecord($: EngineInterface, s: State, session: string, stre
   return asNumber(kw.limit) === undefined ? { ...kw, limit: s.policy.pings } : kw
 }
 
-/** The one place a stretch's pings end: the stop marker is `sent = limit`, so a changed config cannot reopen it. */
-async function endPings($: EngineInterface, s: State, session: string, stretch: number, why: string): Promise<void> {
+/** The one place a stretch's prompts end: the stop marker is `sent = limit`, so a changed config cannot reopen it. */
+async function endPrompts($: EngineInterface, s: State, session: string, stretch: number, why: string): Promise<void> {
   const kw = await stretchRecord($, s, session, stretch)
-  await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.limit, reminder: false })
-  note($, s, `this stretch's pings are over: ${why}`)
+  await $.state.set(IDLE_STRETCH, { ...kw, sent: kw.limit, reminder: false })
+  note($, s, `this stretch's prompts are over: ${why}`)
 }
 
 /** An arm reached core: record which stretch it belongs to and, when it placed the warning, the lead. */
 async function trackStretch($: EngineInterface, s: State, session: string, stretch: number, lead: number | undefined): Promise<void> {
-  const before = await readKeepwarm($, s)
+  const before = await readRecord($, s)
   const kw = await stretchRecord($, s, session, stretch)
   const next = lead !== undefined && lead > 0 ? { ...kw, lead } : kw
   if (next.session !== before.session || next.stretch !== before.stretch || next.lead !== before.lead) {
-    await $.state.set(IDLE_KEEPWARM, next)
+    await $.state.set(IDLE_STRETCH, next)
   }
 }
 
 /**
  * What the stretch's next prompt is, or undefined when none is due. An owed reminder goes first and needs only that the stretch's
- * pings are not ended (`sent = limit`: a compaction, a cold cache or a stop); a ping needs keepwarm on and a slot left.
+ * prompts are not ended (`sent = limit`: a compaction, a cold cache or a stop); a ping needs keepwarm on and a slot left.
  */
-function nextKind(kw: Keepwarm): PromptKind | undefined {
+function nextKind(kw: Stretch): PromptKind | undefined {
   if (kw.sent >= kw.limit) return undefined
   return kw.reminder ? 'reminder' : kw.on ? 'ping' : undefined
 }
 
-/** A running main-loop turn refreshes the cache and, when it ends, arms the next ping itself; a prompt now would queue behind it. */
-function skipForRunningTurn($: EngineInterface, s: State, kind: PromptKind): boolean {
-  if (!s.running) return false
-  note($, s, `${kind} skipped: a turn is running; its arm schedules the next prompt`)
-  return true
-}
-
-/** Resolves undefined once the prompt box is empty and untouched for `QUIET_MS`; otherwise why the ping must not go: the user returned, the stretch's pings ended or `deadline` (epoch ms) came first. `deadline` is the one cold-cache check: `runPing` ends the stretch's pings when it wins. A running compaction pauses the wait. */
-async function holdForUser($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number, kind: PromptKind): Promise<string | undefined> {
+/**
+ * Resolves undefined once the prompt box is empty and nothing has touched it or ended a turn for `QUIET_MS`; otherwise why the prompt must not go: the user
+ * returned, a main-loop turn is running (it refreshes the cache and, when it ends, arms the next prompt itself; one sent now would queue behind it),
+ * `stillDue` says the caller no longer owes it, or `deadline` (epoch ms) came first. `deadline` is the one cold-cache check: the caller ends
+ * the stretch's prompts when it wins. A running compaction pauses the wait.
+ */
+async function holdForUser(
+  $: EngineInterface,
+  s: State,
+  at: Pick<Armed, 'session' | 'stretch'>,
+  epoch: number,
+  deadline: number,
+  stillDue: (record: Stretch) => boolean,
+): Promise<string | undefined> {
   const RETURNED = 'the user returned'
+  const RUNNING = 'a turn is running'
+  if (s.running) return RUNNING
   for (;;) {
     if (s.epoch !== epoch) return RETURNED
-    if (nextKind(await stretchRecord($, s, armed.session, armed.stretch)) !== kind) return "nothing is due this stretch: its pings are over or keepwarm is off"
+    if (!stillDue(await stretchRecord($, s, at.session, at.stretch))) return "nothing is due this stretch: its prompts are over or keepwarm is off"
     const now = await $.clock.now()
     if (now >= deadline) return COLD
-    // A landed compaction ends the wait through the cap; a skipped one lets the ping go.
+    // A compaction that lands meanwhile makes `stillDue` false: a prompt's through the stretch's cap, the compact-now's through `compactions`.
     if (!s.compacting) {
-      const changedAt = await s.lastChange
+      const activeAt = await s.lastActivity
       const { text } = await $.prompt.read()
       if (s.epoch !== epoch) return RETURNED
-      if (!s.compacting && text === '' && now - changedAt >= QUIET_MS) return undefined
+      if (!s.compacting && text === '' && now - activeAt >= QUIET_MS) return s.running ? RUNNING : undefined
     }
     await $.clock.sleep(HOLD_POLL_MS)
   }
@@ -462,24 +474,24 @@ function newNonce(): string {
 }
 
 /**
- * Takes the next ping slot of this stretch; undefined when the prompt must not go (a compaction, the user returned,
+ * Takes the next slot of this stretch; undefined when the prompt must not go (a compaction, the user returned,
  * `deadline` passed, or `kind` is no longer what the stretch owes). A reminder takes ping 1's slot when keepwarm is on, else none (0) and clears the owed flag.
  */
-async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number, kind: PromptKind): Promise<number | undefined> {
+async function reserveSlot($: EngineInterface, s: State, armed: Armed, epoch: number, deadline: number, kind: PromptKind): Promise<{ slot: number; on: boolean } | undefined> {
   const kw = await stretchRecord($, s, armed.session, armed.stretch)
   if (s.compacting || s.epoch !== epoch || nextKind(kw) !== kind || (await $.clock.now()) >= deadline) return undefined
   const slot = kw.on ? kw.sent + 1 : 0
-  await $.state.set(IDLE_KEEPWARM, { ...kw, sent: kw.on ? slot : kw.sent, reminder: false })
-  return slot
+  await $.state.set(IDLE_STRETCH, { ...kw, sent: kw.on ? slot : kw.sent, reminder: false })
+  return { slot, on: kw.on }
 }
 
 /**
  * Sends the stretch's next prompt (`nextKind`: an owed state reminder, else a keep-warm ping), once the box has been quiet. `dueAt` is when the stage's timer
- * was scheduled to fire: `warn_minutes` of cache remain then, so the ping gives up at `dueAt + warn_minutes - margin`
+ * was scheduled to fire: `warn_minutes` of cache remain then, so the prompt gives up at `dueAt + warn_minutes - margin`
  * however late the timer ran. The count is taken before the submit so that a reload or a failure can only cost a
- * ping, never add one.
+ * prompt, never add one.
  */
-async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number): Promise<void> {
+async function runPrompt($: EngineInterface, s: State, armed: Armed, epoch: number, dueAt: number): Promise<void> {
   let kind: PromptKind = 'ping'
   try {
     const due = nextKind(await stretchRecord($, s, armed.session, armed.stretch))
@@ -490,24 +502,21 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       return
     }
     const deadline = dueAt + s.policy.warnMs - EXPIRY_MARGIN_MS
-    if (skipForRunningTurn($, s, kind)) return
-    const held = await holdForUser($, s, armed, epoch, deadline, kind)
+    const held = await holdForUser($, s, armed, epoch, deadline, record => nextKind(record) === kind)
     if (held === COLD) {
-      await enqueue(s, () => endPings($, s, armed.session, armed.stretch, COLD))
+      await enqueue(s, () => endPrompts($, s, armed.session, armed.stretch, COLD))
       return
     }
     if (held !== undefined) {
       note($, s, `${kind} skipped: ${held}`)
       return
     }
-    if (skipForRunningTurn($, s, kind)) return // a turn started while the prompt waited
-    const index = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline, kind))
-    if (typeof index !== 'number' || s.epoch !== epoch) return
-    const ping: Ping = {
+    const reserved = await enqueue(s, () => reserveSlot($, s, armed, epoch, deadline, kind))
+    if (reserved === undefined || s.epoch !== epoch) return
+    const prompt: Prompt = {
       nonce: newNonce(),
       kind,
-      index,
-      offersStop: kind === 'ping' || index > 0,
+      index: reserved.slot,
       session: armed.session,
       stretch: armed.stretch,
       phase: 'submitted',
@@ -515,16 +524,16 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
       userCame: false,
     }
     // A prompt still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
-    s.ping = ping
+    s.prompt = prompt
     try {
-      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce, ping.offersStop) })
-      if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
-        s.ping = undefined
-        note($, s, `${label(ping)} dropped: ${result.drop}`)
+      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(prompt.nonce) : reminderText(prompt.nonce, reserved.on) })
+      if (result.drop !== undefined && s.prompt === prompt && prompt.phase === 'submitted') {
+        s.prompt = undefined
+        note($, s, `${label(prompt)} dropped: ${result.drop}`)
       }
     } catch (err) {
-      if (s.ping === ping && ping.phase === 'submitted') s.ping = undefined
-      note($, s, `${label(ping)} failed: ${describeError(err)}`)
+      if (s.prompt === prompt && prompt.phase === 'submitted') s.prompt = undefined
+      note($, s, `${label(prompt)} failed: ${describeError(err)}`)
     }
   } catch (err) {
     note($, s, `${kind} error: ${describeError(err)}`)
@@ -535,72 +544,63 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
  * The prompts after the warn timer's: one timer, `lead` after this arm (pings 2 and on, or a reminder the warn timer could not send). Any later main-loop arm replaces it and a return cancels it.
  * Only after this stretch's warning acted (`warned`), and not while a warn timer is pending: that timer sends the first prompt.
  */
-async function schedulePing($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
-  const kw = await readKeepwarm($, s)
+async function schedulePrompt($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<void> {
+  const kw = await readRecord($, s)
   const kind = nextKind(kw)
   if (kind === undefined || !kw.warned || armed.at.warn !== undefined) return
   if (kw.session !== armed.session || kw.stretch !== armed.stretch || kw.lead <= 0) return
   const due = (await $.clock.now()) + kw.lead
   if (s.epoch !== epoch || s.armed !== armed) return
-  s.pingTimer?.cancel()
-  s.pingTimer = $.clock.after(kw.lead, () => {
+  s.promptTimer?.cancel()
+  s.promptTimer = $.clock.after(kw.lead, () => {
     void (async () => {
       try {
         if (s.armed !== armed || s.epoch !== epoch) return
-        await runPing($, s, armed, epoch, due)
+        await runPrompt($, s, armed, epoch, due)
       } catch (err) {
-        note($, s, `ping timer error: ${describeError(err)}`)
+        note($, s, `prompt timer error: ${describeError(err)}`)
       }
     })()
   })
   note($, s, `${kind === 'reminder' ? 'state reminder' : `ping ${kw.sent + 1}`} in ${Math.round(kw.lead / 1000)}s`)
 }
 
-function label(ping: Ping): string {
-  return ping.kind === 'ping' ? `ping ${ping.index}` : 'state reminder'
+function label(prompt: Prompt): string {
+  return prompt.kind === 'ping' ? `ping ${prompt.index}` : 'state reminder'
 }
 
 /**
- * The ping's or reminder's own turn ended: record how it went, and on a stop end this stretch's pings. True when the reminder chose
- * `compact-now`: the pings are already ended, so nothing races the compaction, and a vetoed one does not restart them.
+ * The prompt's own turn ended: record how it went, and on a stop end this stretch's prompts. Returns the parsed choice. A reminder's `compact-now` ends the
+ * prompts here too, so nothing races the compaction and a vetoed one does not restart them.
  */
-async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<boolean> {
+async function finishPrompt($: EngineInterface, s: State, prompt: Prompt, reason: string, answer: string): Promise<Choice | undefined> {
   if (reason !== 'answer') {
-    note($, s, `${label(ping)} ended: ${reason}`)
-    return false
+    note($, s, `${label(prompt)} ended: ${reason}`)
+    return undefined
   }
-  const choice = parseChoice(answer)
-  if (choice === 'compact-now' && ping.kind === 'reminder') {
-    await endPings($, s, ping.session, ping.stretch, 'compact-now')
-    return true
-  }
-  if (choice === 'stop-waiting' && ping.offersStop) {
-    await endPings($, s, ping.session, ping.stretch, `${label(ping)} replied stop-waiting`)
-  } else note($, s, `${label(ping)} continued`)
-  return false
+  const parsed = parseChoice(answer)
+  // A ping cannot record state, so its compact-now does not count.
+  const choice = parsed === 'compact-now' && prompt.kind !== 'reminder' ? undefined : parsed
+  if (choice === undefined) note($, s, `${label(prompt)} continued`)
+  else await endPrompts($, s, prompt.session, prompt.stretch, `${label(prompt)} replied ${choice}`)
+  return choice
 }
 
 /**
- * Compacts the conversation the reminder just brought up to date, once the box has been quiet for `QUIET_MS` after the last main-loop turn's end and the last
- * prompt change: the call must land between turns, and the arm's latency is not what guarantees that. No deadline: the reminder turn just warmed the cache.
- * Gives up when the user came back, the box holds a draft (someone is there, and an unbounded wait could compact a cold cache), or a main-loop turn is running. Runs outside the CLI queue:
- * a compaction takes a minute and must not hold `return` or `fire` behind it.
+ * Compacts the conversation the reminder just brought up to date, once the box has been quiet like a prompt's: the call must land between turns. The reminder's turn
+ * warmed the cache, so the wait ends a chained prompt's `lead + warn_minutes - margin` after it. It gives up when the user came back, a main-loop turn is running or another
+ * compaction landed. Runs outside the CLI queue: a compaction takes a minute and must not hold `return` or `fire` behind it.
  */
-async function compactNow($: EngineInterface, s: State, ping: Ping, epoch: number): Promise<void> {
+async function compactNow($: EngineInterface, s: State, prompt: Prompt, epoch: number, compactions: number): Promise<void> {
   try {
-    for (;;) {
-      if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
-      if (s.running) return note($, s, 'compact-now skipped: a turn is running')
-      if (s.compacting) return note($, s, 'compact-now skipped: another compaction is running')
-      const now = await $.clock.now()
-      const changedAt = await s.lastChange
-      const turnEnd = await s.lastTurnEnd
-      const { text } = await $.prompt.read()
-      if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
-      if (text !== '') return note($, s, 'compact-now skipped: the prompt box holds a draft')
-      if (now - Math.max(changedAt, turnEnd) >= QUIET_MS) break
-      await $.clock.sleep(HOLD_POLL_MS)
+    if (prompt.userCame) return note($, s, 'compact-now skipped: the user returned') // back during the reminder's own turn, before `epoch` was taken
+    const { lead } = await stretchRecord($, s, prompt.session, prompt.stretch)
+    if (s.policy.warnMs === undefined || s.policy.warnMs <= EXPIRY_MARGIN_MS || lead <= 0) {
+      return note($, s, 'compact-now skipped: no usable lead or warn_minutes')
     }
+    const deadline = (await $.clock.now()) + lead + s.policy.warnMs - EXPIRY_MARGIN_MS
+    const held = await holdForUser($, s, prompt, epoch, deadline, () => s.compactions === compactions)
+    if (held !== undefined) return note($, s, `compact-now skipped: ${held}`)
     const result = await $.session.compact({ instructions: COMPACT_INSTRUCTIONS })
     note($, s, result.skip === undefined ? 'compacted' : `compaction skipped: ${result.skip}`)
   } catch (err) {
@@ -644,7 +644,7 @@ function userReturned($: EngineInterface, s: State): void {
   s.epoch += 1
   cancelTimers(s)
   s.armed = undefined
-  if (s.ping !== undefined) s.ping.userCame = true
+  if (s.prompt !== undefined) s.prompt.userCame = true
   // Read the id now, not when the queued call runs: `/clear` changes it in between.
   const sessionId = $.session.id().catch(() => undefined)
   void enqueue(s, () => returnTask($, s, sessionId))
@@ -669,11 +669,11 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
     if (stage === 'warn' && reply.decision === 'act' && dueAt !== undefined) {
       await enqueue(s, async () => {
         const kw = await stretchRecord($, s, armed.session, armed.stretch)
-        await $.state.set(IDLE_KEEPWARM, { ...kw, warned: true, reminder: reply.remind === true })
+        await $.state.set(IDLE_STRETCH, { ...kw, warned: true, reminder: reply.remind === true })
       })
       // Core says `remind` when the session has a work item and `[idle] state_reminder` is on: the reminder is owed until submitted, so a turn
       // running now does not lose it (the next arm sends it).
-      void runPing($, s, armed, epoch, dueAt)
+      void runPrompt($, s, armed, epoch, dueAt)
     }
   } catch (err) {
     note($, s, `timer ${stage} error: ${describeError(err)}`)
@@ -747,11 +747,11 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       s.stopTasks = undefined
       s.running = true
-      // The ping may queue behind a running turn, so its turn is found by the nonce in its text, not by order.
-      const ping = s.ping
-      if (ping?.phase === 'submitted' && e.text.includes(ping.nonce)) {
-        ping.phase = 'running'
-        ping.turnId = e.turnId
+      // The prompt may queue behind a running turn, so its turn is found by the nonce in its text, not by order.
+      const prompt = s.prompt
+      if (prompt?.phase === 'submitted' && e.text.includes(prompt.nonce)) {
+        prompt.phase = 'running'
+        prompt.turnId = e.turnId
       }
     }
     return next(e)
@@ -767,21 +767,21 @@ export const register: Register = on => {
     // A subagent's turn carries agentId; only the main loop's end is the user-visible idle.
     if (e.agentId === undefined) {
       s.running = false
-      s.lastTurnEnd = $.clock.now()
-      void s.lastTurnEnd.catch(() => undefined)
+      touched($, s)
     }
     if (e.agentId === undefined && !s.inert) {
       const epoch = s.epoch
+      const compactions = s.compactions // read at the turn's end, so a compaction landing during the arm still counts
       const tasks = s.stopTasks
       s.stopTasks = undefined
-      const ping = s.ping?.turnId === e.turnId ? s.ping : undefined
-      if (ping !== undefined) s.ping = undefined
+      const prompt = s.prompt?.turnId === e.turnId ? s.prompt : undefined
+      if (prompt !== undefined) s.prompt = undefined
       else s.lastAnswer = e.answer
       void enqueue(s, async () => {
-        const compact = ping !== undefined && (await finishPing($, s, ping, e.reason, e.answer))
-        // The ping's reply must not become the your-turn notice's excerpt.
-        await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
-        if (compact && ping !== undefined) void compactNow($, s, ping, epoch)
+        const choice = prompt !== undefined ? await finishPrompt($, s, prompt, e.reason, e.answer) : undefined
+        // The prompt's reply must not become the your-turn notice's excerpt.
+        await armTask($, s, epoch, prompt !== undefined ? s.lastAnswer : e.answer, tasks)
+        if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch, compactions)
       })
     }
     return next(e)
@@ -805,10 +805,10 @@ export const register: Register = on => {
 
   // While the ping's turn runs the user is away and only asked to keep the cache warm, not to resume work.
   on('tool.check', async ($, e, next) => {
-    const ping = s.ping
+    const prompt = s.prompt
     // Other plugins' permission queries carry no tool_use_id and are not calls to deny.
     // The reminder turn must write the work item, so only a ping's turn is denied.
-    if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || ping?.phase !== 'running' || ping.kind !== 'ping' || ping.userCame) return next(e)
+    if (e.tool_use_id === undefined || e.agentId !== undefined || e.isReadOnly === true || prompt?.phase !== 'running' || prompt.kind !== 'ping' || prompt.userCame) return next(e)
     return {
       decision: 'deny',
       reason:
@@ -819,13 +819,11 @@ export const register: Register = on => {
   // The user touching the prompt box: typing and deletion arrive as prompt.edit, every other write as prompt.change.
   // Both run per edit, so they only record the time.
   on('prompt.edit', async ($, e, next) => {
-    s.lastChange = $.clock.now()
-    void s.lastChange.catch(() => undefined)
+    touched($, s)
     return next(e)
   })
   on('prompt.change', async ($, e, next) => {
-    s.lastChange = $.clock.now()
-    void s.lastChange.catch(() => undefined)
+    touched($, s)
     return next(e)
   })
 
@@ -843,8 +841,8 @@ export const register: Register = on => {
       return { text: 'usage: /keepwarm [on|off]' }
     }
     await enqueue(s, async () => {
-      const kw = await readKeepwarm($, s)
-      await $.state.set(IDLE_KEEPWARM, { ...kw, on: word === '' ? !kw.on : word === 'on' })
+      const kw = await readRecord($, s)
+      await $.state.set(IDLE_STRETCH, { ...kw, on: word === '' ? !kw.on : word === 'on' })
     })
     return { text: await keepwarmLine($, s) }
   })
@@ -857,14 +855,14 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A compaction replaces the conversation the pings were keeping cached, so a ping now would prefill the new summary
+  // A compaction replaces the conversation the prompts were keeping cached, so a prompt now would prefill the new summary
   // and add a turn. `precompute` only computes a summary to keep; nothing is replaced yet. A manual /compact has already
   // counted as a return (its command.run), so this acts on the auto and plugin compactions of a still-armed stretch.
   on('session.compact', async ($, e, next) => {
     const armed = s.armed
-    if (s.inert || e.agentId !== undefined || e.trigger === 'precompute' || armed === undefined) return next(e)
+    if (s.inert || e.agentId !== undefined || e.trigger === 'precompute') return next(e)
     // `session.compact` fires before the compaction, and `next` resolves to its outcome: a skip (a PreCompact hook
-    // blocked it) leaves the conversation and its cache, so only a result with messages ends the pings.
+    // blocked it) leaves the conversation and its cache, so only a result with messages ends the prompts.
     s.compacting = true
     let result: Awaited<ReturnType<typeof next>>
     try {
@@ -873,10 +871,13 @@ export const register: Register = on => {
       s.compacting = false
     }
     if ('messages' in result) {
-      s.pingTimer?.cancel()
-      s.pingTimer = undefined
-      // Queued before the next reservation, so a ping waiting in holdForUser or a timer that already fired finds the cap.
-      void enqueue(s, () => endPings($, s, armed.session, armed.stretch, `compaction (${e.trigger})`))
+      s.compactions += 1
+      if (armed !== undefined) {
+        s.promptTimer?.cancel()
+        s.promptTimer = undefined
+        // Queued before the next reservation, so a prompt waiting in holdForUser or a timer that already fired finds the cap.
+        void enqueue(s, () => endPrompts($, s, armed.session, armed.stretch, `compaction (${e.trigger})`))
+      }
     }
     return result
   })

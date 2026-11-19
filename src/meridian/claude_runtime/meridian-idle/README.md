@@ -28,7 +28,7 @@ that common flag for readability.
 | `fire warn` answers `act` with `remind: true` | `$.prompt.submit` (state reminder) | The cache warning fired and core wants the work item's state brought up to date. See State reminder. |
 | `fire warn` answers `act` without `remind`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
 | `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's or reminder's turn by its nonce, read its reply, and deny tools that change anything while a ping runs. |
-| `prompt.edit`, `prompt.change` | none | Remember when the user last touched the prompt box, so a ping or the reminder waits for a quiet one. |
+| `prompt.edit`, `prompt.change`, `turn.complete` (main loop) | none | Remember when the prompt box was last touched or a turn last ended, so every injected prompt waits for a quiet box. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns.
@@ -61,7 +61,8 @@ lists it), replacing what is stale and writing nothing if it is current, and end
 never reach it.
 
 It is sent like a ping, with the same guards: a quiet prompt box, the cold-cache
-deadline, no running turn, no compaction, no user return. It is a plugin prompt
+deadline, no running turn, no compaction, no user return (the quiet box, below,
+spells them out). It is a plugin prompt
 without `asUser`, so the model does not read it as the user, the session log
 files it as injected, and it is not a return. It is the one prompt
 here whose turn may write: the keepwarm tool denial applies to pings only, and
@@ -76,7 +77,7 @@ then, or a guard holds it, the stretch's next prompt is the reminder instead of 
 ping: the next arm schedules it one `lead` later, with keepwarm on or off, and a
 reload recovers the stretch and does the same. The count and the flag are written
 before the submit, so a reload cannot send it twice. The cold-cache deadline still
-applies, and a stop, compaction or cold cache that ends the stretch's pings
+applies, and a stop, compaction or cold cache that ends the stretch's prompts
 also drops it.
 
 The reminder says its turn keeps the cache warm while the user is away, and asks
@@ -85,8 +86,9 @@ the reply to end with a last line that is exactly one of:
 - `compact-now`: the work item holds what is needed to resume. The mod compacts
   the conversation while the cache is warm, so the user returns to a small
   context. The reminder says to choose it only after the update.
-- `stop-waiting`: offered only with keepwarm on. Ends the stretch's pings, as on
-  a ping.
+- `stop-waiting`: offered only with keepwarm on. Ends the stretch's prompts, as
+  on a ping. The mod obeys it on any prompt; with keepwarm off there is nothing
+  more to stop.
 - anything else: keep waiting.
 
 Pings do not offer `compact-now` and ignore it: they change nothing, so the
@@ -94,21 +96,22 @@ state the model weighed at the reminder is the state it would weigh again.
 Without a work item core sends no reminder, so there is no compaction either.
 
 On `turn.complete` of the reminder's turn (reason `answer`) with `compact-now`
-the mod ends the stretch's pings first (so no ping or chained timer races the
-compaction, and a vetoed compaction does not restart them). It then waits for
-the same quiet box a ping waits for: empty and untouched for 10 s, counted from
-the later of the last main-loop turn's end and the last prompt change. That wait
-is what puts the call between turns. It has no deadline, since the reminder turn
-just warmed the cache, and it gives up, with the reason in the log, when the user
-came back, the box holds a draft, a main-loop turn is running (a task
-notification woke the session) or another compaction is. Then it calls
+the mod ends the stretch's prompts first (so no ping or chained timer races the
+compaction, and a vetoed compaction does not restart them). It then waits like a
+prompt does: the same quiet box, measured from the later of the last main-loop
+turn's end and the last prompt change. That wait is what puts the call between
+turns. The reminder's turn has just warmed the cache, so the wait ends a chained prompt's
+`lead + warn_minutes - margin` after that turn; a draft in the box holds it until then
+and another compaction pauses it. It gives up, with the reason in the log, when the
+user came back (also during the reminder's turn), a main-loop turn is running (a task
+notification woke the session), or another compaction landed meanwhile. Then it calls
 `$.session.compact` with instructions to keep what the work item does not
 hold (the user's latest requests, what is not yet recorded, where the
 conversation stopped). The call runs outside the CLI queue, since it can take a
 minute. The log ends `compacted`, `compaction skipped: <why>` (a hook vetoed it)
 or `compaction failed: <error>`. The host runs `$.session.compact` through every
 hook but the calling one, and on a real session the mod's own `session.compact`
-hook did not see it (one "pings are over" log line, not two); the pings are
+hook did not see it (one "prompts are over" log line, not two); the prompts are
 already ended either way. `state_reminder = false` turns all of this off.
 
 ## Keepwarm
@@ -136,13 +139,13 @@ stretch), and `warned`; every way its pings end writes `sent = limit`, and the
 count is taken before each submit, so a reload can cost a ping but never add
 one. Pings send no notification.
 
-- **Quiet box.** A ping is submitted only after the prompt box has been empty
-  and untouched for 10 s. Every check before the submit stops 1 minute before
+- **Quiet box.** A prompt is submitted only after the prompt box has been empty
+  and untouched, and no main-loop turn has ended, for 10 s. Every check before the submit stops 1 minute before
   the cache would expire: the stage's scheduled time plus `warn_minutes` (from
   `idle config`) minus 1 minute. The deadline does not move when the timer runs
   late, so a late timer has less time or none. A skipped prompt spends no slot.
-  When that deadline passes while a ping waits, the stretch's pings end too (the
-  deadline is the cold-cache check), so a later arm schedules none.
+  When that deadline passes while a prompt waits, the stretch's prompts end too
+  (the deadline is the cold-cache check), so a later arm schedules none.
 - **Not the user.** The ping is a plugin prompt without `asUser`, so the model
   reads it as sent by the plugin, and the mod does not count it as a return.
 - **Its turn.** The text carries a nonce; the main-loop `turn.start` that
@@ -157,12 +160,12 @@ one. Pings send no notification.
   touched.
 - **Stop.** A reply whose last non-empty line is `stop-waiting` (alone or in one
   pair of quotes or backticks; a reply that is only that word counts) ends this
-  stretch's pings; keepwarm stays on. The reminder's reply is read the same way. The ping
+  stretch's prompts; keepwarm stays on. The reminder's reply is read the same way. The ping
   text and the denied-tool reason both say so, and that stopping lets the cache
   go cold before the user returns.
 - **Compaction.** A `session.compact` of the main conversation (trigger
   `manual`, `auto` or `plugin`, no `agentId`) during an armed stretch ends its
-  pings the same way and cancels the chained timer: the cache they protected is
+  prompts the same way and cancels the chained timer: the cache they protected is
   gone, and a ping would prefill the new summary and add a turn. `precompute`
   and a subagent's compaction change nothing. A manual `/compact` already counted
   as a return.
