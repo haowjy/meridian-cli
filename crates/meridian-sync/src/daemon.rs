@@ -74,11 +74,12 @@ pub fn run(options: Options) -> u8 {
         let key = key.to_string_lossy();
         // The daemon's `meridian notify` must see only file-configured settings, as a service
         // would, whatever shell started a foreground run.
-        if (key.starts_with("MERIDIAN_") && key != "MERIDIAN_HOME") || key.starts_with("_MERIDIAN_")
-        {
+        if key.starts_with("MERIDIAN_") || key.starts_with("_MERIDIAN_") {
             std::env::remove_var(&*key);
         }
     }
+    // The child `meridian` resolves its home from this, not from the user's `$HOME`.
+    std::env::set_var("MERIDIAN_HOME", &options.home);
     let code = match Daemon::new(options.home, &autosync_dir, &lock) {
         Ok(daemon) => daemon.run(),
         Err(e) => {
@@ -281,6 +282,11 @@ impl Worker {
                     self.watch = None;
                     self.dirty = None;
                 }
+                let gone: Vec<conflict::Dir> = (self.cfg.dirs.iter())
+                    .filter(|d| !cfg.dirs.iter().any(|n| n.rel == d.rel))
+                    .cloned()
+                    .collect();
+                conflict::sync(&self.cfg.clone_path, &gone, None);
                 self.cfg = cfg;
             }
             Msg::Watch(hint) => match hint {
@@ -371,12 +377,15 @@ impl Worker {
         });
         // A pass cut short by shutdown isn't the clone's state.
         if !self.cancel.load(Ordering::Relaxed) {
+            if !self.cfg.autosync {
+                conflict::sync(&spec.clone_path, &self.cfg.dirs, None);
+            }
             if let Some(r) = result.as_ref() {
                 // Only a conflict or a sync changes the file: a failed fetch says nothing
                 // about whether the conflict is still there.
                 match r.outcome {
                     pass::Outcome::Conflicted => {
-                        conflict::sync(&spec.clone_path, &self.cfg.dirs, r.conflict.as_ref());
+                        conflict::sync(&spec.clone_path, &self.cfg.dirs, Some(r));
                     }
                     pass::Outcome::Synced => conflict::sync(&spec.clone_path, &self.cfg.dirs, None),
                     _ => {}

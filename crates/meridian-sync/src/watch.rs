@@ -72,7 +72,10 @@ impl Classifier {
                 }
                 continue;
             }
-            if path.file_name().is_some_and(|n| n == CONFLICT_FILE) {
+            if path
+                .file_name()
+                .is_some_and(|n| n.as_encoded_bytes().starts_with(CONFLICT_FILE.as_bytes()))
+            {
                 continue;
             }
             if let Some(ignored) = &self.ignored {

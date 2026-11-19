@@ -18,7 +18,7 @@ use crate::records::CloneGroup;
 /// file into context directories and it must never be committed. A pathspec needs no
 /// edit to the repository, and unlike `.git/info/exclude` it beats an allowlist
 /// `.gitignore`.
-const CONFLICT_FILE_EXCLUDE: &str = ":(exclude,glob)**/SYNC-CONFLICT.md";
+const CONFLICT_FILE_EXCLUDE: &str = ":(exclude,glob)**/SYNC-CONFLICT.md*";
 
 /// Left in `.git` by a person's own operation: the pass touches nothing while one is open.
 const FOREIGN_OPERATION_MARKERS: &[&str] = &[
