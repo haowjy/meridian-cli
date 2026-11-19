@@ -12,3 +12,8 @@ may have changed.
 The sidecar runs inside the TUI: contain sensor failures and keep diagnostics
 away from its terminal. [.context/CONTEXT.md](.context/CONTEXT.md) describes
 wake and reopen behavior.
+
+To test an idle stretch live, launch the TUI with `MERIDIAN_NOTIFY_PUSH_BACKEND=none`
+and `MERIDIAN_NOTIFY_EMAIL_BACKEND=none`. Every interactive session counts as
+primary, including one an agent starts in a private tmux, so otherwise its push and
+cache warning reach Jimmy's phone and inbox.
