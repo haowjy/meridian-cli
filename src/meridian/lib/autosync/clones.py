@@ -38,6 +38,13 @@ def clone_refusal_message(task_dir: Path, clone: Path) -> str:
     )
 
 
+def project_in_clone_message(clone: Path) -> str:
+    return (
+        f"cannot create a Meridian project inside the context clone `{clone}`, which other "
+        "agents and autosync share. Run `meridian init` in your project instead."
+    )
+
+
 def clone_launch_warning(task_dir: Path, clone: Path) -> str:
     return (
         f"`{task_dir}` is inside the context clone `{clone}`; "
