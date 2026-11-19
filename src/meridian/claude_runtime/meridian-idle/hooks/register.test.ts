@@ -910,6 +910,22 @@ test('compact-now is skipped when a main-loop turn is running at the end of the 
   expect(await statusOf($)).toContain('compact-now skipped: a turn is running')
 })
 
+test('compact-now waits QUIET_MS after a turn shorter than the poll', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(9500)
+  await $.turn.start({ text: 'task notification', turnId: 't9' })
+  await $.turn.complete({ ...MAIN_TURN, turnId: 't9' })
+  await clock.advance(1000)
+  expect(h.compactions).toEqual([])
+  await clock.advance(10_000)
+  expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
+})
+
 for (const during of ['turn', 'wait'] as const) {
   test(`compact-now is skipped when the user came back during the ${during}`, async ($, on) => {
     const h = reminderHost()

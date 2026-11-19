@@ -79,8 +79,8 @@ before the submit, so a reload cannot send it twice. The cold-cache deadline sti
 applies, and a stop, compaction or cold cache that ends the stretch's pings
 also drops it.
 
-The reminder says it is a keepwarm turn and asks the reply to end with a last
-line that is exactly one of:
+The reminder says its turn keeps the cache warm while the user is away, and asks
+the reply to end with a last line that is exactly one of:
 
 - `compact-now`: the work item holds what is needed to resume. The mod compacts
   the conversation while the cache is warm, so the user returns to a small
@@ -97,12 +97,12 @@ On `turn.complete` of the reminder's turn (reason `answer`) with `compact-now`
 the mod ends the stretch's pings first (so no ping or chained timer races the
 compaction, and a vetoed compaction does not restart them). It then waits for
 the same quiet box a ping waits for: empty and untouched for 10 s, counted from
-the later of the turn's end and the last prompt change. That wait is what puts
-the call between turns. It has no deadline, since the reminder turn just warmed
-the cache, and it gives up, with the reason in the log, when the user came back,
-the box holds a draft, or a main-loop turn is running (a task notification woke
-the session). Then it
-calls `$.session.compact` with instructions to keep what the work item does not
+the later of the last main-loop turn's end and the last prompt change. That wait
+is what puts the call between turns. It has no deadline, since the reminder turn
+just warmed the cache, and it gives up, with the reason in the log, when the user
+came back, the box holds a draft, a main-loop turn is running (a task
+notification woke the session) or another compaction is. Then it calls
+`$.session.compact` with instructions to keep what the work item does not
 hold (the user's latest requests, what is not yet recorded, where the
 conversation stopped). The call runs outside the CLI queue, since it can take a
 minute. The log ends `compacted`, `compaction skipped: <why>` (a hook vetoed it)
