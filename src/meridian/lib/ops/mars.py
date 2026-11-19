@@ -12,10 +12,8 @@ from meridian.lib.catalog.mars_roots import (
     MarsRoots,
     ensure_resolved_mars_root,
     mars_fallback_args,
+    resolve_mars_executable,
     resolve_mars_roots,
-)
-from meridian.lib.catalog.mars_roots import (
-    resolve_mars_executable as _resolve_mars_executable,
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
@@ -52,11 +50,6 @@ class MarsAgentEntry(BaseModel):
     native_harnesses: tuple[str, ...] = ()
     # Named in `[settings.meridian.fanout]`: Meridian launches it even where native.
     fanout: bool = False
-
-
-def resolve_mars_executable() -> str | None:
-    """Prefer the Mars binary from this install environment over PATH."""
-    return _resolve_mars_executable()
 
 
 def _prepare_mars_roots(project_root: Path | None, *, executable: str) -> MarsRoots:
@@ -296,5 +289,4 @@ __all__ = [
     "check_upgrade_availability",
     "format_upgrade_availability",
     "mars_list_agents",
-    "resolve_mars_executable",
 ]

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "meridian-sync"
+dynamic = ["version"]
+description = "Keeps Meridian's git contexts in sync with their remotes"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Rust",
+]
+
+[project.urls]
+Repository = "https://github.com/haowjy/meridian-cli"
+
+[tool.maturin]
+bindings = "bin"
+strip = true
+
+[tool.uv]
+# uv rebuilds a path source only when these change; without them a Rust edit is ignored.
+cache-keys = [
+  { file = "Cargo.toml" },
+  { file = "Cargo.lock" },
+  { file = "src/**/*.rs" },
+]

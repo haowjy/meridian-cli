@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
+from meridian.dev.versions import LOCATIONS, disagreements
 from meridian.env_registry import is_registered_env_name
 from meridian.lib.state.paths import LaunchPaths
 
@@ -82,6 +83,7 @@ class Sources:
 
     python_modules: tuple[PythonSource, ...]
     scripts: tuple[ScriptSource, ...]
+    repo_root: Path
 
 
 Check = Callable[[Sources], list[Violation]]
@@ -101,7 +103,7 @@ def read_sources(source_root: Path) -> Sources:
             modules.append(PythonSource(as_posix, path.read_text(encoding="utf-8")))
         elif path.suffix in _SCRIPT_SUFFIXES:
             scripts.append(ScriptSource(as_posix, path.read_text(encoding="utf-8")))
-    return Sources(tuple(modules), tuple(scripts))
+    return Sources(tuple(modules), tuple(scripts), source_root.parent)
 
 
 # Each exception names the narrow function that owns the legitimate raw write.
@@ -534,7 +536,6 @@ _SYS_EXECUTABLE_OWNERS = frozenset(
         "meridian/lib/platform/python_module.py",
         "meridian/lib/harness/claude.py",  # hands the interpreter to a stdlib hook script
         "meridian/lib/harness/projections/tool_extension_policy.py",  # runs the stdlib evaluator
-        "meridian/lib/catalog/mars_roots.py",  # finds the scripts dir beside the interpreter
         "meridian/lib/launch/cli_shim.py",  # compares PATH's `meridian` to this build's
     }
 )
@@ -684,6 +685,18 @@ def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
     ]
 
 
+def version_location_violations(sources: Sources) -> list[Violation]:
+    """Reject a release version that differs between the places `versions.LOCATIONS` lists."""
+
+    # A `--source-root` without the repo around it has no version files to compare.
+    if not all((sources.repo_root / location.path).is_file() for location in LOCATIONS):
+        return []
+    # Paths sit outside `src/`; `..` keeps `_display` pointing at the file.
+    return [
+        Violation(f"../{path}", 0, message) for path, message in disagreements(sources.repo_root)
+    ]
+
+
 CHECKS: tuple[Check, ...] = (
     raw_write_violations,
     stale_raw_write_allowlist,
@@ -695,6 +708,7 @@ CHECKS: tuple[Check, ...] = (
     chat_lock_path_violations,
     context_env_read_violations,
     stale_context_env_allowlist,
+    version_location_violations,
 )
 
 

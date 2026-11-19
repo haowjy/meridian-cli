@@ -131,7 +131,10 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
   commit, including `release:skip` merges, deduplicated by PR number (a rebase
   merge owns several commits), and skips direct pushes; the walk is capped at 200
   commits and fails above that rather than dropping entries
-- Updates `src/meridian/__init__.py`
+- Writes the version to every location in `meridian.dev.versions.LOCATIONS`
+  (`src/meridian/__init__.py`, the `meridian-sync` pin in `pyproject.toml`, and the
+  crate's `Cargo.toml` and `Cargo.lock`, where a release candidate is spelled `-rc.N`);
+  the `meridian.dev.lints` run in preflight fails when they disagree
 - Renders those sections together into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
 - Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
@@ -153,11 +156,26 @@ carries the notes itself instead:
 scripts/manually-release.sh patch --no-collect --notes-file notes.md --push
 ```
 
-`release.yml` is the only PyPI trusted publishing workflow identity. Manual or
+`release.yml` builds the `meridian-sync` wheels (Linux x86_64 and arm64, macOS arm64 and
+x86_64) and sdist, validates meridian-cli's wheel and sdist with `--find-links` at the
+`meridian-sync` wheel (the exact pin is not on PyPI yet), and publishes `meridian-sync` before
+meridian-cli. `release.yml` is the only PyPI trusted publishing workflow identity. Manual or
 backfill `v*` tag pushes use the same workflow and provenance checks. It also
 creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
 as the release body. Re-running the failed job skips artifacts PyPI already has
 (`skip-existing`) and edits the existing release.
+
+Before the first release that includes `meridian-sync`, PyPI needs a trusted publisher for the
+`meridian-sync` project (owner `haowjy`, repository `meridian-cli`, workflow `release.yml`,
+environment `pypi`). Without it the publish job fails after the tag and release commit are
+already on `main`; register the publisher and re-run the job.
+
+A manual backfill tag on a commit from before `crates/meridian-sync` existed fails at
+`sync-wheels`, so that path only works for commits that carry the crate.
+
+A release candidate pins `meridian-sync` to a pre-release, so installing one needs uv 0.12 or
+newer (older uv rejects the transitive pre-release unless `--prerelease=allow` is passed).
+CI uses one uv version in every workflow for this reason.
 
 The release workflow ignores its own `release: v...` commit so the auto-commit
 does not recursively release again.
@@ -214,7 +232,7 @@ git push --no-verify origin vX.Y.Z           # push the tag (bypasses local v* g
 
 ## Boundaries
 
-- Do not edit `__version__` — CI owns version bumps
+- Do not edit the version in any `meridian.dev.versions.LOCATIONS` file — CI owns version bumps
 - Do not edit `CHANGELOG.md` in a PR — the release job renders it from the merged PR body
 - Do not create or push `v*` tags manually — CI owns tags
 - The pre-push hook blocks direct `v*` tag pushes

@@ -17,6 +17,7 @@ from meridian.dev.lints import (
     stale_context_env_allowlist,
     stale_raw_write_allowlist,
     unregistered_env_violations,
+    version_location_violations,
 )
 
 
@@ -135,3 +136,28 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
     assert {v.path for v in stale_raw_write_allowlist(sources)} == {
         path for path, _, _ in RAW_WRITE_ALLOWLIST
     }
+    # The repo files around a bare source root are missing: nothing to compare.
+    assert version_location_violations(sources) == []
+
+
+def test_version_lint_reports_a_location_that_disagrees(tmp_path: Path) -> None:
+    def plant(relative_path: str, text: str) -> None:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    plant("src/meridian/__init__.py", '__version__ = "1.2.3"\n')
+    plant(
+        "pyproject.toml",
+        "  \"meridian-sync==1.2.3; sys_platform != 'win32'\",\n",
+    )
+    plant(
+        "crates/meridian-sync/Cargo.toml",
+        '[dependencies.x]\nversion = "9.9.9"\n\n[package]\nname = "meridian-sync"\n'
+        'version = "1.2.4"\n',
+    )
+    plant("crates/meridian-sync/Cargo.lock", 'name = "meridian-sync"\nversion = "1.2.3"\n')
+
+    violations = version_location_violations(read_sources(tmp_path / "src"))
+
+    assert [v.path for v in violations] == ["../crates/meridian-sync/Cargo.toml"]

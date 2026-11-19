@@ -10,7 +10,9 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
-_EXPECTED_METADATA_VERSION = "2.4"
+# The newest core metadata the PyPI publish action accepts. hatchling and maturin write
+# 2.4 or older; a newer one is rejected at upload.
+_NEWEST_ACCEPTED = (2, 4)
 
 
 class VerificationError(RuntimeError):
@@ -66,9 +68,11 @@ def _metadata_version(contents: str) -> str:
 
 
 def _assert_expected(*, path: Path, version: str) -> None:
-    if version != _EXPECTED_METADATA_VERSION:
+    major, _, minor = version.partition(".")
+    if not (major.isdigit() and minor.isdigit()) or (int(major), int(minor)) > _NEWEST_ACCEPTED:
+        newest = ".".join(map(str, _NEWEST_ACCEPTED))
         raise VerificationError(
-            f"{path} has Metadata-Version {version}; expected {_EXPECTED_METADATA_VERSION}"
+            f"{path} has Metadata-Version {version}; the newest accepted is {newest}"
         )
     print(f"Verified release metadata in {path}: Metadata-Version {version}")
 

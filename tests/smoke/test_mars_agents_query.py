@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.ops import mars as mars_module
+from meridian.lib.catalog.mars_roots import resolve_mars_executable
 from meridian.lib.ops.mars import mars_list_agents
 
 pytestmark = pytest.mark.slow
@@ -61,7 +61,7 @@ def test_mars_query_commands_accepted_by_real_mars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executable = mars_module.resolve_mars_executable()
+    executable = resolve_mars_executable()
     if executable is None:
         pytest.skip("mars binary not available")
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -13,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.python_module import installed_executable
 from meridian.lib.state.user_paths import get_user_home
 
 
@@ -103,16 +103,7 @@ def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
 
 def resolve_mars_executable() -> str | None:
     """Prefer the Mars binary from this install environment over ``PATH``."""
-
-    # Keep the wrapper path intact: uv tool scripts point at a symlinked Python
-    # binary, and resolving it jumps out of the tool environment where sibling
-    # scripts (including ``mars``) live.
-    scripts_dir = Path(sys.executable).parent
-    for name in ("mars", "mars.exe"):
-        candidate = scripts_dir / name
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("mars")
+    return installed_executable("mars") or shutil.which("mars")
 
 
 def ensure_user_mars_root(
