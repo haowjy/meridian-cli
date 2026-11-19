@@ -14,6 +14,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::clock::iso;
+use crate::conflict;
 use crate::git::{StepEvent, Timeouts};
 use crate::pass::{self, CloneSpec, PassEnv, PassResult};
 use crate::records::{self, CloneGroup, Scan};
@@ -40,6 +42,8 @@ const WRITE_EVERY: Duration = Duration::from_secs(60);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(30);
 /// How long a clone polls before native watching is tried again.
 const WATCH_RETRY: Duration = Duration::from_secs(5 * 60);
+/// How long a notification child may run before it is sent SIGTERM.
+const NOTIFY_LIMIT: Duration = Duration::from_secs(60);
 /// How long the executable may be missing before it counts as uninstalled: an upgrade
 /// that removes the file before writing the new one leaves a gap.
 const EXE_GRACE: Duration = Duration::from_secs(5);
@@ -68,7 +72,10 @@ pub fn run(options: Options) -> u8 {
     detach_from_terminal();
     for (key, _) in std::env::vars_os() {
         let key = key.to_string_lossy();
-        if key.starts_with("MERIDIAN_") && key != "MERIDIAN_HOME" {
+        // The daemon's `meridian notify` must see only file-configured settings, as a service
+        // would, whatever shell started a foreground run.
+        if (key.starts_with("MERIDIAN_") && key != "MERIDIAN_HOME") || key.starts_with("_MERIDIAN_")
+        {
             std::env::remove_var(&*key);
         }
     }
@@ -159,6 +166,8 @@ struct WorkerConfig {
     clone_key: String,
     remote: String,
     autosync: bool,
+    /// The context directories of the clone, where `SYNC-CONFLICT.md` goes.
+    dirs: Vec<conflict::Dir>,
     /// The newest root-record `written_at` read so far; a change asks for a pass.
     written_at: String,
 }
@@ -170,6 +179,7 @@ impl From<&CloneGroup> for WorkerConfig {
             clone_key: g.clone_key.clone(),
             remote: g.remote.clone(),
             autosync: g.autosync,
+            dirs: conflict::dirs(&g.contexts),
             written_at: g.written_at.clone(),
         }
     }
@@ -204,7 +214,6 @@ enum Event {
 
 struct Worker {
     cfg: WorkerConfig,
-    home: PathBuf,
     events: Sender<Event>,
     rx: Receiver<Msg>,
     tx: Sender<Msg>,
@@ -316,7 +325,6 @@ impl Worker {
 
     fn pass_env(&self) -> PassEnv {
         PassEnv {
-            home: self.home.clone(),
             timeouts: Timeouts::default(),
             git_env: Vec::new(),
             cancel: Some(Arc::clone(&self.cancel)),
@@ -364,6 +372,15 @@ impl Worker {
         // A pass cut short by shutdown isn't the clone's state.
         if !self.cancel.load(Ordering::Relaxed) {
             if let Some(r) = result.as_ref() {
+                // Only a conflict or a sync changes the file: a failed fetch says nothing
+                // about whether the conflict is still there.
+                match r.outcome {
+                    pass::Outcome::Conflicted => {
+                        conflict::sync(&spec.clone_path, &self.cfg.dirs, r.conflict.as_ref());
+                    }
+                    pass::Outcome::Synced => conflict::sync(&spec.clone_path, &self.cfg.dirs, None),
+                    _ => {}
+                }
                 if acted.get() || r.outcome != pass::Outcome::Synced || r.repair.is_some() {
                     eprintln!(
                         "meridian-sync: pass on {} ({why}): {:?}{}",
@@ -480,6 +497,8 @@ struct Daemon {
     scanned_at: String,
     events_tx: Sender<Event>,
     events_rx: Receiver<Event>,
+    /// `meridian notify` children, each with its start and whether it was sent SIGTERM.
+    notifications: Vec<(Child, Instant, bool)>,
     dirty: bool,
     last_write: Option<Instant>,
 }
@@ -508,6 +527,7 @@ impl Daemon {
             scanned_at: String::new(),
             events_tx,
             events_rx,
+            notifications: Vec::new(),
             dirty: true,
             last_write: None,
         })
@@ -578,19 +598,83 @@ impl Daemon {
             }
         }
         self.retiring.retain(|w| !w.join.is_finished());
-        for slot in self.slots.values_mut() {
+        let mut stopped = Vec::new();
+        for (key, slot) in &mut self.slots {
             if let Some(why) = slot.tracker.judge(now, wall) {
                 eprintln!(
                     "meridian-sync: {} stopped: {}",
                     slot.sent.clone_path.display(),
                     why.0
                 );
+                stopped.push((key.clone(), why.0, slot.tracker.entry().fix.clone()));
                 self.dirty = true;
             }
         }
+        for (key, why, fix) in stopped {
+            self.notify_stopped(&key, &why, fix);
+        }
+        self.reap_notifications(now);
         if self.dirty || self.last_write.is_none_or(|t| now - t >= WRITE_EVERY) {
             self.write(now);
         }
+    }
+
+    /// Runs `meridian -C <root> notify` for a clone that just stopped, where `<root>` is the
+    /// project of the newest record naming it: that project's routes and the user's apply.
+    /// Never waits on the child; `reap_notifications` checks on it each loop.
+    fn notify_stopped(&mut self, key: &str, why: &str, fix: Option<String>) {
+        let Some(group) = self.scan.clones.iter().find(|g| g.clone_key == key) else {
+            return;
+        };
+        let mut names: Vec<&str> = group
+            .contexts
+            .iter()
+            .filter(|c| c.root == group.newest_root)
+            .map(|c| c.name.as_str())
+            .collect();
+        names.dedup();
+        let title = format!("autosync stopped: {}", names.join(", "));
+        let body = fix.unwrap_or_else(|| why.to_string());
+        let Some(meridian) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("meridian")))
+        else {
+            return;
+        };
+        let child = Command::new(&meridian)
+            .arg("-C")
+            .arg(&group.newest_root)
+            .args(["notify", &title, &body, "--priority", "4"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn();
+        match child {
+            Ok(child) => self.notifications.push((child, Instant::now(), false)),
+            Err(e) => eprintln!("meridian-sync: cannot run {}: {e}", meridian.display()),
+        }
+    }
+
+    /// Collects finished notification children and sends SIGTERM to one past its limit.
+    fn reap_notifications(&mut self, now: Instant) {
+        self.notifications.retain_mut(|(child, started, termed)| {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        eprintln!("meridian-sync: notification failed ({status})");
+                    }
+                    false
+                }
+                Ok(None) => {
+                    if !*termed && now.saturating_duration_since(*started) >= NOTIFY_LIMIT {
+                        // SAFETY: a signal to a child this process started and hasn't reaped.
+                        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+                        *termed = true;
+                    }
+                    true
+                }
+                Err(_) => false,
+            }
+        });
     }
 
     fn reconcile(&mut self, now: Instant, wall: SystemTime) {
@@ -646,7 +730,7 @@ impl Daemon {
                 None if (changed || due.is_some())
                     && !self.retiring.iter().any(|w| w.key == cfg.clone_key) =>
                 {
-                    slot.worker = Some(spawn_worker(&self.home, &cfg, &self.events_tx));
+                    slot.worker = Some(spawn_worker(&cfg, &self.events_tx));
                     slot.tracker.requested();
                 }
                 None => {}
@@ -749,12 +833,11 @@ impl Daemon {
     }
 }
 
-fn spawn_worker(home: &Path, cfg: &WorkerConfig, events: &Sender<Event>) -> WorkerHandle {
+fn spawn_worker(cfg: &WorkerConfig, events: &Sender<Event>) -> WorkerHandle {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let worker = Worker {
         cfg: cfg.clone(),
-        home: home.to_path_buf(),
         events: events.clone(),
         rx,
         tx: tx.clone(),

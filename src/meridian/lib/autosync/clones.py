@@ -31,7 +31,7 @@ def enclosing_clone(path: Path) -> Path | None:
 
 
 def clone_key(clone_path: Path) -> str:
-    """Name a clone for its lock and its state entry: ``sha256(resolved path)[:16]``."""
+    """Name a clone in the root records and its state entry: ``sha256(resolved path)[:16]``."""
 
     resolved = clone_path.expanduser().resolve()
     return hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]

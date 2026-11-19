@@ -411,15 +411,40 @@ See [configuration.md](configuration/context.md) for the full schema.
 
 `meridian-sync`, a daemon that ships with meridian-cli, keeps each git context's clone in
 sync with its remote: it commits local edits, fetches, merges off the worktree and pushes.
-Nothing starts it yet; run `meridian sync run` where you want it. It syncs the git contexts
-of every project you have run this version of `meridian` in (each run publishes that
-project's contexts in `autosync/roots/`), alongside the `git-autosync` hook, which still works.
+It is the only thing that syncs; the `git-autosync` hook is gone. Turn it off for a context
+with `autosync = false` ([context configuration](configuration/context.md)), or for the
+machine with `meridian sync service uninstall`.
+
+The first time a person runs `meridian` in a project with a git context, it installs the
+daemon as a user service (a systemd user unit on Linux, a launchd agent on macOS) and
+prints one line saying so. The service starts at login. It is never installed from an agent
+session, from a dev install (a checkout run in place), or when `MERIDIAN_HOME` isn't the
+default; those use `meridian sync service install` or `meridian sync run`. A launch also
+restarts a stopped service. Without a service manager (a container, WSL without systemd),
+run `meridian sync run` under whatever supervises processes there.
+
+A stopped sync shows up where you look: `meridian` prints one line per stopped clone of the
+project (and "daemon not running") before the harness starts, `meridian context` and
+`meridian doctor` show it, and the daemon sends it through `meridian notify` once, when the
+clone stops. Only notify settings in config files reach that notification: the service has
+no `MERIDIAN_NOTIFY_*` variables from your shell.
+
+On a merge conflict the clone stops and the daemon writes `SYNC-CONFLICT.md` into each
+context directory of the clone. It is never committed, and goes away after the first
+successful pass. Each context's `AGENTS.md` should say so, so an agent that finds the file
+knows what to do (see [upgrading](upgrading.md)). `meridian sync now` on a conflicted clone
+prints each conflicting file with both sides.
 
 | Command | Purpose |
 |---------|---------|
 | `meridian sync run` | Run the daemon in the foreground. Exits 1 with `already running (pid N)` when one holds the lock; restarts itself after an upgrade. Stop with Ctrl-C |
-| `meridian sync now [CONTEXT]` | Ask the daemon for a pass on this project's git contexts (or one by name), wait up to 60 s, print each clone's state. Exits non-zero unless every clone ended `synced` |
-| `meridian sync status` | Daemon liveness and each context's state (`synced`, `retrying`, `stopped`, `pending`, `off`), the running step and since when, branch, ahead/behind, watch mode, last success, and the reason and fix when stopped. A daemon that isn't running, or a state file this meridian can't read, shows as `pending` with the cause in `note`. `--json` for scripts |
+| `meridian sync now [CONTEXT]` | Ask the daemon for a pass on this project's git contexts (or one by name), wait up to 60 s, print each clone's state; for a conflicted clone, each conflicting file with the local and remote content. Exits non-zero unless every clone ended `synced` |
+| `meridian sync status` | The service, the daemon's liveness, and each context's state (`synced`, `retrying`, `stopped`, `pending`, `off`), the running step and since when, branch, ahead/behind, watch mode, last success, and the reason and fix when stopped. A daemon that isn't running, or a state file this meridian can't read, shows as `pending` with the cause in `note`. `--json` for scripts |
+| `meridian sync service install` | Install the user service and start it; also repairs a missing unit, a moved install or a stopped daemon, and undoes `uninstall`. Works for any install and home (a non-default home gets its own service name) |
+| `meridian sync service uninstall` | Stop and remove the user service and write `autosync/service.off`, so a later launch doesn't install it again |
+
+`meridian sync conflict list|show|resolve` were removed; they print a pointer for one minor
+release.
 
 A clone is `stopped` when its last pass conflicted or left the default branch, when passes
 have failed for 15 minutes, or when its worker reported nothing for 15 minutes.

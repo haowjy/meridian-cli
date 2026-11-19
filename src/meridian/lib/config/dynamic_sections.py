@@ -27,6 +27,7 @@ class DynamicContextEntry(BaseModel):
     path: NonEmptyString | None = None
     archive: NonEmptyString | None = None
     remote: NonEmptyString | None = None
+    autosync: bool | None = None
 
 
 class DynamicContextConfig(RootModel[dict[str, DynamicContextEntry]]):

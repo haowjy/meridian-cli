@@ -23,10 +23,14 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   repository above it.
 - `pass`: `run_pass` and its outcome and reason enums. Integration happens off the worktree
   (`merge-tree`, `commit-tree`, `merge --ff-only`), and only the fast-forward writes the
-  worktree. A pass holds `<home>/locks/clone-<key>.lock` (flock, same file as the Python
-  `git-autosync` hook) until C deletes the hook; delete `CloneLock` with it.
+  worktree. Only a clone's one worker runs passes on it, inside the one process holding
+  `daemon.lock`; there is no clone lock.
+- `conflict`: `SYNC-CONFLICT.md`. A worker writes it into each context directory of a
+  conflicted clone and deletes it after a pass that ends `synced` (a failed fetch changes
+  nothing). `pass` excludes it from `git add` and `status` by pathspec, because the docs
+  clone's allowlist `.gitignore` re-includes `*.md` over any exclude file; `watch` ignores it.
 - `records`: reads `<home>/autosync/roots/*.json`, which Python writes, and groups contexts
-  by `clone_key` (it names the lock): records disagreeing on the path for a key lose to the
+  by `clone_key` (its `state.json` entry): records disagreeing on the path for a key lose to the
   newest and are listed in `skipped`.
 - `watch`: `notify` plus the `ignore` crate; a hint only, `git status` inside the pass decides.
   Linux takes one non-recursive watch per unignored directory (over 20,000, or the kernel
@@ -39,7 +43,11 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   pass finishes: that is what lets a restart loop around a hung git still reach the
   15-minute stop.
 - `daemon`: the lock, one worker thread per clone, and the main thread, the only writer of
-  `state.json`. Shutdown cancels git through `PassEnv::cancel` (SIGTERM, as at a timeout)
+  `state.json`. When a clone becomes stopped (once; a restored stop doesn't count) it runs
+  `meridian -C <newest record's root> notify` from beside its own binary, never waiting:
+  each loop checks the child, and one past 60 s gets SIGTERM. At start the daemon drops every
+  `MERIDIAN_*` (except `MERIDIAN_HOME`) and `_MERIDIAN_*` variable, so only file-configured
+  notify settings reach it. Shutdown cancels git through `PassEnv::cancel` (SIGTERM, as at a timeout)
   rather than signalling pids. Exit 0 stops for good (home gone, or the binary missing past a
   5 s grace); 75 asks for a restart (binary replaced, or `daemon.lock` no longer the file the
   daemon holds). `tests/daemon_exit.rs` runs these through the binary.

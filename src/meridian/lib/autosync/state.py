@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -103,8 +104,10 @@ def git_contexts(project_root: Path) -> list[GitContext]:
                 remote=remote,
                 clone_path=clone_path,
                 path="" if relative == Path() else relative.as_posix(),
-                # Until the setting exists: a managed clone syncs, a user's own checkout doesn't.
-                autosync=clone_path.parent == managed_root,
+                # Unset: a managed clone syncs, a user's own checkout doesn't.
+                autosync=(
+                    ctx.autosync if ctx.autosync is not None else clone_path.parent == managed_root
+                ),
             )
         )
     return contexts
@@ -133,10 +136,18 @@ def read_record_written_at(project_root: Path) -> str | None:
     return written_at if isinstance(written_at, str) else None
 
 
-def register_project(project_root: Path, *, force: bool = False) -> str | None:
-    """Write this project's root record; return its ``written_at``, or ``None`` if no record
-    applies (no git contexts, or a root inside a managed clone). A project that no longer
-    has git contexts removes its own record, so the daemon drops the clone.
+@dataclass(frozen=True)
+class Registration:
+    """This project's root record as written or confirmed."""
+
+    written_at: str
+    contexts: Sequence[GitContext]
+
+
+def register_project(project_root: Path, *, force: bool = False) -> Registration | None:
+    """Write this project's root record; return it, or ``None`` if no record applies (no
+    git contexts, or a root inside a managed clone). A project that no longer has git
+    contexts removes its own record, so the daemon drops the clone.
 
     Rewrites only when the contexts changed, unless ``force``: a new ``written_at`` is what
     asks the daemon for a pass. Raises ``ValueError`` for a config that fails to load and
@@ -146,7 +157,8 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
     root = Path(os.path.realpath(project_root))
     if enclosing_clone(root) is not None:
         return None
-    contexts = [c.to_json() for c in git_contexts(root)]
+    git = git_contexts(root)
+    contexts = [c.to_json() for c in git]
     path = record_path(root)
     if not contexts:
         path.unlink(missing_ok=True)
@@ -160,7 +172,7 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
         and existing.get("contexts") == contexts
         and isinstance(existing.get("written_at"), str)
     ):
-        return cast("str", existing["written_at"])
+        return Registration(cast("str", existing["written_at"]), git)
     written_at = now_iso()
     record = {
         "v": RECORD_V,
@@ -170,7 +182,29 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(record, indent=2) + "\n")
-    return written_at
+    return Registration(written_at, git)
+
+
+def prune_leftovers() -> int:
+    """`meridian doctor --prune`: root records whose project is gone, and what the removed
+    `git-autosync` hook left (its per-clone locks and per-project state). Returns how many
+    paths it removed."""
+
+    removed = 0
+    for record in (autosync_dir() / "roots").glob("*.json"):
+        data = _read_json(record)
+        root = data.get("root") if data else None
+        if isinstance(root, str) and not Path(root).exists():
+            record.unlink(missing_ok=True)
+            removed += 1
+    home = get_user_home()
+    for lock in (home / "locks").glob("clone-*.lock"):
+        lock.unlink(missing_ok=True)
+        removed += 1
+    for state_dir in (home / "projects").glob("*/autosync"):
+        shutil.rmtree(state_dir, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 # ---- Reading what the daemon says --------------------------------------------------
@@ -200,8 +234,12 @@ def daemon_running() -> bool:
         os.close(fd)
 
 
+def service_off_path() -> Path:
+    return autosync_dir() / "service.off"
+
+
 def service_off() -> bool:
-    return (autosync_dir() / "service.off").exists()
+    return service_off_path().exists()
 
 
 @dataclass(frozen=True)
@@ -239,7 +277,14 @@ def read_daemon_file() -> DaemonFile:
     return DaemonFile(data)
 
 
-NOT_RUNNING_FIX = "Start it with `meridian sync run`."
+def not_running_fix() -> str:
+    from meridian.lib.autosync.service import manager
+
+    if manager() is None:
+        return "No service manager here; start the daemon with `meridian sync run`."
+    return "Start the service with `meridian sync service install`."
+
+
 STARTING_NOTE = "the daemon is starting"
 
 
@@ -274,7 +319,7 @@ def context_sync(
     for ctx in contexts:
         key, path = ctx.clone_key, ctx.clone_path.as_posix()
         if not running:
-            if service_is_off:
+            if service_is_off or not ctx.autosync:
                 out.append(ContextSync(ctx.name, key, path, "off"))
             else:
                 out.append(
@@ -284,7 +329,7 @@ def context_sync(
                         path,
                         "pending",
                         note="daemon not running",
-                        fix=NOT_RUNNING_FIX,
+                        fix=not_running_fix(),
                     )
                 )
             continue

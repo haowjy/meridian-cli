@@ -30,6 +30,7 @@ path   = "project/strategy"
 | --- | ---- | ------- | ------- |
 | `source` | str | `"local"` | `"local"` or `"git"` |
 | `remote` | str | — | Git remote URL (required when `source = "git"`) |
+| `autosync` | bool | see below | Keep the clone in sync with its remote |
 | `path` | str | `"{user_home}/context/{project}/work"` | Path to the work directory (see path resolution below) |
 | `archive` | str | `"{user_home}/context/{project}/archive/work"` | Path to the work archive directory |
 
@@ -39,6 +40,7 @@ path   = "project/strategy"
 | --- | ---- | ------- | ------- |
 | `source` | str | `"local"` | `"local"` or `"git"` |
 | `remote` | str | — | Git remote URL (required when `source = "git"`) |
+| `autosync` | bool | see below | Keep the clone in sync with its remote |
 | `path` | str | `"{user_home}/context/{project}/kb"` | Path to the knowledge base directory (see path resolution below) |
 
 ### `[context.NAME]`
@@ -49,9 +51,25 @@ Arbitrary named context tables are allowed alongside the built-in `work` and `kb
 | --- | ---- | ------- | ------- |
 | `source` | str | `"local"` | `"local"` or `"git"` |
 | `remote` | str | — | Git remote URL (required when `source = "git"`) |
+| `autosync` | bool | see below | Keep the clone in sync with its remote |
 | `path` | str | — | Path to the context directory, relative to repo or clone root |
 
 When `source = "git"`, Meridian clones the remote into a local cache and resolves paths relative to the clone root. Use `meridian context` to inspect the resolved paths.
+
+### `autosync`
+
+Every git context takes `autosync`. The `meridian-sync` daemon commits edits in the clone,
+fetches, merges and pushes; see [Context Sync](../commands.md#context-sync).
+
+- **Default:** on for a clone Meridian manages (under `~/.meridian/git/`), off when a
+  `[git."<url>"].path` override points the clone at a checkout you manage. Setting it to
+  `true` on an override opts that checkout in; the daemon then keeps it on the remote's
+  default branch.
+- **A clone syncs when any context naming it has `autosync` on.** Contexts in several
+  projects can share one clone. To stop syncing one on this machine, set `autosync = false`
+  in `meridian.local.toml` for each project that names it.
+- `autosync = true` on `source = "local"`, or with no `remote`, is a config error.
+- **Machine-wide off:** `meridian sync service uninstall`.
 
 ### Path resolution
 

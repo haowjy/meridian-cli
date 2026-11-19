@@ -15,7 +15,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, Spaw
 
 | Export | Purpose |
 | ------ | ------- |
-| `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `remote`, `enabled`, `priority`, `require_serial`, `exclude` |
+| `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `enabled`, `priority`, `require_serial` |
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
@@ -74,7 +74,7 @@ The following helpers are available via submodule imports. They are not re-expor
 
 ### Git Helpers
 
-Used by `git-autosync` and useful for any hook that operates on a remote repo.
+Useful for any hook that operates on a remote repo.
 
 ```python
 from meridian.plugin_api.git import generate_repo_slug, normalize_repo_url, resolve_clone_path

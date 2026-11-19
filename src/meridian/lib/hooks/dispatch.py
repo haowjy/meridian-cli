@@ -358,7 +358,5 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         enabled=hook.enabled,
         priority=hook.priority,
         require_serial=hook.require_serial,
-        exclude=hook.exclude,
         options=hook.options,
-        remote=hook.remote,
     )

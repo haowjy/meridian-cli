@@ -27,7 +27,7 @@ meridian hooks run sync-notes
 `hooks run` bypasses interval throttling. Registrations with the same name,
 builtin, command, options and timeout are one hook: without
 `--event` it runs once, as its last registered event (an unevented
-`git-autosync` row runs as `work.done`), and `--event` may name any event, as
+builtin row runs as the last of its default events), and `--event` may name any event, as
 for a single-row hook. When those fields differ, use `--event` to select a row. A builtin that only supports notification events cannot run
 manually because it has no notification payload; use `meridian notify` instead.
 
@@ -61,8 +61,7 @@ firing, so repeated activations of the same work item remain distinct.
 
 A primary launch with `--work`, or with work inherited through `--from`, fires
 `work.activated` synchronously after its session is created and before the
-harness starts. A hook on that event therefore delays primary startup; the
-default `git-autosync` hook performs one sync before such a launch. Child work
+harness starts. A hook on that event therefore delays primary startup. Child work
 inheritance, work rename attachment maintenance, and `work clear` do not fire
 the event.
 
@@ -91,9 +90,10 @@ Hooks live in any Meridian config file. Precedence is: `default < user < project
 # meridian.toml (project) or ~/.meridian/config.toml (user)
 
 [[hooks]]
-name    = "sync-notes"
-builtin = "git-autosync"
-remote  = "git@github.com:team/docs.git"
+name    = "notify-team"
+builtin = "notify"
+event   = "spawn.finished"
+options = { channels = ["ntfy"] }
 
 [[hooks]]
 name    = "run-tests"
@@ -109,7 +109,6 @@ event   = "spawn.finished"
 | `builtin` | str | one of `builtin`/`command` | — | Use a builtin hook |
 | `command` | str | one of `builtin`/`command` | — | Shell command to run |
 | `event` | str | yes (unless builtin supplies defaults) | builtin default | Event that triggers the hook |
-| `remote` | str | no | — | `git-autosync` shorthand for `options.remote`; ignored when `options.remote` is set |
 | `enabled` | bool | no | `true` | Set to `false` to disable without removing |
 | `priority` | int | no | `0` | Higher values run first within the same source |
 | `timeout_secs` | int | no | builtin default | Max seconds before hook is killed |
@@ -118,10 +117,6 @@ event   = "spawn.finished"
 | `when.status` | array[str] | no | — | On `spawn.finished`, fire only for `success`, `failure`, `cancelled`, or `timeout` (matching stored spawn statuses `succeeded`, `failed`, `cancelled`, and `timed_out`) |
 | `when.agent` | str | no | — | Only fire for this agent profile (for notification events, the notifying session's agent) |
 | `when.kind` | array[str] | no | — | On spawn events, only fire for these kinds: `child`, `primary`, `streaming`; notification events use the notifying spawn's kind when known; it cannot match work events |
-| `exclude` | array[str] | no | — | `git-autosync` file path patterns to leave out of commits and stash around merges |
-| `options.remote` | str | no | — | Git remote URL for `git-autosync` to clone and sync |
-| `options.path` | str | no | — | Local repository for `git-autosync` to initialize and commit without remote sync |
-| `options.conflict_policy` | str | no | `"abort"` | `git-autosync` only: handling for a merge or rebase already in progress; `"abort"` clears it and continues, `"leave"` skips the sync |
 | `options.channels` | array[str] | no | `["push", "email"]` | `notify` only: transports to deliver to |
 | `options.priority` | int | no | notice's | `notify` only: 1–5 priority override |
 
@@ -141,8 +136,7 @@ and asks the row to set `event` explicitly. A runtime context that lacks or
 does not match a configured condition skips the hook.
 
 If you omit `name` for a builtin hook, Meridian names it from the options that
-pick its target: `git-autosync` rows from `remote` or `path`, so rows for
-different repos don't override each other; `notify` rows are all `notify`.
+pick its target; `notify` rows are all `notify`.
 For predictable `hooks run NAME` usage, set `name` explicitly, except when a
 `notify` row is meant to replace the default route as described below.
 
@@ -248,71 +242,15 @@ those rows, retains every valid row, and applies default-route overrides as
 usual. `meridian hooks check` instead exits non-zero and names every invalid
 row.
 
-## Builtin: `git-autosync`
+## Removed builtin: `git-autosync`
 
-`git-autosync` commits changes in a local repository and can keep it in sync
-with a remote. In remote mode, each trigger:
-
-1. Stages and commits uncommitted changes except paths matching `exclude`
-2. Fetches upstream
-3. Merges `origin/<current-branch>` when behind remote
-4. Pushes when ahead or after a local commit
-
-If the merge conflicts, autosync records the conflict and aborts the merge,
-returning the repository to its pre-merge state. A later trigger retries the
-commit/fetch/merge workflow. If that merge conflicts while any unresolved
-conflict record already exists for the sync root, autosync aborts it without
-writing another record.
-
-At the start of a run, autosync also detects a merge or rebase already in
-progress. The default `conflict_policy = "abort"` aborts that operation and
-continues the sync. Set it to `"leave"` to keep the pre-existing operation in
-place and skip that sync. Autosync itself never rebases.
-
-```toml
-# Leave a pre-existing merge or rebase in place for manual resolution
-[[hooks]]
-builtin = "git-autosync"
-remote  = "git@github.com:team/docs.git"
-[hooks.options]
-conflict_policy = "leave"
-```
-
-**Target:** configure at least one of top-level `remote`, `options.remote`, or
-`options.path`. A remote selects clone/fetch/merge/push mode; otherwise
-`options.path` selects local commit-only mode. `options.remote` overrides the
-top-level shorthand, and remote mode wins when a path is also present.
-
-**Default events:** `spawn.finished`, `work.activated`, `work.done`
-
-The `work.activated` default syncs whenever `work start` or `work switch`
-resolves an item, even from a shell with no active Meridian session. It also
-syncs once before a primary launch whose session attaches work through
-`--work` or `--from`.
-
-```toml
-[[hooks]]
-name    = "sync-notes"
-builtin = "git-autosync"
-remote  = "git@github.com:team/notes.git"
-```
-
-To register only for specific events, set `event` explicitly:
-
-```toml
-# Only sync when a work item completes
-[[hooks]]
-name    = "sync-notes"
-builtin = "git-autosync"
-remote  = "git@github.com:team/notes.git"
-event   = "work.done"
-```
-
-To run manually at any time:
-
-```bash
-meridian hooks run sync-notes
-```
+Git contexts now sync through the `meridian-sync` daemon, which watches each clone and
+needs no hook row: see [Context Sync](commands.md#context-sync) and the `autosync` key in
+[context configuration](configuration/context.md). A `[[hooks]] builtin = "git-autosync"`
+row still loads, does nothing, and warns each time it would have run; delete it. `remote`,
+`exclude` and `options.*` on such a row are ignored. A row with `options.path` also made
+local-only commits, which nothing replaces now. The stub is removed one minor release
+after this one.
 
 ## MCP
 

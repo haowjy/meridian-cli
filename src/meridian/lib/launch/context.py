@@ -5,18 +5,17 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import ValidationError
 
 from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
-    ArbitraryContextConfig,
     ContextConfig,
     ContextSourceType,
+    extra_contexts,
 )
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.config.loader import (
@@ -623,17 +622,7 @@ def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path
     add_root(source=config.work.source, remote=config.work.remote)
     add_root(source=config.kb.source, remote=config.kb.remote)
 
-    extras_raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
-    for value in extras.values():
-        try:
-            parsed = (
-                value
-                if isinstance(value, ArbitraryContextConfig)
-                else ArbitraryContextConfig.model_validate(value)
-            )
-        except ValidationError:
-            continue
+    for parsed in extra_contexts(config).values():
         add_root(source=parsed.source, remote=parsed.remote)
 
     return tuple(roots)

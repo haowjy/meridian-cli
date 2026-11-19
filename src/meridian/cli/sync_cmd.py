@@ -1,4 +1,4 @@
-"""CLI command handlers for the context sync daemon and autosync conflicts."""
+"""CLI command handlers for the context sync daemon."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from meridian.cli.invocation import emit
 
 
 def register_sync_commands(app: App) -> None:
-    """Register sync conflict CLI commands under a ``sync`` subapp."""
+    """Register the ``sync`` subapp."""
 
     sync_app = App(
         name="sync",
@@ -23,12 +23,20 @@ def register_sync_commands(app: App) -> None:
     )
     conflict_app = App(
         name="conflict",
-        help="Manage autosync conflicts.",
+        help="Removed: conflicts now show in `meridian sync status` and `meridian sync now`.",
+        help_epilogue="",
+        help_formatter=ALIGNED_PLAIN_FORMATTER,
+        help_format="plaintext",
+    )
+    service_app = App(
+        name="service",
+        help="Install or remove the user service that runs the sync daemon.",
         help_epilogue="",
         help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
     sync_app.command(conflict_app, name="conflict")
+    sync_app.command(service_app, name="service")
     app.command(sync_app, name="sync")
 
     def sync_run() -> None:
@@ -83,37 +91,39 @@ def register_sync_commands(app: App) -> None:
     sync_app.command(sync_now, name="now")
     sync_app.command(sync_status, name="status")
 
-    def conflict_list() -> None:
-        """List unresolved autosync conflicts across all sync roots."""
+    def service_install() -> None:
+        """Install the sync daemon as a user service and start it.
 
-        from meridian.lib.ops.sync_conflicts import list_conflicts_sync
+        A systemd user unit on Linux, a launchd agent on macOS. Works for any install
+        and home, and undoes `meridian sync service uninstall`. Meridian also does this
+        by itself the first time a person runs it in a project with a git context.
+        """
 
-        emit(list_conflicts_sync())
+        from meridian.lib.ops.sync_daemon import service_install_sync
 
-    def conflict_show(
-        conflict_id: Annotated[
-            str,
-            Parameter(help="Conflict ID to show details for."),
-        ],
-    ) -> None:
-        """Show detailed information about a specific conflict."""
+        emit(service_install_sync())
 
-        from meridian.lib.ops.sync_conflicts import show_conflict_sync
+    def service_uninstall() -> None:
+        """Stop and remove the user service, and keep autosync off on this machine.
 
-        emit(show_conflict_sync(conflict_id))
+        Writes `autosync/service.off` so a later launch doesn't install it again; a
+        foreground `meridian sync run` still works. Undo with `meridian sync service install`.
+        """
 
-    def conflict_resolve(
-        conflict_id: Annotated[
-            str,
-            Parameter(help="Conflict ID to mark as resolved."),
-        ],
-    ) -> None:
-        """Mark a conflict as resolved and clean up metadata/notices."""
+        from meridian.lib.ops.sync_daemon import service_uninstall_sync
 
-        from meridian.lib.ops.sync_conflicts import resolve_conflict_sync
+        emit(service_uninstall_sync())
 
-        emit(resolve_conflict_sync(conflict_id))
+    service_app.command(service_install, name="install")
+    service_app.command(service_uninstall, name="uninstall")
 
-    conflict_app.command(conflict_list, name="list")
-    conflict_app.command(conflict_show, name="show")
-    conflict_app.command(conflict_resolve, name="resolve")
+    def _conflict_removed(*_conflict_id: str) -> None:
+        """Removed. Conflicts show in `meridian sync status`; resolve with `meridian sync now`."""
+
+        from meridian.lib.ops.sync_daemon import conflict_removed_sync
+
+        emit(conflict_removed_sync())
+
+    # Kept for one minor release so a script that calls them gets a pointer, not an error.
+    for name in ("list", "show", "resolve"):
+        conflict_app.command(_conflict_removed, name=name)

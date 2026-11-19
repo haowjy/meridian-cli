@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from meridian.lib.config.context_config import (
-    ArbitraryContextConfig,
     ContextConfig,
     ContextSourceType,
+    extra_contexts,
 )
 from meridian.lib.state.project_identity import (
     AdHoc,
@@ -26,6 +25,8 @@ class ResolvedContext:
     source: ContextSourceType
     remote: str | None
     path: Path | None
+    # The `autosync` key as written; `None` is the default for the clone.
+    autosync: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -52,17 +53,7 @@ def context_uses_project_placeholder(config: ContextConfig) -> bool:
     if "{project}" in config.kb.path:
         return True
 
-    extras_raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
-    for value in extras.values():
-        parsed = (
-            value
-            if isinstance(value, ArbitraryContextConfig)
-            else ArbitraryContextConfig.model_validate(value)
-        )
-        if "{project}" in parsed.path:
-            return True
-    return False
+    return any("{project}" in parsed.path for parsed in extra_contexts(config).values())
 
 
 def _resolve_path(
@@ -80,8 +71,8 @@ def _resolve_path(
     is available (fresh project on a read path).
 
     When source is GIT and remote is provided, resolves path relative to
-    the auto-cloned repository location. The clone itself is handled lazily
-    by git-autosync hooks, not here.
+    the auto-cloned repository location. The clone itself is made by the
+    sync daemon, not here.
     """
     if "{project}" in path_spec:
         if project_id:
@@ -152,17 +143,18 @@ def resolve_context_paths(
 
     extra: dict[str, tuple[Path, ContextSourceType]] = {}
     named = [
-        ResolvedContext("work", config.work.source, config.work.remote, work_root_resolved),
-        ResolvedContext("kb", config.kb.source, config.kb.remote, kb_root_resolved),
+        ResolvedContext(
+            "work",
+            config.work.source,
+            config.work.remote,
+            work_root_resolved,
+            config.work.autosync,
+        ),
+        ResolvedContext(
+            "kb", config.kb.source, config.kb.remote, kb_root_resolved, config.kb.autosync
+        ),
     ]
-    extras_raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
-    for name, value in extras.items():
-        parsed = (
-            value
-            if isinstance(value, ArbitraryContextConfig)
-            else ArbitraryContextConfig.model_validate(value)
-        )
+    for name, parsed in extra_contexts(config).items():
         resolved = _resolve_path(
             parsed.path,
             project_root,
@@ -175,7 +167,11 @@ def resolve_context_paths(
             # Skip extra contexts that can't resolve without a project ID
             continue
         extra[name] = (resolved, parsed.source)
-        named.append(ResolvedContext(name.strip().lower(), parsed.source, parsed.remote, resolved))
+        named.append(
+            ResolvedContext(
+                name.strip().lower(), parsed.source, parsed.remote, resolved, parsed.autosync
+            )
+        )
 
     return ResolvedContextPaths(
         work_root=work_root_resolved,

@@ -78,7 +78,7 @@ from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequir
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import is_project_scoped_env_name
-from meridian.lib.core.depth import is_root_side_effect_process
+from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
@@ -1005,7 +1005,7 @@ def _maybe_schedule_background_repairs(
     schedule_background_repairs(project_root, repair_orphans=not continues_spawn)
 
 
-def _publish_autosync_record(
+def _autosync_at_startup(
     *,
     startup_class: StartupClass,
     project_root: Path | None,
@@ -1014,8 +1014,10 @@ def _publish_autosync_record(
     """Tell the sync daemon what this project's git contexts are: the one record write.
 
     Every primary launch rewrites the record, which asks the daemon for a pass; other
-    commands rewrite it only when the contexts changed. A config that fails to load or a
-    home that can't be written leaves the record alone and the command unaffected.
+    commands rewrite it only when the contexts changed. A human's primary launch then makes
+    sure the service runs and prints what is wrong with syncing before the harness starts.
+    A config that fails to load or a home that can't be written leaves the command
+    unaffected.
     """
 
     if skipped or project_root is None or not is_root_side_effect_process():
@@ -1023,8 +1025,15 @@ def _publish_autosync_record(
 
     from meridian.lib.autosync.state import register_project
 
+    primary = startup_class == StartupClass.PRIMARY_LAUNCH
     with suppress(ValueError, OSError):
-        register_project(project_root, force=startup_class == StartupClass.PRIMARY_LAUNCH)
+        registration = register_project(project_root, force=primary)
+        if registration is None or not primary or is_managed_meridian_session():
+            return
+        from meridian.lib.ops.sync_daemon import startup_notices
+
+        for notice in startup_notices(project_root, registration):
+            print(notice, file=sys.stderr)
 
 
 def _print_agent_root_help() -> None:
@@ -1239,7 +1248,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 command_path=descriptor.command_path if descriptor is not None else None,
             ),
         )
-        _publish_autosync_record(
+        _autosync_at_startup(
             startup_class=startup_class,
             project_root=project_root,
             skipped=bootstrap_skipped or launch_dry_run,

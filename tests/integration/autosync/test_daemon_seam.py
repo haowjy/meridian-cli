@@ -52,8 +52,9 @@ def test_a_registered_project_is_synced_and_read_back(
     (project / "meridian.toml").write_text(
         f'[context.kb]\nsource = "git"\nremote = "{remote}"\npath = "kb"\n'
     )
-    written_at = autosync.register_project(project)
-    assert written_at is not None
+    registration = autosync.register_project(project)
+    assert registration is not None
+    written_at = registration.written_at
     contexts = autosync.git_contexts(project)
     assert [c.name for c in contexts] == ["kb"]
 

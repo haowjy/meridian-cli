@@ -13,7 +13,6 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
-    field_validator,
     model_validator,
 )
 
@@ -159,8 +158,6 @@ class HookSpec(BaseModel):
     priority: int = 0
     require_serial: bool = False
     when: HookWhenSpec | None = None
-    exclude: tuple[NonEmptyString, ...] = ()
-    remote: NonEmptyString | None = None
     options: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -170,12 +167,6 @@ class HookSpec(BaseModel):
         if row is not None and "failure_policy" in row:
             raise ValueError("`failure_policy` was removed; hook failures always continue")
         return data
-
-    @field_validator("exclude", mode="before")
-    @classmethod
-    def _tuple_exclude(cls, value: object) -> object:
-        values = json_list(value)
-        return tuple(values) if values is not None else value
 
 
 def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
@@ -281,9 +272,6 @@ def hooks_from_spec(
 
     command = spec.command
     options = dict(spec.options)
-    if spec.remote is not None:
-        options.setdefault("remote", spec.remote)
-
     if command is not None and spec.builtin is not None:
         raise ValueError(
             f"Invalid hook config '{row_source}': 'command' and 'builtin' are mutually exclusive."
@@ -359,9 +347,7 @@ def hooks_from_spec(
             priority=spec.priority,
             require_serial=spec.require_serial,
             when=when,
-            exclude=spec.exclude,
             options=options,
-            remote=spec.remote,
         )
         for event in events
     )

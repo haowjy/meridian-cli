@@ -18,7 +18,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 /// Watched directories per clone before falling back to polling.
 pub const MAX_DIRS: usize = 20_000;
 
-const CONFLICT_FILE: &str = "SYNC-CONFLICT.md";
+use crate::conflict::FILE as CONFLICT_FILE;
 
 /// What the watcher tells the worker.
 #[derive(Debug, Clone, PartialEq, Eq)]

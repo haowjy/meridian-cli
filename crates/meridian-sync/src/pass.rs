@@ -4,10 +4,8 @@
 //! to overwrite a file written since the last commit. `merge-tree` does the merging in
 //! the object store.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io;
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -119,8 +117,6 @@ impl From<&CloneGroup> for CloneSpec {
 
 #[derive(Debug, Clone)]
 pub struct PassEnv {
-    /// The Meridian home: the clone lock lives in `<home>/locks/`.
-    pub home: PathBuf,
     pub timeouts: Timeouts,
     /// Variables added to every git call, over the daemon's own environment.
     pub git_env: Vec<(String, String)>,
@@ -278,14 +274,7 @@ fn run(
         conflict: None,
         repair: None,
     };
-    let lock = env
-        .home
-        .join("locks")
-        .join(format!("clone-{}.lock", spec.clone_key));
-    let end = match CloneLock::acquire(&lock) {
-        Ok(_lock) => pass.execute(full).err(),
-        Err(e) => Some(internal(e)),
-    };
+    let end = pass.execute(full).err();
     pass.finish(end)
 }
 
@@ -881,52 +870,6 @@ fn trim(text: String) -> String {
     match text.char_indices().nth(ERROR_LIMIT) {
         Some((end, _)) => text[..end].to_string(),
         None => text.to_string(),
-    }
-}
-
-/// An exclusive `flock` on `<home>/locks/clone-<key>.lock`, the lock the `git-autosync`
-/// hook takes on the same file. Held until dropped.
-struct CloneLock(#[allow(dead_code)] File);
-
-impl CloneLock {
-    fn acquire(path: &Path) -> io::Result<CloneLock> {
-        loop {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let file = match OpenOptions::new().read(true).write(true).open(path) {
-                Ok(f) => f,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    match OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .create_new(true)
-                        .open(path)
-                    {
-                        Ok(f) => f,
-                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                        Err(e) => return Err(e),
-                    }
-                }
-                Err(e) => return Err(e),
-            };
-            loop {
-                // SAFETY: the descriptor is open for as long as `file` is.
-                if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-                    break;
-                }
-                let err = io::Error::last_os_error();
-                if err.kind() != io::ErrorKind::Interrupted {
-                    return Err(err);
-                }
-            }
-            // The holder before us may have deleted the file; a lock on an unlinked
-            // inode excludes nobody.
-            let (held, current) = (file.metadata()?, fs::metadata(path));
-            if current.is_ok_and(|m| (m.dev(), m.ino()) == (held.dev(), held.ino())) {
-                return Ok(CloneLock(file));
-            }
-        }
     }
 }
 
