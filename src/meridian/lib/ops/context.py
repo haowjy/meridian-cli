@@ -463,8 +463,23 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
     return parsed
 
 
-def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str | None:
-    status = read_status(context_root, runtime_root=runtime_root)
+_SYNCED_OUTCOMES = frozenset({"success", "nothing_to_sync"})
+
+
+def _clone_root(context_dir: Path) -> Path | None:
+    """The git clone holding a context directory; autosync state is keyed by it."""
+
+    for candidate in (context_dir, *context_dir.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _sync_status_for_context(context_dir: Path, *, runtime_root: Path) -> str | None:
+    clone_root = _clone_root(context_dir)
+    if clone_root is None:
+        return None
+    status = read_status(clone_root, runtime_root=runtime_root)
     if status.state is None and not status.unresolved_conflicts:
         return None
 
@@ -487,6 +502,9 @@ def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str |
             ]
         )
 
+    if status.state is not None and status.state.outcome not in _SYNCED_OUTCOMES:
+        error = f": {status.state.error.splitlines()[0]}" if status.state.error else ""
+        return f"failed ({state_info}){error}"
     return f"ok ({state_info})"
 
 

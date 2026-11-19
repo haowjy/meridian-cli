@@ -6,9 +6,11 @@ are delegated to the tightly coupled transaction store.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import os
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -84,6 +86,37 @@ def _git_subprocess_env() -> dict[str, str]:
     return env
 
 
+def _run_timed(
+    argv: list[str],
+    *,
+    timeout: float,
+    cwd: str | Path | None = None,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Run git in its own process group; on timeout SIGTERM the group and wait.
+
+    SIGKILL would leave `index.lock` behind, which blocks every later sync.
+    """
+
+    with subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+
+
 def _is_no_upstream_error(message: str) -> bool:
     """Return whether git reported that @{upstream} cannot be resolved."""
 
@@ -107,6 +140,16 @@ class _SyncOutcome:
     conflict_id: str | None = None
     conflict_paths: tuple[str, ...] | None = None
     files_changed: dict[str, int] | None = None
+
+
+def _runtime_error_outcome(exc: Exception) -> _SyncOutcome:
+    return _SyncOutcome(
+        outcome="skipped",
+        success=True,
+        skipped=True,
+        skip_reason="git_runtime_error",
+        error=str(exc),
+    )
 
 
 class GitAutosyncOptions(BaseModel):
@@ -151,12 +194,9 @@ class GitAutosync:
             return False, "git CLI not found in PATH."
 
         try:
-            result = subprocess.run(
+            result = _run_timed(
                 [git_bin, "--version"],
-                capture_output=True,
-                text=True,
                 timeout=_REQUIREMENTS_TIMEOUT_SECS,
-                check=False,
                 env={**_git_subprocess_env(), "LC_ALL": "C"},
             )
         except FileNotFoundError:
@@ -272,52 +312,42 @@ class GitAutosync:
                 clone_path=str(clone_path),
             )
 
-        # Ensure clone exists
-        clone_ok, clone_error = self._ensure_clone(remote_url, clone_path)
-        if not clone_ok:
-            logger.warning(
-                "git_autosync_clone_failed",
-                repo=remote_url,
-                clone_path=str(clone_path),
-                error=clone_error,
-            )
-            return self._result(
-                config,
-                context,
-                _SyncOutcome(
+        try:
+            clone_ok, clone_error = self._ensure_clone(remote_url, clone_path)
+            if not clone_ok:
+                logger.warning(
+                    "git_autosync_clone_failed",
+                    repo=remote_url,
+                    clone_path=str(clone_path),
+                    error=clone_error,
+                )
+                outcome = _SyncOutcome(
                     outcome="skipped",
                     success=True,
                     skipped=True,
                     skip_reason="clone_failed",
                     error=clone_error,
-                ),
-                start=start,
-                clone_path=str(clone_path),
-                context_name=remote_url,
-            )
-
-        try:
-            conflict_policy = config.options.get("conflict_policy", "abort")
-            outcome = self._sync(
-                str(clone_path),
-                config.exclude,
-                conflict_policy,
-                context=context,
-                autosync_tx=autosync_tx,
-            )
+                )
+            else:
+                outcome = self._sync(
+                    str(clone_path),
+                    config.exclude,
+                    config.options.get("conflict_policy", "abort"),
+                    context=context,
+                    autosync_tx=autosync_tx,
+                )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning(
                 "git_autosync_runtime_error",
                 clone_path=str(clone_path),
                 error=str(exc),
             )
-            outcome = _SyncOutcome(
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="git_runtime_error",
-                error=str(exc),
-            )
+            outcome = _runtime_error_outcome(exc)
+        autosync_tx.write_sync_state(
+            outcome=outcome.skip_reason or "success",
+            conflict_id=outcome.conflict_id,
+            error=outcome.error,
+        )
         return self._result(
             config,
             context,
@@ -358,36 +388,41 @@ class GitAutosync:
                 runtime_root=runtime_root,
                 timeout=_LOCK_TIMEOUT_SECS,
             ) as autosync_tx:
-                ok, error = self._ensure_local_repo(local_path)
-                if not ok:
-                    logger.warning(
-                        "git_autosync_local_init_failed",
-                        path=str(local_path),
-                        error=error,
-                    )
-                    return self._result(
-                        config,
-                        context,
-                        _SyncOutcome(
+                try:
+                    ok, error = self._ensure_local_repo(local_path)
+                    if not ok:
+                        logger.warning(
+                            "git_autosync_local_init_failed",
+                            path=str(local_path),
+                            error=error,
+                        )
+                        outcome = _SyncOutcome(
                             outcome="skipped",
                             success=True,
                             skipped=True,
                             skip_reason="local_init_failed",
                             error=error,
-                        ),
-                        start=start,
+                        )
+                    else:
+                        outcome = self._sync(
+                            str(local_path),
+                            config.exclude,
+                            config.options.get("conflict_policy", "abort"),
+                            local_only=True,
+                            context=context,
+                            autosync_tx=autosync_tx,
+                        )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.warning(
+                        "git_autosync_runtime_error",
                         clone_path=str(local_path),
-                        context_name="local",
+                        error=str(exc),
                     )
-
-                conflict_policy = config.options.get("conflict_policy", "abort")
-                outcome = self._sync(
-                    str(local_path),
-                    config.exclude,
-                    conflict_policy,
-                    local_only=True,
-                    context=context,
-                    autosync_tx=autosync_tx,
+                    outcome = _runtime_error_outcome(exc)
+                autosync_tx.write_sync_state(
+                    outcome=outcome.skip_reason or "success",
+                    conflict_id=outcome.conflict_id,
+                    error=outcome.error,
                 )
         except TimeoutError as exc:
             outcome = _SyncOutcome(
@@ -395,19 +430,6 @@ class GitAutosync:
                 success=True,
                 skipped=True,
                 skip_reason="lock_timeout",
-                error=str(exc),
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            logger.warning(
-                "git_autosync_runtime_error",
-                clone_path=str(local_path),
-                error=str(exc),
-            )
-            outcome = _SyncOutcome(
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="git_runtime_error",
                 error=str(exc),
             )
         return self._result(
@@ -467,12 +489,9 @@ class GitAutosync:
 
         # Clone
         clone_path.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
+        result = _run_timed(
             ["git", "clone", remote_url, str(clone_path)],
-            capture_output=True,
-            text=True,
             timeout=_CLONE_TIMEOUT_SECS,
-            check=False,
             env={**os.environ, "LC_ALL": "C"},
         )
         if result.returncode != 0:
@@ -482,13 +501,10 @@ class GitAutosync:
     def _get_remote_url(self, clone_path: Path) -> str | None:
         """Get the origin remote URL from an existing clone."""
 
-        result = subprocess.run(
+        result = _run_timed(
             ["git", "remote", "get-url", "origin"],
             cwd=clone_path,
-            capture_output=True,
-            text=True,
             timeout=_REMOTE_TIMEOUT_SECS,
-            check=False,
             env={**os.environ, "LC_ALL": "C"},
         )
         if result.returncode != 0:
@@ -596,6 +612,22 @@ class GitAutosync:
                 clone_path=clone_path,
                 error=str(exc),
             )
+
+    def _off_default_branch(self, clone_path: str) -> str | None:
+        """Return why HEAD is not on the branch origin/HEAD names, or None when it is."""
+
+        head = self._run_git(
+            clone_path,
+            ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            timeout=5,
+        )
+        if head.returncode != 0:
+            return self._format_git_error("cannot resolve origin/HEAD", head)
+        default_branch = head.stdout.strip().removeprefix("origin/")
+        current = self._get_current_branch(clone_path)
+        if current == default_branch:
+            return None
+        return f"HEAD is on {current or 'a detached commit'}, not {default_branch}"
 
     def _get_current_branch(self, clone_path: str) -> str | None:
         result = self._run_git(clone_path, ["branch", "--show-current"], timeout=5)
@@ -827,6 +859,18 @@ class GitAutosync:
                     ),
                 )
 
+        if not local_only:
+            off_branch = self._off_default_branch(clone_path)
+            if off_branch is not None:
+                logger.warning("git_autosync_off_branch", clone_path=clone_path, error=off_branch)
+                return _SyncOutcome(
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="off_branch",
+                    error=off_branch,
+                )
+
         # 3. Stage everything
         add = self._run_git(clone_path, ["add", "-A"], timeout=_ADD_TIMEOUT_SECS)
         if add.returncode != 0:
@@ -951,9 +995,7 @@ class GitAutosync:
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             if just_committed:
-                autosync_tx.write_sync_state(outcome="success")
                 return _SyncOutcome(outcome="success", success=True, files_changed=files_changed)
-            autosync_tx.write_sync_state(outcome="nothing_to_sync")
             return _SyncOutcome(
                 outcome="skipped",
                 success=True,
@@ -1052,7 +1094,6 @@ class GitAutosync:
                             "git_autosync_merge_conflict_already_recorded",
                             clone_path=clone_path,
                         )
-                        autosync_tx.write_sync_state(outcome="conflict_detected")
                         return _SyncOutcome(
                             outcome="skipped",
                             success=True,
@@ -1081,10 +1122,6 @@ class GitAutosync:
                         resolved=False,
                     )
                     autosync_tx.write_conflict(record)
-                    autosync_tx.write_sync_state(
-                        outcome="conflict_detected",
-                        conflict_id=conflict_id,
-                    )
                     if stashed_excludes:
                         self._unstash_excluded_files(clone_path)
                     return _SyncOutcome(
@@ -1132,7 +1169,6 @@ class GitAutosync:
                     files_changed=files_changed,
                 )
 
-            autosync_tx.write_sync_state(outcome="success")
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             return _SyncOutcome(
@@ -1142,7 +1178,6 @@ class GitAutosync:
             )
 
         # 12. Nothing to sync.
-        autosync_tx.write_sync_state(outcome="nothing_to_sync")
         if stashed_excludes:
             self._unstash_excluded_files(clone_path)
         return _SyncOutcome(
@@ -1239,13 +1274,10 @@ class GitAutosync:
         *,
         timeout: int,
     ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        return _run_timed(
             ["git", *args],
             cwd=work_dir,
-            capture_output=True,
-            text=True,
             timeout=timeout,
-            check=False,
             env={**_git_subprocess_env(), "LC_ALL": "C"},  # Locale-independent
         )
 
