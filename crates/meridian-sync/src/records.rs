@@ -89,41 +89,66 @@ pub fn scan(roots_dir: &Path) -> Scan {
     let mut records = Vec::new();
     for file in files {
         match read_record(&roots_dir.join(&file)) {
-            Ok(rec) => records.push(rec),
+            Ok(rec) => records.push((file, rec)),
             Err((v, error)) => out.skipped.push(Skipped { file, v, error }),
         }
     }
-    records.retain(|r| r.root.is_dir());
-    // Oldest first, so the newest record's remote and key win a disagreement.
-    records.sort_by(|a, b| a.written_at.cmp(&b.written_at));
+    records.retain(|(_, r)| r.root.is_dir());
+    // Oldest first, so the newest record's remote and path win a disagreement.
+    records.sort_by(|a, b| a.1.written_at.cmp(&b.1.written_at));
 
-    let mut groups: BTreeMap<PathBuf, CloneGroup> = BTreeMap::new();
-    for rec in records {
-        for ctx in rec.contexts {
+    // One clone is one `clone_key` (a function of its path), and the key names its lock
+    // and state: records that disagree on the path for a key lose to the newest.
+    let mut newest_path: BTreeMap<&str, &Path> = BTreeMap::new();
+    for (_, rec) in &records {
+        for ctx in &rec.contexts {
+            newest_path.insert(&ctx.clone_key, &ctx.clone_path);
+        }
+    }
+    let mut disagreeing: Vec<Skipped> = Vec::new();
+    let mut groups: BTreeMap<String, CloneGroup> = BTreeMap::new();
+    for (file, rec) in &records {
+        for ctx in &rec.contexts {
+            let winner = newest_path[ctx.clone_key.as_str()];
+            if ctx.clone_path != winner {
+                if !disagreeing.iter().any(|s| s.file == *file) {
+                    disagreeing.push(Skipped {
+                        file: file.clone(),
+                        v: Some(SUPPORTED_V),
+                        error: format!(
+                            "clone_key {} names {} here and {} in a newer record",
+                            ctx.clone_key,
+                            ctx.clone_path.display(),
+                            winner.display()
+                        ),
+                    });
+                }
+                continue;
+            }
             let group = groups
-                .entry(ctx.clone_path.clone())
+                .entry(ctx.clone_key.clone())
                 .or_insert_with(|| CloneGroup {
                     clone_path: ctx.clone_path.clone(),
-                    clone_key: String::new(),
+                    clone_key: ctx.clone_key.clone(),
                     remote: String::new(),
                     autosync: false,
                     contexts: Vec::new(),
                     written_at: String::new(),
                     newest_root: PathBuf::new(),
                 });
-            group.clone_key = ctx.clone_key;
-            group.remote = ctx.remote;
+            group.remote = ctx.remote.clone();
             group.autosync |= ctx.autosync;
             group.written_at = rec.written_at.clone();
             group.newest_root = rec.root.clone();
             group.contexts.push(ContextRef {
                 root: rec.root.clone(),
-                name: ctx.name,
-                path: ctx.path,
+                name: ctx.name.clone(),
+                path: ctx.path.clone(),
                 autosync: ctx.autosync,
             });
         }
     }
+    out.skipped.extend(disagreeing);
     out.clones = groups.into_values().collect();
     out
 }

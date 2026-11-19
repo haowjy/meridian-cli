@@ -120,6 +120,8 @@ pub struct PassEnv {
     /// The Meridian home: the clone lock lives in `<home>/locks/`.
     pub home: PathBuf,
     pub timeouts: Timeouts,
+    /// Variables added to every git call, over the daemon's own environment.
+    pub git_env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,7 +216,7 @@ fn run(
         .to_path_buf();
     let mut pass = Pass {
         spec,
-        git: Git::new(&parent, &parent, env.timeouts, observer),
+        git: Git::new(&parent, &parent, env.timeouts, &env.git_env, observer),
         default_branch: None,
         current_branch: None,
         ahead: 0,
@@ -254,10 +256,11 @@ impl Pass<'_> {
             Availability::TooOld(found) => return Err(End::new(Reason::GitTooOld, found)),
         }
         self.ensure_clone_exists()?;
-        self.git.resolve_ssh();
         if !full {
             return Ok(());
         }
+        // From inside the clone now, for its own `core.sshCommand`.
+        self.git.resolve_ssh();
         self.reject_foreign_operation()?;
         let b = self.settle_branch()?;
         self.commit_local_changes()?;
@@ -318,6 +321,9 @@ impl Pass<'_> {
             }
         }
         if path.symlink_metadata().is_err() {
+            // The clone is the call most likely to meet a host-key or passphrase prompt:
+            // BatchMode applies to it too, resolved from global config at the parent.
+            self.git.resolve_ssh();
             let tmp = PathBuf::from(format!("{}.tmp-{}", path.display(), std::process::id()));
             let tmp_arg = tmp.to_string_lossy().into_owned();
             let remote = self.spec.remote.clone();
@@ -375,29 +381,40 @@ impl Pass<'_> {
         }))
     }
 
-    fn default_branch(&mut self) -> Step<String> {
-        const PREFIX: &str = "refs/remotes/origin/";
-        let read = |pass: &mut Pass| -> Step<Option<String>> {
-            let out = pass.query(
-                "symbolic-ref",
-                &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
-            )?;
-            if !out.ok() {
-                return Ok(None);
-            }
-            Ok(out.stdout.trim().strip_prefix(PREFIX).map(str::to_string))
-        };
-        if let Some(b) = read(self)? {
-            return Ok(b);
-        }
-        // An empty remote has no HEAD to set; that failure is not an error here.
+    /// `origin/HEAD`'s branch, if the clone has one.
+    fn origin_head(&mut self) -> Step<Option<String>> {
+        let out = self.query(
+            "symbolic-ref",
+            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+        )?;
+        let text = out.stdout.trim();
+        Ok(out
+            .ok()
+            .then(|| {
+                text.strip_prefix("refs/remotes/origin/")
+                    .map(str::to_string)
+            })
+            .flatten())
+    }
+
+    /// Asks the remote for its `HEAD` and records it as `origin/HEAD`. A failure is not
+    /// an error here: an empty remote has no `HEAD` to set.
+    fn refresh_origin_head(&mut self) -> Step<()> {
         let timeout = self.git.timeouts().fetch;
         self.git(
             "remote",
             timeout,
             &["remote", "set-head", "origin", "--auto"],
         )?;
-        if let Some(b) = read(self)? {
+        Ok(())
+    }
+
+    fn default_branch(&mut self) -> Step<String> {
+        if let Some(b) = self.origin_head()? {
+            return Ok(b);
+        }
+        self.refresh_origin_head()?;
+        if let Some(b) = self.origin_head()? {
             return Ok(b);
         }
         self.head_branch()?.ok_or_else(|| {
@@ -547,11 +564,35 @@ impl Pass<'_> {
         if out.ok() {
             return Ok(());
         }
-        let missing = out.stderr.contains("couldn't find remote ref");
-        if missing && self.resolve(&format!("refs/remotes/origin/{b}"))?.is_none() {
+        if !out.stderr.contains("couldn't find remote ref") {
+            return Err(End::new(Reason::FetchFailed, out.error_text()));
+        }
+        if self.resolve(&format!("refs/remotes/origin/{b}"))?.is_none() {
             return Ok(());
         }
-        Err(End::new(Reason::FetchFailed, out.error_text()))
+        // The remote had `<b>` once and no longer does: its default branch was renamed.
+        // `set-head --auto` rejects a branch it has no tracking ref for, so fetch first.
+        self.git("fetch", timeout, &["fetch", "origin"])?;
+        self.refresh_origin_head()?;
+        match self.origin_head()? {
+            Some(new) if new != b => {
+                self.default_branch = Some(new.clone());
+                Err(End::new(
+                    Reason::OffBranch,
+                    format!("the remote's default branch is now {new}, no longer {b}"),
+                ))
+            }
+            _ => {
+                let clone = self.path().display().to_string();
+                Err(End::new(
+                    Reason::FetchFailed,
+                    format!(
+                        "the remote no longer has {b} and its new default branch is unknown. Run `git -C {clone} remote set-head origin --auto`. git said: {}",
+                        out.error_text()
+                    ),
+                ))
+            }
+        }
     }
 
     // ---- 4. Integrate -------------------------------------------------------------

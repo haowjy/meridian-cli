@@ -4,31 +4,34 @@ use std::fs;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{mpsc, Once};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use meridian_sync::git::{Git, StepEvent, Timeouts};
 use meridian_sync::pass::{run_pass, CloneSpec, Outcome, PassEnv, PassResult, Reason};
 
-fn isolate_git_config() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        for (k, v) in [
-            ("GIT_CONFIG_GLOBAL", "/dev/null"),
-            ("GIT_CONFIG_NOSYSTEM", "1"),
-            ("GIT_AUTHOR_NAME", "Test"),
-            ("GIT_AUTHOR_EMAIL", "test@example.com"),
-            ("GIT_COMMITTER_NAME", "Test"),
-            ("GIT_COMMITTER_EMAIL", "test@example.com"),
-        ] {
-            std::env::set_var(k, v);
-        }
-    });
+/// Every git call here, ours and the helpers', runs with this environment passed
+/// explicitly: the test threads never touch the process environment.
+const GIT_ENV: [(&str, &str); 6] = [
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_AUTHOR_NAME", "Test"),
+    ("GIT_AUTHOR_EMAIL", "test@example.com"),
+    ("GIT_COMMITTER_NAME", "Test"),
+    ("GIT_COMMITTER_EMAIL", "test@example.com"),
+];
+
+fn git_env() -> Vec<(String, String)> {
+    GIT_ENV
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
+        .envs(GIT_ENV)
         .current_dir(dir)
         .output()
         .unwrap();
@@ -63,7 +66,6 @@ struct World {
 impl World {
     /// A bare remote holding `a.txt` and `b.txt` on `main`; the clone doesn't exist yet.
     fn unsynced() -> World {
-        isolate_git_config();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         let remote = root.join("remote.git");
@@ -82,6 +84,7 @@ impl World {
             env: PassEnv {
                 home: root.join("home"),
                 timeouts: Timeouts::default(),
+                git_env: git_env(),
             },
             spec: CloneSpec {
                 clone_path: clone.clone(),
@@ -469,7 +472,13 @@ fn a_clone_path_without_git_leaves_the_parent_repository_alone() {
 
     // The ceiling is what stops every other git call from finding that parent.
     let mut quiet = |_: &StepEvent| {};
-    let mut g = Git::new(&w.clone, &parent, Timeouts::default(), &mut quiet);
+    let mut g = Git::new(
+        &w.clone,
+        &parent,
+        Timeouts::default(),
+        &git_env(),
+        &mut quiet,
+    );
     let out = g
         .run(
             "rev-parse",
@@ -578,7 +587,6 @@ fn a_failed_clone_leaves_nothing_at_the_clone_path() {
 
 #[test]
 fn an_empty_remote_gets_its_first_commit() {
-    isolate_git_config();
     let tmp = tempfile::tempdir().unwrap();
     let remote = tmp.path().join("empty.git");
     fs::create_dir_all(&remote).unwrap();
@@ -592,6 +600,7 @@ fn an_empty_remote_gets_its_first_commit() {
     let env = PassEnv {
         home: tmp.path().join("home"),
         timeouts: Timeouts::default(),
+        git_env: git_env(),
     };
     let r = run_pass(&spec, &env, &mut |_| {});
     assert_eq!(r.outcome, Outcome::Synced, "{r:?}");
@@ -658,4 +667,92 @@ fn a_pass_waits_for_the_clone_lock_the_hook_takes() {
         Outcome::Synced
     );
     handle.join().unwrap();
+}
+
+#[test]
+fn a_head_that_moves_during_integrate_is_not_merged_over() {
+    let w = World::new();
+    w.push_from_other("a.txt", "remote\n");
+    write(&w.clone, "local.txt", "local\n");
+    let clone = w.clone.clone();
+    let mut done = false;
+    let r = w.pass_observing(&mut |ev| {
+        if ev.step == "commit-tree" && !done {
+            done = true;
+            write(&clone, "a.txt", "human\n");
+            git(
+                &clone,
+                &["commit", "-q", "-a", "-m", "human commit mid-pass"],
+            );
+        }
+    });
+    assert_eq!(
+        reason(&r),
+        (Outcome::Failed, Some(Reason::MergeBlockedByDirtyTree)),
+        "{r:?}"
+    );
+    assert_eq!(w.read("a.txt"), "human\n");
+    assert!(!w.clone.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn a_default_branch_that_moves_before_the_repair_is_not_overwritten() {
+    let w = World::new();
+    on_stray_branch(&w, false);
+    let clone = w.clone.clone();
+    let mut done = false;
+    let r = w.pass_observing(&mut |ev| {
+        if ev.step == "rev-list" && !done {
+            done = true;
+            let tree = git(&clone, &["rev-parse", "main^{tree}"]);
+            let moved = git(
+                &clone,
+                &["commit-tree", &tree, "-p", "main", "-m", "main moved"],
+            );
+            git(&clone, &["update-ref", "refs/heads/main", &moved]);
+        }
+    });
+    assert_eq!(r.outcome, Outcome::Blocked, "{r:?}");
+    assert_eq!(r.reason, Some(Reason::OffBranch));
+    assert!(r.error.unwrap().contains("expected"));
+    assert_eq!(
+        git(&w.clone, &["log", "--format=%s", "-1", "main"]),
+        "main moved"
+    );
+}
+
+#[test]
+fn a_branch_tracking_another_upstream_is_not_repaired() {
+    let w = World::new();
+    on_stray_branch(&w, false);
+    git(&w.clone, &["config", "branch.feat/x.remote", "origin"]);
+    git(
+        &w.clone,
+        &["config", "branch.feat/x.merge", "refs/heads/other"],
+    );
+    let r = w.pass();
+    assert_eq!(
+        reason(&r),
+        (Outcome::Blocked, Some(Reason::OffBranch)),
+        "{r:?}"
+    );
+    assert_eq!(
+        git(&w.clone, &["symbolic-ref", "HEAD"]),
+        "refs/heads/feat/x"
+    );
+}
+
+#[test]
+fn an_incoming_file_does_not_overwrite_an_ignored_local_file() {
+    let w = World::new();
+    write(&w.clone, ".git/info/exclude", "ignored.txt\n");
+    write(&w.clone, "ignored.txt", "mine\n");
+    w.push_from_other("ignored.txt", "theirs\n");
+    let r = w.pass();
+    assert_eq!(
+        reason(&r),
+        (Outcome::Failed, Some(Reason::MergeBlockedByDirtyTree)),
+        "{r:?}"
+    );
+    assert_eq!(w.read("ignored.txt"), "mine\n");
 }

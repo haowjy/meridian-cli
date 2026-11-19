@@ -1,16 +1,36 @@
 //! The git subprocess runner. Every git call in the crate goes through [`Git::run`].
 //!
 //! git is never SIGKILLed: a git killed that way leaves `index.lock` behind and every
-//! later pass fails on it. On a timeout the runner sends SIGTERM to git's process group
-//! (so `ssh` and hook children go too) and keeps waiting; whoever owns the thread bounds
-//! it from outside.
+//! later pass fails on it. On a timeout the runner sends SIGTERM, then SIGCONT, to git's
+//! process group (so `ssh` and hook children go too, even a stopped one) and keeps
+//! waiting for git itself; whoever owns the thread bounds it from outside. It never waits
+//! on a grandchild: once git has exited, output still held open by something else is
+//! abandoned after a short grace.
 
-use std::io::{self, Read};
+use std::ffi::OsString;
+use std::io;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
+
+/// How long output is still read after git has exited, for what a grandchild or the
+/// kernel buffer still holds.
+const DRAIN_GRACE: Duration = Duration::from_millis(250);
+const POLL_INTERVAL_MS: i32 = 25;
+
+/// Pinned on every call: settings that change what a pass does, and the `advice.*` keys
+/// that bury the error text in `hint:` lines.
+const PINNED_CONFIG: &[&str] = &[
+    "merge.autostash=false",
+    "commit.gpgsign=false",
+    "advice.diverging=false",
+    "advice.pushUpdateRejected=false",
+    "advice.commitBeforeMerge=false",
+    "advice.resolveConflict=false",
+    "advice.addIgnoredFile=false",
+];
 
 /// Oldest git with `merge-tree --write-tree`.
 const MIN_GIT: (u32, u32) = (2, 38);
@@ -114,6 +134,7 @@ pub struct Git<'a> {
     ceiling: PathBuf,
     timeouts: Timeouts,
     ssh_command: Option<String>,
+    env: Vec<(OsString, OsString)>,
     observer: &'a mut dyn FnMut(&StepEvent),
 }
 
@@ -124,6 +145,7 @@ impl<'a> Git<'a> {
         cwd: &Path,
         ceiling: &Path,
         timeouts: Timeouts,
+        env: &[(String, String)],
         observer: &'a mut dyn FnMut(&StepEvent),
     ) -> Self {
         Git {
@@ -131,6 +153,7 @@ impl<'a> Git<'a> {
             ceiling: ceiling.to_path_buf(),
             timeouts,
             ssh_command: None,
+            env: env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
             observer,
         }
     }
@@ -151,7 +174,9 @@ impl<'a> Git<'a> {
     /// `core.sshCommand`, else uses plain `ssh`. A `GIT_SSH_COMMAND` the user exported wins.
     pub fn resolve_ssh(&mut self) {
         self.ssh_command = None;
-        if std::env::var_os("GIT_SSH_COMMAND").is_some() {
+        let exported = std::env::var_os("GIT_SSH_COMMAND").is_some()
+            || self.env.iter().any(|(k, _)| k == "GIT_SSH_COMMAND");
+        if exported {
             return;
         }
         let configured = self
@@ -182,7 +207,7 @@ impl<'a> Git<'a> {
         }
     }
 
-    /// Runs `git -c merge.autostash=false -c commit.gpgsign=false <args>`.
+    /// Runs `git -c <PINNED_CONFIG>... <args>`.
     pub fn run(
         &mut self,
         step: &'static str,
@@ -201,12 +226,15 @@ impl<'a> Git<'a> {
     ) -> io::Result<Output> {
         let mut cmd = Command::new("git");
         if pinned {
-            cmd.args(["-c", "merge.autostash=false", "-c", "commit.gpgsign=false"]);
+            for setting in PINNED_CONFIG {
+                cmd.args(["-c", setting]);
+            }
         }
         cmd.args(args).current_dir(&self.cwd);
         for var in REPO_ENV_VARS {
             cmd.env_remove(var);
         }
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
         cmd.env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_EDITOR", "true")
@@ -222,41 +250,117 @@ impl<'a> Git<'a> {
         let mut child = cmd.spawn()?;
         let pid = child.id();
         (self.observer)(&StepEvent { step, pid });
-        let stdout = drain(child.stdout.take());
-        let stderr = drain(child.stderr.take());
+        let mut out = Pipe::new(child.stdout.take().map(OwnedFd::from));
+        let mut err = Pipe::new(child.stderr.take().map(OwnedFd::from));
 
         let deadline = Instant::now() + timeout;
         let mut timed_out = false;
-        let mut pause = Duration::from_millis(1);
-        let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break status;
+        let mut exited = None;
+        let mut abandon_at = None;
+        loop {
+            poll_readable(&[&out, &err]);
+            out.pump();
+            err.pump();
+            if exited.is_none() {
+                exited = child.try_wait()?;
+                if exited.is_some() {
+                    abandon_at = Some(Instant::now() + DRAIN_GRACE);
+                    out.pump();
+                    err.pump();
+                }
             }
-            if !timed_out && Instant::now() >= deadline {
+            if exited.is_none() && !timed_out && Instant::now() >= deadline {
                 timed_out = true;
-                // SAFETY: `pid` is our own child, and its process group is its pid.
-                unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+                let group = -(pid as libc::pid_t);
+                // SAFETY: `pid` is our own child, and its process group is its pid. A
+                // stopped process holds SIGTERM pending until it is continued.
+                unsafe {
+                    libc::kill(group, libc::SIGTERM);
+                    libc::kill(group, libc::SIGCONT);
+                }
             }
-            thread::sleep(pause);
-            pause = (pause * 2).min(Duration::from_millis(50));
-        };
+            if let (Some(_), Some(at)) = (&exited, abandon_at) {
+                if (out.fd.is_none() && err.fd.is_none()) || Instant::now() >= at {
+                    break;
+                }
+            }
+        }
         Ok(Output {
-            code: status.code(),
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
+            code: exited.and_then(|s| s.code()),
+            stdout: String::from_utf8_lossy(&out.buf).into_owned(),
+            stderr: String::from_utf8_lossy(&err.buf).into_owned(),
             timed_out,
         })
     }
 }
 
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut bytes);
+/// A non-blocking read end of a child's output; `fd` is `None` once it hit EOF.
+struct Pipe {
+    fd: Option<OwnedFd>,
+    buf: Vec<u8>,
+}
+
+impl Pipe {
+    fn new(fd: Option<OwnedFd>) -> Pipe {
+        if let Some(fd) = &fd {
+            // SAFETY: the descriptor is open for as long as `fd` is.
+            unsafe {
+                let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
+                libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
         }
-        String::from_utf8_lossy(&bytes).into_owned()
-    })
+        Pipe {
+            fd,
+            buf: Vec::new(),
+        }
+    }
+
+    /// Reads whatever is available.
+    fn pump(&mut self) {
+        let Some(raw) = self.fd.as_ref().map(AsRawFd::as_raw_fd) else {
+            return;
+        };
+        let mut chunk = [0u8; 8192];
+        loop {
+            // SAFETY: `chunk` is valid for `chunk.len()` bytes and `raw` is open.
+            let n = unsafe { libc::read(raw, chunk.as_mut_ptr().cast(), chunk.len()) };
+            if n > 0 {
+                self.buf.extend_from_slice(&chunk[..n as usize]);
+                continue;
+            }
+            if n < 0 {
+                match io::Error::last_os_error().kind() {
+                    io::ErrorKind::Interrupted => continue,
+                    io::ErrorKind::WouldBlock => return,
+                    _ => {}
+                }
+            }
+            self.fd = None;
+            return;
+        }
+    }
+}
+
+/// Waits up to one interval for output or hang-up on either pipe; with none open it is
+/// just the sleep between `try_wait` checks.
+fn poll_readable(pipes: &[&Pipe]) {
+    let mut fds: Vec<libc::pollfd> = pipes
+        .iter()
+        .filter_map(|p| p.fd.as_ref())
+        .map(|fd| libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        })
+        .collect();
+    // SAFETY: `fds` is a valid array of `fds.len()` pollfds.
+    unsafe {
+        libc::poll(
+            fds.as_mut_ptr(),
+            fds.len() as libc::nfds_t,
+            POLL_INTERVAL_MS,
+        )
+    };
 }
 
 fn parse_version(text: &str) -> Option<(u32, u32)> {
