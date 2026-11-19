@@ -21,6 +21,8 @@ there. Never edit `.mars/` or the copies sync writes into harness directories
    frontmatter `name`. With no `mars.toml` yet, run `meridian mars init`. Link each
    harness whose skill directory should receive skills with `meridian mars link .claude`.
    Linked targets also limit which harnesses can launch (`resources/models.md`).
+   Name an agent in the text by its name in backticks (`explorer`), not `@explorer`:
+   Claude Code loads the file a bare `@path` names in a skill or `AGENTS.md`.
 2. **Check.** `meridian mars check .mars-src` (bare `meridian mars check` in a package
    root) fails on what sync only warns about and then drops: an invalid field value, a
    malformed `model-policies`, a skill without a `description`, unparseable YAML. A
