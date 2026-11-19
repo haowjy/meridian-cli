@@ -165,10 +165,14 @@ creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
 as the release body. Re-running the failed job skips artifacts PyPI already has
 (`skip-existing`) and edits the existing release.
 
-Before the first release that includes `meridian-sync`, PyPI needs a trusted publisher for the
-`meridian-sync` project (owner `haowjy`, repository `meridian-cli`, workflow `release.yml`,
-environment `pypi`). Without it the publish job fails after the tag and release commit are
-already on `main`; register the publisher and re-run the job.
+Both PyPI projects, `meridian-cli` and `meridian-sync`, need a trusted publisher with the same
+four values: owner `haowjy`, repository `meridian-cli`, workflow `release.yml`, environment
+`pypi`. The publish job mints one token per upload and PyPI scopes it to the projects of the
+most specific matching publisher, so a project whose publisher says environment "(Any)" while
+the other says `pypi` gets a token for the other project only and fails with `403 Invalid API
+Token: OIDC scoped token is not valid for project`. A missing or mismatched publisher fails the
+publish job after the tag and release commit are already on `main`; fix the publisher and
+re-run the failed job.
 
 A manual backfill tag on a commit from before `crates/meridian-sync` existed fails at
 `sync-wheels`, so that path only works for commits that carry the crate.
