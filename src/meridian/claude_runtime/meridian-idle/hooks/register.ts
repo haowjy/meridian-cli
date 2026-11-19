@@ -580,7 +580,7 @@ async function finishPing($: EngineInterface, s: State, ping: Ping, reason: stri
 /**
  * Compacts the conversation the reminder just brought up to date, once the box has been quiet for `QUIET_MS` after the turn's end (`endedAt`) and the last
  * prompt change: the call must land between turns, and the arm's latency is not what guarantees that. No deadline: the reminder turn just warmed the cache.
- * Gives up when the user came back or a main-loop turn is running (a task notification woke the session). Runs outside the CLI queue:
+ * Gives up when the user came back, the box holds a draft (someone is there, and an unbounded wait could compact a cold cache), or a main-loop turn is running. Runs outside the CLI queue:
  * a compaction takes a minute and must not hold `return` or `fire` behind it.
  */
 async function compactNow($: EngineInterface, s: State, ping: Ping, epoch: number, endedAt: Promise<number>): Promise<void> {
@@ -593,7 +593,8 @@ async function compactNow($: EngineInterface, s: State, ping: Ping, epoch: numbe
       const changedAt = await s.lastChange
       const { text } = await $.prompt.read()
       if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
-      if (text === '' && now - Math.max(changedAt, turnEnd) >= QUIET_MS) break
+      if (text !== '') return note($, s, 'compact-now skipped: the prompt box holds a draft')
+      if (now - Math.max(changedAt, turnEnd) >= QUIET_MS) break
       await $.clock.sleep(HOLD_POLL_MS)
     }
     const result = await $.session.compact({ instructions: COMPACT_INSTRUCTIONS })

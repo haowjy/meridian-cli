@@ -99,8 +99,9 @@ compaction, and a vetoed compaction does not restart them). It then waits for
 the same quiet box a ping waits for: empty and untouched for 10 s, counted from
 the later of the turn's end and the last prompt change. That wait is what puts
 the call between turns. It has no deadline, since the reminder turn just warmed
-the cache, and it gives up, with the reason in the log, when the user came back
-or a main-loop turn is running (a task notification woke the session). Then it
+the cache, and it gives up, with the reason in the log, when the user came back,
+the box holds a draft, or a main-loop turn is running (a task notification woke
+the session). Then it
 calls `$.session.compact` with instructions to keep what the work item does not
 hold (the user's latest requests, what is not yet recorded, where the
 conversation stopped). The call runs outside the CLI queue, since it can take a

@@ -881,7 +881,7 @@ test('compact-now waits QUIET_MS after the turn, and after a later prompt change
   expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
 })
 
-test('compact-now waits while the box holds a draft and goes once it clears', async ($, on) => {
+test('compact-now is skipped when the box holds a draft', async ($, on) => {
   const h = reminderHost()
   const clock = install(on, h)
 
@@ -889,11 +889,10 @@ test('compact-now waits while the box holds a draft and goes once it clears', as
   await clock.advance(LEAD)
   h.box = 'a draft'
   await pingTurn($, h, 'p1', 'compact-now')
-  await clock.advance(60_000)
-  expect(h.compactions).toEqual([])
+  await clock.advance(5000)
   h.box = ''
   await clock.advance(20_000)
-  expect(h.compactions).toHaveLength(1)
+  expect(h.compactions).toEqual([])
 })
 
 test('compact-now is skipped when a main-loop turn is running at the end of the wait', async ($, on) => {
