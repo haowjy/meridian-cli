@@ -133,6 +133,7 @@ class SyncState(BaseModel):
     last_sync: str = ""
     outcome: str = "unknown"
     conflict_id: str | None = None
+    error: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -142,10 +143,12 @@ class SyncState(BaseModel):
             return value
         last_sync = raw.get("last_sync")
         conflict_id = raw.get("conflict_id")
+        error = raw.get("error")
         return {
             "last_sync": last_sync if isinstance(last_sync, str) and last_sync.strip() else "",
             "outcome": str(raw.get("outcome", "unknown")),
             "conflict_id": None if conflict_id is None else str(conflict_id),
+            "error": error if isinstance(error, str) and error else None,
         }
 
 
@@ -205,6 +208,7 @@ class AutosyncMutation(Protocol):
         *,
         outcome: str,
         conflict_id: str | None = None,
+        error: str | None = None,
     ) -> None: ...
 
     def mark_resolved(self, conflict_id: str) -> bool: ...
@@ -227,6 +231,7 @@ class _LockedAutosyncTransaction:
         *,
         outcome: str,
         conflict_id: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Write autosync state JSON atomically."""
 
@@ -234,6 +239,7 @@ class _LockedAutosyncTransaction:
             self.sync_root,
             outcome=outcome,
             conflict_id=conflict_id,
+            error=error,
             runtime_root=self.runtime_root,
         )
 
@@ -353,6 +359,7 @@ def _write_sync_state(
     *,
     outcome: str,
     conflict_id: str | None = None,
+    error: str | None = None,
     runtime_root: Path,
 ) -> None:
     """Write autosync state JSON atomically."""
@@ -363,6 +370,7 @@ def _write_sync_state(
             last_sync=datetime.now(UTC).isoformat(),
             outcome=outcome,
             conflict_id=conflict_id,
+            error=error,
         ),
         indent=2,
     )

@@ -5,3 +5,13 @@ not zero ahead and behind; treating it as zero silently skips sync.
 
 Use `hook_event` in structlog calls: `event` is reserved and collides with its
 positional argument.
+
+Never SIGKILL git: a killed git leaves `.git/index.lock` and every later sync fails.
+`_run_timed` runs git in its own process group and SIGTERMs the group on timeout, then SIGKILLs it after 60 s
+(the hook runs synchronously, so an unbounded wait would hang the calling command);
+after SIGKILL it waits 5 s, then closes the pipes and drops unread output.
+Every sync outcome is written to the state file by `execute`, keyed by the clone of the remote (or the resolved path for a `path` row);
+`state.outcome` is the skip reason or `success`, and `meridian context` shows
+anything but `success`/`nothing_to_sync` as `failed`. With a remote, sync stops
+(`off_branch`) unless HEAD is on the remote's default branch; a clone with no `origin/HEAD` runs
+`git remote set-head origin --auto` first.
