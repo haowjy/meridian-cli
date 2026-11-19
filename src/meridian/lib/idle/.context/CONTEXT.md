@@ -28,4 +28,6 @@ single warning as ping 1, for the same reason: re-claiming `warn` would send
 another notice, and remembering the reminder needs an `IdleState` field older
 builds cannot read. So the mod keeps the reminder owed in its own `$.state`
 stretch record until it submits it, and a turn running at the warning only
-delays it. The notice goes out before `remind` is decided.
+delays it. The notice goes out before `remind` is decided. The mod, not core,
+acts on the reminder's reply: a last line `compact-now` makes it compact the
+session while the cache is warm. Core never compacts and does not see the choice.

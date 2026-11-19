@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { isStop } from './keepwarm'
+import { COMPACT_INSTRUCTIONS, parseChoice } from './keepwarm'
 
 type Host = {
   calls: string[][]
@@ -17,6 +17,8 @@ type Host = {
   fireDelayMs?: number
   /** What the host answers a compaction with; the default is a finished compaction. */
   compact?: () => unknown
+  /** The `instructions` of each compaction that reached the host. */
+  compactions: unknown[]
 }
 
 const START = 1_000_000
@@ -28,6 +30,7 @@ function host(): Host {
   return {
     calls: [],
     submitted: [],
+    compactions: [],
     box: '',
     store: {},
     reply: {
@@ -84,7 +87,10 @@ function install(on: On, h: Host) {
   on('tool.check', () => ({ decision: 'allow' }))
   on('command.run', () => ({ text: '' }))
   on('session.end', () => ({ sessionId: 'sess-1' }) as never)
-  on('session.compact', () => (h.compact?.() ?? { messages: [SUMMARY] }) as never)
+  on('session.compact', (_$, e) => {
+    h.compactions.push(e.instructions)
+    return (h.compact?.() ?? { messages: [SUMMARY] }) as never
+  })
   return clock
 }
 
@@ -552,12 +558,13 @@ test('keepwarm off stops pings, and /meridian-idle prints the state', async ($, 
   expect(calls(h, 'return')).toEqual([])
 })
 
-test('a stop is the whole reply, alone or in one pair of quotes', () => {
+test("a choice is the reply's last line, alone or in one pair of quotes", () => {
   for (const reply of ['stop-waiting', '  stop-waiting\n', '"stop-waiting"', "'stop-waiting'", '`stop-waiting`', '“stop-waiting”', '‘stop-waiting’']) {
-    expect(isStop(reply)).toBe(true)
+    expect(parseChoice(reply)).toBe('stop-waiting')
   }
-  for (const reply of ['stop-waiting.', 'I will stop-waiting', '""stop-waiting""', '"stop-waiting”', '', 'ok']) {
-    expect(isStop(reply)).toBe(false)
+  expect(parseChoice('Work item updated.\n\n`compact-now`\n')).toBe('compact-now')
+  for (const reply of ['stop-waiting.', 'I will stop-waiting', '""stop-waiting""', '"stop-waiting”', '', 'ok', 'compact-now\nthen more', 'compact-now is my choice']) {
+    expect(parseChoice(reply)).toBeUndefined()
   }
 })
 
@@ -771,4 +778,127 @@ for (const how of ['session.end clear', 'a /clear command'] as const) {
 
     expect(h.submitted).toHaveLength(1)
   })
+}
+
+// -- compact-now on the state reminder ---------------------------------------------
+
+/** A fake core that sends the reminder with the warning. */
+function reminderHost(): Host {
+  const h = keepwarmHost()
+  h.reply.fire = { decision: 'act', reason: 'guards-passed', remind: true }
+  return h
+}
+
+async function statusOf($: Engine): Promise<string> {
+  return (await $.command.run({ ...IDLE_COMMAND, args: '' })).text ?? ''
+}
+
+for (const keepwarm of [true, false]) {
+  test(`the reminder offers compact-now, and stop-waiting only with keepwarm on (${keepwarm ? 'on' : 'off'})`, async ($, on) => {
+    const h = reminderHost()
+    const clock = install(on, h)
+    if (keepwarm) await startKeepwarm($, clock)
+    else await startConfigured($, clock)
+    await clock.advance(LEAD)
+
+    expect(h.submitted).toHaveLength(1)
+    expect(h.submitted[0]).toContain('compact-now')
+    expect(h.submitted[0]?.includes('stop-waiting')).toBe(keepwarm)
+  })
+}
+
+test('compact-now after the reminder compacts once with the instructions and ends the pings', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'Work item updated.\ncompact-now')
+  await clock.advance(10 * LEAD)
+
+  expect(h.compactions).toEqual([COMPACT_INSTRUCTIONS])
+  expect(h.submitted).toHaveLength(1)
+  const status = await statusOf($)
+  expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
+  expect(status).toContain('compacted')
+  expect(calls(h, 'arm')).toHaveLength(2) // the reminder's own arm still reaches core
+})
+
+test('compact-now works with keepwarm off', async ($, on) => {
+  const h = reminderHost()
+  const clock = install(on, h)
+
+  await startConfigured($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(LEAD)
+
+  expect(h.compactions).toHaveLength(1)
+})
+
+for (const [answer, pings] of [['Updated.\nstop-waiting', 1], ['Updated.\ncompact-now is not needed', 2]] as const) {
+  test(`reminder reply ${JSON.stringify(answer)} ${pings === 1 ? 'ends the pings' : 'keeps waiting'} and compacts nothing`, async ($, on) => {
+    const h = reminderHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', answer)
+    await clock.advance(10 * LEAD)
+
+    expect(h.compactions).toEqual([])
+    expect(h.submitted).toHaveLength(pings)
+  })
+}
+
+test('a ping answering compact-now compacts nothing', async ($, on) => {
+  const h = keepwarmHost()
+  const clock = install(on, h)
+
+  await startKeepwarm($, clock)
+  await clock.advance(LEAD)
+  await pingTurn($, h, 'p1', 'compact-now')
+  await clock.advance(LEAD)
+
+  expect(h.compactions).toEqual([])
+  expect(h.submitted).toHaveLength(2)
+})
+
+for (const how of ['returned', 'draft'] as const) {
+  test(`compact-now is skipped when ${how === 'returned' ? 'the user came back during the turn' : 'the box holds a draft'}`, async ($, on) => {
+    const h = reminderHost()
+    const clock = install(on, h)
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await $.turn.start({ text: h.submitted[0] ?? '', turnId: 'p1' })
+    if (how === 'returned') await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+    else h.box = 'a draft'
+    await $.turn.complete({ ...MAIN_TURN, turnId: 'p1', answer: 'compact-now' })
+    await clock.advance(LEAD)
+
+    expect(h.compactions).toEqual([])
+    expect(await statusOf($)).toContain(how === 'returned' ? 'user came back' : 'box is not empty')
+  })
+}
+
+for (const how of ['vetoed', 'rejected'] as const) {
+  test(`a ${how} compaction is logged and leaves the pings ended`, async ($, on) => {
+    const h = reminderHost()
+    const clock = install(on, h)
+    h.compact = () => {
+      if (how === 'rejected') throw new Error('a turn is running')
+      return { skip: 'blocked by a PreCompact hook' }
+    }
+
+    await startKeepwarm($, clock)
+    await clock.advance(LEAD)
+    await pingTurn($, h, 'p1', 'compact-now')
+    await clock.advance(10 * LEAD)
+
+    expect(h.submitted).toHaveLength(1)
+    const status = await statusOf($)
+    expect(status).toContain('keepwarm: on, 3/3 pings this stretch')
+    expect(status).toContain(how === 'vetoed' ? 'compaction skipped: blocked by a PreCompact hook' : 'compaction failed')
+   })
 }

@@ -1,9 +1,10 @@
 import type { ClassicHookInputs, EngineInterface, Register, Timer } from 'claude-code'
 
 import {
+  COMPACT_INSTRUCTIONS,
   DEFAULT_PINGS,
   FRESH,
-  isStop,
+  parseChoice,
   pingText,
   reminderText,
   type Keepwarm,
@@ -510,7 +511,7 @@ async function runPing($: EngineInterface, s: State, armed: Armed, epoch: number
     // A prompt still unmatched never started (its queue was cleared): this one replaces it, and its slot stays spent.
     s.ping = ping
     try {
-      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce) })
+      const result = await $.prompt.submit({ text: kind === 'ping' ? pingText(ping.nonce) : reminderText(ping.nonce, index > 0) })
       if (result.drop !== undefined && s.ping === ping && ping.phase === 'submitted') {
         s.ping = undefined
         note($, s, `${label(ping)} dropped: ${result.drop}`)
@@ -553,12 +554,40 @@ function label(ping: Ping): string {
   return ping.kind === 'ping' ? `ping ${ping.index}` : 'state reminder'
 }
 
-/** The ping's own turn ended: record how it went and, on a stop, end this stretch's pings. */
-async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<void> {
-  if (reason !== 'answer') return note($, s, `${label(ping)} ended: ${reason}`)
-  // Only a ping's reply can stop the pings; the reminder asks for no such reply.
-  if (ping.kind === 'reminder' || !isStop(answer)) return note($, s, `${label(ping)} continued`)
-  await endPings($, s, ping.session, ping.stretch, `ping ${ping.index} replied stop-waiting`)
+/**
+ * The ping's or reminder's own turn ended: record how it went, and on a stop end this stretch's pings. True when the reminder chose
+ * `compact-now`: the pings are already ended, so nothing races the compaction, and a vetoed one does not restart them.
+ * A reminder's `stop-waiting` counts only when it was offered (keepwarm on: it took a slot).
+ */
+async function finishPing($: EngineInterface, s: State, ping: Ping, reason: string, answer: string): Promise<boolean> {
+  if (reason !== 'answer') {
+    note($, s, `${label(ping)} ended: ${reason}`)
+    return false
+  }
+  const choice = parseChoice(answer)
+  if (choice === 'compact-now' && ping.kind === 'reminder') {
+    await endPings($, s, ping.session, ping.stretch, 'compact-now')
+    return true
+  }
+  if (choice === 'stop-waiting' && (ping.kind === 'ping' || ping.index > 0)) {
+    await endPings($, s, ping.session, ping.stretch, `${label(ping)} replied stop-waiting`)
+  } else note($, s, `${label(ping)} continued`)
+  return false
+}
+
+/**
+ * Compacts the conversation the reminder just brought up to date, unless the user came back or is typing. Runs outside the CLI queue:
+ * a compaction takes a minute and must not hold `return` or `fire` behind it.
+ */
+async function compactNow($: EngineInterface, s: State, ping: Ping, epoch: number): Promise<void> {
+  try {
+    if (ping.userCame || s.epoch !== epoch) return note($, s, 'compact-now skipped: the user came back')
+    if ((await $.prompt.read()).text !== '') return note($, s, 'compact-now skipped: the prompt box is not empty')
+    const result = await $.session.compact({ instructions: COMPACT_INSTRUCTIONS })
+    note($, s, result.skip === undefined ? 'compacted' : `compaction skipped: ${result.skip}`)
+  } catch (err) {
+    note($, s, `compaction failed: ${describeError(err)}`)
+  }
 }
 
 // -- return ----------------------------------------------------------------
@@ -726,11 +755,15 @@ export const register: Register = on => {
       const ping = s.ping?.turnId === e.turnId ? s.ping : undefined
       if (ping !== undefined) s.ping = undefined
       else s.lastAnswer = e.answer
-      void enqueue(s, async () => {
-        if (ping !== undefined) await finishPing($, s, ping, e.reason, e.answer)
-        // The ping's reply must not become the your-turn notice's excerpt.
-        await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
-      })
+      void (async () => {
+        let compact = false
+        await enqueue(s, async () => {
+          if (ping !== undefined) compact = await finishPing($, s, ping, e.reason, e.answer)
+          // The ping's reply must not become the your-turn notice's excerpt.
+          await armTask($, s, epoch, ping !== undefined ? s.lastAnswer : e.answer, tasks)
+        })
+        if (compact && ping !== undefined) await compactNow($, s, ping, epoch)
+      })()
     }
     return next(e)
   })
