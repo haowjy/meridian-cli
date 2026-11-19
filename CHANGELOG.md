@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.7] - 2026-11-19
+
+### Added
+- At the cache warning, a Claude session that has just brought its work item up to date can
+  choose to compact itself while the prompt cache is still warm, so you come back to a small
+  context instead of a cold rebuild. The state reminder now asks the model to end with
+  `compact-now`, `stop-waiting` (keepwarm on only) or anything else to keep waiting.
+  `state_reminder = false` turns the reminder, and with it this choice, off.
+
 ## [0.23.6] - 2026-11-19
 
 ### Fixed
