@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -103,8 +104,10 @@ def git_contexts(project_root: Path) -> list[GitContext]:
                 remote=remote,
                 clone_path=clone_path,
                 path="" if relative == Path() else relative.as_posix(),
-                # Until the setting exists: a managed clone syncs, a user's own checkout doesn't.
-                autosync=clone_path.parent == managed_root,
+                # Unset: a managed clone syncs, a user's own checkout doesn't.
+                autosync=(
+                    ctx.autosync if ctx.autosync is not None else clone_path.parent == managed_root
+                ),
             )
         )
     return contexts
@@ -133,10 +136,18 @@ def read_record_written_at(project_root: Path) -> str | None:
     return written_at if isinstance(written_at, str) else None
 
 
-def register_project(project_root: Path, *, force: bool = False) -> str | None:
-    """Write this project's root record; return its ``written_at``, or ``None`` if no record
-    applies (no git contexts, or a root inside a managed clone). A project that no longer
-    has git contexts removes its own record, so the daemon drops the clone.
+@dataclass(frozen=True)
+class Registration:
+    """This project's root record as written or confirmed."""
+
+    written_at: str
+    contexts: Sequence[GitContext]
+
+
+def register_project(project_root: Path, *, force: bool = False) -> Registration | None:
+    """Write this project's root record; return it, or ``None`` if no record applies (no
+    git contexts, or a root inside a managed clone). A project that no longer has git
+    contexts removes its own record, so the daemon drops the clone.
 
     Rewrites only when the contexts changed, unless ``force``: a new ``written_at`` is what
     asks the daemon for a pass. Raises ``ValueError`` for a config that fails to load and
@@ -146,7 +157,8 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
     root = Path(os.path.realpath(project_root))
     if enclosing_clone(root) is not None:
         return None
-    contexts = [c.to_json() for c in git_contexts(root)]
+    git = git_contexts(root)
+    contexts = [c.to_json() for c in git]
     path = record_path(root)
     if not contexts:
         path.unlink(missing_ok=True)
@@ -160,7 +172,7 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
         and existing.get("contexts") == contexts
         and isinstance(existing.get("written_at"), str)
     ):
-        return cast("str", existing["written_at"])
+        return Registration(cast("str", existing["written_at"]), git)
     written_at = now_iso()
     record = {
         "v": RECORD_V,
@@ -170,7 +182,46 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(record, indent=2) + "\n")
-    return written_at
+    return Registration(written_at, git)
+
+
+def prune_leftovers() -> int:
+    """`meridian doctor --prune`: root records whose project is gone, and what the removed
+    `git-autosync` hook left. Returns how many paths it removed."""
+
+    removed = 0
+    for record in (autosync_dir() / "roots").glob("*.json"):
+        data = _read_json(record)
+        root = data.get("root") if data else None
+        if isinstance(root, str) and not Path(root).exists():
+            removed += _remove(record)
+    return removed + _prune_old_hook_files()
+
+
+def _remove(path: Path) -> int:
+    """1 if `path` is gone afterwards by this call, else 0."""
+
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError:
+        return 0
+    return 1
+
+
+def _prune_old_hook_files() -> int:
+    """Migration, removed with the `git-autosync` stub (see `.context/TODO`): the old hook's
+    per-clone locks and per-project state."""
+
+    home = get_user_home()
+    removed = 0
+    for lock in (home / "locks").glob("clone-*.lock"):
+        removed += _remove(lock)
+    for state_dir in (home / "projects").glob("*/autosync"):
+        removed += _remove(state_dir)
+    return removed
 
 
 # ---- Reading what the daemon says --------------------------------------------------
@@ -200,8 +251,12 @@ def daemon_running() -> bool:
         os.close(fd)
 
 
+def service_off_path() -> Path:
+    return autosync_dir() / "service.off"
+
+
 def service_off() -> bool:
-    return (autosync_dir() / "service.off").exists()
+    return service_off_path().exists()
 
 
 @dataclass(frozen=True)
@@ -239,15 +294,23 @@ def read_daemon_file() -> DaemonFile:
     return DaemonFile(data)
 
 
-NOT_RUNNING_FIX = "Start it with `meridian sync run`."
+def not_running_fix() -> str:
+    from meridian.lib.autosync.service import has_manager
+
+    if has_manager():
+        return "Start the service with `meridian sync service install`."
+    return "Start the daemon with `meridian sync run`."
+
+
 STARTING_NOTE = "the daemon is starting"
+NOT_RUNNING_NOTE = "daemon not running"
 
 
 @dataclass(frozen=True)
-class ContextSync:
-    """What one git context's clone is doing."""
+class CloneSync:
+    """What one clone of this project is doing, and the contexts that name it."""
 
-    name: str
+    contexts: tuple[str, ...]
     clone_key: str
     clone_path: str
     state: SyncState
@@ -257,8 +320,12 @@ class ContextSync:
     note: str | None = None
     fix: str | None = None
 
+    @property
+    def names(self) -> str:
+        return ", ".join(self.contexts)
 
-def context_sync(
+
+def clone_syncs(
     contexts: Sequence[GitContext],
     *,
     running: bool,
@@ -266,38 +333,43 @@ def context_sync(
     file: DaemonFile,
     written_at: str | None,
     record_file: str | None,
-) -> list[ContextSync]:
-    """Decide each context's state: a running daemon's entry, else off, else pending with
-    a note saying why."""
+) -> list[CloneSync]:
+    """The one decision every surface renders: one row per clone, `autosync` on when any
+    context naming the clone has it. A running daemon's entry, else off, else pending
+    with a note saying why."""
 
-    out: list[ContextSync] = []
+    by_clone: dict[str, list[GitContext]] = {}
     for ctx in contexts:
-        key, path = ctx.clone_key, ctx.clone_path.as_posix()
+        by_clone.setdefault(ctx.clone_key, []).append(ctx)
+    out: list[CloneSync] = []
+    for key, members in by_clone.items():
+        names = tuple(c.name for c in members)
+        path = members[0].clone_path.as_posix()
         if not running:
-            if service_is_off:
-                out.append(ContextSync(ctx.name, key, path, "off"))
+            if service_is_off or not any(c.autosync for c in members):
+                out.append(CloneSync(names, key, path, "off"))
             else:
                 out.append(
-                    ContextSync(
-                        ctx.name,
+                    CloneSync(
+                        names,
                         key,
                         path,
                         "pending",
-                        note="daemon not running",
-                        fix=NOT_RUNNING_FIX,
+                        note=NOT_RUNNING_NOTE,
+                        fix=not_running_fix(),
                     )
                 )
             continue
         if file.problem is not None:
-            out.append(ContextSync(ctx.name, key, path, "pending", note=file.problem))
+            out.append(CloneSync(names, key, path, "pending", note=file.problem))
             continue
         entry = file.clones.get(key)
         if entry is not None:
             state = cast("SyncState", entry.get("state", "pending"))
             fix = entry.get("fix")
             out.append(
-                ContextSync(
-                    ctx.name,
+                CloneSync(
+                    names,
                     key,
                     path,
                     state,
@@ -308,13 +380,13 @@ def context_sync(
             continue
         scanned_at = file.text("scanned_at")
         if file.data is None or (written_at and (scanned_at is None or scanned_at < written_at)):
-            out.append(ContextSync(ctx.name, key, path, "pending", note=STARTING_NOTE))
+            out.append(CloneSync(names, key, path, "pending", note=STARTING_NOTE))
             continue
         line = next((s for s in file.skipped_records if s.get("file") == record_file), None)
         detail = f" ({line.get('file')}: {line.get('error')})" if line else ""
         out.append(
-            ContextSync(
-                ctx.name,
+            CloneSync(
+                names,
                 key,
                 path,
                 "stopped",

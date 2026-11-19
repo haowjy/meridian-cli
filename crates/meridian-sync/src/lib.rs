@@ -2,6 +2,7 @@
 //! the per-clone workers and the state file.
 
 pub mod clock;
+pub mod conflict;
 pub mod daemon;
 pub mod git;
 pub mod pass;

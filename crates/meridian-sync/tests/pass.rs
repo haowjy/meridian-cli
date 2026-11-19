@@ -1,10 +1,8 @@
 //! The sync pass against a bare remote in a temp dir, through real git.
 
 use std::fs;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use meridian_sync::git::{Git, StepEvent, Timeouts};
@@ -82,7 +80,6 @@ impl World {
             remote: remote.clone(),
             other,
             env: PassEnv {
-                home: root.join("home"),
                 timeouts: Timeouts::default(),
                 git_env: git_env(),
                 cancel: None,
@@ -606,7 +603,6 @@ fn an_empty_remote_gets_its_first_commit() {
         clone_key: "k".into(),
     };
     let env = PassEnv {
-        home: tmp.path().join("home"),
         timeouts: Timeouts::default(),
         git_env: git_env(),
         cancel: None,
@@ -648,34 +644,6 @@ fn fetch_and_push_failures_name_their_step_and_keep_the_local_commit() {
         (Outcome::Failed, Some(Reason::FetchFailed)),
         "{r:?}"
     );
-}
-
-#[test]
-fn a_pass_waits_for_the_clone_lock_the_hook_takes() {
-    let w = World::new();
-    let lock_path = w.env.home.join("locks/clone-testkey.lock");
-    assert!(lock_path.exists(), "the pass created the lock file");
-    let held = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .unwrap();
-    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX) }, 0);
-
-    let (tx, rx) = mpsc::channel();
-    let (spec, env) = (w.spec.clone(), w.env.clone());
-    let handle =
-        std::thread::spawn(move || tx.send(run_pass(&spec, &env, &mut |_| {}).outcome).unwrap());
-    assert!(
-        rx.recv_timeout(Duration::from_millis(500)).is_err(),
-        "ran while the lock was held"
-    );
-    drop(held);
-    assert_eq!(
-        rx.recv_timeout(Duration::from_secs(30)).unwrap(),
-        Outcome::Synced
-    );
-    handle.join().unwrap();
 }
 
 #[test]

@@ -1,0 +1,7 @@
+- Next minor release after the daemon cutover: delete the `git-autosync` stub
+  (`git_autosync.py` and its registration), `Hook.remote` and `Hook.exclude`
+  (`plugin_api/types.py`), `HookSpec.remote`/`exclude` and the `remote` → `options` copy
+  (`hooks/schema.py`, `hooks/dispatch.py`), the `meridian sync conflict` stubs
+  (`cli/sync_cmd.py`, `ops/sync_daemon.py`) and the old hook's file pruning
+  (`autosync/state.py::_prune_old_hook_files`). Drop the matching notes in `docs/hooks.md`,
+  `docs/plugin-api.md` and `docs/commands.md`.

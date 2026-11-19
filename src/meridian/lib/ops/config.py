@@ -493,7 +493,7 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
     """Ensure first-run runtime state exists without creating project-root files.
 
     For git-backed contexts with configured remotes, we skip directory creation
-    here since git-autosync hooks handle cloning and directory setup. This
+    here since the sync daemon handles cloning and directory setup. This
     avoids creating non-git directories at clone paths before the actual clone
     happens.
     """

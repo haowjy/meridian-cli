@@ -9,7 +9,7 @@ Live cases require deliberate cost approval.
 | Tier | Guides | Requirements |
 |---|---|---|
 | Local, no model request | `project-resolution.md`, `spawn/routing-provenance.md`, `spawn/skill-injection.md` | Disposable setup; some dry-runs probe installed harnesses/catalogs. Prefer `tests/smoke/scripts/cli.sh` for the maintained cheap path. |
-| Local opt-in integration | `spawn/bootstrap.md`, `hooks/git-autosync.md` | Disposable project and (for autosync) a local bare remote. Keep destructive fixtures under the scratch path. |
+| Local opt-in integration | `spawn/bootstrap.md` | Disposable project. Keep destructive fixtures under the scratch path. |
 | Live/credentialed | `fork.md`, `spawn/context-from.md`, `opencode-orphan-cleanup.md` | Explicit human opt-in, eligible cheap model/harness, isolated native stores, and a timeout. These may spend money or terminate a worker. |
 
 `tests/smoke/README.md` explains default automatic versus executable smoke,
@@ -46,7 +46,5 @@ store.
 - Cross-transport projection parity is a default automated contract in
   `tests/contract/harness/test_launch_spec_parity.py`; the stale manual duplicate
   and its dead test paths were retired.
-- `hooks/git-autosync.md` must use a disposable local bare remote; it must not
-  push to a developer or public remote.
 - `opencode-orphan-cleanup.md` may kill a worker by design; use a disposable
   process and bounded timeout.

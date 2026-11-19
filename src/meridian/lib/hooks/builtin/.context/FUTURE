@@ -1,2 +1,0 @@
-- `git_autosync.py`: route direct git invocations through the sanitized runner;
-  they currently inherit repo-scoped Git environment variables.

@@ -68,17 +68,6 @@ source = "git"
 remote = "git@github.com:voluma-bio/docs.git"
 path = "strategy"
 
-# -- Hooks -------------------------------------------------------------------
-# Auto-sync work to private docs repo
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:haowjy/meridian-cli-docs.git"
-
-# Auto-sync KB to public KB repo
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:haowjy/meridian-cli-kb.git"
-
 # -- Workspace roots ---------------------------------------------------------
 # Use parent directory to avoid Claude Code skill leakage from individual repos.
 # See docs/configuration.md "Claude Code Skill Leakage" for details.

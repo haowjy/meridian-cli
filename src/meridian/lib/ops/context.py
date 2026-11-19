@@ -3,23 +3,24 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.mars_roots import mars_fallback_label
-from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
+from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolver import (
+    ResolvedContext as ResolvedContextEntry,
+)
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
     context_env_key,
     resolve_context_paths,
 )
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.formatting import relative_time
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
 from meridian.lib.launch.session_links import execution_link_chat, republish_chat_links
 from meridian.lib.ops.runtime import (
@@ -30,7 +31,6 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.state.paths import load_context_config
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.work_scope import WorkScope
-from meridian.plugin_api.git import resolve_clone_path
 
 
 class ContextInput(BaseModel):
@@ -116,9 +116,12 @@ class ContextOutput(BaseModel):
 
         from meridian.lib.config.context_config import ContextSourceType
 
-        extra: dict[str, tuple[Path, ContextSourceType]] = {}
-        for name, entry in self.extra_contexts.items():
-            extra[name] = (Path(entry.resolved), ContextSourceType(entry.source))
+        extras = tuple(
+            ResolvedContextEntry(
+                name, ContextSourceType(entry.source), None, Path(entry.resolved), entry.path, None
+            )
+            for name, entry in self.extra_contexts.items()
+        )
         return ResolvedContextPaths(
             work_root=Path(self.work_resolved) if self.work_resolved is not None else None,
             work_archive=(
@@ -127,7 +130,7 @@ class ContextOutput(BaseModel):
             work_source=ContextSourceType(self.work_source),
             kb_root=Path(self.kb_resolved) if self.kb_resolved is not None else None,
             kb_source=ContextSourceType(self.kb_source),
-            extra=extra,
+            contexts=extras,
         )
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -452,70 +455,8 @@ async def task_dir_clear(input: TaskDirClearInput) -> TaskDirMutationOutput:
     return await asyncio.to_thread(task_dir_clear_sync, input)
 
 
-def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
-
-    extras_raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
-    parsed: dict[str, ArbitraryContextConfig] = {}
-    for name, value in extras.items():
-        parsed[name.strip().lower()] = (
-            value
-            if isinstance(value, ArbitraryContextConfig)
-            else ArbitraryContextConfig.model_validate(value)
-        )
-    return parsed
-
-
-_SYNCED_OUTCOMES = frozenset({"success", "nothing_to_sync"})
-
-
-def _sync_status_for_context(
-    remote: str | None, path: Path | None, *, runtime_root: Path
-) -> str | None:
-    """Sync line for a context.
-
-    Autosync state is keyed by the clone of the context's remote, or by its resolved path
-    for a local-only `path` row.
-    """
-
-    if remote is not None and remote.strip():
-        sync_root = resolve_clone_path(remote.strip())
-    elif path is not None:
-        sync_root = path.expanduser().resolve()
-    else:
-        return None
-    status = read_status(sync_root, runtime_root=runtime_root)
-    if status.state is None and not status.unresolved_conflicts:
-        return None
-
-    state_info = "unknown"
-    if status.state is not None:
-        if status.state.last_sync:
-            state_info = f"{status.state.outcome}, {relative_time(status.state.last_sync)}"
-        else:
-            state_info = status.state.outcome
-
-    if status.unresolved_conflicts:
-        conflict_lines: list[str] = []
-        for c in status.unresolved_conflicts:
-            paths_str = ", ".join(c.paths) or "(no paths)"
-            conflict_lines.append(f"    {c.id} {paths_str} ({c.conflict_type})")
-        return "\n".join(
-            [
-                f"conflict ({state_info}) — {len(status.unresolved_conflicts)} unresolved",
-                *conflict_lines,
-            ]
-        )
-
-    if status.state is not None and status.state.outcome == "conflict_detected":
-        return "ok (conflict resolved, waiting for next sync)"
-    if status.state is not None and status.state.outcome not in _SYNCED_OUTCOMES:
-        error = f": {status.state.error.splitlines()[0]}" if status.state.error else ""
-        return f"failed ({state_info}){error}"
-    return f"ok ({state_info})"
-
-
 def context_sync(input: ContextInput) -> ContextOutput:
+    from meridian.lib.ops.sync_daemon import project_sync_summaries
 
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root
@@ -526,46 +467,13 @@ def context_sync(input: ContextInput) -> ContextOutput:
     )
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
-    extra_config = _extra_context_config(context_config)
-    extra_contexts: dict[str, ContextEntryOutput] = {}
-    sync_status: dict[str, str] = {}
-
-    work_sync = (
-        _sync_status_for_context(
-            context_config.work.remote, resolved_paths.work_root, runtime_root=runtime_root
+    extra_entries = {
+        c.name: ContextEntryOutput(
+            source=c.source.value, path=c.path_spec, resolved=c.path.as_posix()
         )
-        if runtime_root is not None
-        else None
-    )
-    if work_sync is not None:
-        sync_status["work"] = work_sync
-    kb_sync = (
-        _sync_status_for_context(
-            context_config.kb.remote, resolved_paths.kb_root, runtime_root=runtime_root
-        )
-        if runtime_root is not None
-        else None
-    )
-    if kb_sync is not None:
-        sync_status["kb"] = kb_sync
-
-    for name, (path, source) in resolved_paths.extra.items():
-        normalized = name.strip().lower()
-        config_entry = extra_config.get(normalized)
-        if config_entry is None:
-            continue
-        extra_contexts[normalized] = ContextEntryOutput(
-            source=source.value,
-            path=config_entry.path,
-            resolved=path.as_posix(),
-        )
-        extra_sync = (
-            _sync_status_for_context(config_entry.remote, path, runtime_root=runtime_root)
-            if runtime_root is not None
-            else None
-        )
-        if extra_sync is not None:
-            sync_status[normalized] = extra_sync
+        for c in resolved_paths.extra_contexts
+        if c.path is not None
+    }
 
     mars_roots = authority.mars_roots
     return ContextOutput(
@@ -598,8 +506,8 @@ def context_sync(input: ContextInput) -> ContextOutput:
         mars_scope=mars_roots.scope,
         mars_user_root=(mars_roots.user.as_posix() if mars_roots.user is not None else None),
         mars_fallback=mars_fallback_label(mars_roots),
-        extra_contexts=extra_contexts,
-        sync_status=sync_status,
+        extra_contexts=extra_entries,
+        sync_status=project_sync_summaries(authority.project_root),
         render_verbose=input.verbose,
     )
 

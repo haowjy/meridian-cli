@@ -71,7 +71,7 @@ mkdir -p "$MERIDIAN_HOME" "$PI_CODING_AGENT_DIR" "$PI_CODING_AGENT_SESSION_DIR" 
 
 # A fixture must not read a developer's global/system git config or invoke a
 # signing helper.  The local config still makes commits deterministic for
-# guides that exercise git hooks/autosync.
+# guides that exercise git hooks.
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 : >"$GIT_CONFIG_GLOBAL"

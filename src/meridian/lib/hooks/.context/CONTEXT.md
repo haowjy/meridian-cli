@@ -8,4 +8,4 @@ External hooks inherit no registered payload variables from the caller; absent
 fields must stay absent rather than carrying another hook's context.
 
 KB `hooks.md` holds the reasons behind hook failure handling, event naming and
-autosync.
+the context sync daemon (`lib/autosync`).
