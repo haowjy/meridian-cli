@@ -204,11 +204,12 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         ),
     ),
     "sync": GroupHelp(
-        summary="Context sync daemon and autosync conflict management.",
+        summary="Context sync daemon and its user service.",
         long_help=(
             "Keep git contexts in sync with their remotes.\n\n"
             "`run` starts the sync daemon in the foreground; `now` syncs this project's "
-            "contexts and waits; `status` shows each clone's state."
+            "contexts and waits; `status` shows each clone's state; `service install|uninstall` "
+            "adds or removes the user service that keeps the daemon running."
         ),
     ),
     "models": GroupHelp(

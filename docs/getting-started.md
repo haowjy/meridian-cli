@@ -182,5 +182,5 @@ Existing roots are projected to harness launches automatically — `permissions.
 - [configuration.md](configuration.md) — `mars.toml` vs `meridian.toml`, config keys, model routing, environment variables
 - [agent-profiles.md](agent-profiles.md) — agent profile format, `model-policies`, `no-fallback`, and `mode`
 - [codex-tui-passthrough.md](codex-tui-passthrough.md) — managed Codex startup, bootstrap, and attach behavior
-- [hooks.md](hooks.md) — hook events, builtin hooks, and `git-autosync`
+- [hooks.md](hooks.md) — hook events and builtin hooks
 - [plugin-api.md](plugin-api.md) — stable API for hook and plugin authors

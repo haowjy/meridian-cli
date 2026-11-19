@@ -1,9 +1,9 @@
 # Built-in hooks
 
-Built-ins use `meridian.plugin_api` for general capabilities. The tightly coupled
-`autosync_store` and notification transports stay internal; notify imports its
-transport lazily because config loading imports built-ins for their schemas.
+Built-ins use `meridian.plugin_api` for general capabilities. Notification transports stay
+internal; notify imports its transport lazily because config loading imports built-ins for
+their schemas.
 
-Capture merge conflict paths and type before aborting: abort clears the index.
-Keep untracked files in the excluded-file stash or a remote addition can block
-merge. See [.context/CONTEXT.md](.context/CONTEXT.md).
+`git_autosync.py` is a stub for the removed hook: a `git-autosync` row loads, does nothing
+and warns. Delete it one minor release after it shipped (see `docs/releasing.md`). Syncing
+lives in `crates/meridian-sync` and `lib/autosync`. See [.context/CONTEXT.md](.context/CONTEXT.md).

@@ -57,7 +57,7 @@ id = "calm-river-stone"
 The ID keys all mutable state outside the repository:
 
 ```text
-~/.meridian/projects/<id>/    # runtime, locks, caches, autosync metadata
+~/.meridian/projects/<id>/    # runtime, locks, caches
 ~/.meridian/context/<id>/     # default work, archive, and KB roots
 ```
 

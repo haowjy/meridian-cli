@@ -95,6 +95,8 @@ class DoctorOutput(BaseModel):
     repaired: tuple[str, ...] = ()
     legacy_pi_sessions: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
+    # The sync daemon, when this project has git contexts.
+    autosync: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         from meridian.lib.core.formatting import kv_block
@@ -129,6 +131,7 @@ class DoctorOutput(BaseModel):
             ("orphan_locks_contended", str(self.lock_gc.files_contended)),
             ("killed_orphan_spawns", ", ".join(self.killed_orphan_spawns) or "none"),
             ("repaired", ", ".join(self.repaired) if self.repaired else "none"),
+            ("autosync", self.autosync),
         ]
         if self.telemetry_cleanup is not None:
             tc = self.telemetry_cleanup
@@ -778,7 +781,19 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 )
             )
 
-    repaired = tuple(sorted({*local_report.repaired, *global_report.repaired}))
+    from meridian.lib.ops.sync_daemon import doctor_findings
+
+    autosync_status, autosync_problems = doctor_findings(project_root)
+    warnings.extend(DoctorWarning(code=code, message=text) for code, text in autosync_problems)
+
+    repaired = {*local_report.repaired, *global_report.repaired}
+    if payload.prune and is_root_side_effect_process():
+        from meridian.lib.autosync.state import prune_leftovers
+
+        if prune_leftovers():
+            repaired.add("autosync_leftovers")
+
+    repaired = tuple(sorted(repaired))
     return DoctorOutput(
         ok=not warnings,
         project_root=project_root.as_posix(),
@@ -803,6 +818,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         repaired=repaired,
         legacy_pi_sessions=local_report.legacy_pi_sessions,
         killed_orphan_spawns=local_report.killed_orphan_spawns,
+        autosync=autosync_status,
     )
 
 

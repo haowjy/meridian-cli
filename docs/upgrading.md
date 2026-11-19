@@ -1,5 +1,47 @@
 # Upgrade notes
 
+## Git contexts sync through a daemon, not the `git-autosync` hook
+
+Needs `meridian-sync`, which every install now carries.
+
+- **Every git context starts syncing, including ones that never had a hook row.** A
+  `[context.<name>]` with `source = "git"` now syncs its clone by default; before, only a
+  context with a `[[hooks]] builtin = "git-autosync"` row did. A clone you manage yourself (a `[git."<url>"].path` override)
+  stays off unless you set `autosync = true`. To keep one context from syncing, add
+  `autosync = false` to its table (in `meridian.local.toml` for each project that names the
+  clone, if you don't want to commit it).
+- **The service installs at your next launch.** The first time you run `meridian` in a
+  project with a git context, it installs a user service (systemd on Linux, launchd on
+  macOS), starts it, and says so. It is not installed from agent sessions, dev installs
+  (a checkout run in place), or a non-default `MERIDIAN_HOME`; `meridian sync service
+  install` installs it anywhere. Without a service manager, run `meridian sync run` where
+  your processes are supervised.
+- **To turn it off on this machine:** `meridian sync service uninstall`. It removes the
+  service and writes `~/.meridian/autosync/service.off`, so a later launch doesn't install it
+  again. `meridian sync service install` undoes it.
+- **The hook row does nothing now.** Delete `[[hooks]] builtin = "git-autosync"` rows from
+  `meridian.toml`; one still loads and warns when its event fires. `remote`, `exclude` and
+  `options.*` on it are ignored, and a row with `options.path` (local-only commits) has no
+  replacement. `meridian sync conflict list|show|resolve` print a pointer to `meridian sync
+  status`; they go away in the next minor release. `Hook.remote` and `Hook.exclude` are gone
+  from `meridian.plugin_api`.
+- **A stopped sync now shows itself.** `meridian` prints a line per stopped clone before the
+  harness starts, `meridian context` and `meridian doctor` show it, and the daemon runs
+  `meridian notify` once when a clone stops. Only notify settings in config files apply to
+  that notification, not `MERIDIAN_NOTIFY_*` variables from your shell.
+- **Add one line to each context directory's `AGENTS.md`.** On a merge conflict the daemon
+  stops the clone and writes `SYNC-CONFLICT.md` into each of its context directories (never
+  committed; removed after the next successful pass). Agents learn of it from this line,
+  which never changes. Create the `AGENTS.md` if the directory has none:
+
+  ```
+  If `SYNC-CONFLICT.md` exists in this directory, autosync is stopped: run `meridian sync now <context>`, resolve what it shows, and run it again.
+  ```
+
+  Replace `<context>` with that directory's context name (`kb`, `work`, `strategy`).
+- `meridian doctor --prune` also removes root records of projects that no longer exist and the
+  old hook's lock and state files.
+
 ## Mars decides effort, and `mars sync` no longer upgrades
 
 Needs Mars 0.36.0, which this release pins.

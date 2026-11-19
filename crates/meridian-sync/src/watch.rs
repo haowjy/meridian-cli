@@ -18,7 +18,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 /// Watched directories per clone before falling back to polling.
 pub const MAX_DIRS: usize = 20_000;
 
-const CONFLICT_FILE: &str = "SYNC-CONFLICT.md";
+use crate::conflict::FILE as CONFLICT_FILE;
 
 /// What the watcher tells the worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +72,10 @@ impl Classifier {
                 }
                 continue;
             }
-            if path.file_name().is_some_and(|n| n == CONFLICT_FILE) {
+            if path
+                .file_name()
+                .is_some_and(|n| n.as_encoded_bytes().starts_with(CONFLICT_FILE.as_bytes()))
+            {
                 continue;
             }
             if let Some(ignored) = &self.ignored {
