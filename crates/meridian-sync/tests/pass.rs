@@ -231,9 +231,15 @@ fn conflict_leaves_the_worktree_alone_and_clears_once_resolved() {
     let merge = Command::new("git")
         .args(["merge", "origin/main"])
         .current_dir(&w.clone)
+        .envs(GIT_ENV)
         .output()
         .unwrap();
     assert!(!merge.status.success());
+    assert!(
+        w.clone.join(".git/MERGE_HEAD").exists(),
+        "the human's merge must be left open: {}",
+        String::from_utf8_lossy(&merge.stderr)
+    );
     write(&w.clone, "a.txt", "resolved\n");
     commit_all(&w.clone, "resolve");
     let r = w.pass();
@@ -432,6 +438,7 @@ fn an_open_rebase_is_left_alone() {
     let rebase = Command::new("git")
         .args(["rebase", "origin/main"])
         .current_dir(&w.clone)
+        .envs(GIT_ENV)
         .output()
         .unwrap();
     assert!(!rebase.status.success());
