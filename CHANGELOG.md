@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.9] - 2026-11-19
+
+### Changed
+- Meridian refuses to start a spawn, set a task dir, or `meridian init` a project inside a
+  context clone under `~/.meridian/git/`, where git commands act on a repo that other
+  agents and autosync share. A spawn launched from a shell whose cwd is inside a clone
+  runs in the project root instead. A primary launch inside a clone prints a warning. Use
+  a linked worktree at `<clone>.worktrees/<name>` for branch work.
+
 ## [0.23.8] - 2026-11-19
 
 ### Changed
