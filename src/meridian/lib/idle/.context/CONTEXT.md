@@ -13,8 +13,8 @@ one warning (ping 1) and time the later pings itself
 The keepwarm default and ping count (`[idle] keepwarm`, `keepwarm_pings`,
 overridable under `[harness.claude.idle]`) reach the mod in the `idle config`
 reply, and only an interactive primary acts on them. A main-conversation
-compaction ends the stretch's pings (a `precompute` compaction does not), as
-does a ping that would go out after the cache is already cold.
+compaction ends the stretch's prompts (a `precompute` compaction does not), as
+does a prompt that would go out after the cache is already cold.
 Do not make core re-claim `warn` per anchor to carry them: every ping would then
 send another notice, and remembering the single notice needs a new `IdleState`
 field, which older builds cannot read back (`extra="forbid"`).
@@ -30,4 +30,5 @@ builds cannot read. So the mod keeps the reminder owed in its own `$.state`
 stretch record until it submits it, and a turn running at the warning only
 delays it. The notice goes out before `remind` is decided. The mod, not core,
 acts on the reminder's reply: a last line `compact-now` makes it compact the
-session while the cache is warm. Core never compacts and does not see the choice.
+session while the cache is warm, waiting for a quiet box no longer than the
+reminder's own cold-cache deadline. Core never compacts and does not see the choice.
