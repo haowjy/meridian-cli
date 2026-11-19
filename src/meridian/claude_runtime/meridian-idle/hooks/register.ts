@@ -591,7 +591,7 @@ async function finishPrompt($: EngineInterface, s: State, prompt: Prompt, reason
  * warmed the cache, so the wait ends a chained prompt's `lead + warn_minutes - margin` after it. It gives up when the user came back, a main-loop turn is running or another
  * compaction landed. Runs outside the CLI queue: a compaction takes a minute and must not hold `return` or `fire` behind it.
  */
-async function compactNow($: EngineInterface, s: State, prompt: Prompt, epoch: number): Promise<void> {
+async function compactNow($: EngineInterface, s: State, prompt: Prompt, epoch: number, compactions: number): Promise<void> {
   try {
     if (prompt.userCame) return note($, s, 'compact-now skipped: the user returned') // back during the reminder's own turn, before `epoch` was taken
     const { lead } = await stretchRecord($, s, prompt.session, prompt.stretch)
@@ -599,7 +599,6 @@ async function compactNow($: EngineInterface, s: State, prompt: Prompt, epoch: n
       return note($, s, 'compact-now skipped: no usable lead or warn_minutes')
     }
     const deadline = (await $.clock.now()) + lead + s.policy.warnMs - EXPIRY_MARGIN_MS
-    const compactions = s.compactions
     const held = await holdForUser($, s, prompt, epoch, deadline, () => s.compactions === compactions)
     if (held !== undefined) return note($, s, `compact-now skipped: ${held}`)
     const result = await $.session.compact({ instructions: COMPACT_INSTRUCTIONS })
@@ -772,6 +771,7 @@ export const register: Register = on => {
     }
     if (e.agentId === undefined && !s.inert) {
       const epoch = s.epoch
+      const compactions = s.compactions // read at the turn's end, so a compaction landing during the arm still counts
       const tasks = s.stopTasks
       s.stopTasks = undefined
       const prompt = s.prompt?.turnId === e.turnId ? s.prompt : undefined
@@ -781,7 +781,7 @@ export const register: Register = on => {
         const choice = prompt !== undefined ? await finishPrompt($, s, prompt, e.reason, e.answer) : undefined
         // The prompt's reply must not become the your-turn notice's excerpt.
         await armTask($, s, epoch, prompt !== undefined ? s.lastAnswer : e.answer, tasks)
-        if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch)
+        if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch, compactions)
       })
     }
     return next(e)

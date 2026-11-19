@@ -30,5 +30,6 @@ builds cannot read. So the mod keeps the reminder owed in its own `$.state`
 stretch record until it submits it, and a turn running at the warning only
 delays it. The notice goes out before `remind` is decided. The mod, not core,
 acts on the reminder's reply: a last line `compact-now` makes it compact the
-session while the cache is warm, waiting for a quiet box no longer than the
-reminder's own cold-cache deadline. Core never compacts and does not see the choice.
+session while the cache is warm, once the box is quiet; it measures its own
+cold-cache deadline from the reminder's turn and stops if another compaction
+lands first. Core never compacts and does not see the choice.
