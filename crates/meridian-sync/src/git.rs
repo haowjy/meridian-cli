@@ -13,6 +13,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long output is still read after git has exited, for what a grandchild or the
@@ -135,6 +137,7 @@ pub struct Git<'a> {
     timeouts: Timeouts,
     ssh_command: Option<String>,
     env: Vec<(OsString, OsString)>,
+    cancel: Option<Arc<AtomicBool>>,
     observer: &'a mut dyn FnMut(&StepEvent),
 }
 
@@ -154,8 +157,16 @@ impl<'a> Git<'a> {
             timeouts,
             ssh_command: None,
             env: env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            cancel: None,
             observer,
         }
+    }
+
+    /// Once `cancel` is true no call starts, and a call running then is sent SIGTERM, as at
+    /// its deadline. Either way the call is an `Interrupted` error, so a pass ends there
+    /// instead of acting on a killed git's answer.
+    pub fn set_cancel(&mut self, cancel: Option<Arc<AtomicBool>>) {
+        self.cancel = cancel;
     }
 
     pub fn timeouts(&self) -> Timeouts {
@@ -198,6 +209,8 @@ impl<'a> Git<'a> {
         let out = match self.run_raw("version", self.timeouts.other, &["--version"], false) {
             Ok(out) => out,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Availability::Missing,
+            // Cancelled: the pass's next call reports it.
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => return Availability::Ok,
             Err(e) => return Availability::TooOld(e.to_string()),
         };
         let text = out.stdout.trim().to_string();
@@ -217,6 +230,12 @@ impl<'a> Git<'a> {
         self.run_raw(step, timeout, args, true)
     }
 
+    fn is_cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+
     fn run_raw(
         &mut self,
         step: &'static str,
@@ -224,6 +243,9 @@ impl<'a> Git<'a> {
         args: &[&str],
         pinned: bool,
     ) -> io::Result<Output> {
+        if self.is_cancelled() {
+            return Err(cancelled());
+        }
         let mut cmd = Command::new("git");
         if pinned {
             for setting in PINNED_CONFIG {
@@ -255,6 +277,8 @@ impl<'a> Git<'a> {
 
         let deadline = Instant::now() + timeout;
         let mut timed_out = false;
+        let mut terminated = false;
+        let mut killed_by_cancel = false;
         let mut exited = None;
         let mut abandon_at = None;
         loop {
@@ -269,8 +293,11 @@ impl<'a> Git<'a> {
                     err.pump();
                 }
             }
-            if exited.is_none() && !timed_out && Instant::now() >= deadline {
-                timed_out = true;
+            let cancelled = self.is_cancelled();
+            if exited.is_none() && !terminated && (cancelled || Instant::now() >= deadline) {
+                terminated = true;
+                killed_by_cancel = cancelled;
+                timed_out = !cancelled;
                 let group = -(pid as libc::pid_t);
                 // SAFETY: `pid` is our own child, and its process group is its pid. A
                 // stopped process holds SIGTERM pending until it is continued.
@@ -285,6 +312,9 @@ impl<'a> Git<'a> {
                 }
             }
         }
+        if killed_by_cancel {
+            return Err(cancelled());
+        }
         Ok(Output {
             code: exited.and_then(|s| s.code()),
             stdout: String::from_utf8_lossy(&out.buf).into_owned(),
@@ -292,6 +322,10 @@ impl<'a> Git<'a> {
             timed_out,
         })
     }
+}
+
+fn cancelled() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
 /// A non-blocking read end of a child's output; `fd` is `None` once it hit EOF.

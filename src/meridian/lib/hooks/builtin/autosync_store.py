@@ -30,6 +30,7 @@ from pydantic import (
     model_validator,
 )
 
+from meridian.lib.autosync.clones import clone_key
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import mutate_model, read_model, write_model
 from meridian.lib.utils.json_shapes import is_object_sequence, json_object
@@ -190,9 +191,7 @@ def state_file(sync_root: Path, *, runtime_root: Path) -> Path:
 def autosync_lock_path(sync_root: Path) -> Path:
     """Return the canonical transaction lock path for a sync root."""
 
-    canonical_root = sync_root.expanduser().resolve()
-    root_hash = hashlib.sha256(str(canonical_root).encode("utf-8")).hexdigest()[:16]
-    return get_user_home() / "locks" / f"clone-{root_hash}.lock"
+    return get_user_home() / "locks" / f"clone-{clone_key(sync_root)}.lock"
 
 
 class AutosyncMutation(Protocol):

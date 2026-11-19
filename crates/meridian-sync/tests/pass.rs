@@ -85,6 +85,7 @@ impl World {
                 home: root.join("home"),
                 timeouts: Timeouts::default(),
                 git_env: git_env(),
+                cancel: None,
             },
             spec: CloneSpec {
                 clone_path: clone.clone(),
@@ -608,6 +609,7 @@ fn an_empty_remote_gets_its_first_commit() {
         home: tmp.path().join("home"),
         timeouts: Timeouts::default(),
         git_env: git_env(),
+        cancel: None,
     };
     let r = run_pass(&spec, &env, &mut |_| {});
     assert_eq!(r.outcome, Outcome::Synced, "{r:?}");
@@ -762,4 +764,19 @@ fn an_incoming_file_does_not_overwrite_an_ignored_local_file() {
         "{r:?}"
     );
     assert_eq!(w.read("ignored.txt"), "mine\n");
+}
+
+#[test]
+fn a_cancelled_pass_starts_no_git_and_commits_nothing() {
+    let mut w = World::new();
+    write(&w.clone, "new.md", "new\n");
+    let head = w.head();
+    w.env.cancel = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    let mut started = Vec::new();
+    let r = w.pass_observing(&mut |e| started.push(e.step));
+    assert_eq!(reason(&r), (Outcome::Failed, Some(Reason::InternalError)));
+    assert!(started.is_empty(), "{started:?}");
+    assert_eq!(w.head(), head);
 }

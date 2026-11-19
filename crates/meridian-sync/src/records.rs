@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -65,7 +65,7 @@ pub struct Skipped {
     pub error: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Scan {
     pub clones: Vec<CloneGroup>,
     pub skipped: Vec<Skipped>,
@@ -161,7 +161,22 @@ fn read_record(path: &Path) -> Result<Record, (Option<i64>, String)> {
     if v != Some(SUPPORTED_V) {
         return Err((v, format!("unsupported record version {v:?}")));
     }
-    serde_json::from_value(value).map_err(|e| (v, e.to_string()))
+    let record: Record = serde_json::from_value(value).map_err(|e| (v, e.to_string()))?;
+    // `SYNC-CONFLICT.md` is written at `clone_path/path`: it stays inside the clone.
+    let escaping = record.contexts.iter().find(|c| {
+        c.path.as_deref().is_some_and(|p| {
+            Path::new(p)
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        })
+    });
+    match escaping {
+        Some(c) => Err((
+            v,
+            format!("context {} has a path outside its clone", c.name),
+        )),
+        None => Ok(record),
+    }
 }
 
 #[cfg(test)]
@@ -177,6 +192,24 @@ mod tests {
             r#"{{"v":1,"root":{root:?},"written_at":"{at}","extra":1,"contexts":[
             {{"name":"kb","remote":"{remote}","clone_path":"{clone}","clone_key":"k1","autosync":{autosync}}}]}}"#
         )
+    }
+
+    #[test]
+    fn a_path_leaving_the_clone_skips_the_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (name, path) in [("up.json", "../../etc"), ("abs.json", "/etc")] {
+            write(
+                tmp.path(),
+                name,
+                format!(
+                    r#"{{"v":1,"root":"/r","written_at":"2026-01-01T00:00:00.000000Z","contexts":[
+                    {{"name":"kb","remote":"r","clone_path":"/c","clone_key":"k","autosync":true,"path":"{path}"}}]}}"#
+                ),
+            );
+        }
+        let scan = scan(tmp.path());
+        assert!(scan.clones.is_empty());
+        assert_eq!(scan.skipped.len(), 2);
     }
 
     #[test]

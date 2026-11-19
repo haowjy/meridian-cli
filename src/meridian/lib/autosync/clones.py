@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -27,6 +28,13 @@ def enclosing_clone(path: Path) -> Path | None:
         return None
     clone = git_root / relative.parts[0]
     return clone if (clone / ".git").is_dir() else None
+
+
+def clone_key(clone_path: Path) -> str:
+    """Name a clone for its lock and its state entry: ``sha256(resolved path)[:16]``."""
+
+    resolved = clone_path.expanduser().resolve()
+    return hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
 
 
 def clone_refusal_message(task_dir: Path, clone: Path) -> str:

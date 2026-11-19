@@ -407,6 +407,23 @@ path   = "project/strategy"
 
 See [configuration.md](configuration/context.md) for the full schema.
 
+## Context Sync
+
+`meridian-sync`, a daemon that ships with meridian-cli, keeps each git context's clone in
+sync with its remote: it commits local edits, fetches, merges off the worktree and pushes.
+Nothing starts it yet; run `meridian sync run` where you want it. It syncs the git contexts
+of every project you have run this version of `meridian` in (each run publishes that
+project's contexts in `autosync/roots/`), alongside the `git-autosync` hook, which still works.
+
+| Command | Purpose |
+|---------|---------|
+| `meridian sync run` | Run the daemon in the foreground. Exits 1 with `already running (pid N)` when one holds the lock; restarts itself after an upgrade. Stop with Ctrl-C |
+| `meridian sync now [CONTEXT]` | Ask the daemon for a pass on this project's git contexts (or one by name), wait up to 60 s, print each clone's state. Exits non-zero unless every clone ended `synced` |
+| `meridian sync status` | Daemon liveness and each context's state (`synced`, `retrying`, `stopped`, `pending`, `off`), the running step and since when, branch, ahead/behind, watch mode, last success, and the reason and fix when stopped. A daemon that isn't running, or a state file this meridian can't read, shows as `pending` with the cause in `note`. `--json` for scripts |
+
+A clone is `stopped` when its last pass conflicted or left the default branch, when passes
+have failed for 15 minutes, or when its worker reported nothing for 15 minutes.
+
 ## Extensions
 
 | Command | Description |
