@@ -6,6 +6,12 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.6] - 2026-11-19
+
+### Fixed
+- `meridian work done` run from a shell inside the work item's folder no longer ends
+  with a `FileNotFoundError` traceback after the item has been archived.
+
 ## [0.23.5] - 2026-11-19
 
 ### Changed
