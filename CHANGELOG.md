@@ -6,6 +6,21 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-19
+
+### Upgrade notes
+- Add this line to each context directory's `AGENTS.md` (create the file if missing): "If `SYNC-CONFLICT.md` exists in this directory, autosync is stopped: run `meridian sync now <context>`, resolve what it shows, and run it again." See https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#git-contexts-sync-through-a-daemon-not-the-git-autosync-hook
+
+### Added
+- Git contexts sync through the `meridian-sync` daemon, installed as a user service (systemd or launchd) the first time you run `meridian` in a project with a git context. It watches each clone, so edits and remote commits sync without waiting for a hook event. `[context.<name>] autosync` turns a context off; `meridian sync service uninstall` turns it off for the machine. A stopped sync shows on the launch line (one line per stopped clone), in `meridian context` and `meridian doctor`, and through `meridian notify`. On a conflict the daemon writes `SYNC-CONFLICT.md` into each context directory, and `meridian sync now` shows both sides.
+
+### Changed
+- Every git context now syncs by default, including ones with no `git-autosync` hook row. Add `autosync = false` to opt out.
+- `meridian sync status` and `meridian sync now` JSON report one entry per clone (`clones[]`, each with `contexts`).
+
+### Deprecated
+- The `git-autosync` hook row does nothing and warns; delete it. `Hook.remote` and `Hook.exclude` (plugin API and hook rows) are carried but unused. `meridian sync conflict list` prints no conflicts, and `show` and `resolve` print a pointer and exit 1. All of these are removed in the next minor release.
+
 ## [0.23.12] - 2026-11-19
 
 ### Added
