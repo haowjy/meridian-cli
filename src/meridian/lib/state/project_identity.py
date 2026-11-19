@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.config.preserving_edit import (
     project_config_transaction,
     set_project_id,
@@ -188,6 +189,7 @@ def mint_committed_identity(
 ) -> Committed:
 
     project_root = project_root.expanduser().resolve()
+    require_outside_clone(project_root)
     user_home = get_user_home()
     with project_config_transaction(project_root, user_home):
         existing = get_committed_project_id(project_root)

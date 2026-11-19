@@ -4,6 +4,7 @@ from pathlib import Path
 
 import structlog
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -154,6 +155,7 @@ def build_create_payload(
             ambient_work_id=ambient_work_id,
             caller_cwd=payload.caller_cwd,
         )
+        require_outside_clone(launch_resolution.task_cwd_resolution.task_cwd)
         parsed_template_vars = parse_template_assignments(payload.template_vars)
         resolved_work_id_hint = launch_resolution.effective_work_id
 

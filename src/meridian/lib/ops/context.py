@@ -7,6 +7,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
@@ -363,11 +364,12 @@ def _require_session_spawn_id(ctx: RuntimeContext) -> str:
 
 def _validated_task_dir_path(path: str) -> Path:
     resolved = Path(path).expanduser().resolve()
-    if resolved.is_dir():
-        return resolved
     if not resolved.exists():
         raise ValueError(f"task_dir does not exist: {resolved}")
-    raise ValueError(f"task_dir is not a directory: {resolved}")
+    if not resolved.is_dir():
+        raise ValueError(f"task_dir is not a directory: {resolved}")
+    require_outside_clone(resolved)
+    return resolved
 
 
 def _resolve_effective_task_dir_output() -> TaskDirOutput:

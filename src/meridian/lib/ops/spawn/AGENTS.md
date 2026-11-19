@@ -10,6 +10,10 @@ Contracts, wait scoping and delivery: [.context/CONTEXT.md](.context/CONTEXT.md)
 - **Foreground and background converge at `launch_prepared_spawn()`**, which owns
   pre-run failure finalization (writes `launch_failure`, then re-raises; safe because
   `complete_spawn()` is idempotent).
+- **A spawn never runs inside a context clone.** `require_outside_clone()`
+  (`lib/autosync/clones.py`, the one predicate) refuses the resolved task dir in
+  `prepare.py` and again in `execute.py`, whatever chose the dir; the same predicate guards
+  setting a task dir and `mint_committed_identity`. Do not add a second test.
 - **Depth guard is ops-layer.** `max_depth_reached()` runs before any spawn execution
   and returns `depth_exceeded_output()` with no row; `launch/` does not enforce depth.
 - **Import execution entry points from `execute.py` only**, never `execute_*` from

@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
@@ -144,6 +145,7 @@ def _resolve_execution_contract(
             caller_cwd=payload.caller_cwd,
         ).task_cwd
 
+    require_outside_clone(execution_cwd)
     work_id = resolve_spawn_work_id(payload, request, ctx=ctx)
     execution_cwd_str = execution_cwd.as_posix()
     return SpawnExecutionContract(
