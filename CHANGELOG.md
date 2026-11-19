@@ -6,6 +6,21 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.23.12] - 2026-11-19
+
+### Added
+- `meridian sync run` runs the new `meridian-sync` daemon in the foreground. It watches each git
+  context's clone, commits edits after 30 s, fetches every 5 min, merges off the worktree and
+  pushes. A clone that conflicts, leaves its default branch, or fails for 15 min shows as
+  `stopped`. It restarts itself after an upgrade. Nothing starts it automatically yet; the
+  `git-autosync` hook still syncs.
+- `meridian sync now [CONTEXT]` syncs this project's git contexts and waits up to 60 s.
+  `meridian sync status [--json]` shows the daemon and, for each context, its state (`off`,
+  `pending`, `synced`, `retrying`, `stopped`), the running step, branch, ahead/behind, watch
+  mode, last success, reason and fix.
+- Each `meridian` run in a project with git contexts publishes them for the daemon in
+  `~/.meridian/autosync/roots/`. A project that drops its last git context removes its entry.
+
 ## [0.23.11] - 2026-11-19
 
 ### Added
