@@ -29,6 +29,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.state.paths import load_context_config
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.work_scope import WorkScope
+from meridian.plugin_api.git import resolve_clone_path
 
 
 class ContextInput(BaseModel):
@@ -466,20 +467,12 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
 _SYNCED_OUTCOMES = frozenset({"success", "nothing_to_sync"})
 
 
-def _clone_root(context_dir: Path) -> Path | None:
-    """The git clone holding a context directory; autosync state is keyed by it."""
+def _sync_status_for_context(remote: str | None, *, runtime_root: Path) -> str | None:
+    """Sync line for a context; autosync state is keyed by the clone of its remote."""
 
-    for candidate in (context_dir, *context_dir.parents):
-        if (candidate / ".git").exists():
-            return candidate
-    return None
-
-
-def _sync_status_for_context(context_dir: Path, *, runtime_root: Path) -> str | None:
-    clone_root = _clone_root(context_dir)
-    if clone_root is None:
+    if remote is None or not remote.strip():
         return None
-    status = read_status(clone_root, runtime_root=runtime_root)
+    status = read_status(resolve_clone_path(remote.strip()), runtime_root=runtime_root)
     if status.state is None and not status.unresolved_conflicts:
         return None
 
@@ -524,15 +517,15 @@ def context_sync(input: ContextInput) -> ContextOutput:
     sync_status: dict[str, str] = {}
 
     work_sync = (
-        _sync_status_for_context(resolved_paths.work_root, runtime_root=runtime_root)
-        if resolved_paths.work_root is not None and runtime_root is not None
+        _sync_status_for_context(context_config.work.remote, runtime_root=runtime_root)
+        if runtime_root is not None
         else None
     )
     if work_sync is not None:
         sync_status["work"] = work_sync
     kb_sync = (
-        _sync_status_for_context(resolved_paths.kb_root, runtime_root=runtime_root)
-        if resolved_paths.kb_root is not None and runtime_root is not None
+        _sync_status_for_context(context_config.kb.remote, runtime_root=runtime_root)
+        if runtime_root is not None
         else None
     )
     if kb_sync is not None:
@@ -549,7 +542,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
             resolved=path.as_posix(),
         )
         extra_sync = (
-            _sync_status_for_context(path, runtime_root=runtime_root)
+            _sync_status_for_context(config_entry.remote, runtime_root=runtime_root)
             if runtime_root is not None
             else None
         )

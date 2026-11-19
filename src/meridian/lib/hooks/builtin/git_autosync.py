@@ -57,6 +57,7 @@ _STASH_TIMEOUT_SECS = 30
 _DIFF_TIMEOUT_SECS = 30
 _MAX_ERROR_CHARS = 500
 _LOCK_TIMEOUT_SECS = 60.0
+_SIGTERM_GRACE_SECS = 60.0
 
 _GIT_LOCAL_ENV_VARS: tuple[str, ...] = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -95,7 +96,10 @@ def _run_timed(
 ) -> subprocess.CompletedProcess[str]:
     """Run git in its own process group; on timeout SIGTERM the group and wait.
 
-    SIGKILL would leave `index.lock` behind, which blocks every later sync.
+    git exits on SIGTERM and removes its `index.lock`; SIGKILL would leave it behind and
+    block every later sync. A hook script that traps SIGTERM gets SIGKILL after
+    `_SIGTERM_GRACE_SECS` so the calling command, which runs this hook synchronously,
+    cannot hang; that case is a failure that names the possible lock.
     """
 
     with subprocess.Popen(
@@ -112,7 +116,16 @@ def _run_timed(
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGTERM)
-            proc.communicate()
+            try:
+                proc.communicate(timeout=_SIGTERM_GRACE_SECS)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+                raise subprocess.SubprocessError(
+                    f"{argv[0]} ignored SIGTERM for {_SIGTERM_GRACE_SECS:.0f}s and was "
+                    "killed; it may have left .git/index.lock"
+                ) from None
             raise
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
