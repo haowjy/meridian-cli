@@ -160,10 +160,13 @@ pub fn write(path: &Path, file: &StateFile) -> std::io::Result<()> {
     let tmp = dir.join(format!(".{name}.tmp-{}", std::process::id()));
     let mut out = fs::File::create(&tmp)?;
     out.write_all(&serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?)?;
+    out.sync_all()?;
     drop(out);
     fs::rename(&tmp, path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
-    })
+    })?;
+    // The rename itself survives a power loss only once the directory is synced.
+    fs::File::open(dir)?.sync_all()
 }
 
 /// Why a clone was newly judged stopped, for the log (and C's notification).
@@ -261,6 +264,13 @@ impl Tracker {
     /// The worker found its thread dead: nothing is in flight any more.
     pub fn worker_died(&mut self) {
         self.in_flight = false;
+    }
+
+    /// The worker ended with its git exited and no pass result: no step is running.
+    pub fn step_ended(&mut self) {
+        self.entry.step = None;
+        self.entry.step_pid = None;
+        self.entry.step_started_at = None;
     }
 
     pub fn on_step(&mut self, step: &str, pid: u32, now: Instant, wall: SystemTime) {

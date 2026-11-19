@@ -16,7 +16,9 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   a timeout sends SIGTERM then SIGCONT (a stopped process holds SIGTERM pending) to git's
   process group and keeps waiting for git's own pid, but never for a grandchild holding the
   output pipes: a short grace after git exits, then they are dropped. Extra environment goes
-  in `PassEnv::git_env`; tests never call `set_var`. Every call is confined
+  in `PassEnv::git_env`; tests never call `set_var`. Cancel is an end state: once
+  `PassEnv::cancel` is set no git starts, and a call it killed is an `Interrupted` error, so a
+  pass ends instead of acting on a killed git's answer. Every call is confined
   by `GIT_CEILING_DIRECTORIES`, so a clone path that lost its `.git` can't resolve to a
   repository above it.
 - `pass`: `run_pass` and its outcome and reason enums. Integration happens off the worktree
@@ -28,7 +30,8 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   newest and are listed in `skipped`.
 - `watch`: `notify` plus the `ignore` crate; a hint only, `git status` inside the pass decides.
   Linux takes one non-recursive watch per unignored directory (over 20,000, or the kernel
-  limit, falls back to polling); macOS takes one recursive stream and filters with the root
+  limit, falls back to polling and retries every 5 minutes); every directory, first walk or
+  new, is judged by a walk from the clone's root, so one ignore decision applies; macOS takes one recursive stream and filters with the root
   ignore files, which is untested here.
 - `state`: `state.json`'s model, its atomic write, and `Tracker`, the judge. Every duration
   is an `Instant` passed in, so the stopped rules are unit-tested with an injected clock.
@@ -37,7 +40,9 @@ exactly by it. Design: the context-autosync design's "Packaging and release".
   15-minute stop.
 - `daemon`: the lock, one worker thread per clone, and the main thread, the only writer of
   `state.json`. Shutdown cancels git through `PassEnv::cancel` (SIGTERM, as at a timeout)
-  rather than signalling pids. Exit 0 stops for good, 75 asks for a restart.
+  rather than signalling pids. Exit 0 stops for good (home gone, or the binary missing past a
+  5 s grace); 75 asks for a restart (binary replaced, or `daemon.lock` no longer the file the
+  daemon holds). `tests/daemon_exit.rs` runs these through the binary.
 - `meridian-sync version` prints Python's spelling (`0.24.0rc1`); `state.json`'s `version`
   and `meridian sync status` use it too.
 - `tests/pass.rs` runs real git against a bare remote in a temp dir. A test that edits the

@@ -27,7 +27,7 @@ STATE_V = 1
 
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
-SyncState = Literal["off", "pending", "synced", "retrying", "stopped", "not_running", "unknown"]
+SyncState = Literal["off", "pending", "synced", "retrying", "stopped"]
 
 
 def now_iso() -> str:
@@ -73,7 +73,7 @@ def git_contexts(project_root: Path) -> list[GitContext]:
     clone is left out: there is nothing in a clone for the daemon to sync for it.
     """
 
-    from meridian.lib.config.context_config import ArbitraryContextConfig, ContextSourceType
+    from meridian.lib.config.context_config import ContextSourceType
     from meridian.lib.context.resolver import resolve_context_paths
     from meridian.lib.state.paths import load_context_config
     from meridian.lib.state.project_identity import resolve_project_identity, state_id
@@ -85,37 +85,22 @@ def git_contexts(project_root: Path) -> list[GitContext]:
     identity = resolve_project_identity(project_root)
     resolved = resolve_context_paths(project_root, config, state_id(identity), identity=identity)
 
-    extras_raw = getattr(config, "__pydantic_extra__", None)
-    extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
-    candidates: list[tuple[str, str | None, ContextSourceType, Path | None]] = [
-        ("work", config.work.remote, resolved.work_source, resolved.work_root),
-        ("kb", config.kb.remote, resolved.kb_source, resolved.kb_root),
-    ]
-    for name, value in extras.items():
-        parsed = (
-            value
-            if isinstance(value, ArbitraryContextConfig)
-            else ArbitraryContextConfig.model_validate(value)
-        )
-        located = resolved.extra.get(name)
-        candidates.append(
-            (name.strip().lower(), parsed.remote, parsed.source, located[0] if located else None)
-        )
-
     managed_root = Path(os.path.realpath(get_user_home() / "git"))
     contexts: list[GitContext] = []
-    for name, remote, source, path in candidates:
-        if source != ContextSourceType.GIT or not remote or not remote.strip() or path is None:
+    for ctx in resolved.contexts:
+        remote = ctx.remote.strip() if ctx.remote else ""
+        if ctx.source != ContextSourceType.GIT or not remote or ctx.path is None:
             continue
-        clone_path = resolve_clone_path(remote.strip())
+        clone_path = resolve_clone_path(remote)
+        # Normalized first: a `..` in a committed `meridian.toml` must not leave the clone.
         try:
-            relative = path.relative_to(clone_path)
+            relative = Path(os.path.normpath(ctx.path)).relative_to(clone_path)
         except ValueError:
             continue
         contexts.append(
             GitContext(
-                name=name,
-                remote=remote.strip(),
+                name=ctx.name,
+                remote=remote,
                 clone_path=clone_path,
                 path="" if relative == Path() else relative.as_posix(),
                 # Until the setting exists: a managed clone syncs, a user's own checkout doesn't.
@@ -150,7 +135,8 @@ def read_record_written_at(project_root: Path) -> str | None:
 
 def register_project(project_root: Path, *, force: bool = False) -> str | None:
     """Write this project's root record; return its ``written_at``, or ``None`` if no record
-    applies (no git contexts, or a root inside a managed clone).
+    applies (no git contexts, or a root inside a managed clone). A project that no longer
+    has git contexts removes its own record, so the daemon drops the clone.
 
     Rewrites only when the contexts changed, unless ``force``: a new ``written_at`` is what
     asks the daemon for a pass. Raises ``ValueError`` for a config that fails to load and
@@ -161,9 +147,10 @@ def register_project(project_root: Path, *, force: bool = False) -> str | None:
     if enclosing_clone(root) is not None:
         return None
     contexts = [c.to_json() for c in git_contexts(root)]
-    if not contexts:
-        return None
     path = record_path(root)
+    if not contexts:
+        path.unlink(missing_ok=True)
+        return None
     existing = _read_json(path)
     if (
         not force
@@ -253,6 +240,7 @@ def read_daemon_file() -> DaemonFile:
 
 
 NOT_RUNNING_FIX = "Start it with `meridian sync run`."
+STARTING_NOTE = "the daemon is starting"
 
 
 @dataclass(frozen=True)
@@ -265,15 +253,9 @@ class ContextSync:
     state: SyncState
     # The daemon's entry for the clone, when it has one.
     entry: Mapping[str, Any] | None = None
-    # Why, when the state isn't read from an entry.
+    # Why, when the state isn't read from an entry: not running, unreadable, starting.
     note: str | None = None
-
-    @property
-    def fix(self) -> str | None:
-        if self.entry is not None:
-            fix = self.entry.get("fix")
-            return fix if isinstance(fix, str) else None
-        return NOT_RUNNING_FIX if self.state == "not_running" else None
+    fix: str | None = None
 
 
 def context_sync(
@@ -285,7 +267,8 @@ def context_sync(
     written_at: str | None,
     record_file: str | None,
 ) -> list[ContextSync]:
-    """Decide each context's state: a running daemon's entry, else off, else not running."""
+    """Decide each context's state: a running daemon's entry, else off, else pending with
+    a note saying why."""
 
     out: list[ContextSync] = []
     for ctx in contexts:
@@ -295,20 +278,37 @@ def context_sync(
                 out.append(ContextSync(ctx.name, key, path, "off"))
             else:
                 out.append(
-                    ContextSync(ctx.name, key, path, "not_running", note="daemon not running")
+                    ContextSync(
+                        ctx.name,
+                        key,
+                        path,
+                        "pending",
+                        note="daemon not running",
+                        fix=NOT_RUNNING_FIX,
+                    )
                 )
             continue
         if file.problem is not None:
-            out.append(ContextSync(ctx.name, key, path, "unknown", note=file.problem))
+            out.append(ContextSync(ctx.name, key, path, "pending", note=file.problem))
             continue
         entry = file.clones.get(key)
         if entry is not None:
-            state = cast("SyncState", entry.get("state", "unknown"))
-            out.append(ContextSync(ctx.name, key, path, state, entry=entry))
+            state = cast("SyncState", entry.get("state", "pending"))
+            fix = entry.get("fix")
+            out.append(
+                ContextSync(
+                    ctx.name,
+                    key,
+                    path,
+                    state,
+                    entry=entry,
+                    fix=fix if isinstance(fix, str) else None,
+                )
+            )
             continue
         scanned_at = file.text("scanned_at")
         if file.data is None or (written_at and (scanned_at is None or scanned_at < written_at)):
-            out.append(ContextSync(ctx.name, key, path, "pending", note="the daemon is starting"))
+            out.append(ContextSync(ctx.name, key, path, "pending", note=STARTING_NOTE))
             continue
         line = next((s for s in file.skipped_records if s.get("file") == record_file), None)
         detail = f" ({line.get('file')}: {line.get('error')})" if line else ""

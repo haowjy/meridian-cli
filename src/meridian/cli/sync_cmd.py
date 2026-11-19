@@ -68,9 +68,11 @@ def register_sync_commands(app: App) -> None:
     def sync_status() -> None:
         """Show the sync daemon and each of this project's git contexts.
 
-        Per context: state (synced, retrying, stopped, pending, off), branch, ahead and
-        behind, last success, the reason and the fix when stopped. `--json` prints the
-        same for scripts, plus the daemon's `alive_at` and any skipped records.
+        Per context: state (synced, retrying, stopped, pending, off), the running step and
+        since when, branch, ahead and behind, watch mode, last success, and the reason and
+        fix when stopped. A daemon that isn't running, or a state file this meridian can't
+        read, shows as `pending` with the cause in `note`. `--json` prints the same for
+        scripts, plus the daemon's `alive_at` and any skipped records.
         """
 
         from meridian.lib.ops.sync_daemon import sync_status_sync

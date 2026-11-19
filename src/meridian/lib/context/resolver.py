@@ -19,6 +19,16 @@ from meridian.plugin_api.git import resolve_clone_path
 
 
 @dataclass(frozen=True)
+class ResolvedContext:
+    """One configured context with its resolved path, source and remote."""
+
+    name: str
+    source: ContextSourceType
+    remote: str | None
+    path: Path | None
+
+
+@dataclass(frozen=True)
 class ResolvedContextPaths:
     """Resolved context paths after substitution."""
 
@@ -28,6 +38,8 @@ class ResolvedContextPaths:
     kb_root: Path | None
     kb_source: ContextSourceType
     extra: dict[str, tuple[Path, ContextSourceType]]
+    # `work`, `kb`, then each named context whose path resolved, in config order.
+    contexts: tuple[ResolvedContext, ...] = ()
 
 
 def context_uses_project_placeholder(config: ContextConfig) -> bool:
@@ -139,6 +151,10 @@ def resolve_context_paths(
     )
 
     extra: dict[str, tuple[Path, ContextSourceType]] = {}
+    named = [
+        ResolvedContext("work", config.work.source, config.work.remote, work_root_resolved),
+        ResolvedContext("kb", config.kb.source, config.kb.remote, kb_root_resolved),
+    ]
     extras_raw = getattr(config, "__pydantic_extra__", None)
     extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
     for name, value in extras.items():
@@ -159,6 +175,7 @@ def resolve_context_paths(
             # Skip extra contexts that can't resolve without a project ID
             continue
         extra[name] = (resolved, parsed.source)
+        named.append(ResolvedContext(name.strip().lower(), parsed.source, parsed.remote, resolved))
 
     return ResolvedContextPaths(
         work_root=work_root_resolved,
@@ -167,6 +184,7 @@ def resolve_context_paths(
         kb_root=kb_root_resolved,
         kb_source=config.kb.source,
         extra=extra,
+        contexts=tuple(named),
     )
 
 

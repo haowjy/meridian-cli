@@ -765,3 +765,18 @@ fn an_incoming_file_does_not_overwrite_an_ignored_local_file() {
     );
     assert_eq!(w.read("ignored.txt"), "mine\n");
 }
+
+#[test]
+fn a_cancelled_pass_starts_no_git_and_commits_nothing() {
+    let mut w = World::new();
+    write(&w.clone, "new.md", "new\n");
+    let head = w.head();
+    w.env.cancel = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    let mut started = Vec::new();
+    let r = w.pass_observing(&mut |e| started.push(e.step));
+    assert_eq!(reason(&r), (Outcome::Failed, Some(Reason::InternalError)));
+    assert!(started.is_empty(), "{started:?}");
+    assert_eq!(w.head(), head);
+}

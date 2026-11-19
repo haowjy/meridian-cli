@@ -6,6 +6,7 @@
 //! thread never waits on anything that can block: it reads events with a timeout, and a
 //! worker stuck in git is stopped by cancelling the git, not by waiting.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -37,6 +38,11 @@ const LOOP_WAIT: Duration = Duration::from_secs(1);
 const WRITE_EVERY: Duration = Duration::from_secs(60);
 /// How long shutdown waits for workers whose git was sent SIGTERM.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(30);
+/// How long a clone polls before native watching is tried again.
+const WATCH_RETRY: Duration = Duration::from_secs(5 * 60);
+/// How long the executable may be missing before it counts as uninstalled: an upgrade
+/// that removes the file before writing the new one leaves a gap.
+const EXE_GRACE: Duration = Duration::from_secs(5);
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -49,6 +55,10 @@ pub struct Options {
 /// Runs the daemon and returns its exit code: 0 stops for good, 75 asks for a restart,
 /// anything else is a failure.
 pub fn run(options: Options) -> u8 {
+    // A home that is gone is a stop, and nothing here may create it again.
+    if !options.home.exists() {
+        return 0;
+    }
     let autosync_dir = options.home.join("autosync");
     let lock = match take_lock(&autosync_dir.join("daemon.lock"), options.wait) {
         Ok(lock) => lock,
@@ -62,7 +72,7 @@ pub fn run(options: Options) -> u8 {
             std::env::remove_var(&*key);
         }
     }
-    let code = match Daemon::new(options.home, &autosync_dir) {
+    let code = match Daemon::new(options.home, &autosync_dir, &lock) {
         Ok(daemon) => daemon.run(),
         Err(e) => {
             eprintln!("meridian-sync: {e}");
@@ -201,6 +211,8 @@ struct Worker {
     cancel: Arc<AtomicBool>,
     watch: Option<Watch>,
     polling: bool,
+    /// When polling began, so a clone that shrank gets its watches back.
+    polling_since: Option<Instant>,
     /// First and last file event since the last pass.
     dirty: Option<(Instant, Instant)>,
     /// Why the next pass runs, once one is wanted.
@@ -219,11 +231,7 @@ impl Worker {
             if let Some(why) = self.pass_wanted.or(debounced.then_some("file change")) {
                 self.pass_wanted = None;
                 self.dirty = None;
-                eprintln!(
-                    "meridian-sync: pass on {} ({why})",
-                    self.cfg.clone_path.display()
-                );
-                self.pass();
+                self.pass(why);
                 self.ensure_watch();
                 last_poll = Instant::now();
                 continue;
@@ -319,12 +327,16 @@ impl Worker {
         pass::has_local_changes(&self.spec(), &self.pass_env(), &mut |_| {})
     }
 
-    fn pass(&mut self) {
+    fn pass(&mut self, why: &str) {
         let (spec, env) = (self.spec(), self.pass_env());
         let answered = self.cfg.written_at.clone();
         let key = self.cfg.clone_key.clone();
         let events = self.events.clone();
+        let acted = Cell::new(false);
         let mut observe = |e: &StepEvent| {
+            if matches!(e.step, "commit" | "merge" | "merge-tree" | "push" | "clone") {
+                acted.set(true);
+            }
             let _ = events.send(Event::Step {
                 key: key.clone(),
                 step: e.step,
@@ -351,6 +363,16 @@ impl Worker {
         });
         // A pass cut short by shutdown isn't the clone's state.
         if !self.cancel.load(Ordering::Relaxed) {
+            if let Some(r) = result.as_ref() {
+                if acted.get() || r.outcome != pass::Outcome::Synced || r.repair.is_some() {
+                    eprintln!(
+                        "meridian-sync: pass on {} ({why}): {:?}{}",
+                        spec.clone_path.display(),
+                        r.outcome,
+                        r.reason.map(|r| format!(" {r:?}")).unwrap_or_default()
+                    );
+                }
+            }
             let _ = self.events.send(Event::Pass {
                 key,
                 answered,
@@ -360,6 +382,12 @@ impl Worker {
     }
 
     fn ensure_watch(&mut self) {
+        if self
+            .polling_since
+            .is_some_and(|t| t.elapsed() >= WATCH_RETRY)
+        {
+            self.polling = false;
+        }
         if !self.cfg.autosync
             || self.watch.is_some()
             || self.polling
@@ -383,6 +411,7 @@ impl Worker {
     fn fall_back_to_polling(&mut self) {
         self.watch = None;
         self.polling = true;
+        self.polling_since = Some(Instant::now());
         self.report_mode("polling");
     }
 
@@ -395,6 +424,7 @@ impl Worker {
 }
 
 struct WorkerHandle {
+    key: String,
     tx: Sender<Msg>,
     join: JoinHandle<()>,
     cancel: Arc<AtomicBool>,
@@ -420,6 +450,13 @@ struct Slot {
 /// Identity of the running executable: a replaced binary is a new `(dev, inode, mtime)`.
 type ExeStamp = (u64, u64, i64);
 
+/// `(dev, inode)` of a file: the lock is the file this identifies, not the path.
+type FileId = (u64, u64);
+
+fn file_id(m: &fs::Metadata) -> FileId {
+    (m.dev(), m.ino())
+}
+
 fn exe_stamp(path: &Path) -> Option<ExeStamp> {
     let m = fs::metadata(path).ok()?;
     Some((m.dev(), m.ino(), m.mtime()))
@@ -427,6 +464,11 @@ fn exe_stamp(path: &Path) -> Option<ExeStamp> {
 
 struct Daemon {
     home: PathBuf,
+    lock_path: PathBuf,
+    /// The lock file this daemon holds; another file at `lock_path` means a second daemon
+    /// could hold the lock too.
+    lock_id: FileId,
+    exe_missing_since: Option<Instant>,
     roots_dir: PathBuf,
     state_path: PathBuf,
     exe: Option<(PathBuf, ExeStamp)>,
@@ -443,13 +485,17 @@ struct Daemon {
 }
 
 impl Daemon {
-    fn new(home: PathBuf, autosync_dir: &Path) -> Result<Daemon, String> {
+    fn new(home: PathBuf, autosync_dir: &Path, lock: &File) -> Result<Daemon, String> {
+        let lock_id = file_id(&lock.metadata().map_err(|e| e.to_string())?);
         let (events_tx, events_rx) = mpsc::channel();
         let state_path = autosync_dir.join("state.json");
         let exe = std::env::current_exe()
             .ok()
             .and_then(|p| exe_stamp(&p).map(|s| (p, s)));
         Ok(Daemon {
+            lock_path: autosync_dir.join("daemon.lock"),
+            lock_id,
+            exe_missing_since: None,
             roots_dir: autosync_dir.join("roots"),
             previous: state::read_previous(&state_path),
             state_path,
@@ -485,16 +531,26 @@ impl Daemon {
     }
 
     /// `0` stops for good, `75` asks for a restart.
-    fn exit_reason(&self) -> Option<u8> {
+    fn exit_reason(&mut self) -> Option<u8> {
         if STOP.load(Ordering::Relaxed) || !self.home.exists() {
             return Some(0);
         }
+        // `autosync/` was deleted or replaced under us: a new daemon may hold the lock.
+        if fs::metadata(&self.lock_path).map(|m| file_id(&m)).ok() != Some(self.lock_id) {
+            return Some(EXIT_RESTART);
+        }
         let (path, stamp) = self.exe.as_ref()?;
         match exe_stamp(path) {
-            // meridian-cli was uninstalled; nothing will ask for a restart.
-            None => Some(0),
-            Some(now) if now != *stamp => Some(EXIT_RESTART),
-            Some(_) => None,
+            // Still missing after the grace: meridian-cli was uninstalled, and nothing
+            // will ask for a restart.
+            None => {
+                let since = *self.exe_missing_since.get_or_insert_with(Instant::now);
+                (since.elapsed() >= EXE_GRACE).then_some(0)
+            }
+            Some(now) => {
+                self.exe_missing_since = None;
+                (now != *stamp).then_some(EXIT_RESTART)
+            }
         }
     }
 
@@ -585,7 +641,11 @@ impl Daemon {
                     }
                 }
                 // A worker that ended is started again on the clone's next trigger.
-                None if changed || due.is_some() => {
+                // Not while the old worker for the key is still ending: two workers in one
+                // clone.
+                None if (changed || due.is_some())
+                    && !self.retiring.iter().any(|w| w.key == cfg.clone_key) =>
+                {
                     slot.worker = Some(spawn_worker(&self.home, &cfg, &self.events_tx));
                     slot.tracker.requested();
                 }
@@ -656,19 +716,26 @@ impl Daemon {
     /// Every running git gets SIGTERM (through its worker's cancel flag) and is waited
     /// for, so git removes its own lock; the last state is written for the next start.
     fn shutdown(mut self, code: u8) {
-        let workers: Vec<WorkerHandle> = self
+        let mut workers: Vec<WorkerHandle> = self
             .slots
             .values_mut()
             .filter_map(|s| s.worker.take())
-            .chain(self.retiring.drain(..))
             .collect();
+        workers.append(&mut self.retiring);
         for w in &workers {
             w.stop();
         }
         let deadline = Instant::now() + SHUTDOWN_WAIT;
-        for w in workers {
+        for w in &workers {
             while !w.join.is_finished() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(25));
+            }
+        }
+        // A worker that ended took its git with it: no step is left running. One that
+        // didn't (a git that ignored SIGTERM) keeps its step for the next daemon.
+        for w in workers.iter().filter(|w| w.join.is_finished()) {
+            if let Some(slot) = self.slots.get_mut(&w.key) {
+                slot.tracker.step_ended();
             }
         }
         if code == EXIT_RESTART || (code == 0 && self.home.exists()) {
@@ -694,6 +761,7 @@ fn spawn_worker(home: &Path, cfg: &WorkerConfig, events: &Sender<Event>) -> Work
         cancel: Arc::clone(&cancel),
         watch: None,
         polling: false,
+        polling_since: None,
         dirty: None,
         pass_wanted: None,
     };
@@ -701,5 +769,10 @@ fn spawn_worker(home: &Path, cfg: &WorkerConfig, events: &Sender<Event>) -> Work
         .name(format!("worker-{}", cfg.clone_key))
         .spawn(move || worker.run())
         .expect("spawn a worker thread");
-    WorkerHandle { tx, join, cancel }
+    WorkerHandle {
+        key: cfg.clone_key.clone(),
+        tx,
+        join,
+        cancel,
+    }
 }

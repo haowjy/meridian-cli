@@ -6,6 +6,7 @@
 //! kernel's limit, is polled instead. macOS (FSEvents) takes one recursive stream and
 //! drops events under paths the root ignore files name.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -44,7 +45,8 @@ pub struct Watch {
     watcher: RecommendedWatcher,
     clone: PathBuf,
     recursive: bool,
-    dirs: usize,
+    /// Directories holding a watch.
+    watched: HashSet<PathBuf>,
 }
 
 struct Classifier {
@@ -127,7 +129,7 @@ pub fn start(clone: &Path, sink: Sink) -> Option<Watch> {
         watcher,
         clone: clone.to_path_buf(),
         recursive,
-        dirs: 0,
+        watched: HashSet::new(),
     };
     watch.watch_all().ok()?;
     Some(watch)
@@ -135,7 +137,6 @@ pub fn start(clone: &Path, sink: Sink) -> Option<Watch> {
 
 impl Watch {
     fn watch_all(&mut self) -> Result<(), LimitReached> {
-        self.dirs = 0;
         let clone = self.clone.clone();
         if self.recursive {
             self.add(&clone, RecursiveMode::Recursive)?;
@@ -149,47 +150,68 @@ impl Watch {
         Ok(())
     }
 
-    /// Watches `dir` and every directory below it that git doesn't ignore.
+    /// Watches `dir` and every directory below it that git doesn't ignore. The ignore
+    /// files are read from the clone's root down, so a new directory is judged as the
+    /// initial walk would judge it.
     pub fn add_tree(&mut self, dir: &Path) -> Result<(), LimitReached> {
         if self.recursive {
             return Ok(());
         }
-        let walk = WalkBuilder::new(dir)
-            .hidden(false)
-            .parents(false)
-            .require_git(false)
-            .git_ignore(true)
-            .git_exclude(true)
-            .git_global(true)
-            .filter_entry(|e| e.file_name() != ".git")
-            .build();
-        for entry in walk.filter_map(Result::ok) {
-            if entry.file_type().is_some_and(|t| t.is_dir()) {
-                self.add(entry.path(), RecursiveMode::NonRecursive)?;
-            }
+        for found in unignored_dirs(&self.clone, dir) {
+            self.add(&found, RecursiveMode::NonRecursive)?;
         }
         Ok(())
     }
 
-    /// After a queue overflow: watch what appeared while events were lost.
+    /// After a queue overflow: watch what appeared while events were lost, and forget
+    /// what is gone, so a clone that shrank can leave the polling fallback.
     pub fn rewalk(&mut self) -> Result<(), LimitReached> {
+        self.watched.retain(|p| p.is_dir());
         self.watch_all()
     }
 
     fn add(&mut self, path: &Path, mode: RecursiveMode) -> Result<(), LimitReached> {
-        if self.dirs >= MAX_DIRS {
+        if self.watched.contains(path) {
+            return Ok(());
+        }
+        if self.watched.len() >= MAX_DIRS {
             return Err(LimitReached);
         }
         match self.watcher.watch(path, mode) {
             Ok(()) => {
-                self.dirs += 1;
+                self.watched.insert(path.to_path_buf());
                 Ok(())
             }
-            // The directory went away between the walk and the watch.
-            Err(e) if matches!(e.kind, notify::ErrorKind::PathNotFound) => Ok(()),
-            Err(_) => Err(LimitReached),
+            Err(e) if is_limit(&e) => Err(LimitReached),
+            // This directory's own problem (gone, or not readable): the rest is watched.
+            Err(_) => Ok(()),
         }
     }
+}
+
+/// Directories at or below `subtree` that git doesn't ignore, walking from the clone's
+/// root so every ignore file above them applies. Other branches of the tree are listed,
+/// not entered.
+fn unignored_dirs(clone: &Path, subtree: &Path) -> Vec<PathBuf> {
+    let subtree = subtree.to_path_buf();
+    let on_path = subtree.clone();
+    WalkBuilder::new(clone)
+        .hidden(false)
+        .parents(false)
+        .require_git(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(true)
+        .filter_entry(move |e| {
+            e.file_name() != ".git"
+                && (e.path().starts_with(&on_path) || on_path.starts_with(e.path()))
+        })
+        .build()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|t| t.is_dir()))
+        .map(ignore::DirEntry::into_path)
+        .filter(|p| p.starts_with(&subtree))
+        .collect()
 }
 
 fn is_limit(e: &notify::Error) -> bool {
@@ -229,42 +251,82 @@ mod tests {
         false
     }
 
+    fn event(kind: EventKind, path: PathBuf) -> Event {
+        Event::new(kind).add_path(path)
+    }
+
+    #[test]
+    fn the_conflict_file_and_git_internals_are_not_changes() {
+        let c = Classifier {
+            git_dir: PathBuf::from("/c/.git"),
+            ignored: None,
+        };
+        let create = EventKind::Create(notify::event::CreateKind::File);
+        assert!(c
+            .classify(&event(create, "/c/notes/SYNC-CONFLICT.md".into()), false)
+            .is_empty());
+        assert!(c
+            .classify(&event(create, "/c/.git/index.lock".into()), false)
+            .is_empty());
+        assert_eq!(
+            c.classify(&event(create, "/c/.git/HEAD".into()), false),
+            vec![Hint::Head]
+        );
+        assert_eq!(
+            c.classify(&event(create, "/c/notes/a.md".into()), false),
+            vec![Hint::Change]
+        );
+    }
+
+    #[test]
+    fn ignored_directories_are_never_walked_old_or_new() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clone = tmp.path();
+        let mk = |p: &str| std::fs::create_dir_all(clone.join(p)).unwrap();
+        std::fs::write(clone.join(".gitignore"), "build/\ncache/\n").unwrap();
+        mk("build/deep");
+        mk("notes/new/cache/x/y");
+        mk("notes/new/inner");
+        mk(".git");
+        let names = |dirs: Vec<PathBuf>| -> Vec<String> {
+            let mut v: Vec<_> = dirs
+                .iter()
+                .map(|d| d.strip_prefix(clone).unwrap().display().to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names(unignored_dirs(clone, clone)),
+            ["", "notes", "notes/new", "notes/new/inner"]
+        );
+        // A directory that appears later gets the same answer as in the first walk.
+        assert_eq!(
+            names(unignored_dirs(clone, &clone.join("notes/new"))),
+            ["notes/new", "notes/new/inner"]
+        );
+        assert!(unignored_dirs(clone, &clone.join("build/deep")).is_empty());
+        assert!(unignored_dirs(clone, &clone.join("notes/new/cache/x")).is_empty());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
-    fn watches_the_worktree_but_not_ignored_directories() {
+    fn a_live_watch_reports_changes_and_head() {
         let tmp = tempfile::tempdir().unwrap();
         let clone = tmp.path();
         std::fs::create_dir_all(clone.join(".git")).unwrap();
-        std::fs::write(clone.join(".gitignore"), "build/\n").unwrap();
-        std::fs::create_dir_all(clone.join("build/deep")).unwrap();
         std::fs::create_dir_all(clone.join("notes")).unwrap();
-        let (mut watch, seen) = collect(clone);
-        // root, notes, .git; not build/.
-        assert_eq!(watch.dirs, 3);
-
-        std::fs::write(clone.join("build/deep/x"), "x").unwrap();
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(seen.lock().unwrap().is_empty());
-
+        let (watch, seen) = collect(clone);
+        // root, notes, .git
+        assert_eq!(watch.watched.len(), 3);
         std::fs::write(clone.join("notes/a.md"), "a").unwrap();
         assert!(wait_for(&seen, |h| *h == Hint::Change));
-
         std::fs::write(clone.join(".git/HEAD"), "ref: refs/heads/x\n").unwrap();
         assert!(wait_for(&seen, |h| *h == Hint::Head));
-
-        std::fs::create_dir_all(clone.join("notes/new/inner")).unwrap();
+        std::fs::create_dir_all(clone.join("notes/new")).unwrap();
         assert!(wait_for(
             &seen,
             |h| matches!(h, Hint::NewDir(p) if p.ends_with("notes/new"))
         ));
-        watch.add_tree(&clone.join("notes/new")).unwrap();
-        seen.lock().unwrap().clear();
-        std::fs::write(clone.join("notes/new/inner/b.md"), "b").unwrap();
-        assert!(wait_for(&seen, |h| *h == Hint::Change));
-
-        seen.lock().unwrap().clear();
-        std::fs::write(clone.join("notes/SYNC-CONFLICT.md"), "c").unwrap();
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(!seen.lock().unwrap().contains(&Hint::Change));
     }
 }

@@ -24,6 +24,24 @@ _POLL_S = 0.25
 _RESTART_CODE = 75
 
 
+class RepairOutput(BaseModel):
+    """A stray branch's commits the daemon moved onto the default branch."""
+
+    model_config = ConfigDict(frozen=True)
+
+    from_branch: str
+    commits: int
+    at: str
+
+
+class SkippedRecordOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    file: str
+    v: int | None = None
+    error: str
+
+
 class SyncContextOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -46,27 +64,35 @@ class SyncContextOutput(BaseModel):
     step: str | None = None
     step_started_at: str | None = None
     watch: str | None = None
-    last_repair: Mapping[str, Any] | None = None
+    last_repair: RepairOutput | None = None
 
     def line(self) -> str:
-        """`kb: synced 2m ago` / `work: STOPPED since …, off_branch`, then the fix."""
+        """`kb: synced 2m ago` / `work: STOPPED since …, off_branch`, then the running
+        step, the branch, and the fix, one per indented line."""
 
         if self.state == "synced" and self.last_success_at:
             head = f"synced {relative_time(self.last_success_at)}"
         elif self.state == "stopped":
             since = f" since {relative_time(self.stopped_since)}" if self.stopped_since else ""
             head = f"STOPPED{since}"
-        elif self.state == "not_running":
-            head = "daemon not running"
         else:
             head = self.state
         why = self.reason or (self.outcome if self.state in ("stopped", "retrying") else None)
-        detail = [d for d in (why, self.current_branch if self.reason else None) if d]
-        text = f"{self.name}: {head}" + (f", {' '.join(detail)}" if detail else "")
-        for extra in (self.note if self.state != "not_running" else None, self.fix):
-            if extra:
-                text += f"\n    {extra}"
-        return text
+        branch = self.current_branch if self.reason == "off_branch" else None
+        detail = " ".join(d for d in (why, branch) if d)
+        lines = [f"{self.name}: {head}" + (f", {detail}" if detail else "")]
+        if self.step:
+            since = f" since {relative_time(self.step_started_at)}" if self.step_started_at else ""
+            lines.append(f"running {self.step}{since}")
+        if self.current_branch and self.state != "off":
+            facts = [f"branch {self.current_branch}"]
+            if self.ahead is not None and self.behind is not None:
+                facts.append(f"ahead {self.ahead}, behind {self.behind}")
+            if self.watch:
+                facts.append(f"watching {self.watch}")
+            lines.append(", ".join(facts))
+        lines.extend(x for x in (self.note, self.fix) if x)
+        return "\n    ".join(part for item in lines for part in item.split("\n"))
 
 
 def _context_output(sync: autosync.ContextSync) -> SyncContextOutput:
@@ -80,7 +106,7 @@ def _context_output(sync: autosync.ContextSync) -> SyncContextOutput:
         value = e.get(field)
         return value if isinstance(value, int) else None
 
-    repair = cast("dict[str, Any] | None", e.get("last_repair"))
+    repair = cast("Mapping[str, Any] | None", e.get("last_repair"))
     return SyncContextOutput(
         name=sync.name,
         clone_key=sync.clone_key,
@@ -101,7 +127,15 @@ def _context_output(sync: autosync.ContextSync) -> SyncContextOutput:
         step=text("step"),
         step_started_at=text("step_started_at"),
         watch=text("watch"),
-        last_repair=repair if isinstance(repair, dict) else None,
+        last_repair=(
+            RepairOutput(
+                from_branch=str(repair.get("from", "")),
+                commits=int(repair.get("commits", 0)),
+                at=str(repair.get("at", "")),
+            )
+            if isinstance(repair, Mapping)
+            else None
+        ),
     )
 
 
@@ -125,18 +159,19 @@ class SyncStatusOutput(BaseModel):
 
     daemon: DaemonOutput
     contexts: tuple[SyncContextOutput, ...]
-    skipped_records: tuple[Mapping[str, Any], ...] = ()
+    skipped_records: tuple[SkippedRecordOutput, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         d = self.daemon
         if d.running:
             alive = f"alive {relative_time(d.alive_at)}" if d.alive_at else None
-            detail = ", ".join(
-                x
-                for x in (f"pid {d.pid}" if d.pid else None, f"meridian-sync {d.version}", alive)
-                if x and "None" not in x
-            )
-            daemon = f"running ({detail})"
+            parts = [
+                f"pid {d.pid}" if d.pid else None,
+                f"meridian-sync {d.version}" if d.version else None,
+                alive,
+            ]
+            detail = ", ".join(x for x in parts if x)
+            daemon = f"running ({detail})" if detail else "running"
         elif d.service_off:
             daemon = "off (autosync/service.off exists)"
         else:
@@ -152,7 +187,7 @@ class SyncStatusOutput(BaseModel):
         if not self.contexts:
             blocks.append("This project has no git contexts.")
         for skipped in self.skipped_records:
-            blocks.append(f"skipped record {skipped.get('file')}: {skipped.get('error')}")
+            blocks.append(f"skipped record {skipped.file}: {skipped.error}")
         return "\n".join(blocks)
 
 
@@ -166,10 +201,7 @@ class SyncNowOutput(BaseModel):
     def format_text(self, ctx: FormatContext | None = None) -> str:
         lines = [c.line() for c in self.contexts]
         if self.timed_out:
-            lines.append(
-                f"Still running after {int(NOW_TIMEOUT_S)} s; "
-                "`meridian sync status` shows the step."
-            )
+            lines.append(f"Still running after {int(NOW_TIMEOUT_S)} s.")
         return "\n".join(lines)
 
 
@@ -215,13 +247,20 @@ def sync_status_sync() -> SyncStatusOutput:
     return SyncStatusOutput(
         daemon=_daemon_output(file, running=running),
         contexts=tuple(_context_output(s) for s in states),
-        skipped_records=tuple(file.skipped_records),
+        skipped_records=tuple(
+            SkippedRecordOutput(
+                file=str(r.get("file", "")),
+                v=r["v"] if isinstance(r.get("v"), int) else None,
+                error=str(r.get("error", "")),
+            )
+            for r in file.skipped_records
+        ),
     )
 
 
 def _settled(sync: autosync.ContextSync, written_at: str) -> bool:
     if sync.entry is None:
-        return sync.state != "pending"
+        return sync.note != autosync.STARTING_NOTE
     if sync.state == "off":
         return True
     answered = sync.entry.get("answered")
@@ -235,11 +274,10 @@ def sync_now_sync(context: str | None) -> SyncNowOutput:
     all_contexts = autosync.git_contexts(root)
     selected = [c for c in all_contexts if context is None or c.name == context.strip().lower()]
     if not selected:
-        names = ", ".join(c.name for c in all_contexts) or "none"
-        what = (
-            f"No git context named `{context}`" if context else "This project has no git contexts"
-        )
-        raise ValueError(f"{what} (git contexts here: {names}).")
+        if not all_contexts:
+            raise ValueError("This project has no git contexts.")
+        names = ", ".join(c.name for c in all_contexts)
+        raise ValueError(f"No git context named `{context}` (git contexts here: {names}).")
     written_at = autosync.register_project(root, force=True)
     if written_at is None:
         raise ValueError(f"`{root}` is inside a context clone, so it syncs nothing.")
@@ -279,8 +317,11 @@ def run_daemon_sync() -> int:
         )
     home = get_user_home().absolute()
     child: subprocess.Popen[bytes] | None = None
+    stop_requested = False
 
     def forward(signum: int, _frame: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
         if child is not None and child.poll() is None:
             child.send_signal(signal.SIGTERM)
 
@@ -290,8 +331,10 @@ def run_daemon_sync() -> int:
             # The daemon detaches from this terminal itself, so a Ctrl-C reaches only us;
             # `forward` turns it into the daemon's SIGTERM.
             child = subprocess.Popen([exe, "run", "--home", str(home), "--no-wait"])
+            if stop_requested:  # the signal came before there was a child to forward it to
+                child.send_signal(signal.SIGTERM)
             code = child.wait()
-            if code != _RESTART_CODE:
+            if code != _RESTART_CODE or stop_requested:
                 return code
     finally:
         for sig, handler in previous.items():
