@@ -778,6 +778,7 @@ dependencies = [
     { name = "markdown-it-py" },
     { name = "mars-agents" },
     { name = "mcp" },
+    { name = "meridian-sync", marker = "sys_platform != 'win32'" },
     { name = "pathspec" },
     { name = "prompt-toolkit" },
     { name = "psutil" },
@@ -824,6 +825,7 @@ requires-dist = [
     { name = "markdown-it-py", specifier = ">=4.0" },
     { name = "mars-agents", specifier = "==0.36.0" },
     { name = "mcp", specifier = ">=1.0" },
+    { name = "meridian-sync", marker = "sys_platform != 'win32'", directory = "crates/meridian-sync" },
     { name = "pathspec", specifier = ">=1.1.0" },
     { name = "prompt-toolkit", specifier = ">=3.0,<4" },
     { name = "psutil", specifier = ">=7.2.2" },
@@ -848,6 +850,10 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.15.11" },
 ]
+
+[[package]]
+name = "meridian-sync"
+source = { directory = "crates/meridian-sync" }
 
 [[package]]
 name = "multidict"

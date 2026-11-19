@@ -9,6 +9,11 @@ uv sync --extra dev
 scripts/setup-hooks.sh
 ```
 
+`uv sync` also builds `crates/meridian-sync` (the `meridian-sync` binary, installed into
+`.venv/bin`), so it needs a Rust toolchain (`rustup`, stable). Each worktree compiles the crate
+into its own `crates/meridian-sync/target/`. A Rust edit is picked up by the next `uv sync` or
+`uv run`.
+
 `setup-hooks` sets `core.hooksPath = .githooks`. Git cannot install hooks on
 clone, so every fresh checkout must run this once.
 

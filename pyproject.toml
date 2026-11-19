@@ -26,6 +26,7 @@ dependencies = [
   "markdown-it-py>=4.0",
   "mars-agents==0.36.0",
   "mcp>=1.0",
+  "meridian-sync==0.23.10; sys_platform != 'win32'",
   "pathspec>=1.1.0",
   "prompt-toolkit>=3.0,<4",
   "psutil>=7.2.2",
@@ -166,3 +167,6 @@ dev = [
 # Copy packages into each venv instead of hardlinking them from the uv cache. Worktrees share
 # that cache, so a hardlinked file (e.g. .venv/bin/mars) overwritten in one venv changes it in all.
 link-mode = "copy"
+
+[tool.uv.sources]
+meridian-sync = { path = "crates/meridian-sync" }

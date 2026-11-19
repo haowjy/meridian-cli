@@ -72,16 +72,10 @@ render() {
 }
 
 write_version() {
-  local version="$1"
-  local file="$ROOT_DIR/src/meridian/__init__.py"
-  local expected="__version__ = \"${version}\""
-  sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${version}\"/" "${file}"
-  # The sed is anchored, so a reformatted line (`__version__ = "0.1.0"  # x`)
-  # leaves it unmatched; the commit and tag would go out and release.yml's
-  # provenance check would fail after the fact, with a released section and a
-  # tag already on main. Prove the bump before committing anything.
-  grep -Fq "${expected}" "${file}" \
-    || die "version bump did not land: ${file} has no '${expected}' line; reformat the version line to exactly '__version__ = \"X.Y.Z\"'"
+  # Writes every location in meridian.dev.versions.LOCATIONS and proves each landed: the
+  # commit and tag must not go out with an old version, which release.yml's provenance
+  # check would only catch after the fact, with a released section and a tag on main.
+  uv run python -m meridian.dev.versions write "$1" || die "version bump did not land (see the error above)"
 }
 
 validate_current_release() {
@@ -209,7 +203,8 @@ main() {
   scripts/preflight.sh full
 
   render "${notes_args[@]}" --version "$version" --date "$today"
-  git add src/meridian/__init__.py CHANGELOG.md
+  mapfile -t version_files < <(uv run python -m meridian.dev.versions paths)
+  git add "${version_files[@]}" CHANGELOG.md
   git commit -m "release: v$version"
   create_tag "$tag"
   [[ "$push" -eq 0 ]] || push_release "$tag"

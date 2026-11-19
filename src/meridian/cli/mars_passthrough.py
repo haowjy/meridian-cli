@@ -15,11 +15,11 @@ from meridian.lib.bundled_skills import WHEEL, provide_bundled_skills, report_pr
 from meridian.lib.catalog.mars_roots import (
     ensure_user_mars_root,
     mars_fallback_args,
+    resolve_mars_executable,
     resolve_mars_roots,
     user_mars_root,
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.ops.mars import resolve_mars_executable
 
 _MUTATING_COMMANDS = frozenset(
     {

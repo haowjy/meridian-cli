@@ -58,9 +58,87 @@ jobs:
 
           echo "Provenance verified for v$TAG_VERSION ($RELEASE_KIND)"
 
+  sync-wheels:
+    name: Build meridian-sync wheel (${{ matrix.target }})
+    needs: [verify-provenance]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      # crates.io downloads intermittently fail with HTTP/2 framing errors; these are
+      # CARGO_*-prefixed, so maturin-action forwards them into the manylinux container.
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_NET_RETRY: "10"
+    strategy:
+      # A leg fails on a flaky runner or network, not on broken code (full preflight gates
+      # the tag), so let the others finish: `gh run rerun --failed` then re-runs one leg
+      # instead of several cancelled ones.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          manylinux: auto
+          working-directory: crates/meridian-sync
+          args: --release --out dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.18"
+
+      - name: Smoke-test the wheel
+        run: uv run --isolated --no-project --with crates/meridian-sync/dist/*.whl meridian-sync version
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-wheel-${{ matrix.target }}
+          path: crates/meridian-sync/dist/*.whl
+
+  sync-sdist:
+    name: Build meridian-sync sdist
+    needs: [verify-provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          working-directory: crates/meridian-sync
+          args: --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-sdist
+          path: crates/meridian-sync/dist/*.tar.gz
+
   build:
     name: Build distributions
-    needs: [verify-provenance]
+    needs: [verify-provenance, sync-wheels, sync-sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,30 +168,51 @@ jobs:
           corepack enable
           cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
+      - name: Download meridian-sync distributions
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sync-*
+          path: dist-sync
+          merge-multiple: true
+
       - name: Build distributions
         run: uv build --no-sources
 
       - name: Verify Pi extensions in distributions
         run: uv run --no-sync python scripts/verify-pi-extension-artifacts.py dist
 
+      # maturin's wheels and hatch's are checked separately: each directory needs a wheel and
+      # an sdist.
       - name: Verify release metadata
-        run: uv run --no-sync python scripts/verify-release-metadata.py dist
+        run: |
+          uv run --no-sync python scripts/verify-release-metadata.py dist-sync
+          uv run --no-sync python scripts/verify-release-metadata.py dist
 
+      # meridian-sync is not on PyPI until the publish job, so the exact pin resolves from
+      # the wheel built above.
       - name: Validate wheel artifact
         run: |
-          uv run --isolated --no-project --with dist/*.whl meridian --version
-          uv run --isolated --no-project --with dist/*.whl meridian doctor
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.whl meridian --version
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.whl meridian doctor
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.whl meridian-sync version
 
       - name: Validate sdist artifact
         run: |
-          uv run --isolated --no-project --with dist/*.tar.gz meridian --version
-          uv run --isolated --no-project --with dist/*.tar.gz meridian doctor
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.tar.gz meridian --version
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.tar.gz meridian doctor
+          uv run --isolated --no-project --find-links dist-sync --with dist/*.tar.gz meridian-sync version
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
+
+      - name: Upload meridian-sync distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: meridian-sync-distributions
+          path: dist-sync/
 
   pypi-publish:
     name: Publish PyPI
@@ -128,7 +227,19 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      - name: Publish to PyPI
+      - uses: actions/download-artifact@v8
+        with:
+          name: meridian-sync-distributions
+          path: dist-sync/
+
+      # meridian-cli pins meridian-sync exactly, so the pin must exist on PyPI first.
+      - name: Publish meridian-sync to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-sync
+          skip-existing: true
+
+      - name: Publish meridian-cli to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
