@@ -435,6 +435,18 @@ def test_work_show_json_contract(
         )
     )
     _seed_work_spawn(runtime_root, project_root)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p3",
+        chat_id="c3",
+        model="claude-sonnet-5-5",
+        agent="implementer",
+        harness="codex",
+        prompt="Still working on sparse JSON.",
+        desc="Sparse JSON running",
+        work_id="sparse-json",
+        task_cwd=project_root.as_posix(),
+    )
 
     payload = _run_json(project_root, env, "work", "show", "sparse-json")
 
@@ -450,8 +462,10 @@ def test_work_show_json_contract(
         "spawn_counts",
         "sessions",
     } <= payload.keys()
-    assert payload["spawns"] == []
-    assert payload["spawn_counts"] == {"succeeded": 1}
+    assert len(payload["spawns"]) == 1
+    assert set(payload["spawns"][0]) == {"id", "status", "model", "desc"}
+    assert payload["spawns"][0]["status"] == "running"
+    assert payload["spawn_counts"] == {"running": 1, "succeeded": 1}
     assert {"worktree_path", "worktree_exists", "worktree_pending"}.isdisjoint(payload)
     _assert_noisy_keys_absent(payload)
 
