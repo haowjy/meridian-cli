@@ -1027,10 +1027,14 @@ def run_harness_process(
                             exit_code = 1
                         exit_code = primary.complete(
                             exit_code=exit_code,
-                            harness_id=harness_adapter.id,
-                            policy=runtime_context.resolved_request.launch_policy_snapshot,
+                            extraction=primary.extract(
+                                harness_adapter.id,
+                                facts=facts,
+                                policy=runtime_context.resolved_request.launch_policy_snapshot,
+                            )
+                            if primary.launch is not None
+                            else None,
                             started_monotonic=primary_started,
-                            facts=facts,
                             cancellation_observed=cancelled,
                             identity_error=identity_error,
                             launch_failure=launch_failure,

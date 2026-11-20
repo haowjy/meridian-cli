@@ -21,6 +21,10 @@ class DeliveryKind(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     """The harness answered the request that carried the message."""
 
+    QUEUED = "queued"
+    """Held for a harness that pulls: the session reads it at its next model call, which
+    may be never if it ends first. The sender is told then."""
+
 
 class DeliveryError(RuntimeError):
     """A message was not confirmed delivered; it may have arrived unless a subclass says not."""

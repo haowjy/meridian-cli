@@ -28,7 +28,7 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.continue_launch import ContinueHold
-from meridian.lib.launch.extract import enrich_finalize
+from meridian.lib.launch.extract import FinalizeExtraction, enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import (
     NativeRun,
@@ -201,31 +201,41 @@ class PrimaryHold:
             record_identity_failure(prior_error, phase="pre_exec", lifecycle=self.log)
         return None
 
+    def extract(
+        self,
+        harness_id: HarnessId,
+        *,
+        facts: AttemptFacts,
+        policy: LaunchPolicySnapshot | None,
+    ) -> FinalizeExtraction:
+        """Read the harness's report and usage for the outcome; needs a launched harness."""
+        assert self.launch is not None
+        return enrich_finalize(
+            extractor=get_harness_bundle(harness_id).extractor,
+            facts=facts,
+            native_key=self.native_run.entry.complete() if self.native_run else None,
+            launch=self.launch,
+            harness_id=harness_id,
+            policy=policy,
+        )
+
     def complete(
         self,
         *,
         exit_code: int,
-        harness_id: HarnessId,
-        policy: LaunchPolicySnapshot | None,
+        extraction: FinalizeExtraction | None,
         started_monotonic: float,
-        facts: AttemptFacts,
         cancellation_observed: bool,
         identity_error: NativeIdentityError | None,
         launch_failure: str | None,
     ) -> int:
-        """Write the row's outcome, after identity is concluded; return its resolved exit code."""
+        """Write the row's outcome, after identity is concluded; return its resolved exit code.
+
+        ``extraction`` is ``None`` for a session whose harness leaves no report or usage.
+        """
         launch = self.launch
         if launch is None:
             return exit_code
-        native_run = self.native_run
-        extraction = enrich_finalize(
-            extractor=get_harness_bundle(harness_id).extractor,
-            facts=facts,
-            native_key=native_run.entry.complete() if native_run else None,
-            launch=launch,
-            harness_id=harness_id,
-            policy=policy,
-        )
         duration = (
             max(0.0, time.monotonic() - started_monotonic) if started_monotonic > 0.0 else None
         )
@@ -241,12 +251,14 @@ class PrimaryHold:
                     ),
                     cancellation_observed=cancellation_observed,
                     durable_report_completion=(
-                        extraction.durable_report_completion and identity_failure is None
+                        extraction is not None
+                        and extraction.durable_report_completion
+                        and identity_failure is None
                     ),
                 ),
                 origin="launcher",
                 duration_secs=duration,
-                usage=extraction.usage,
+                usage=extraction.usage if extraction is not None else None,
             )
         )
         if not execution_outcome.completion.wrote:
