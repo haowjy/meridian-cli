@@ -307,6 +307,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
             fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
+            sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
             primary_session_runtime_event_surface=(
                 PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM

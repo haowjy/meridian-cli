@@ -119,6 +119,18 @@ logger = structlog.get_logger(__name__)
 PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
 PI_CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET"
 PI_LAUNCH_PROMPT_ENV = "_MERIDIAN_PI_LAUNCH_PROMPT"
+# A nested launch derives its own scope, endpoint and prompt; the managed-bash task that ran
+# this launcher is not its child's.
+_PI_FORBIDDEN_CHILD_ENV = frozenset(
+    {
+        LEGACY_PI_POLICY_ENV,
+        PI_OWED_PARENT_IDS_ENV,
+        PI_CONTROL_SOCKET_ENV,
+        PI_LAUNCH_PROMPT_ENV,
+        "_MERIDIAN_PI_BASH_ID",
+        "_MERIDIAN_PI_BASH_HOLD_DIR",
+    }
+)
 
 
 def _pi_owed_parent_ids(
@@ -254,6 +266,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
             fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             primary_stderr_log=True,
+            forbidden_child_env_keys=_PI_FORBIDDEN_CHILD_ENV,
         )
 
     @property

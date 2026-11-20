@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from meridian.lib.core.types import HarnessId, TransportId
+from meridian.lib.core.types import TransportId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
@@ -41,7 +41,7 @@ async def dispatch_start(
     async def _runtime_event_sink(event: RawHarnessEvent) -> None:
         await connection_ref["connection"].inject_runtime_event(event)
 
-    if config.harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
+    if bundle.adapter.contract.sends_server_requests:
         request_handler = PermissionBroker(
             launch=config.launch,
             event_sink=_runtime_event_sink,
@@ -51,14 +51,8 @@ async def dispatch_start(
 
     connection: HarnessConnection[Any]
     if request_handler is not None:
-        connection_factory = cast(
-            "Callable[..., HarnessConnection[Any]]",
-            connection_class,
-        )
-        try:
-            connection = connection_factory(request_handler=request_handler)
-        except TypeError:
-            connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
+        connection_factory = cast("Callable[..., HarnessConnection[Any]]", connection_class)
+        connection = connection_factory(request_handler=request_handler)
     else:
         connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
 

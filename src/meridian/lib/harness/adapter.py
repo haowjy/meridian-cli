@@ -131,6 +131,15 @@ class HarnessContract(BaseModel):
     primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
         PrimaryRuntimeEventSurface.NONE
     )
+    #: Whether the harness sends requests to Meridian over its server connection
+    #: (approvals and the like), so a headless spawn needs a ``PermissionBroker``.
+    #: Static: ``supports_runtime_hitl`` only exists once the connection does.
+    sends_server_requests: bool = False
+    #: Environment names (case-insensitive) no child inherits, whichever harness the
+    #: child runs: the parent's own scope or secrets, not the child's to receive.
+    forbidden_child_env_keys: frozenset[str] = frozenset()
+    #: Same, for every name starting with one of these (case-insensitive).
+    forbidden_child_env_prefixes: tuple[str, ...] = ()
 
 
 class SpawnUsageContractVariants(BaseModel):

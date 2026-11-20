@@ -344,6 +344,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
             fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             primary_attach_failure_policy="fallback_to_blackbox",
+            sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
             primary_session_runtime_event_surface=(
                 PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM

@@ -10,6 +10,7 @@ from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.connections.base import PiSessionRole
+from meridian.lib.harness.registry import get_default_harness_registry
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 
@@ -101,11 +102,17 @@ def inherit_child_env(
     blocked: Collection[str] = BLOCKED_CHILD_ENV_VARS,
 ) -> dict[str, str]:
 
+    contracts = get_default_harness_registry().contracts().values()
     blocked_keys = {name.upper() for name in blocked}
+    blocked_keys.update(key.upper() for c in contracts for key in c.forbidden_child_env_keys)
+    blocked_prefixes = (
+        "MERIDIAN_SECRET_",
+        *(prefix.upper() for c in contracts for prefix in c.forbidden_child_env_prefixes),
+    )
     inherited = {
         key: value
         for key, value in base_env.items()
-        if key.upper() not in blocked_keys and not key.upper().startswith("MERIDIAN_SECRET_")
+        if key.upper() not in blocked_keys and not key.upper().startswith(blocked_prefixes)
     }
     if env_overrides is not None:
         inherited.update(env_overrides)
