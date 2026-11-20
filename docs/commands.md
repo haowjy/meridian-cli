@@ -17,6 +17,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn list --work SLUG\|current --view all` | Show every spawn of one work item, finished ones included |
 | `meridian spawn subagents` | List the agents in the calling agent's `subagents:` list, with descriptions and routing markers |
 | `meridian spawn subagents --all` | List every installed agent, including `model-invocable: false` ones and those outside the caller's list |
 | `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
@@ -107,6 +108,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
+| `--work SLUG\|current` | `spawn list` only: include only spawns of that work item; a primary counts only while active. Composes with the other filters |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
 | `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; harness support differs |
 | `--network MODE` | `allow` \| `deny` \| `allowlist`. Overrides the profile mode for this launch; shell network only |
@@ -293,7 +295,7 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
-| `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
+| `meridian work show [SLUG]` | Show one work item, its directory, its active spawns, and a count of finished ones with the `spawn list --work` command that lists them (default: this session's active work item) |
 | `meridian work switch SLUG\|current` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
 | `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |

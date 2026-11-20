@@ -67,6 +67,8 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.work_attachment import resolve_current_work_alias
+from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.idle_store import IdleStore
@@ -753,6 +755,16 @@ def spawn_list_sync(
         return SpawnListOutput(spawns=())
     spawns = list(reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)))
 
+    work_id = resolve_current_work_alias(
+        payload.work,
+        usage="meridian spawn list --work",
+        project_root=_project_root,
+        runtime_root=runtime_root,
+    )
+    if work_id is not None:
+        active_work_ids = active_session_work_ids(runtime_root)
+        spawns = [row for row in spawns if spawn_work_id(row, active_work_ids) == work_id]
+
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
     show_all = payload.statuses == ()
@@ -1249,37 +1261,6 @@ def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutp
     )
 
 
-def _normalize_work_filter(work: str | None) -> str | None:
-    normalized = (work or "").strip()
-    return normalized or None
-
-
-def _spawn_matches_work_item(
-    spawn: SpawnRecord,
-    *,
-    runtime_root: Path,
-    work_id: str,
-    active_session_work_ids: dict[str, str] | None = None,
-) -> bool:
-    normalized_work_id = work_id.strip()
-    if not normalized_work_id:
-        return False
-    if spawn.kind == "primary":
-        if active_session_work_ids is None:
-            active_session_work_ids = {
-                record.chat_id: record.active_work_id
-                for record in session_store.list_active_session_records(runtime_root)
-                if record.active_work_id is not None and record.active_work_id.strip()
-            }
-        chat_id = (spawn.chat_id or "").strip()
-        return (
-            bool(chat_id)
-            and is_active_spawn_status(spawn.status)
-            and active_session_work_ids.get(chat_id) == normalized_work_id
-        )
-    return (spawn.work_id or "").strip() == normalized_work_id
-
-
 def _row_in_cancel_scope(
     row: SpawnRecord,
     *,
@@ -1560,7 +1541,7 @@ def spawn_cancel_all_sync(
     else:
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
-    work_id = _normalize_work_filter(payload.work)
+    work_id = (payload.work or "").strip() or None
     caller_chat_id = (resolved_context.chat_id or "").strip() or None
     caller_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
     # Descendant-scope doesn't need chat_id; only raise when we have neither anchor.
@@ -1571,14 +1552,7 @@ def spawn_cancel_all_sync(
         )
 
     stored_rows = indexed_spawn_scan(runtime_root).records
-    if work_id is not None:
-        active_session_work_ids: dict[str, str] | None = {
-            str(record.chat_id): record.active_work_id
-            for record in session_store.list_active_session_records(runtime_root)
-            if record.active_work_id is not None and record.active_work_id.strip()
-        }
-    else:
-        active_session_work_ids = None
+    active_work_ids = active_session_work_ids(runtime_root) if work_id is not None else {}
 
     # When called from a nested spawn, scope to that spawn's descendants only.
     # When called from a primary/root context, scope to the full chat.
@@ -1591,15 +1565,7 @@ def spawn_cancel_all_sync(
         row
         for row in stored_rows
         if row.status in ACTIVE_SPAWN_STATUSES
-        and (
-            work_id is None
-            or _spawn_matches_work_item(
-                row,
-                runtime_root=runtime_root,
-                work_id=work_id,
-                active_session_work_ids=active_session_work_ids,
-            )
-        )
+        and (work_id is None or spawn_work_id(row, active_work_ids) == work_id)
         and (payload.include_primaries or (row.kind or "").strip() != "primary")
         and _row_in_cancel_scope(
             row,

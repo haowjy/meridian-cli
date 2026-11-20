@@ -447,9 +447,11 @@ def test_work_show_json_contract(
         "work_dir",
         "task_dir",
         "spawns",
+        "spawn_counts",
         "sessions",
     } <= payload.keys()
-    assert set(payload["spawns"][0]) == {"id", "status", "model", "desc"}
+    assert payload["spawns"] == []
+    assert payload["spawn_counts"] == {"succeeded": 1}
     assert {"worktree_path", "worktree_exists", "worktree_pending"}.isdisjoint(payload)
     _assert_noisy_keys_absent(payload)
 

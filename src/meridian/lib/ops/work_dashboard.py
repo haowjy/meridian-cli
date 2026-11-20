@@ -11,6 +11,7 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.work_attachment import resolve_work_id_argument
+from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id
 from meridian.lib.ops.work_sessions import work_session_chat_ids
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -111,45 +112,6 @@ def _format_session_rows(sessions: tuple[WorkSessionItem, ...], *, indent: str) 
         ]
     )
     return [f"{indent}{line}" for line in tabular(rows).splitlines()]
-
-
-def _active_session_work_ids(runtime_root: Path) -> dict[str, str]:
-    attached: dict[str, str] = {}
-    for record in session_store.list_active_session_records(runtime_root):
-        active_work_id = record.active_work_id
-        if active_work_id:
-            attached[record.chat_id] = active_work_id
-    return attached
-
-
-def _effective_work_id(
-    spawn: SpawnRecord,
-    *,
-    active_session_work_ids: dict[str, str],
-) -> str | None:
-    if spawn.kind == "primary":
-        chat_id = (spawn.chat_id or "").strip()
-        if not chat_id:
-            return None
-        return active_session_work_ids.get(chat_id)
-    normalized = (spawn.work_id or "").strip()
-    return normalized or None
-
-
-def _associated_with_work_item(
-    spawn: SpawnRecord,
-    *,
-    work_id: str,
-    active_session_work_ids: dict[str, str],
-) -> bool:
-    if spawn.kind == "primary":
-        chat_id = (spawn.chat_id or "").strip()
-        return (
-            bool(chat_id)
-            and is_active_spawn_status(spawn.status)
-            and active_session_work_ids.get(chat_id) == work_id
-        )
-    return (spawn.work_id or "").strip() == work_id
 
 
 def work_dir_display(project_root: Path, project_state_dir: Path, work_id: str) -> str:
@@ -295,7 +257,8 @@ class WorkShowOutput(BaseModel):
     created_at: str
     work_dir: str
     task_dir: str | None = None
-    spawns: tuple[WorkDashboardSpawn, ...] = ()
+    spawns: tuple[WorkDashboardSpawn, ...] = ()  # active spawns only
+    spawn_counts: dict[str, int] = {}  # every associated spawn, by status
     sessions: tuple[WorkSessionItem, ...] = ()
     worktree_path: str | None = None  # full absolute path; None = no worktree
     worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
@@ -318,6 +281,7 @@ class WorkShowOutput(BaseModel):
                 }
                 for spawn in self.spawns
             ],
+            "spawn_counts": self.spawn_counts,
             "sessions": [
                 {
                     "chat_id": session.chat_id,
@@ -362,10 +326,25 @@ class WorkShowOutput(BaseModel):
         kv_rows.append(("Task dir", self.task_dir or "(project root)"))
 
         lines = [kv_block(kv_rows)]
-        if self.spawns:
+        finished = {
+            status: count
+            for status, count in self.spawn_counts.items()
+            if not is_active_spawn_status(status)
+        }
+        if self.spawns or finished:
             lines.append("")
-            lines.append("Spawns:")
-            lines.extend(_format_spawn_rows(self.spawns, indent="  "))
+            lines.append("Active spawns:")
+            if self.spawns:
+                lines.extend(_format_spawn_rows(self.spawns, indent="  "))
+            else:
+                lines.append("  (no active spawns)")
+            if finished:
+                breakdown = ", ".join(f"{count} {status}" for status, count in finished.items())
+                lines.append(
+                    f"  {sum(finished.values())} finished ({breakdown}): "
+                    f"meridian spawn list --work {self.name} --view all "
+                    f"--limit {sum(finished.values())}"
+                )
         lines.append("")
         lines.append("Sessions:")
         lines.extend(_format_session_rows(self.sessions, indent="  "))
@@ -444,7 +423,7 @@ def work_dashboard_sync(
     runtime_state_root = roots.runtime_root
     work_items, work_warnings = work_store.list_work_items(project_state_dir)
     items_by_name = {item.name: item for item in work_items}
-    active_session_work_ids = _active_session_work_ids(runtime_state_root)
+    active_work_ids = active_session_work_ids(runtime_state_root)
     grouped: dict[str, list[WorkDashboardSpawn]] = {}
     ungrouped: list[WorkDashboardSpawn] = []
 
@@ -455,7 +434,7 @@ def work_dashboard_sync(
         if not is_active_spawn_status(spawn.status):
             continue
         row = _dashboard_spawn(spawn)
-        work_id = _effective_work_id(spawn, active_session_work_ids=active_session_work_ids)
+        work_id = spawn_work_id(spawn, active_work_ids)
         if work_id:
             grouped.setdefault(work_id, []).append(row)
         else:
@@ -556,20 +535,19 @@ def work_show_sync(
     if item is None:
         raise ValueError(f"Work item '{resolved_work_id}' not found")
 
-    active_session_work_ids = _active_session_work_ids(runtime_state_root)
-    associated_spawns = [
-        _dashboard_spawn(spawn)
-        for spawn in overlay_derived(
-            runtime_state_root,
-            indexed_spawn_scan(runtime_state_root).records,
-        )
-        if _associated_with_work_item(
-            spawn,
-            work_id=item.name,
-            active_session_work_ids=active_session_work_ids,
-        )
-    ]
-    associated_spawns.sort(key=lambda spawn: _spawn_id_sort_key(spawn.id))
+    active_work_ids = active_session_work_ids(runtime_state_root)
+    active_spawns: list[WorkDashboardSpawn] = []
+    spawn_counts: dict[str, int] = {}
+    for spawn in overlay_derived(
+        runtime_state_root,
+        indexed_spawn_scan(runtime_state_root).records,
+    ):
+        if spawn_work_id(spawn, active_work_ids) != item.name:
+            continue
+        spawn_counts[spawn.status] = spawn_counts.get(spawn.status, 0) + 1
+        if is_active_spawn_status(spawn.status):
+            active_spawns.append(_dashboard_spawn(spawn))
+    active_spawns.sort(key=lambda spawn: _spawn_id_sort_key(spawn.id))
 
     wt_path = item.worktree_path
     wt_exists: bool | None = None
@@ -584,7 +562,8 @@ def work_show_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         task_dir=item.task_dir,
-        spawns=tuple(associated_spawns),
+        spawns=tuple(active_spawns),
+        spawn_counts=dict(sorted(spawn_counts.items())),
         sessions=_work_sessions_for_work_id(
             project_root,
             runtime_state_root,
