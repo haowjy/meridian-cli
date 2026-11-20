@@ -35,6 +35,11 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import (
+    CaptureObserver,
+    OpenCodeObserver,
+    OpenCodeV2Observer,
+)
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -107,14 +112,20 @@ from meridian.lib.launch.composition import (
     render_system_instruction_blocks,
     render_task_context,
 )
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_OPENCODE_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_OPENCODE,
-)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
+
+_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
+
+
+def _opencode_db_is_v2(path: Path | None) -> bool:
+    try:
+        return detect_opencode_db_schema(path) == "sqlite_v2"
+    except (OSError, sqlite3.Error):
+        return False
+
 
 # Older OpenCode installs emit this log shape; current installs store session
 # metadata in opencode.db.
@@ -300,8 +311,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
     tui_recovers_directory: ClassVar[bool] = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = ("opencode", "run")
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("opencode",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -507,6 +518,15 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             return SessionSeed()
         # Resume and fork both seed from an existing harness session id.
         return SessionSeed(session_id=normalized_harness_session_id)
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        if kind == "opencode_db" and _opencode_db_is_v2(path):
+            return _OPENCODE_V2_DIALECT
+        return "opencode.transcript.v1"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id
+        return OpenCodeV2Observer() if dialect == _OPENCODE_V2_DIALECT else OpenCodeObserver()
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"

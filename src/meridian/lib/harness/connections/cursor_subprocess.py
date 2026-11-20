@@ -28,13 +28,21 @@ from meridian.lib.harness.connections.managed_stdio import (
     launch_managed_stdio,
 )
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
-from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 
 _HARNESS_NAME: Final[str] = HarnessId.CURSOR.value
+BASE_COMMAND_CURSOR_SUBPROCESS: Final[tuple[str, ...]] = (
+    "cursor",
+    "agent",
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--trust",
+)
+CURSOR_INACTIVITY_TIMEOUT_SECONDS: Final[float] = 300.0
 _PROCESS_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
 _CREATE_CHAT_TIMEOUT_SECONDS: Final[float] = 30.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB — match claude_ws.py

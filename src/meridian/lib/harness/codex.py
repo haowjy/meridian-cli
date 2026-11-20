@@ -26,6 +26,7 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, CodexObserver
 from meridian.lib.harness.codex_idle import (
     CODEX_NATIVE_IDLE_HOOK,
     primary_idle_sensor,
@@ -80,10 +81,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
     render_system_instruction_blocks,
     render_task_context,
-)
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CODEX_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_CODEX,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -264,8 +261,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     refused_identity_flags = frozenset(["--session-id", "--resume", "--fork"])
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = ("codex", "exec", "--json")
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("codex",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "model",
@@ -349,6 +346,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
         child_env["CODEX_HOME"] = str(Path(store).parent)
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "codex.rollout"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id, dialect
+        return CodexObserver()
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return find_rollout(native_store, session_id)

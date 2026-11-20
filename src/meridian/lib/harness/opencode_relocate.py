@@ -35,7 +35,9 @@ from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
 from meridian.lib.harness.connections.opencode_http import find_free_port
 from meridian.lib.harness.opencode_transcript import connect_readonly
-from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
+from meridian.lib.harness.projections.project_opencode_streaming import (
+    BASE_COMMAND_OPENCODE_STREAMING,
+)
 
 _SERVE_READY_SECONDS = 30.0
 _MOVE_APPLIED_SECONDS = 15.0

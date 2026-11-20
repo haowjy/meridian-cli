@@ -12,6 +12,7 @@ from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.native_witness import Witness, file_witness
 from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
 from meridian.lib.harness.pi_journal import project_pi_reopen_default
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.transcript import (
     INJECTED_ROLE,
     ToolCall,
@@ -454,7 +455,10 @@ def parse_session_target(
 ) -> ParsedSessionTranscript:
     read = native_read or read_native_source(target.source, budget=budget)
     try:
-        parsed = parse_transcript_events_with_prologues(read.events)
+        adapter = get_default_harness_registry().find(target.source.harness)
+        parsed = parse_transcript_events_with_prologues(
+            read.events, parser=adapter.transcript_parser() if adapter else None
+        )
     finally:
         read.events.close()
 

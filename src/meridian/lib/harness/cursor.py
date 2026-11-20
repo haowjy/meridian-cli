@@ -18,7 +18,10 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
+from meridian.lib.harness.connections.cursor_subprocess import (
+    BASE_COMMAND_CURSOR_SUBPROCESS,
+    CursorSubprocessConnection,
+)
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.harness.projections.permissions_cursor import (
     compile_cursor_permissions,
@@ -33,7 +36,6 @@ from meridian.lib.harness.semantics import (
     connection_closed_outcome,
     stringify_terminal_error,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
