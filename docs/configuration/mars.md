@@ -76,8 +76,7 @@ include_fanout = false          # default false: skip fan-out (sub-delegate) age
 ```
 
 Each listed harness must also have an effective managed target (for Claude,
-`.claude`, from `settings.targets` or legacy `managed_root` when `targets` is
-unset). Mars then materializes only qualifying agents for that harness;
+`.claude`, from `settings.targets`). Mars then materializes only qualifying agents for that harness;
 `.mars/agents/` remains the canonical Meridian spawn source.
 `agent_emission = "always"` is broader and emits all native agent copies.
 
