@@ -20,6 +20,8 @@ from meridian.lib.config.workspace import (
     resolve_workspace_snapshot,
 )
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import HarnessContract, WorkspaceRoots
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.workspace_projection import (
     WorkspaceApplicability,
     project_workspace_roots,
@@ -49,6 +51,13 @@ class ConfigSurfaceWorkspaceRootDetail(BaseModel):
     status: str
 
 
+def _contracts_in_id_order() -> tuple[tuple[HarnessId, HarnessContract], ...]:
+    contracts = get_default_harness_registry().contracts()
+    return tuple(
+        (harness_id, contracts[harness_id]) for harness_id in HarnessId if harness_id in contracts
+    )
+
+
 class ConfigSurfaceWorkspace(BaseModel):
     """Minimal workspace summary payload used by `config show`."""
 
@@ -72,18 +81,12 @@ class ConfigSurfaceWorkspace(BaseModel):
                 skipped=snapshot.roots_count - len(projectable_roots),
             ),
             applicability={
-                HarnessId.CLAUDE.value: project_workspace_roots(
-                    harness_id=HarnessId.CLAUDE,
+                harness_id.value: project_workspace_roots(
+                    support=contract.workspace_roots,
                     roots=projectable_roots,
-                ).applicability,
-                HarnessId.CODEX.value: project_workspace_roots(
-                    harness_id=HarnessId.CODEX,
-                    roots=projectable_roots,
-                ).applicability,
-                HarnessId.OPENCODE.value: project_workspace_roots(
-                    harness_id=HarnessId.OPENCODE,
-                    roots=projectable_roots,
-                ).applicability,
+                ).applicability
+                for harness_id, contract in _contracts_in_id_order()
+                if contract.workspace_roots is not WorkspaceRoots.NONE
             },
             roots_detail=tuple(
                 ConfigSurfaceWorkspaceRootDetail(

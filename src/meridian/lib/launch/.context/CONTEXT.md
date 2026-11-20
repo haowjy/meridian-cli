@@ -19,6 +19,49 @@ An initial owned observation conflicting with the assignment or fork source fail
 attempt; later IDs are diagnostic. Only a verified exit chat replaces the entry chat
 for spawn references and resume hints.
 
+## Pre-exec session
+
+`launch/pre_exec_session.py:create_session_before_exec` is the one place a native session
+is created before the harness execs. The runner decides the operation from `session_mode`
+and passes the adapter one `PreExecSessionRequest`: a fresh primary launch is `create`, a
+`FORK` is `fork` with its source ID, and a `RESUME` (including `--continue` and a reopened
+hold) never calls the port. A spawn calls it only for a fork, because a spawn's connection
+creates its own fresh session. The adapter's port returns the native ID, or `None` to
+leave creation to the harness (every adapter but Codex fork). The request also holds the
+prepared surface (projected content with the composed system instruction, model
+selection, request with its MCP servers; `None` for a background worker's spawn fork,
+which composes it after the fork), the execution cwd, and the base child environment
+through `inherit_child_env`. That is not the bound launch environment: the port runs
+before `bind_launch_context`, because binding needs the created ID.
+
+The created ID travels as `RuntimeBindings.precreated` (`PrecreatedSession`: ID plus
+operation) into `plan_native_identity`, so a created session plans as `create` and a
+forked one as `fork`. Either launches by continuing the existing session
+(`continue_fork` is false in the spec). None of these names is persisted.
+
+Guarantees, which a new implementation keeps:
+
+- The spawn row is written first. The ID is recorded on the row with one atomic
+  `update_spawn` as soon as the session exists, so a launch killed before exec leaves a
+  row that names it. Meridian does not hunt the session; startup recovery marks the spawn
+  crashed as for any killed launch.
+- A cancel already recorded for the launch (`cancel.json`) stops it before the port runs.
+  A signal arriving while the port runs is the launch's ordinary cancel path: nothing
+  masks signals there, so SIGINT raises and SIGTERM ends the process.
+- A failure propagates inside the launch's own try block and fails the launch, so the
+  spawn finalizes as failed with the exception's message as its error. Nothing is
+  retried, and the port cleans up its own partial writes (Codex removes an unregistered
+  rollout).
+- A SIGINT between create and exec is the launch's ordinary cancel path; the session
+  stays in the native store, recorded on the row.
+
+`HarnessPrelaunchState.route_payload` is where an adapter hands the primary's message
+route in-memory facts (a per-launch secret). `prepare_prelaunch` owns it, not the port,
+because the secret must also enter the child env in `env_overrides`, and prelaunch already
+holds the created ID as `resolved_harness_session_id`. The route factory runs in a thread
+of the launching process, so the payload never touches disk. Only the blackbox primary
+path serves a route this way; a managed-attach primary binds its connection's route.
+
 ## Exact continue
 
 Primary and spawn continue retain the spawn ID and replay the source task directory,

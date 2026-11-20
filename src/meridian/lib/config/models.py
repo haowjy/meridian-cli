@@ -27,7 +27,6 @@ from meridian.lib.core.overrides import (
 from meridian.lib.utils.json_shapes import is_json_object
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
-_HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
 ADHOC_STALE_RETENTION_DAYS = 7
 
 
@@ -694,8 +693,6 @@ class MeridianConfig(ConfigModel):
     def harness_profile(self, harness_id: str | None) -> HarnessProfileConfig | None:
 
         normalized = (harness_id or "").strip().lower()
-        if normalized not in _HARNESS_TABLE_KEYS:
-            return None
         profile = getattr(self.harness, normalized, None)
         if not isinstance(profile, HarnessProfileConfig):
             return None

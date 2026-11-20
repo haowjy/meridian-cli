@@ -15,6 +15,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeKey,
     NativeKeyFields,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     Operation,
 )
@@ -22,18 +23,23 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     NativeRelocation,
     NativeRelocationResult,
     SpawnParams,
+    WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
+)
+from meridian.lib.harness.capture_qualify import (
+    CaptureObserver,
+    OpenCodeObserver,
+    OpenCodeV2Observer,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -44,6 +50,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
+from meridian.lib.harness.legacy_native_stores import opencode_session_evidence
 from meridian.lib.harness.opencode_backend import (
     OPENCODE_VERSION_ENV,
     bound_opencode_version,
@@ -68,6 +75,9 @@ from meridian.lib.harness.opencode_transcript import (
     detect_opencode_db_schema,
     opencode_db_any_session_exists,
     resolve_opencode_db_path,
+)
+from meridian.lib.harness.opencode_transcript import (
+    read_last_model as read_opencode_last_model,
 )
 from meridian.lib.harness.passthrough.opencode import (
     build_opencode_attach_command,
@@ -107,14 +117,20 @@ from meridian.lib.launch.composition import (
     render_system_instruction_blocks,
     render_task_context,
 )
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_OPENCODE_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_OPENCODE,
-)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
+
+_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
+
+
+def _opencode_db_is_v2(path: Path | None) -> bool:
+    try:
+        return detect_opencode_db_schema(path) == "sqlite_v2"
+    except (OSError, sqlite3.Error):
+        return False
+
 
 # Older OpenCode installs emit this log shape; current installs store session
 # metadata in opencode.db.
@@ -300,8 +316,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
     tui_recovers_directory: ClassVar[bool] = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = ("opencode", "run")
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("opencode",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -342,8 +358,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+            workspace_roots=WorkspaceRoots.ENV,
             primary_attach_failure_policy="fallback_to_blackbox",
+            sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
             primary_session_runtime_event_surface=(
                 PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
@@ -508,6 +525,15 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Resume and fork both seed from an existing harness session id.
         return SessionSeed(session_id=normalized_harness_session_id)
 
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        if kind == "opencode_db" and _opencode_db_is_v2(path):
+            return _OPENCODE_V2_DIALECT
+        return "opencode.transcript.v1"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id
+        return OpenCodeV2Observer() if dialect == _OPENCODE_V2_DIALECT else OpenCodeObserver()
+
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
 
@@ -531,6 +557,17 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
             else None
         )
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = tail_bytes
+        return read_opencode_last_model(session_id, launch_env={"OPENCODE_DB": str(native)})
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        return opencode_session_evidence(path, recorded_session_id)
 
     def resolve_session_file(
         self,

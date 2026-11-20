@@ -193,6 +193,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         native_run=_native_run(tmp_path),
         run_primary_process_with_capture_fn=_black_box,
         usage_seed=None,
+        route_payload=None,
         run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("subprocess_only contract should bypass managed attach")
         ),
@@ -266,6 +267,7 @@ def test_contract_attach_fallback_does_not_reuse_stale_launcher_diagnostics(
         native_run=_native_run(tmp_path),
         run_primary_process_with_capture_fn=_black_box,
         usage_seed=None,
+        route_payload=None,
         run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
             PrimaryAttachError("fallback please")
         ),

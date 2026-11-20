@@ -159,7 +159,8 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             return None
 
     class FakeConnection:
-        def __init__(self) -> None:
+        def __init__(self, request_handler: object | None = None) -> None:
+            _ = request_handler
             self._spawn_id = SpawnId("")
             self.state = "created"
             self.capabilities = ConnectionCapabilities(
@@ -488,7 +489,8 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             return None
 
     class FakeConnection:
-        def __init__(self) -> None:
+        def __init__(self, request_handler: object | None = None) -> None:
+            _ = request_handler
             self._spawn_id = SpawnId("")
             self.state = "created"
             self.inject_started = asyncio.Event()

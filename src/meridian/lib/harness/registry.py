@@ -51,6 +51,13 @@ class HarnessRegistry(BaseModel):
             raise KeyError(f"Unknown harness '{harness_id}'")
         return self._adapters[harness_id]
 
+    def find(self, name: str | None) -> HarnessEntry | None:
+        """The adapter for a harness name read from stored data; None when unknown."""
+        try:
+            return self._adapters.get(HarnessId(name or ""))
+        except ValueError:
+            return None
+
     def get_subprocess_harness(self, harness_id: HarnessId) -> SubprocessHarness:
         return self.get(harness_id)
 

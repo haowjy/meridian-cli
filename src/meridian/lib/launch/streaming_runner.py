@@ -35,6 +35,7 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.cursor_subprocess import CURSOR_INACTIVITY_TIMEOUT_SECONDS
 from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
@@ -45,7 +46,6 @@ from meridian.lib.launch.artifact_io import (
     append_runner_lifecycle_event as _append_runner_lifecycle_event,
 )
 from meridian.lib.launch.constants import (
-    CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,

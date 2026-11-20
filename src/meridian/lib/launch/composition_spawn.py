@@ -72,8 +72,7 @@ def bind_spawn_launch_context(
         launch=bindings.launch,
         runtime_work_id=bindings.runtime_work_id,
         chat_id=bindings.chat_id,
-        forked_harness_session_id=bindings.forked_harness_session_id,
-        continue_fork_override=bindings.continue_fork_override,
+        precreated=bindings.precreated,
         plan_overrides=dict(plan_overrides or bindings.plan_overrides),
         dry_run=bindings.dry_run,
     )

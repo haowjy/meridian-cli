@@ -59,7 +59,7 @@ def _resolve_session_continuation(
                     resolved_continue_fork = False
 
     # Fork materialization is deferred to the calling executor, which
-    # calls materialize_fork() via the sole owner in launch/fork.py, after both
+    # calls create_session_before_exec() (launch/pre_exec_session.py), after both
     # the spawn row and chat row exist.  resolved_continue_fork=True is preserved
     # here so the executor knows a fork is needed.
 

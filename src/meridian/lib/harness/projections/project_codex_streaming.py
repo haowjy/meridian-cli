@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Final
 
 from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
@@ -21,10 +22,11 @@ from meridian.lib.harness.projections.project_codex_common import (
     project_codex_sandbox,
     project_codex_tool_switch_flags,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
+
+BASE_COMMAND_CODEX_STREAMING: Final[tuple[str, ...]] = ("codex", "app-server")
 
 _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {

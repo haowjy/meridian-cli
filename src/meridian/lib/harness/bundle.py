@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
@@ -103,8 +103,18 @@ EventSinks = Callable[[LaunchPaths], tuple[Callable[[RawHarnessEvent], None], ..
 PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
 
 
-PrimaryMessageRoute = Callable[[LaunchPaths, int], MessageRoute | None]
-"""Route to the primary harness process *pid*, or ``None`` while it has none to offer."""
+@dataclass(frozen=True)
+class PrimaryRouteContext:
+    """What the launching process knows when it asks a bundle for a primary's route."""
+
+    launch: LaunchPaths
+    pid: int
+    # The adapter's ``HarnessPrelaunchState.route_payload``: in-memory, this process only.
+    payload: object | None = field(default=None, repr=False)
+
+
+PrimaryMessageRoute = Callable[[PrimaryRouteContext], MessageRoute | None]
+"""Route to the primary harness process, or ``None`` while it has none to offer."""
 
 
 def _no_event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], None], ...]:

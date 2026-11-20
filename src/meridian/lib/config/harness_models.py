@@ -11,8 +11,6 @@ from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.config.schema import ValueKind, config_field
 from meridian.lib.utils.json_shapes import json_list
 
-_HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
-
 
 def _is_object_tuple(value: object) -> TypeIs[tuple[object, ...]]:
     return isinstance(value, tuple)
@@ -72,14 +70,11 @@ def harness_idle_model(
     defaults: Mapping[str, object] | None = None,
 ) -> type[HarnessIdleConfig]:
 
-    normalized = harness_id.strip().lower()
-    if normalized not in _HARNESS_TABLE_KEYS:
-        raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
     resolved_defaults = dict(defaults or {})
     unknown_defaults = resolved_defaults.keys() - HarnessIdleConfig.model_fields.keys()
     if unknown_defaults:
         names = ", ".join(sorted(unknown_defaults))
-        raise ValueError(f"Unsupported idle defaults for {normalized}: {names}.")
+        raise ValueError(f"Unsupported idle defaults for {harness_id}: {names}.")
 
     fields: dict[str, Any] = {}
     value_kinds: dict[str, ValueKind] = {
@@ -91,10 +86,10 @@ def harness_idle_model(
     }
     for field_name, model_field in HarnessIdleConfig.model_fields.items():
         option = config_field(
-            f"harness.{normalized}.idle.{field_name}",
+            f"harness.{harness_id}.idle.{field_name}",
             value_kind=value_kinds[field_name],
-            file_aliases=(file_alias(("harness", normalized, "idle"), field_name),),
-            env_vars=(f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",),
+            file_aliases=(file_alias(("harness", harness_id, "idle"), field_name),),
+            env_vars=(f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{harness_id.upper()}",),
         )
         annotation = Annotated[(model_field.annotation, *model_field.metadata, option)]
         fields[field_name] = (
@@ -102,7 +97,7 @@ def harness_idle_model(
             resolved_defaults.get(field_name, model_field.default),
         )
 
-    display_name = "OpenCode" if normalized == "opencode" else normalized.title()
+    display_name = "OpenCode" if harness_id == "opencode" else harness_id.title()
     return create_model(
         f"{display_name}HarnessIdleConfig",
         __base__=HarnessIdleConfig,
@@ -188,44 +183,40 @@ def harness_profile_model(
     idle_defaults: Mapping[str, object] | None = None,
 ) -> type[HarnessProfileConfig]:
 
-    normalized = harness_id.strip().lower()
-    if normalized not in _HARNESS_TABLE_KEYS:
-        raise ValueError(f"Unsupported harness ID for profile config: {harness_id!r}.")
-
-    idle_model = harness_idle_model(normalized, defaults=idle_defaults)
+    idle_model = harness_idle_model(harness_id, defaults=idle_defaults)
     fields: dict[str, Any] = {
         "idle": (idle_model, Field(default_factory=idle_model)),
         "wait_yield_seconds": (
             Annotated[
                 float | None,
                 config_field(
-                    f"harness.{normalized}.wait_yield_seconds",
+                    f"harness.{harness_id}.wait_yield_seconds",
                     value_kind="float",
-                    file_aliases=(file_alias(("harness", normalized), "wait_yield_seconds"),),
-                    env_vars=(f"MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_{normalized.upper()}",),
+                    file_aliases=(file_alias(("harness", harness_id), "wait_yield_seconds"),),
+                    env_vars=(f"MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_{harness_id.upper()}",),
                 ),
             ],
             None,
         ),
     }
-    if normalized != "pi":
+    if harness_id != "pi":
         fields["model"] = (
             Annotated[
                 str,
                 config_field(
-                    f"harness.{normalized}",
+                    f"harness.{harness_id}",
                     value_kind="str",
                     file_aliases=(
-                        file_alias(("harness", normalized), "model"),
-                        file_alias("harness", normalized),
+                        file_alias(("harness", harness_id), "model"),
+                        file_alias("harness", harness_id),
                     ),
-                    env_vars=(f"MERIDIAN_HARNESS_MODEL_{normalized.upper()}",),
+                    env_vars=(f"MERIDIAN_HARNESS_MODEL_{harness_id.upper()}",),
                 ),
             ],
             model_default,
         )
 
-    display_name = "OpenCode" if normalized == "opencode" else normalized.title()
+    display_name = "OpenCode" if harness_id == "opencode" else harness_id.title()
     return create_model(
         f"{display_name}HarnessProfileConfig",
         __base__=base,

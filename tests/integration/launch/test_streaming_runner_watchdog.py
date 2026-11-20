@@ -219,7 +219,8 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
         async def join_teardown(self, spawn_id):
             pass
 
-        def __init__(self) -> None:
+        def __init__(self, request_handler: object | None = None) -> None:
+            _ = request_handler
             self.stop_calls: list[dict[str, object]] = []
             self.producer: asyncio.Task[None] | None = None
 
