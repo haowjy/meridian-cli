@@ -17,7 +17,6 @@ from typing import cast
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessSessionId
-from meridian.lib.harness import opencode_transcript
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
 
@@ -34,7 +33,7 @@ class NativeModelReadContext:
     tail_bytes: int | None = None
 
 
-def _nested_str(payload: object, *keys: str) -> str | None:
+def nested_str(payload: object, *keys: str) -> str | None:
     current: object = payload
     for key in keys:
         if not isinstance(current, dict):
@@ -47,7 +46,7 @@ def _nested_str(payload: object, *keys: str) -> str | None:
     return None
 
 
-def _iter_json_objects(path: Path, tail_bytes: int | None) -> Iterator[dict[str, object]]:
+def iter_json_objects(path: Path, tail_bytes: int | None) -> Iterator[dict[str, object]]:
     try:
         with path.open("rb") as handle:
             if tail_bytes is not None:
@@ -85,45 +84,24 @@ def read_last_executed_model(
     """
 
     normalized_session_id = harness_session_id.strip()
-    if not normalized_session_id or harness not in {"claude", "codex", "opencode", "pi"}:
+    if not normalized_session_id:
         return None
     try:
         if context.native_store is not None:
-            from meridian.lib.core.types import HarnessId
             from meridian.lib.harness.registry import get_default_harness_registry
 
-            adapter = get_default_harness_registry().get(HarnessId(harness))
+            adapter = get_default_harness_registry().find(harness)
+            if adapter is None:
+                return None
             native = adapter.resolve_native_session_file(
                 session_id=normalized_session_id,
                 native_store=Path(context.native_store),
             )
             if native is None:
                 return None
-            if harness == "opencode":
-                return opencode_transcript.read_last_model(
-                    normalized_session_id, launch_env={"OPENCODE_DB": str(native)}
-                )
-            last: str | None = None
-            fallback: str | None = None
-            for payload in _iter_json_objects(native, context.tail_bytes):
-                event_type = payload.get("type")
-                if harness == "claude" and event_type == "assistant":
-                    last = _nested_str(payload, "message", "model") or last
-                elif harness == "codex":
-                    if event_type == "turn_context":
-                        last = _nested_str(payload, "payload", "model") or last
-                    elif event_type == "world_state":
-                        fallback = _nested_str(payload, "payload", "state", "model") or fallback
-                elif harness == "pi":
-                    if event_type == "model_change":
-                        last = _nested_str(payload, "modelId") or last
-                    elif event_type == "session":
-                        fallback = (
-                            _nested_str(payload, "model")
-                            or _nested_str(payload, "model", "modelId")
-                            or fallback
-                        )
-            return last or fallback
+            return adapter.read_last_model(
+                session_id=normalized_session_id, native=native, tail_bytes=context.tail_bytes
+            )
     except (OSError, ValueError, RuntimeError, sqlite3.Error):
         return None
     return None

@@ -15,19 +15,22 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
-    InvalidNativeSession,
     LegacyNativeStores,
-    NativeSessionEvidence,
     claude_sessions_in,
-    native_session_evidence,
     pi_sessions_in,
     pi_shared_session_root,
     pi_spawn_session_dir,
 )
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.legacy_native_import import (
     RetainedChatFacts,
     configured_archive_destination,
@@ -295,6 +298,20 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
     )
 
 
+def _native_session_evidence(
+    harness: str, path: Path, recorded_session_id: str | None
+) -> NativeSessionEvidence:
+    if not path.is_file():
+        raise InvalidNativeSession(f"{path} is not a file")
+    adapter = get_default_harness_registry().find(harness)
+    if adapter is None:
+        raise InvalidNativeSession(f"session repair does not support {harness} chats")
+    try:
+        return adapter.native_session_evidence(path, recorded_session_id=recorded_session_id)
+    except NativeSessionUnavailable as exc:
+        raise InvalidNativeSession(f"{path} is not a valid {harness} session") from exc
+
+
 def _bind(
     runtime_root: Path,
     record: session_store.SessionRecord,
@@ -305,9 +322,7 @@ def _bind(
 ) -> SessionRepairOutput:
     chat_id = str(record.chat_id)
     try:
-        evidence = native_session_evidence(
-            record.harness, path, recorded_session_id=record.harness_session_id
-        )
+        evidence = _native_session_evidence(record.harness, path, record.harness_session_id)
     except InvalidNativeSession as exc:
         raise ValueError(f"Refusing: {exc}") from exc
     if record.harness_session_id and record.harness_session_id != evidence.session_id:

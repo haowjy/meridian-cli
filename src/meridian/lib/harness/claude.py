@@ -19,6 +19,7 @@ from meridian.lib.core.native_identity import (
     NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     NativeStoreMove,
     Operation,
@@ -37,6 +38,7 @@ from meridian.lib.harness.adapter import (
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
+    WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -77,6 +79,8 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.legacy_native_stores import claude_session_evidence
+from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.projections.network_claude import (
     effective_claude_policy,
 )
@@ -279,6 +283,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
+            workspace_roots=WorkspaceRoots.ADD_DIR_ARGS,
             # Names one launch's starting-prompt file; a launch that delivers no prompt
             # through the mod must not inherit its parent's.
             forbidden_child_env_keys=frozenset({FIRST_TURN_PATH_ENV}),
@@ -718,6 +723,22 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             session_id=session_id,
             native_store=native_store,
         )
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id
+        last: str | None = None
+        for payload in iter_json_objects(native, tail_bytes):
+            if payload.get("type") == "assistant":
+                last = nested_str(payload, "message", "model") or last
+        return last
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = recorded_session_id
+        return claude_session_evidence(path)
 
     def resolve_session_file(
         self,

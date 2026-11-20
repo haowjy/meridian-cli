@@ -1502,7 +1502,7 @@ def bind_launch_context(
         )
     )
     workspace_projection = project_workspace_roots(
-        harness_id=harness.id,
+        support=harness.contract.workspace_roots,
         roots=projected_roots,
     )
     if workspace_projection.diagnostics:

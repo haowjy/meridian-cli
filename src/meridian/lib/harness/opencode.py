@@ -15,6 +15,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeKey,
     NativeKeyFields,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     Operation,
 )
@@ -27,6 +28,7 @@ from meridian.lib.harness.adapter import (
     NativeRelocation,
     NativeRelocationResult,
     SpawnParams,
+    WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -48,6 +50,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
+from meridian.lib.harness.legacy_native_stores import opencode_session_evidence
 from meridian.lib.harness.opencode_backend import (
     OPENCODE_VERSION_ENV,
     bound_opencode_version,
@@ -72,6 +75,9 @@ from meridian.lib.harness.opencode_transcript import (
     detect_opencode_db_schema,
     opencode_db_any_session_exists,
     resolve_opencode_db_path,
+)
+from meridian.lib.harness.opencode_transcript import (
+    read_last_model as read_opencode_last_model,
 )
 from meridian.lib.harness.passthrough.opencode import (
     build_opencode_attach_command,
@@ -352,6 +358,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+            workspace_roots=WorkspaceRoots.ENV,
             primary_attach_failure_policy="fallback_to_blackbox",
             sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
@@ -550,6 +557,17 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
             else None
         )
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = tail_bytes
+        return read_opencode_last_model(session_id, launch_env={"OPENCODE_DB": str(native)})
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        return opencode_session_evidence(path, recorded_session_id)
 
     def resolve_session_file(
         self,

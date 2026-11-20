@@ -15,6 +15,7 @@ from meridian.lib.core.native_identity import (
     NativeIdentity,
     NativeIdentityError,
     NativeKeyFields,
+    NativeSessionEvidence,
     Operation,
     PostExit,
 )
@@ -40,6 +41,8 @@ from meridian.lib.harness.capture_qualify import CaptureObserver, PiObserver
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import BASE_COMMAND_PI, PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.legacy_native_stores import pi_session_evidence
+from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_idle import detect_ttl
@@ -317,6 +320,30 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id
+        last: str | None = None
+        fallback: str | None = None
+        for payload in iter_json_objects(native, tail_bytes):
+            event_type = payload.get("type")
+            if event_type == "model_change":
+                last = nested_str(payload, "modelId") or last
+            elif event_type == "session":
+                fallback = (
+                    nested_str(payload, "model")
+                    or nested_str(payload, "model", "modelId")
+                    or fallback
+                )
+        return last or fallback
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = recorded_session_id
+        return pi_session_evidence(path)
 
     def native_cwd(
         self,
