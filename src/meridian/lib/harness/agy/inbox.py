@@ -238,8 +238,8 @@ def _read_transcript(transcript_path: str | None) -> str:
 
 __all__ = [
     "MAX_ATTEMPTS",
-    "InboxEntry",
     "REGISTER_WAIT_SECONDS",
+    "InboxEntry",
     "claim_batch",
     "enqueue",
     "hold",
