@@ -1,3 +1,9 @@
 - Meet session browse's <200 ms warm-start target. Universal CLI imports and
   SQLAlchemy-backed index loading dominate; keep one command registration and read
   path instead of adding a parallel fast CLI loader.
+- In `cli/spawn.py:_spawn_list`, the `--all` shortcut silently drops the default
+  `limit` from 20 to 5 (`if limit == 20: limit = 5`). The hint printed by
+  `work show` therefore uses `--view all --limit N`, where `N` is the total number
+  of associated spawns: `--view all` reserves slots for active rows, so a limit
+  equal to the finished count drops finished rows. Either make `--all` mean all or
+  document the cap, then simplify the hint.

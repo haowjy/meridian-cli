@@ -588,6 +588,7 @@ class SpawnListInput(BaseModel):
     model: str | None = None
     profile: str | None = None
     primary: bool = False
+    work: str | None = None
     limit: int = 20
     failed: bool = False
     project_root: str | None = None
