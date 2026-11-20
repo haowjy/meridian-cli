@@ -1,12 +1,14 @@
 - `SpawnListInput.status` still accepts `queued` and `finalizing` on the extension and MCP
   surfaces, while `spawn list` rejects them as filters. Those surfaces never
   warned about the values, so deprecate them there for one release before rejecting them.
-- `work_sessions.py` builds its active chat set from any active session attached to
-  the work item, which is wider than `spawn_work_id` (active primaries plus
-  recorded child work ids): a child session that switches items still counts.
-  The wider rule is `work sessions`' existing behavior, so folding it into the
-  shared membership helper would change that command. Decide which rule is right.
-- Per-work commands remain slow after the spawn read was indexed: `active_session_work_ids`
-  replays the 98 MB `sessions.jsonl` (~59k events) on every call (~200-365 ms), and
-  `work_session_chat_ids` plus the index's `sessions()` take about 0.9 s. Cache or
-  narrow the session read rather than adding another parallel fast path.
+- `ops/work_sessions.py:work_session_chat_ids` builds its active chat set from any
+  active session attached to the work item, which is wider than `spawn_work_id` in
+  `ops/work_membership.py` (active primaries plus recorded child work ids): a child
+  session that switches items still counts. The wider rule is `work sessions`' existing
+  behavior, so folding it into the shared helper would change that command's output.
+  Jimmy owns that product decision; record it here when made.
+- `work show`, `spawn list --work` and the dashboard still spend most of their time on
+  session reads. On a runtime with a 98 MB `sessions.jsonl` (~59k events),
+  `active_session_work_ids` replays it on every call (~200-365 ms) and
+  `work_session_chat_ids` plus the index's `sessions()` take about 0.9 s. Narrow or
+  cache the session read rather than adding a parallel fast path.
