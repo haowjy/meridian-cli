@@ -68,7 +68,7 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
-from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id
+from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id, work_spawns
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.idle_store import IdleStore
@@ -747,23 +747,24 @@ def spawn_list_sync(
     _ = (ctx, sink)
     if prepared is not None and prepared.runtime_root is None:
         return SpawnListOutput(spawns=())
-    _project_root, runtime_root = _resolve_spawn_read_authority(
+    project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    spawns = list(reversed(overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)))
 
     work_id = resolve_current_work_alias(
         payload.work,
-        usage="meridian spawn list --work",
-        project_root=_project_root,
+        usage="meridian spawn list --work <work-id>",
+        project_root=project_root,
         runtime_root=runtime_root,
     )
     if work_id is not None:
-        active_work_ids = active_session_work_ids(runtime_root)
-        spawns = [row for row in spawns if spawn_work_id(row, active_work_ids) == work_id]
+        spawns = list(reversed(work_spawns(runtime_root, work_id)))
+    else:
+        scanned = overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
+        spawns = list(reversed(scanned))
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
