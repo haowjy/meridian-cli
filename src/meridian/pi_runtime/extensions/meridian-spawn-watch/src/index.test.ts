@@ -596,8 +596,8 @@ describe('durable result delivery', () => {
     await pause(800);
     expect(h.notices).toHaveLength(0);
 
-    await child(root, 'p1', 'b1');
     writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'child owns launcher outcome');
+    await child(root, 'p1', 'b1');
     await until(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1:1']);
     expect(h.notices[0]!.content).toContain('child owns launcher outcome');
