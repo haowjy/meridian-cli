@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from meridian.lib.core.delivery import DeliveryKind, MessageRoute
+from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import (
     read_json,
@@ -225,8 +225,8 @@ def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reope
 async def _serve(launch: LaunchPaths, conversation: str, stop: threading.Event) -> None:
     from meridian.lib.launch.process.primary_control_socket import serving_route
 
-    async def deliver(text: str) -> DeliveryKind:
-        await asyncio.to_thread(inbox.enqueue, conversation, text)
+    async def deliver(text: str, sender: MessageSender | None) -> DeliveryKind:
+        await asyncio.to_thread(inbox.enqueue, conversation, text, sender)
         return DeliveryKind.QUEUED
 
     async with serving_route(launch, MessageRoute(deliver, _ROUTE_NOTE)):

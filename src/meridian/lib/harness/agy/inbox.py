@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy.state import agy_root
 from meridian.lib.platform import fcntl
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
@@ -29,16 +29,12 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 MAX_ATTEMPTS = 3
 
 
-_SENDER = re.compile(r"Message from spawn (p\d+)")
-
-
 @dataclass(frozen=True)
 class InboxEntry:
     id: str
     text: str
-    # The sending spawn, read from the frame `spawn message` puts on the text; None when
-    # the text has no frame (a sender with no identity cannot be told anything).
-    sender: str | None
+    # None when the message had no sender identity: nobody can be told it was not delivered.
+    sender: MessageSender | None
     attempts: int = 0
 
     def render(self) -> str:
@@ -53,7 +49,12 @@ class InboxEntry:
 
     def to_line(self) -> str:
         return json.dumps(
-            {"id": self.id, "text": self.text, "sender": self.sender, "attempts": self.attempts},
+            {
+                "id": self.id,
+                "text": self.text,
+                "sender": asdict(self.sender) if self.sender else None,
+                "attempts": self.attempts,
+            },
             separators=(",", ":"),
         )
 
@@ -86,11 +87,8 @@ def _locked(conversation_id: str, *, blocking: bool) -> Generator[bool]:
         os.close(fd)  # closing releases the flock
 
 
-def enqueue(conversation_id: str, text: str) -> InboxEntry:
-    match = _SENDER.search(text)
-    entry = InboxEntry(
-        id=uuid.uuid4().hex[:12], text=text, sender=match.group(1) if match else None
-    )
+def enqueue(conversation_id: str, text: str, sender: MessageSender | None) -> InboxEntry:
+    entry = InboxEntry(id=uuid.uuid4().hex[:12], text=text, sender=sender)
     path = inbox_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _locked(conversation_id, blocking=True):
@@ -116,7 +114,7 @@ def _read_entries(path: Path) -> list[InboxEntry]:
                 InboxEntry(
                     id=str(doc["id"]),
                     text=str(doc["text"]),
-                    sender=doc["sender"] if isinstance(doc.get("sender"), str) else None,
+                    sender=MessageSender(**doc["sender"]) if doc.get("sender") else None,
                     attempts=int(doc.get("attempts", 0)),
                 )
             )

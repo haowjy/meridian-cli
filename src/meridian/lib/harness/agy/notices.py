@@ -14,8 +14,8 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
+from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import (
     process_dirs,
@@ -31,9 +31,8 @@ _SEND_TIMEOUT_SECONDS = 40.0
 
 @dataclass(frozen=True)
 class Notice:
-    sender: str
+    sender: MessageSender
     text: str
-    cwd: str | None
 
 
 def _notice_text(entry: inbox.InboxEntry, session: str) -> str:
@@ -67,14 +66,7 @@ def collect_owed_notices() -> list[Notice]:
                 conversation, transcript if isinstance(transcript, str) else None
             ):
                 if entry.sender is not None:
-                    cwd = request.get("cwd")
-                    notices.append(
-                        Notice(
-                            entry.sender,
-                            _notice_text(entry, str(session)),
-                            cwd if isinstance(cwd, str) else None,
-                        )
-                    )
+                    notices.append(Notice(entry.sender, _notice_text(entry, str(session))))
         shutil.rmtree(proc, ignore_errors=True)
     return notices
 
@@ -84,17 +76,22 @@ def send_owed_notices() -> int:
 
     reached = 0
     for notice in collect_owed_notices():
-        cwd = notice.cwd if notice.cwd and Path(notice.cwd).is_dir() else None
         try:
             done = subprocess.run(
                 module_argv(
-                    "meridian", "spawn", "message", notice.sender, "--message", notice.text
+                    "meridian",
+                    "-C",
+                    notice.sender.project_root,
+                    "spawn",
+                    "message",
+                    notice.sender.spawn_id,
+                    "--message",
+                    notice.text,
                 ),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=_SEND_TIMEOUT_SECONDS,
                 check=False,
-                cwd=cwd,
                 env=scrubbed_env(os.environ),
             )
         except (OSError, subprocess.TimeoutExpired):

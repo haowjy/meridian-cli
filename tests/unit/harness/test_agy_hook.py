@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.holds import HeldRow
 from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
@@ -25,6 +26,10 @@ from meridian.lib.harness.agy.state import (
 def agy_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
     return tmp_path
+
+
+def _sender(spawn_id: str) -> MessageSender:
+    return MessageSender(spawn_id, "/other/project")
 
 
 def _payload(conversation: str, store: Path, **extra: object) -> str:
@@ -60,7 +65,7 @@ def test_subagent_is_marked_and_ignored(agy_home: Path) -> None:
     (parent_subagents / "kid.json").write_text("{}")
     pid = os.getpid()
     run_hook("SessionStart", pid, _payload("par", agy_home))
-    inbox.enqueue("kid", "hello")
+    inbox.enqueue("kid", "hello", None)
 
     assert run_hook("SessionStart", pid, _payload("kid", agy_home)) is None
     assert run_hook("PreInvocation", pid, _payload("kid", agy_home)) is None
@@ -78,13 +83,13 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     pid = os.getpid()
     payload = _payload("c1", agy_home)
     transcript = Path(json.loads(payload)["transcriptPath"])
-    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping")
+    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping", _sender("p7"))
 
     first = run_hook("PreInvocation", pid, payload)
     assert first is not None
     steps = json.loads(first)["injectSteps"]
     assert [s["systemMessage"]["systemMessage"] for s in steps] == [entry.render()]
-    assert entry.sender == "p7"
+    assert entry.sender == _sender("p7")
 
     # Not in the transcript yet: the next call hands it back.
     assert run_hook("PreInvocation", pid, payload) is not None
@@ -98,7 +103,7 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
 def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
     pid = os.getpid()
     payload = _payload("c1", agy_home)
-    inbox.enqueue("c1", "ping")
+    inbox.enqueue("c1", "ping", None)
 
     replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
 
@@ -108,7 +113,7 @@ def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
     from meridian.lib.platform import fcntl
 
-    inbox.enqueue("c1", "ping")
+    inbox.enqueue("c1", "ping", None)
     lock_path = inbox._lock_path("c1")  # pyright: ignore[reportPrivateUsage]
     fd = os.open(lock_path, os.O_RDWR)
     try:
@@ -160,11 +165,11 @@ def test_closed_conversation_owes_notices_only_for_undelivered_messages(agy_home
         agy_root() / "999999-1" / "requests" / "c1.json",
         {"role": "primary", "transcript_path": str(transcript)},
     )
-    seen = inbox.enqueue("c1", "[Meridian] Message from spawn p8 (chat c8). x\n\nfirst")
-    inbox.enqueue("c1", "[Meridian] Message from spawn p9 (chat c9). x\n\nsecond")
+    seen = inbox.enqueue("c1", "first", _sender("p8"))
+    inbox.enqueue("c1", "second", _sender("p9"))
     inbox.claim_batch("c1", None)  # both go out; the transcript will show only the first
     transcript.write_text(f"[meridian:{seen.id}] first\n")
 
-    assert [notice.sender for notice in collect_owed_notices()] == ["p9"]
+    assert [notice.sender for notice in collect_owed_notices()] == [_sender("p9")]
     assert not inbox.inflight_path("c1").exists()
     assert collect_owed_notices() == []

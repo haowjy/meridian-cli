@@ -200,9 +200,13 @@ async def send_message(
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
-    line = (
-        json.dumps({"type": "user_message", "text": framed}, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    request: dict[str, object] = {"type": "user_message", "text": framed}
+    if sender_spawn_id is not None:
+        request["sender"] = {
+            "spawn_id": sender_spawn_id,
+            "project_root": (sender_project_root or project_root).as_posix(),
+        }
+    line = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
     if len(line) > MAX_REQUEST_BYTES:
         _fail(f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit")
 
