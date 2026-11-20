@@ -47,6 +47,15 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 - **`model_observation.observe_session_model` is the one writer of model observations.**
 - Native idle parsing stays in `*_idle.py`; `lib/idle/` owns policy.
 
+## `agy/` is not a launched harness
+
+Meridian never starts Antigravity. `agy/` holds what its plugin runs: the
+`harness-hook agy` fast path (dispatched in `cli/entrypoint.py`, so import nothing heavy;
+no blocking locks, no output for no opinion, catch everything) and the `harness-mcp agy`
+server, whose child commands get no inherited `MERIDIAN_*` identity. The shell guard and
+Mars declarations are in `src/meridian/mars/`; the guard hard-codes the paths in
+`agy/state.py` and `agy/inbox.py`. It has no `HarnessId` yet.
+
 ## Adding a Harness
 
 Follow [`docs/harness-integration.md`](../../../../docs/harness-integration.md) and touch
