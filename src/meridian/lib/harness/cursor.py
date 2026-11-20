@@ -7,7 +7,6 @@ from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     SpawnParams,
@@ -86,7 +85,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.SUBPROCESS,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
         )
 
     @property

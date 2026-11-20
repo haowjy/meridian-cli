@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -30,6 +30,7 @@ from meridian.lib.core.native_identity import (
     NativeStoreMove,
     Operation,
     PostExit,
+    PrecreatedSession,
 )
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.capture_qualify import CaptureObserver
     from meridian.lib.harness.extractors.base import AttemptFold
     from meridian.lib.harness.transcript import TranscriptEventParser
+    from meridian.lib.launch.context import PreparedLaunchSurface
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -76,13 +78,6 @@ class BootstrapMode(StrEnum):
 
     SUBPROCESS_ONLY = "subprocess_only"
     MANAGED_PRIMARY_ATTACH = "managed_primary_attach"
-
-
-class ForkMaterializationMode(StrEnum):
-    """How continue-fork requests are materialized for one harness."""
-
-    NATIVE_CONTINUE_FORK = "native_continue_fork"
-    MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
 
 
 class HarnessCapabilities(BaseModel):
@@ -122,7 +117,6 @@ class HarnessContract(BaseModel):
     transport_ids: tuple[TransportId, ...]
     launch_spec_cls: str
     bootstrap_mode: BootstrapMode
-    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     #: Whether the black-box primary child needs the stderr log path env var
     #: injected so its runtime writes stderr to the spawn dir.
@@ -254,6 +248,9 @@ class HarnessPrelaunchState(BaseModel):
 
     env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
     metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
+    # In-memory facts for this launch's primary message route (a per-launch secret, say):
+    # never serialized, logged or written to disk.
+    route_payload: object | None = Field(default=None, repr=False, exclude=True)
 
 
 class NativePrimaryRuntimeMetadata(BaseModel):
@@ -301,6 +298,27 @@ class NativeRelocationResult:
     refusal: str | None = None
 
 
+@dataclass(frozen=True)
+class PreExecSessionRequest:
+    """What an adapter's ``create_session_before_exec`` gets for one launch.
+
+    ``operation`` is ``create`` for a fresh launch (``source_session_id`` is None) or
+    ``fork`` (``source_session_id`` is the session to fork); a resume never reaches the
+    port. ``surface`` holds the projected content, model selection and request; it is
+    None for a spawn fork started by a background worker, which composes its surface
+    after the fork. ``env`` is the base environment through ``inherit_child_env``, with
+    no per-launch bindings. ``surface`` and ``env`` stay out of ``repr``: the request's
+    environment overrides and the child environment can hold secrets.
+    """
+
+    operation: Literal["create", "fork"]
+    source_session_id: str | None
+    native_store: str | None
+    surface: PreparedLaunchSurface | None = field(repr=False)
+    cwd: Path
+    env: dict[str, str] = field(repr=False)
+
+
 @runtime_checkable
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
@@ -332,7 +350,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def handled_fields(self) -> frozenset[str]: ...
 
     def plan_native_identity(
-        self, run: SpawnParams, *, preforked_session_id: str | None = None
+        self, run: SpawnParams, *, precreated: PrecreatedSession | None = None
     ) -> LaunchIntent | None: ...
 
     def native_store_for_launch(
@@ -549,7 +567,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent: ...
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None: ...
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool: ...
 
@@ -589,7 +607,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         run: SpawnParams,
         *,
-        preforked_session_id: str | None = None,
+        precreated: PrecreatedSession | None = None,
     ) -> LaunchIntent | None:
         if not self.native_identity:
             return None
@@ -599,8 +617,8 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
                     f"{self.id} managed identity refuses {token} in passthrough extra_args"
                 )
         source = (run.continue_harness_session_id or "").strip() or None
-        if preforked_session_id:
-            intent = LaunchIntent("fork", preforked_session_id=preforked_session_id)
+        if precreated is not None:
+            intent = LaunchIntent(precreated.operation, precreated_session_id=precreated.session_id)
         else:
             intent = LaunchIntent(
                 "fork" if source and run.continue_fork else "resume" if source else "create", source
@@ -649,7 +667,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             lookup = source_store or self._store(
                 child_env, child_cwd, spawn_id, "resume", interactive
             )
-            wanted = intent.source_session_id or intent.preforked_session_id
+            wanted = intent.source_session_id or intent.precreated_session_id
             source = self._require_source(
                 wanted,
                 Path(lookup),
@@ -740,7 +758,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return (
             intent.source_session_id
             if intent.operation == "resume"
-            else intent.preforked_session_id
+            else intent.precreated_session_id
         )
 
     def observe_after_exit(
@@ -817,10 +835,16 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = name, description, prompt
         return ""
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None:
+        """Create the native session Meridian launches on, or ``None`` to let the harness
+        create its own.
 
-        _ = source_session_id
-        raise NotImplementedError
+        Runs after the spawn row exists and before the harness execs: on a fresh primary
+        launch (``create``) and on a fork of either kind (``fork``), never on a resume. A
+        returned ID is recorded on the row and launched on; an exception fails the launch.
+        """
+        _ = request
+        return None
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         _ = project_root, session_ref

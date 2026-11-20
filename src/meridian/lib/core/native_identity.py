@@ -186,7 +186,15 @@ class LaunchIntent:
 
     operation: Operation
     source_session_id: str | None = None
-    preforked_session_id: str | None = None
+    precreated_session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PrecreatedSession:
+    """A native session Meridian created before exec, and how it came to exist."""
+
+    session_id: str
+    operation: Literal["create", "fork"]
 
 
 @dataclass(frozen=True)

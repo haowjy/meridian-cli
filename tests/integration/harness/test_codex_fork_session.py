@@ -13,9 +13,25 @@ from uuid import UUID
 import pytest
 
 from meridian.lib.harness import codex as codex_module
+from meridian.lib.harness.adapter import PreExecSessionRequest
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.codex_rollout import materialize_fork_rollout
 from meridian.lib.platform import IS_WINDOWS
+
+
+def _fork(adapter: CodexAdapter, source_session_id: str, *, native_store: str | None = None) -> str:
+    forked = adapter.create_session_before_exec(
+        PreExecSessionRequest(
+            operation="fork",
+            source_session_id=source_session_id,
+            native_store=native_store,
+            surface=None,
+            cwd=Path.cwd(),
+            env={},
+        )
+    )
+    assert forked is not None
+    return forked
 
 
 def _setup_codex_state(
@@ -112,7 +128,8 @@ def test_codex_fork_session_uses_codex_home_override(
 
     if pinned:
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "wrong-home"))
-    forked_session_id = CodexAdapter().fork_session(
+    forked_session_id = _fork(
+        CodexAdapter(),
         source_session_id,
         native_store=str(codex_home_override / "sessions") if pinned else None,
     )
@@ -146,7 +163,7 @@ def test_codex_fork_session_copies_rollout_and_inserts_thread(
 
     assert adapter.capabilities.supports_session_fork is True
 
-    forked_session_id = adapter.fork_session(source_session_id)
+    forked_session_id = _fork(adapter, source_session_id)
     assert forked_session_id != source_session_id
     assert str(UUID(forked_session_id)) == forked_session_id
 
@@ -255,7 +272,7 @@ def test_codex_fork_session_drops_partial_live_tail(
     writer.start()
     assert partial_written.wait(timeout=2)
     try:
-        forked_session_id = CodexAdapter().fork_session(source_session_id)
+        forked_session_id = _fork(CodexAdapter(), source_session_id)
     finally:
         finish_write.set()
         writer.join(timeout=2)
@@ -305,7 +322,7 @@ def test_codex_fork_session_reconciles_commit_ack_loss(
 
     monkeypatch.setattr(codex_module.sqlite3, "connect", connect)
 
-    forked_session_id = CodexAdapter().fork_session(source_session_id)
+    forked_session_id = _fork(CodexAdapter(), source_session_id)
 
     connection = real_connect(db_path)
     forked_row = connection.execute(
@@ -330,7 +347,7 @@ def test_codex_fork_session_rejects_invalid_complete_record(
         handle.write(b"not-json\n")
 
     with pytest.raises(RuntimeError, match="line 3 is not valid JSON"):
-        CodexAdapter().fork_session(source_session_id)
+        _fork(CodexAdapter(), source_session_id)
 
     connection = sqlite3.connect(db_path)
     total_rows = connection.execute("SELECT COUNT(*) FROM threads").fetchone()
@@ -362,7 +379,7 @@ def test_codex_fork_session_replace_failure_leaves_no_partial_target(
     monkeypatch.setattr("meridian.lib.harness.codex.os.replace", _replace_raises)
 
     with pytest.raises(RuntimeError, match="Failed to fork Codex session: replace boom"):
-        CodexAdapter().fork_session(source_session_id)
+        _fork(CodexAdapter(), source_session_id)
 
     assert not expected_target_path.exists()
     assert not list(source_rollout_path.parent.glob(f".{expected_target_path.name}.*.tmp"))
@@ -404,7 +421,7 @@ def test_codex_fork_session_removes_rollout_when_db_insert_fails(
     connection.close()
 
     with pytest.raises(RuntimeError, match="Failed to fork Codex session: insert blocked"):
-        CodexAdapter().fork_session(source_session_id)
+        _fork(CodexAdapter(), source_session_id)
 
     assert not expected_target_path.exists()
 

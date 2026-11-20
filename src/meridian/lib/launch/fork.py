@@ -4,8 +4,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.catalog.agent import load_agent_profile
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.session_identity import chat_owner_spawn
@@ -46,35 +44,4 @@ def require_replayed_agent(
         ) from exc
 
 
-def materialize_fork(
-    *,
-    adapter: SubprocessHarness,
-    source_session_id: str,
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    native_store: str | None = None,
-) -> str:
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
-    if row is None:
-        raise RuntimeError(
-            f"Fork precondition violated: no spawn row exists for {spawn_id!r}. "
-            "Call start_spawn() before materialize_fork()."
-        )
-
-    forked_session_id = (
-        adapter.fork_session(source_session_id, native_store=native_store)
-        if native_store is not None
-        else adapter.fork_session(source_session_id)
-    ).strip()
-    if not forked_session_id:
-        raise RuntimeError("Harness adapter.fork_session() returned an empty session ID.")
-
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        harness_session_id=forked_session_id,
-    )
-    return forked_session_id
-
-
-__all__ = ["fork_usage_seed", "materialize_fork", "require_replayed_agent"]
+__all__ = ["fork_usage_seed", "require_replayed_agent"]

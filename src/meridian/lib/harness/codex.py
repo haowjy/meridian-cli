@@ -15,9 +15,9 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
+    PreExecSessionRequest,
     SpawnParams,
 )
 from meridian.lib.harness.bundle import (
@@ -303,7 +303,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
-            fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
             sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
             primary_session_runtime_event_surface=(
@@ -334,7 +333,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def validate_intent(self, intent: LaunchIntent) -> None:
-        source = intent.source_session_id or intent.preforked_session_id
+        source = intent.source_session_id or intent.precreated_session_id
         if source:
             from uuid import UUID
 
@@ -479,10 +478,15 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             native_store=sessions_root,
         )
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
-        normalized_source_session_id = source_session_id.strip()
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None:
+        """Fork the source rollout into a new registered Codex thread; a fresh launch
+        creates nothing, Codex makes its own session."""
+        if request.operation == "create":
+            return None
+        normalized_source_session_id = (request.source_session_id or "").strip()
         if not normalized_source_session_id:
             raise ValueError("source_session_id is required.")
+        native_store = request.native_store
 
         db_path = (
             Path(native_store).parent if native_store else resolve_codex_home(os.environ)

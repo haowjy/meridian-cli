@@ -14,6 +14,7 @@ from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.launch.pre_exec_session import LaunchCancelledError
 from meridian.lib.state.paths import LaunchPaths
 
 
@@ -37,6 +38,14 @@ async def finalize_launch_failure(
             lifecycle=LifecycleLog.for_launch(launch),
         )
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
+    if isinstance(error, LaunchCancelledError):
+        return await service.complete_spawn(
+            spawn_id,
+            "cancelled",
+            error.exit_code,
+            origin="cancel",
+            error=error.error or "cancelled",
+        )
     return await service.complete_spawn(
         spawn_id,
         "failed",

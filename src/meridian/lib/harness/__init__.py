@@ -36,6 +36,14 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "(concrete streaming transport implementation)"
     ),
     (
+        "src/meridian/lib/harness/adapter.py::create_session_before_exec() "
+        "(override only when Meridian must create the native session before exec, on a "
+        "fresh launch or a fork, never a resume; an assign_session_id() override "
+        "must then return LaunchIntent.precreated_session_id; "
+        "HarnessPrelaunchState.route_payload hands in-memory facts to "
+        "HarnessBundle.primary_message_route)"
+    ),
+    (
         "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
         "(the harness's compile of the permission policy and its enforcement report; "
         "register its report and effective-network function as HarnessProjectionPorts)"

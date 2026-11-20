@@ -7,6 +7,7 @@ from typing import Any
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
+from meridian.lib.core.native_identity import PrecreatedSession
 from meridian.lib.core.types import HarnessId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry
@@ -207,7 +208,7 @@ def build_launch_context(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
-    forked_harness_session_id: str | None = None,
+    precreated: PrecreatedSession | None = None,
     cache: MarsResultCache | None = None,
 ) -> BuiltLaunchContext:
     """Test facade over the production prepare and bind phases."""
@@ -241,7 +242,7 @@ def build_launch_context(
             bindings=RuntimeBindings(
                 launch=launch_paths(Path(runtime.runtime_root), spawn_id),
                 runtime_work_id=runtime_work_id,
-                forked_harness_session_id=forked_harness_session_id,
+                precreated=precreated,
                 plan_overrides=dict(plan_overrides or {}),
                 dry_run=dry_run,
             ),
