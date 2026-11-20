@@ -1,5 +1,16 @@
 # Upgrade notes
 
+## Cursor is removed
+
+Needs Mars 0.38.0, which this release pins; it also dropped Cursor.
+
+- **`--harness cursor` and `harness: cursor` now fail** with `Cursor support was removed in 0.27.0`. Use `--harness claude|codex|opencode|pi`, change the profile's `harness`, or route the model to another harness in `mars.toml`. A model alias that names `cursor` is dropped from `mars.lock` on the first sync, and Mars warns `field.retired` while it is still in `mars.toml`.
+- **Old Cursor spawns and chats stay listed.** `meridian spawn list` and `spawn show` read the stored records. Resuming, forking or reading the transcript of a Cursor session fails with the same removal error. Cursor's own session data in its app is untouched.
+- **Clean up `.cursor` by hand.** A project whose `targets` still names `.cursor` keeps syncing its other targets, and each sync warns `retired-target`. Run `meridian mars unlink .cursor` to remove what earlier syncs installed there (your own files stay).
+- **`managed_root` in `mars.toml` is no longer read.** A project that still relies on it has no targets, so a sync writes nothing to `.claude/`. Mars warns `field.retired` with the line to write instead, for example `targets = [".claude"]`.
+- **A target dropped from `targets` keeps its files** until you run `meridian mars unlink <target>`.
+- Nothing Meridian wrote to disk changes.
+
 ## Cursor is deprecated
 
 Cursor support goes away in the next minor release after 0.25. Until then it works as before, and every launch on it warns.

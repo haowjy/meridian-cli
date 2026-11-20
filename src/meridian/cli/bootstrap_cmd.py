@@ -33,7 +33,7 @@ def register_bootstrap_command(app: App) -> None:
             str | None,
             Parameter(
                 name="--harness",
-                help="Force harness id (claude, codex, cursor, opencode, or pi).",
+                help="Force harness id (claude, codex, opencode, or pi).",
             ),
         ] = None,
         agent: Annotated[

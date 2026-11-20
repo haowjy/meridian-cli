@@ -50,7 +50,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `name` | str | filename stem | Profile identifier used with `-a NAME` |
 | `description` | str | `""` | One-line description shown in `mars list` |
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
-| `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor` (deprecated; removed in the next minor release), or `pi` |
+| `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, or `pi` |
 | `mode` | str | `subagent` | `primary` or `subagent` — marks leads in `meridian spawn subagents` and decides which lead-only Meridian guidance the prompt carries; see [`mode`](#mode) |
 | `model-invocable` | bool | `true` | `false` hides the agent from `meridian spawn subagents` unless `--all` is given; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
@@ -193,7 +193,7 @@ sets its own value wins over `primary.autocompact`. What each harness does with 
 |---|---|---|
 | **Claude** | `--autocompact <tokens>` for values from 100000 through 1000000 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<percent>` |
 | **Codex** | `-c model_auto_compact_token_limit=<tokens>` | `-c model_post_turn_compact_threshold_percent=<percent>` |
-| **OpenCode**, **Pi**, **Cursor** | Not applied | Not applied |
+| **OpenCode**, **Pi** | Not applied | Not applied |
 
 Claude applies the percentage to its autocompact window, so both fields can be
 set together. A Claude token value outside its native 100000–1000000 range is
@@ -224,7 +224,6 @@ gets no effort. What each harness does with the level Mars returns:
 | **Codex** | `-c model_reasoning_effort="none"` on a model that takes it | `-c model_reasoning_effort="<level>"` |
 | **Pi** | `--thinking off` | `--thinking <level>` |
 | **OpenCode** | Not applied | Not applied, except the legacy V1 `run` fallback, which gets `--variant <level>` |
-| **Cursor** | Mars picks the model's default slug | Mars folds the level into the model slug; see [Cursor](configuration/cursor.md#effort-and-slug-resolution) |
 
 ## Harness-native passthrough
 
@@ -244,7 +243,7 @@ so `mcp_servers.*` entries pass through like other native config. A key segment 
 `.`, `=`, whitespace, or quotes cannot be addressed by Codex's `-c` syntax and is reported
 as unsupported and ignored. `--dry-run` shows each applied or skipped key, for example
 `[native] native_config: some_key = true -> -c some_key=true`.
-Claude, Pi, and Cursor do not apply native config; their report lists the key
+Claude and Pi do not apply native config; their report lists the key
 names as `[unsupported] native_config: ... -> not applied for <Harness>`. OpenCode applies
 only `permission`: its denies and asks join the profile's tool rules and the strictest match
 wins; its allows are ignored, and an `ask` or `deny` under `*` raises every rule.
@@ -493,7 +492,7 @@ for the complete host grammar, precedence, and replacement rules.
 
 A *spawn* is a headless agent launched with `meridian spawn`; a *primary* is the
 interactive session started with `meridian`. Supported profile rules bind both roles.
-Cursor is spawn-only. A profile limits the model, not the human operating a primary;
+A profile limits the model, not the human operating a primary;
 for example, an OpenCode user can intentionally switch to another agent or choose
 "always allow" in the TUI.
 
@@ -510,7 +509,6 @@ form exposes the same lines as `permission_report`.
 | **Codex** | **Partial**. Exact unscoped `web`, `web_search`, and `image` allow/deny rules use native switches; a `bash` allow needs none, since Codex's shell is on by default. A whole-policy allowlist turns off web search and image viewing, and so does an `ask` of either (Codex cannot ask, so the stricter result is off). Meridian installs a Meridian-owned `PreToolUse` hook on the app-server whenever any shell rule could refuse a command: a `bash` or `*` deny, or an `ask`, scoped or not. A rule Mars reports as covered by a stricter one is not carried; the stricter one is. The hook is **Partial** throughout. The hook splits a command on `;`, `&&`, `||`, `|`, `&` and newlines and wildcard-matches each segment, as Pi does. An allowlist (`*: deny`, or any rule that denies unmatched shell commands) needs every segment to match an allow or a Meridian command grant and refuses `$`, backticks, redirection and other shell syntax, so it binds file reads too: allow the read commands the agent needs. It is a guard against accidents, not a sandbox: wrapped, full-path or compound forms it does not see (`/usr/bin/uname -a`, `sh -c 'uname -a'`, `sudo git reset --hard`, `bash -c`, substitutions, subshells, scripts, interpreters, `git -C <dir> reset --hard`) get past a deny. The hook cannot ask, so an `ask`, scoped or not, is a deny. An agent that can replace the Python interpreter turns the hook off, and `apply_patch` and MCP calls never reach it. A Codex without `hooks/list`, or one that does not list the hook as trusted and intact, refuses the launch. Scoped rules on other capabilities and every other capability are **not enforced**. | **Native** for every explicit non-default mode. An unset value is omitted; Codex chooses its default. Before a `read-only` or `workspace-write` launch, Meridian rewrites `$CODEX_HOME/rules/meridian.rules`; its `meridian spawn` rule runs those commands outside the sandbox for every Codex session using that home. | `workspace-write` is **Native** for `allow` without denies (`network_access=true`) and for `deny` or an empty allowlist (`false`). Host sets use Codex's network proxy and one inline domain map: finite allows are `"host"="allow"`; `allow` plus denies adds `"*"="allow"`; denies are `"host"="deny"`. Any `allow` entry under `features.network_proxy.domains` in the child-selected `$CODEX_HOME/config.toml` or `.codex/config.toml` in the child cwd or an ancestor produces an attributed warning because it can widen access beyond Meridian's projection. A boolean `features.network_proxy` declares no domains and does not warn. Warnings do not change the permission report or child guardrail, which compare only Meridian's projected policy. Domain `deny` entries are narrowing and are not modelled. Host-map cases are **Partial** because Codex always leaves local services reachable. `read-only` stays offline in Meridian's projection and reports any `allow` or non-empty allowlist **Not enforced**. Under `danger-full-access`, restrictions are **Not enforced**. The user-wide `meridian spawn` rule runs matching commands outside constrained modes with network access. | **Native** for `auto` (`approval_policy=on-request` plus `approvals_reviewer=auto_review`, Codex's own auto, set on every launch so `~/.codex/config.toml` does not decide it) and `never` (`never`). A reviewer-approved request can escape the sandbox. Meridian does not use `--approve-for-me`: it refuses `--sandbox`. **Partial** for `confirm`, which is `on-request` with `approvals_reviewer=user` because Codex has no stricter mode: the user is asked, and a spawn refuses every request. Meridian sets the reviewer on every launch that can escalate, so neither `~/.codex/config.toml` nor a forked thread decides it. | **Partial**. By default Meridian disables Codex's built-in multi-agent feature; `[harness.codex] allow_builtin_agents = true` removes that rule. The user-wide rules file grants the `meridian spawn` prefix under a constrained sandbox; other exact or prefix Meridian commands and the task-list deny are not projected. |
 | **OpenCode** | **Native** on the selected `meridian-<profile>` config agent in V1 and V2, for spawns and primaries. Scoped rules and allowlists work. **Partial** in V2 where distinct `write` and `patch` meanings collapse onto `edit`; the strictest conflicting effect wins. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** unless a `*` tool rule in the profile already decides unmatched calls: `confirm` asks in a primary and denies in a headless spawn; `auto` and `never` allow unmatched calls without prompting. An `ask` or `deny` under `*` in `harness-overrides.opencode.permission` raises the result; its `*: allow` is ignored. `default` leaves OpenCode's behavior, except an otherwise unrestricted spawn keeps Meridian's historical allow-all fallback. | **Native** sub-agent denies and exact/prefix Meridian-command grants. Meridian-command grants are decided before profile rules. |
 | **Pi** | **Native** for mapped tools. Plain rules use `--tools`/`--exclude-tools`; scoped rules, allowlists, and `ask` use Meridian's `meridian-permissions` Pi extension, which checks each simple command of a Bash call. A `*: deny` allowlist, a `bash: deny`/`ask` beside scoped Bash rules, or a scoped Bash `ask` also refuses shell syntax the extension cannot split (expansion, redirection, loops, here-docs). **Partial** for scoped Bash denies when Bash allows unmatched commands (`bash: allow` or `*: allow`): a command the extension cannot split runs unchecked. | **Not enforced**. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Not enforced**. This does not affect tool-level `ask`, which the extension enforces separately. | **Native**. Pi has no native sub-agent or built-in-agent tools, so those denies already hold; when a policy could restrict the shell, the extension grants exact and prefix Meridian commands. |
-| **Cursor** | **Not enforced**, including restrictive profiles and `ask`. | **Native**: `danger-full-access` disables Cursor's binary sandbox. **Partial**: `read-only` enables it, which still allows workspace writes, so it runs as `workspace-write`; `workspace-write` disables it because Cursor has no middle setting. Unset uses Cursor's default. | `allow` without denies is already satisfied because shell network is unrestricted; `allowlist`, deny exceptions, and `deny` are **Not enforced**. | **Native** for `auto` (`--force`) and `never` (`--yolo`). `confirm` is **Not enforced**. | **Not enforced**. |
 
 If Mars predates the bundle's `network_source` field, Meridian refuses the launch and asks
 you to upgrade Meridian; it names the selected executable because Meridian's bundled Mars
@@ -665,7 +663,7 @@ tool, OpenCode's defaults and your OpenCode config decide the rest.
 ### `ask` and headless spawns
 
 A primary can put a human in the loop: Claude, OpenCode, and Pi present a native prompt
-for a mapped `ask` rule. Codex cannot ask: its hook refuses an `ask` of shell commands and its web and image switches turn off. Cursor does not enforce tool-level `ask`.
+for a mapped `ask` rule. Codex cannot ask: its hook refuses an `ask` of shell commands and its web and image switches turn off.
 
 A spawn has no human to answer, so a supported `ask` is refused immediately and never
 routed to the parent agent. Claude disables permission prompts, OpenCode lowers the rule
@@ -676,8 +674,7 @@ catalog produces no attempted-call event to journal.
 
 Runtime approval requests caused by Codex or OpenCode's approval mode are also refused
 and journaled in spawns. In a managed Codex primary they are recorded and remain pending
-for a controller; the Codex TUI itself cannot answer them. Do not rely on Cursor approval
-prompts; that path is unobserved.
+for a controller; the Codex TUI itself cannot answer them.
 
 ### Platform rules
 
@@ -728,8 +725,7 @@ them:
   record. Only `read-only` and
   `workspace-write` callers have a floor, and both sides are compared by what their harness
   actually enforces. OpenCode and Pi enforce neither sandbox nor network, so they count as
-  `danger-full-access` and online; Cursor's binary sandbox counts `read-only` as
-  `workspace-write` and `workspace-write` as `danger-full-access`, with open network. A
+  `danger-full-access` and online. A
   caller that counts as `danger-full-access` has no floor, and a child that a sandboxed caller
   is refused because of its harness gets a refusal naming that harness. Pass `--harness claude` or `--harness codex` (or a model that
   routes there) to keep such a child. `spawn`, `spawn --continue`, and `spawn --fork` (including `--dry-run`)

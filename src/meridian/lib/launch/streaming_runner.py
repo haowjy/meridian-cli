@@ -45,12 +45,10 @@ from meridian.lib.launch.artifact_io import (
     append_runner_lifecycle_event as _append_runner_lifecycle_event,
 )
 from meridian.lib.launch.constants import (
-    CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
     RUNNER_HEARTBEAT_SECONDS,
-    SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.env import (
@@ -117,7 +115,6 @@ class _AttemptRuntime:
     received_signal: signal.Signals | None
     budget_breach: BudgetBreach | None
     terminated_by_report_watchdog: bool
-    terminated_by_inactivity: bool = False
     cancelled_by_request: bool = False
     terminal_observed: bool = False
     authoritative_terminal_status: TerminalSpawnStatus | None = None
@@ -194,14 +191,6 @@ class StreamingRunConclusion:
             ),
             terminal_status=self.authoritative_terminal_status,
         )
-
-
-def _inactivity_terminal_outcome(
-    extraction: FinalizeExtraction,
-) -> tuple[int | None, str | None]:
-    if extraction.durable_report_completion:
-        return 0, None
-    return None, "stalled"
 
 
 def _install_signal_handlers(
@@ -303,16 +292,12 @@ async def _consume_subscriber_events(
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
-    last_event_at: list[float] | None = None,
 ) -> None:
     while True:
         normalized_event = await subscriber.get()
         if normalized_event is None:
             return
         event = normalized_event.raw
-
-        if last_event_at is not None:
-            last_event_at[0] = asyncio.get_running_loop().time()
 
         if terminal_event_future is not None and not terminal_event_future.done():
             event_outcome = normalized_event.semantics.terminal
@@ -382,40 +367,6 @@ async def _runner_heartbeat(*, launch: LaunchPaths, completion_event: asyncio.Ev
     while not await _wait_for_event_or_timeout(completion_event, RUNNER_HEARTBEAT_SECONDS):
         with suppress(OSError):
             os.utime(launch.runner_lifecycle)
-
-
-async def _inactivity_watchdog(
-    *,
-    last_event_at: list[float],
-    completion_event: asyncio.Event,
-    manager: SpawnManager,
-    spawn_id: SpawnId,
-    timeout_seconds: float,
-    poll_seconds: float = SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
-) -> bool:
-    loop = asyncio.get_running_loop()
-    while True:
-        if completion_event.is_set():
-            return False
-        idle = loop.time() - last_event_at[0]
-        if idle >= timeout_seconds:
-            break
-        if await _wait_for_event_or_timeout(
-            completion_event,
-            min(poll_seconds, max(0.0, timeout_seconds - idle)),
-        ):
-            return False
-    if completion_event.is_set():
-        return False
-    await manager.stop_spawn(
-        spawn_id, status=SpawnStatus.FAILED, exit_code=1, error="inactivity_stall"
-    )
-    logger.info(
-        "Inactivity watchdog stopped stalled spawn after silence.",
-        spawn_id=str(spawn_id),
-        timeout_seconds=timeout_seconds,
-    )
-    return True
 
 
 async def _start_spawn_with_timeout(
@@ -594,7 +545,6 @@ async def _run_streaming_attempt(
     signal_task: asyncio.Task[bool] | None = None
     budget_task: asyncio.Task[bool] | None = None
     watchdog_task: asyncio.Task[bool] | None = None
-    inactivity_task: asyncio.Task[bool] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
     consume_task: asyncio.Task[None] | None = None
     completion_event = asyncio.Event()
@@ -608,7 +558,6 @@ async def _run_streaming_attempt(
         budget_breach_holder=budget_breach_holder,
         budget_signal=budget_signal,
     )
-    last_event_at: list[float] = [asyncio.get_running_loop().time()]
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
@@ -619,7 +568,6 @@ async def _run_streaming_attempt(
     drain_error: str | None = None
     timed_out = False
     terminated_by_report_watchdog = False
-    terminated_by_inactivity = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: TerminalSpawnStatus | None = None
@@ -664,7 +612,6 @@ async def _run_streaming_attempt(
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                last_event_at=last_event_at,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())
@@ -683,17 +630,6 @@ async def _run_streaming_attempt(
         heartbeat_task = asyncio.create_task(
             _runner_heartbeat(launch=launch, completion_event=completion_event)
         )
-        if config.harness_id == HarnessId.CURSOR:
-            inactivity_task = asyncio.create_task(
-                _inactivity_watchdog(
-                    last_event_at=last_event_at,
-                    completion_event=completion_event,
-                    manager=manager,
-                    spawn_id=run.spawn_id,
-                    timeout_seconds=CURSOR_INACTIVITY_TIMEOUT_SECONDS,
-                )
-            )
-
         decision = await arbitrate_terminal(
             completion_task=completion_task,
             terminal_event_future=terminal_event_future,
@@ -701,7 +637,6 @@ async def _run_streaming_attempt(
             timeout_task=timeout_task,
             budget_task=budget_task,
             watchdog_task=watchdog_task,
-            inactivity_task=inactivity_task,
         )
         terminal_outcome = decision.terminal_outcome
         if decision.trigger == TriggerKind.BUDGET:
@@ -723,8 +658,6 @@ async def _run_streaming_attempt(
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:
             terminated_by_report_watchdog = True
-        elif decision.trigger == TriggerKind.INACTIVITY:
-            terminated_by_inactivity = True
         elif decision.stop_required:
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:
@@ -759,8 +692,6 @@ async def _run_streaming_attempt(
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
                 terminated_by_report_watchdog = True
-            if drain_outcome.error == "inactivity_stall":
-                terminated_by_inactivity = True
 
         # The watchdog resolves the completion future mid-flight inside
         # stop_spawn(), so completion_task can finish before watchdog_task.
@@ -794,7 +725,6 @@ async def _run_streaming_attempt(
             signal_task,
             budget_task,
             watchdog_task,
-            inactivity_task,
             heartbeat_task,
             consume_task,
         ):
@@ -825,7 +755,6 @@ async def _run_streaming_attempt(
         received_signal=received_signal[0],
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
-        terminated_by_inactivity=terminated_by_inactivity,
         cancelled_by_request=cancelled_by_request,
         terminal_observed=(
             terminal_outcome is not None
@@ -1188,11 +1117,6 @@ async def execute_with_streaming(
                         if breach is not None:
                             _append_budget_exceeded_event(run=run, breach=breach)
                         conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
-                    elif attempt.terminated_by_inactivity:
-                        exit_override, failure_override = _inactivity_terminal_outcome(extraction)
-                        if exit_override is not None:
-                            conclusion.exit_code = exit_override
-                        conclusion.failure_reason = failure_override
                     else:
                         if (
                             conclusion.exit_code == 0

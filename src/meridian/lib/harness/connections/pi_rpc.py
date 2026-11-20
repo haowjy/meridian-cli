@@ -100,7 +100,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         supports_steer=True,
         supports_cancel=True,
         runtime_model_switch=False,
-        structured_reasoning=True,
         supports_primary_observer=False,
         supports_runtime_hitl=False,
         supported_startup_phases=frozenset(

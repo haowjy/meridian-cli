@@ -42,7 +42,7 @@ A Mars package can install agents, skills, hooks, and MCP servers. `meridian mar
 
 ```toml
 [settings]
-targets = [".claude", ".codex", ".opencode", ".pi", ".cursor"]
+targets = [".claude", ".codex", ".opencode", ".pi"]
 default_model = "gptmini"
 default_harness = "codex"
 models_cache_ttl_hours = 24
@@ -149,11 +149,11 @@ harnesses = []
 Project-local aliases live under `[models.<alias>]`:
 
 ```toml
-[models.composer]
-harness = "cursor"
-model = "composer-2.5"
-provider = "cursor"
-description = "Cursor's native coding model. Fast, strong tool use."
+[models.fast]
+harness = "claude"
+model = "claude-haiku-5-5"
+provider = "anthropic"
+description = "Small, fast model for quick edits."
 ```
 
 Prefer model aliases as the user-facing interface. When invoking Meridian, pass

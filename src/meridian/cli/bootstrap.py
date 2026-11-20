@@ -34,7 +34,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--no-ignore-direnv",
     }
 )
-HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
+HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode", "pi"})
 
 
 @dataclass(frozen=True)

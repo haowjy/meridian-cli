@@ -1,8 +1,6 @@
 # qa-validated: pi-rpc-quiescence
 import signal
 
-import pytest
-
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -11,7 +9,6 @@ from meridian.lib.launch.extract import (
 from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
-    _inactivity_terminal_outcome,
 )
 
 
@@ -49,7 +46,7 @@ def test_terminal_facts_do_not_treat_synthetic_failure_report_as_completion() ->
         exit_code=130,
         failure_reason="cancelled",
         extracted=_extraction_with_report(
-            "Cursor subprocess exited with code 130.",
+            "Codex subprocess exited with code 130.",
             source="failure_reason",
         ),
         cancellation_observed=True,
@@ -67,18 +64,3 @@ def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     assert facts.exit_code == 0
     assert facts.failure_reason is None
     assert facts.cancellation_observed is True
-
-
-@pytest.mark.parametrize(
-    ("report", "exit_override", "failure_reason"),
-    [("recovered report", 0, None), (None, None, "stalled")],
-    ids=["durable-report", "missing-report"],
-)
-def test_inactivity_terminal_outcome(
-    report: str | None,
-    exit_override: int | None,
-    failure_reason: str | None,
-) -> None:
-    outcome = _inactivity_terminal_outcome(_extraction_with_report(report))
-
-    assert outcome == (exit_override, failure_reason)

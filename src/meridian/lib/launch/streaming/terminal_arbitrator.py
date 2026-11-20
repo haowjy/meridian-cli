@@ -24,7 +24,6 @@ class TriggerKind(Enum):
     TIMEOUT = "timeout"
     BUDGET = "budget"
     WATCHDOG = "watchdog"
-    INACTIVITY = "inactivity"
 
 
 @dataclass(frozen=True)
@@ -47,7 +46,6 @@ async def arbitrate_terminal(
     timeout_task: asyncio.Future[None] | None = None,
     budget_task: asyncio.Future[Any] | None = None,
     watchdog_task: asyncio.Future[bool] | None = None,
-    inactivity_task: asyncio.Future[bool] | None = None,
 ) -> ArbitrationDecision:
     """Return the terminal decision for the first completed trigger set.
 
@@ -56,9 +54,8 @@ async def arbitrate_terminal(
     2. budget exceeded
     3. timeout
     4. watchdog report termination
-    5. inactivity stall termination
-    6. completion
-    7. signal
+    5. completion
+    6. signal
 
     Optional triggers are absent from the race when their task is ``None``.
     """
@@ -74,8 +71,6 @@ async def arbitrate_terminal(
         wait_tasks.add(cast("asyncio.Future[object]", timeout_task))
     if watchdog_task is not None:
         wait_tasks.add(cast("asyncio.Future[object]", watchdog_task))
-    if inactivity_task is not None:
-        wait_tasks.add(cast("asyncio.Future[object]", inactivity_task))
 
     done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
 
@@ -109,16 +104,6 @@ async def arbitrate_terminal(
     if watchdog_task is not None and watchdog_task in done and watchdog_task.result():
         return ArbitrationDecision(
             trigger=TriggerKind.WATCHDOG,
-            terminal_outcome=None,
-            stop_required=False,
-            synthetic_status=None,
-            synthetic_exit_code=None,
-            synthetic_error=None,
-        )
-
-    if inactivity_task is not None and inactivity_task in done and inactivity_task.result():
-        return ArbitrationDecision(
-            trigger=TriggerKind.INACTIVITY,
             terminal_outcome=None,
             stop_required=False,
             synthetic_status=None,

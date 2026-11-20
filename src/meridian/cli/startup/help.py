@@ -26,7 +26,7 @@ class Option:
 
 OPTIONS: tuple[Option, ...] = (
     Option("-m, --model TEXT", "Model id or alias for primary harness.", False),
-    Option("--harness TEXT", "Force harness id (claude, codex, cursor, opencode, or pi).", False),
+    Option("--harness TEXT", "Force harness id (claude, codex, opencode, or pi).", False),
     Option("--format TEXT", "Set output format: text or json.", False),
     Option("--json", "Emit command output as JSON.", False),
     Option("-C, --directory PATH", "Resolve project root from this path instead of CWD.", True),
@@ -141,7 +141,7 @@ def render_root_help(*, agent_mode: bool) -> str:
         )
     else:
         sections.append(
-            "Global harness selection: --harness (or prefix with claude/codex/cursor/opencode)\n\n"
+            "Global harness selection: --harness (or prefix with claude/codex/opencode/pi)\n\n"
             "Bundled package manager: meridian mars ARGS...\n\n"
             'Run "meridian spawn -h" for subagent usage.\n\n'
             f"Version: {__version__}"

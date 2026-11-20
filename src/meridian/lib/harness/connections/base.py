@@ -55,7 +55,6 @@ class ConnectionCapabilities:
     supports_steer: bool
     supports_cancel: bool
     runtime_model_switch: bool
-    structured_reasoning: bool
     supports_primary_observer: bool = False
     supports_runtime_hitl: bool = False
     supported_startup_phases: frozenset[str] = field(default_factory=_empty_startup_phases)
