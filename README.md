@@ -101,7 +101,7 @@ graph TB
 
     subgraph Packages
         Sources["git sources"] -->|"mars add/sync"| Store[".mars/"]
-        Store -->|"materialize targets"| Tool[".claude/ · .cursor/ · .codex/ · .opencode/ · .pi/"]
+        Store -->|"materialize targets"| Tool[".claude/ · .codex/ · .opencode/ · .pi/"]
     end
 
     subgraph Runtime

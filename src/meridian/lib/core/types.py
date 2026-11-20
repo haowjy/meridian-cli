@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Annotated, NewType
 
@@ -9,9 +11,19 @@ class HarnessId(StrEnum):
 
     CLAUDE = "claude"
     CODEX = "codex"
-    CURSOR = "cursor"
     OPENCODE = "opencode"
     PI = "pi"
+
+    @classmethod
+    def _missing_(cls, value: object) -> HarnessId | None:
+        # Old chats and spawn rows still name cursor; a bare "not a valid HarnessId"
+        # would hide why they no longer open.
+        if value == "cursor":
+            raise ValueError(
+                "Cursor support was removed in 0.27.0; its sessions can no longer be "
+                "launched, resumed or read."
+            )
+        return None
 
 
 class TransportId(StrEnum):

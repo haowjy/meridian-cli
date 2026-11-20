@@ -1,6 +1,6 @@
 # meridian-cli
 
-Meridian lets agents in Claude Code, Codex, OpenCode, Cursor (deprecated) and Pi spawn each other.
+Meridian lets agents in Claude Code, Codex, OpenCode and Pi spawn each other.
 It launches, tracks and reports; orchestration belongs in agent prompts, not here.
 
 ## Who It's For
@@ -73,7 +73,7 @@ ones that look wrong, and report them. Change branches only in a worktree
 (`../meridian-cli.worktrees/<name>`, passed to spawns as `--task-dir`).
 
 Each area's `AGENTS.md` holds the rules that guard it; read it before changing that
-area. `meridian mars sync` rewrites `.claude/`, `.codex/`, `.cursor/`, `.opencode/` and
+area. `meridian mars sync` rewrites `.claude/`, `.codex/`, `.opencode/` and
 `.pi/`: change agents and skills at their source in `../prompts/<package>`
 (`../prompts/AGENTS.md`).
 

@@ -93,7 +93,6 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
                 supports_steer=True,
                 supports_cancel=True,
                 runtime_model_switch=False,
-                structured_reasoning=True,
                 supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
             )
 
@@ -249,7 +248,6 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
                 supports_steer=False,
                 supports_cancel=True,
                 runtime_model_switch=False,
-                structured_reasoning=True,
                 supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
             )
 

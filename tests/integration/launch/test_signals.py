@@ -56,7 +56,6 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
                 supports_steer=True,
                 supports_cancel=True,
                 runtime_model_switch=False,
-                structured_reasoning=True,
             )
 
         @property

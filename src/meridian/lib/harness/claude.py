@@ -294,7 +294,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
-            supports_primary_launch=True,
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
             captures_blackbox_output=True,

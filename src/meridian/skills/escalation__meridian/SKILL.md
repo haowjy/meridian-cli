@@ -39,7 +39,7 @@ The one-run controls are in `meridian spawn -h --advanced`.
   `allowlist`, so pass `--network allowlist` with them.
 - **Tool call denied:** the approval mode is blocking it. On Claude, try
   `--approval auto` first: it approves file edits and keeps prompts for riskier calls.
-  On OpenCode and Cursor, `auto` approves every call the profile's tools allow, the
+  On OpenCode, `auto` approves every call the profile's tools allow, the
   same as `--approval never` (`--yolo`), so ask the human before either there; ask
   before `never` on any harness. `--dry-run` reports what the mode becomes for the
   child's harness. Neither mode widens the sandbox or overrides a `tools` deny.
