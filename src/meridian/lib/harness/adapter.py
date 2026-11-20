@@ -21,11 +21,13 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
     LaunchIntent,
     NativeIdentity,
     NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     NativeStoreMove,
     Operation,
@@ -108,6 +110,16 @@ class HarnessCapabilities(BaseModel):
     accepts_messages: bool = True
 
 
+class WorkspaceRoots(StrEnum):
+    """How a harness takes extra workspace roots."""
+
+    NONE = "none"
+    # `--add-dir <root>` arguments on the launch command.
+    ADD_DIR_ARGS = "add_dir_args"
+    # The adapter's `project_launch_env` carries the roots.
+    ENV = "env"
+
+
 class HarnessContract(BaseModel):
     """Inspectable contract surface for one harness adapter."""
 
@@ -117,6 +129,7 @@ class HarnessContract(BaseModel):
     transport_ids: tuple[TransportId, ...]
     launch_spec_cls: str
     bootstrap_mode: BootstrapMode
+    workspace_roots: WorkspaceRoots = WorkspaceRoots.NONE
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     #: Whether the black-box primary child needs the stderr log path env var
     #: injected so its runtime writes stderr to the spawn dir.
@@ -517,7 +530,21 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         native_store: Path,
     ) -> Path | None: ...
 
-    native_identity: ClassVar[bool]
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        """The last model the native session file ``native`` ran, verbatim; None if unread.
+
+        ``tail_bytes`` limits a JSONL history to its last N bytes."""
+        ...
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        """Read ``path`` as one of this harness's sessions for ``session repair``; raises
+        ``InvalidNativeSession`` when it is not, or the harness has no such reader."""
+        ...
+
     continues_in_source_store: ClassVar[frozenset[Operation]]
     # The harness's own TUI asks for a new directory when its recorded one is gone, so a
     # launch that relocate could not repair is still worth offering.
@@ -976,6 +1003,18 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         native_store: Path,
     ) -> Path | None:
         return None
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id, native, tail_bytes
+        return None
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = path, recorded_session_id
+        raise InvalidNativeSession(f"session repair does not support {self.id} chats")
 
     def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
         """Why a resume's store differs from the recorded one; only the adapter knows

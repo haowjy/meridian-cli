@@ -7,12 +7,16 @@ import re
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
+    NativeEntryMismatch,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.codex_rollout import CODEX_ROLLOUT_FILENAME_RE, resolve_exact_rollout
 from meridian.lib.harness.pi_identity import read_header as read_pi_header
@@ -22,6 +26,10 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.platform import get_home_path
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
+
+# The harnesses older builds wrote chat rows without a native store for. A fact about
+# history, not a capability: a harness added later never joins it.
+SUPPORTED = frozenset({"claude", "codex", "opencode", "pi"})
 
 
 class LegacyNativeStores:
@@ -139,24 +147,6 @@ class LegacyNativeStores:
 
 PI_SESSION_VERSIONS = frozenset({1, 2, 3})
 _PI_FILENAME_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?Z_")
-
-
-@dataclass(frozen=True)
-class NativeSessionEvidence:
-    """One validated native session: its exact key plus what it records."""
-
-    harness: str
-    path: Path
-    native_store: Path
-    session_id: str
-    cwd: str | None
-    started_at: datetime | None
-    first_user: str | None = None
-    final_assistant: str | None = None
-
-
-class InvalidNativeSession(ValueError):
-    """The file is not a valid, exactly resolvable native session."""
 
 
 def parse_instant(value: object) -> datetime | None:
@@ -386,22 +376,3 @@ def opencode_session_evidence(path: Path, session_id: str | None) -> NativeSessi
     if exact is None:
         raise InvalidNativeSession(f"{path} has no OpenCode session {session_id}")
     return NativeSessionEvidence("opencode", path, path, session_id, None, None)
-
-
-def native_session_evidence(
-    harness: str, path: Path, *, recorded_session_id: str | None = None
-) -> NativeSessionEvidence:
-    if not path.is_file():
-        raise InvalidNativeSession(f"{path} is not a file")
-    try:
-        if harness == "pi":
-            return pi_session_evidence(path)
-        if harness == "claude":
-            return claude_session_evidence(path)
-        if harness == "codex":
-            return codex_session_evidence(path)
-        if harness == "opencode":
-            return opencode_session_evidence(path, recorded_session_id)
-    except NativeSessionUnavailable as exc:
-        raise InvalidNativeSession(f"{path} is not a valid {harness} session") from exc
-    raise InvalidNativeSession(f"session repair does not support {harness} chats")

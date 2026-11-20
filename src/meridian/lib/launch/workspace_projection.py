@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import WorkspaceRoots
 
 WorkspaceApplicability = Literal[
     "active",
@@ -35,16 +35,7 @@ class ProjectionResult(BaseModel):
     diagnostics: tuple[WorkspaceProjectionDiagnostic, ...] = ()
 
 
-# Harnesses with a workspace projection; `config show` reports only these. Any other
-# harness projects as unsupported, so a new harness that supports roots is added here.
-WORKSPACE_PROJECTING_HARNESSES: tuple[HarnessId, ...] = (
-    HarnessId.CLAUDE,
-    HarnessId.CODEX,
-    HarnessId.OPENCODE,
-)
-
-
-def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
+def _project_add_dir_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
     projected: list[str] = []
     for root in roots:
         projected.extend(("--add-dir", root.as_posix()))
@@ -53,31 +44,29 @@ def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
 
 def project_workspace_roots(
     *,
-    harness_id: HarnessId,
+    support: WorkspaceRoots,
     roots: tuple[Path, ...],
 ) -> ProjectionResult:
 
     if not roots:
         return ProjectionResult(applicability="ignored:no_roots")
 
-    # Claude and Codex both support --add-dir. Note: Codex --add-dir only grants
-    # write access; in read-only sandbox modes the flag is ignored. We project
-    # it anyway for write scenarios and document this as semi-supported.
-    if harness_id in (HarnessId.CLAUDE, HarnessId.CODEX):
+    # Codex --add-dir only grants write access; in read-only sandbox modes the flag is
+    # ignored. We project it anyway for write scenarios and document this as semi-supported.
+    if support is WorkspaceRoots.ADD_DIR_ARGS:
         return ProjectionResult(
             applicability="active",
-            args=_project_claude_workspace_args(roots),
+            args=_project_add_dir_args(roots),
         )
 
-    if harness_id == HarnessId.OPENCODE:
-        # Roots become ``external_directory`` grants in ``OpenCodeAdapter.project_launch_env``.
+    if support is WorkspaceRoots.ENV:
+        # The adapter's ``project_launch_env`` turns the roots into its own grants.
         return ProjectionResult(applicability="active")
 
     return ProjectionResult(applicability="unsupported:requires_config_generation")
 
 
 __all__ = [
-    "WORKSPACE_PROJECTING_HARNESSES",
     "ProjectionResult",
     "WorkspaceApplicability",
     "WorkspaceProjectionDiagnostic",

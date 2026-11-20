@@ -39,8 +39,29 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "(streaming transport; only when the bundle declares one)"
     ),
     (
-        "src/meridian/lib/launch/workspace_projection.py::WORKSPACE_PROJECTING_HARNESSES "
-        "(only when the harness can take workspace roots; `config show` reports these)"
+        "HarnessContract.workspace_roots, set in the adapter "
+        "(ADD_DIR_ARGS, ENV, or the default NONE; `config show` lists the harnesses that "
+        "take roots)"
+    ),
+    (
+        "adapter read_last_model() and native_session_evidence() "
+        "(override to read the model from, and to repair, a native session file; the "
+        "defaults read nothing and refuse `session repair --native`)"
+    ),
+    (
+        "src/meridian/lib/config/harness_models.py::HarnessConfig "
+        "(one field and profile model per harness; without it a `[harness.<id>]` table is "
+        "dropped silently and harness_profile() returns None)"
+    ),
+    (
+        "src/meridian/lib/launch/context.py (the `harness.id ==` branches that bind "
+        "launch-artifact paths into the spec: system prompt file, settings file, report "
+        "output path; add one when the harness's spec takes them)"
+    ),
+    (
+        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() and "
+        "ops/session_search_index.py (optional: candidate listing without --native, and a "
+        "store shared by many sessions, as OpenCode's database is)"
     ),
     (
         "src/meridian/lib/harness/adapter.py::create_session_before_exec() "

@@ -16,19 +16,19 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from uuid import UUID
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import NativeKeyFields, NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.core.types import ChatId
-
-if TYPE_CHECKING:
-    from meridian.lib.harness.legacy_native_stores import (
-        NativeSessionEvidence,
-    )
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import read_events, utc_now_iso
@@ -92,8 +92,7 @@ def report_legacy_native_import(
     records: list[SessionRecord] | None = None,
 ) -> ImportReport:
     """Compute exact bindings without locks, state writes, or native-store writes."""
-    from meridian.lib.harness.legacy_native_stores import LegacyNativeStores
-    from meridian.lib.harness.registry import get_default_harness_registry
+    from meridian.lib.harness.legacy_native_stores import SUPPORTED, LegacyNativeStores
 
     report = ImportReport(
         schema_version=1,
@@ -142,14 +141,12 @@ def report_legacy_native_import(
             if spawn.harness_session_id:
                 ids[spawn.chat_id].add(spawn.harness_session_id.strip())
     stores = LegacyNativeStores()
-    registry = get_default_harness_registry()
     for chat in chats:
         if chat.native_store and chat.harness_session_id:
             if chat.chat_id in previously_imported:
                 report.record(chat, "imported")
             continue
-        adapter = registry.find(chat.harness)
-        if adapter is None or not adapter.native_identity or chat.record_mode == "historical":
+        if chat.harness not in SUPPORTED or chat.record_mode == "historical":
             report.record(chat, "unsupported")
         elif len(ids[chat.chat_id]) > 1:
             report.record(chat, "ambiguous_id")
@@ -551,10 +548,7 @@ def recover_legacy_pi_sessions(
     retained starting prompt (or, with no prompt retained, the report body).
     Primaries shared one root, so they are never bound here.
     """
-    from meridian.lib.harness.legacy_native_stores import (
-        InvalidNativeSession,
-        pi_session_evidence,
-    )
+    from meridian.lib.harness.legacy_native_stores import pi_session_evidence
 
     marker = runtime_root / MARKER
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):

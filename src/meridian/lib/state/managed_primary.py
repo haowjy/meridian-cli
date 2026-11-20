@@ -7,8 +7,6 @@ from pathlib import Path
 import psutil
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import BootstrapMode
-from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
@@ -63,25 +61,18 @@ def terminate_managed_primary_processes(
     return tuple(signaled)
 
 
-def is_managed_primary_candidate(record: SpawnRecord) -> bool:
-    """Conservatively identify managed-primary rows when metadata is unavailable."""
-
-    if record.kind != "primary":
-        return False
-    entry = get_default_harness_registry().find((record.harness or "").strip().lower())
-    return (
-        entry is not None and entry.contract.bootstrap_mode is BootstrapMode.MANAGED_PRIMARY_ATTACH
-    )
-
-
 def tear_down_dead_launch(
     runtime_root: Path,
     record: SpawnRecord,
     metadata: PrimaryMetadata | None,
     *,
+    managed_if_unrecorded: bool,
     until: float,
 ) -> None:
     """Stop what a launch with no runner left behind; the one teardown cancel uses.
+
+    ``managed_if_unrecorded`` says whether the row's harness runs managed primaries; it
+    decides only when no launch metadata survives.
 
     A managed primary's backend and TUI go first (by exact birth, then their recorded
     scopes), then every other recorded scope. Nothing is signalled whose birth is
@@ -94,9 +85,7 @@ def tear_down_dead_launch(
         terminate_recorded_spawn_scopes,
     )
 
-    managed = (
-        metadata.managed_backend if metadata is not None else is_managed_primary_candidate(record)
-    )
+    managed = metadata.managed_backend if metadata is not None else managed_if_unrecorded
     if managed:
         terminate_managed_primary_processes(metadata, include_launcher=False)
         cancel_managed_primary(
@@ -111,6 +100,8 @@ def release_managed_primary_scopes(
     runtime_root: Path,
     spawn_id: SpawnId,
     record: SpawnRecord,
+    *,
+    managed_if_unrecorded: bool,
 ) -> None:
     """Tear down a terminal managed-primary orphan once its runner is gone."""
 
@@ -119,17 +110,20 @@ def release_managed_primary_scopes(
     if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
         return
     metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, record))
-    if metadata is None and not is_managed_primary_candidate(record):
+    if metadata is None and not managed_if_unrecorded:
         return
     if metadata is not None and not metadata.managed_backend:
         return
     tear_down_dead_launch(
-        runtime_root, record, metadata, until=time.monotonic() + _RELEASE_GRACE_SECS
+        runtime_root,
+        record,
+        metadata,
+        managed_if_unrecorded=managed_if_unrecorded,
+        until=time.monotonic() + _RELEASE_GRACE_SECS,
     )
 
 
 __all__ = [
-    "is_managed_primary_candidate",
     "release_managed_primary_scopes",
     "tear_down_dead_launch",
     "terminate_managed_primary_processes",

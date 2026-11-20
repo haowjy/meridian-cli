@@ -37,13 +37,21 @@ Read these contracts before implementing:
 seams. Add the `HarnessId` member, then register a `HarnessBundle` with its adapter,
 spec class, extractor, transport map, projection ports, and semantics; import the
 modules in `_run_bootstrap()` and register the adapter in
-`HarnessRegistry.with_defaults()`. Everything else asks the adapter or the registry:
-`native_identity = True` is what makes a harness eligible for legacy native-session
-import, `contract.bootstrap_mode` is what marks a managed primary, and CLI help and
-shortcuts derive from `HarnessId`. Add the harness to
-`WORKSPACE_PROJECTING_HARNESSES` only if it can take workspace roots. Do not add a
-harness-name list or `== "claude"` branch outside `lib/harness/`; give the adapter a
-capability instead.
+`HarnessRegistry.with_defaults()`. Beyond those, a harness declares what it can do
+and the rest of the code asks the adapter or the registry:
+`contract.bootstrap_mode` marks a managed primary, `contract.workspace_roots` says how
+it takes workspace roots, and `read_last_model()` and `native_session_evidence()`
+read its native session files. CLI help and shortcuts derive from `HarnessId`.
+
+Three places outside `lib/harness/` still name harnesses, and a new harness edits
+them when it needs the behaviour: `HarnessConfig` in `config/harness_models.py` (its
+`[harness.<id>]` table is dropped until it has a field), the `harness.id ==` branches in
+`launch/context.py` that bind launch-artifact paths into the spec, and the optional
+candidate listing in `ops/session_repair.py`. The other name branches there, such as
+Pi's session role and drain coordinator or OpenCode's version env, are behaviour only
+that harness has. `legacy_native_stores.SUPPORTED` is a closed list of the harnesses
+older builds wrote chats for; a new harness never joins it. Do not add another harness-name list or
+`== "claude"` branch outside `lib/harness/`; give the adapter a capability instead.
 
 The adapter declares capabilities and a `HarnessContract`, resolves `SpawnParams`
 into a launch spec, and projects composed content onto the harness's actual
