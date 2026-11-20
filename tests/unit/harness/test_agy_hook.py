@@ -156,7 +156,6 @@ def test_tool_call_runs_as_its_root_conversations_row() -> None:
     assert (env["MERIDIAN_SPAWN_ID"], env["MERIDIAN_CHAT_ID"]) == ("p4", "c4")
     assert env["MERIDIAN_PROJECT_DIR"] == "/proj"
     assert env["_MERIDIAN_DEPTH"] == "0"
-    assert "MERIDIAN_SPAWN_ID" not in call_env(None)
 
 
 def test_closed_conversation_notifies_only_for_undelivered_messages(

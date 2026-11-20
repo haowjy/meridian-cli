@@ -37,7 +37,14 @@ logger = logging.getLogger(__name__)
 
 _ADOPT_WAIT_SECONDS = 20.0
 _CLOSE_WAIT_SECONDS = 0.3
+# A conversation whose hold failed is retried by the poll no sooner than this; a tool call
+# for it retries at once.
+_RETRY_SECONDS = 10.0
 _ROUTE_NOTE = "agy has no push channel: the message is read at the session's next model call."
+
+
+class HoldError(RuntimeError):
+    """A conversation has no row to run as; the text says why and is shown to the model."""
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,7 @@ class _Hold:
     ready: threading.Event = field(default_factory=threading.Event)
     stop: threading.Event = field(default_factory=threading.Event)
     row: HeldRow | None = None
+    error: str | None = None
     thread: threading.Thread | None = None
 
 
@@ -69,21 +77,39 @@ class ConversationHolds:
     def __init__(self, proc_dir: Path) -> None:
         self._proc_dir = proc_dir
         self._holds: dict[str, _Hold] = {}
+        self._failures: dict[str, tuple[str, float]] = {}  # conversation -> (error, when)
         self._lock = threading.Lock()
 
     def sync(self) -> None:
         """Adopt every primary conversation of this ``agy`` process that has no hold yet."""
 
         for path in sorted((self._proc_dir / "requests").glob("*.json")):
-            self._adopt(path.stem)
+            with self._lock:
+                failure = self._failures.get(path.stem)
+            if failure is None or time.monotonic() - failure[1] >= _RETRY_SECONDS:
+                self._adopt(path.stem)
 
-    def row_for(self, conversation: str) -> HeldRow | None:
-        """The row held for ``conversation``, adopting it first when its request just arrived."""
+    def row_for(self, conversation: str) -> HeldRow:
+        """The row held for ``conversation``, adopting it first when its request just arrived.
+
+        Raises ``HoldError`` when there is none, and a failed hold is dropped, so the next
+        call or poll adopts again.
+        """
 
         hold = self._adopt(conversation)
         if hold is None:
-            return None
+            raise HoldError(
+                f"Meridian has no session for Antigravity conversation {conversation}: its "
+                "SessionStart hook did not register it, so nothing ran. Check that "
+                "`meridian mars sync` installed the plugin's hooks, then send another prompt."
+            )
         hold.ready.wait(_ADOPT_WAIT_SECONDS)
+        if hold.row is None:
+            raise HoldError(
+                "Meridian could not hold this Antigravity conversation as a session, so "
+                f"nothing ran: {hold.error or 'timed out'}. If another agy process has the "
+                "conversation open, close it; the next call retries."
+            )
         return hold.row
 
     def close(self) -> None:
@@ -120,10 +146,23 @@ class ConversationHolds:
     def _run(self, hold: _Hold, request: dict[str, Any]) -> None:
         try:
             _hold_row(hold, request, self._proc_dir)
-        except Exception:
-            logger.warning("agy conversation %s was not held", hold.conversation, exc_info=True)
+        except Exception as exc:
+            if hold.row is None:
+                self._drop(hold, str(exc) or type(exc).__name__)
+            else:
+                logger.warning("agy conversation %s ended", hold.conversation, exc_info=True)
         finally:
             hold.ready.set()
+
+    def _drop(self, hold: _Hold, error: str) -> None:
+        hold.error = error
+        with self._lock:
+            if self._holds.get(hold.conversation) is hold:
+                del self._holds[hold.conversation]
+            previous = self._failures.get(hold.conversation)
+            self._failures[hold.conversation] = (error, time.monotonic())
+        if previous is None or previous[0] != error:
+            logger.warning("agy conversation %s was not held: %s", hold.conversation, error)
 
 
 def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
@@ -233,4 +272,4 @@ async def _serve(launch: LaunchPaths, conversation: str, stop: threading.Event) 
         await asyncio.to_thread(stop.wait)
 
 
-__all__ = ["ConversationHolds", "HeldRow"]
+__all__ = ["ConversationHolds", "HeldRow", "HoldError"]

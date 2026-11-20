@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from meridian.lib.core.logging import configure_logging
-from meridian.lib.harness.agy.holds import ConversationHolds, HeldRow
+from meridian.lib.harness.agy.holds import ConversationHolds, HeldRow, HoldError
 from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
     CONVERSATION_ID_KEY,
@@ -66,26 +67,25 @@ def root_conversation(meta: Mapping[str, Any]) -> str | None:
     return root if is_safe_id(root) else None
 
 
-def call_env(row: HeldRow | None) -> dict[str, str]:
-    """The environment of one command: the session's identity, or none when it has no row.
+def call_env(row: HeldRow) -> dict[str, str]:
+    """The environment of one command: the session's identity, call by call.
 
     The server's own environment belongs to whoever started ``agy``, so identity comes
-    only from the conversation's row, call by call.
+    only from the conversation's row.
     """
 
-    env = scrubbed_env(os.environ)
-    if row is not None:
-        from meridian.lib.core.resolved_context import ResolvedContext
-        from meridian.lib.core.types import SpawnId
+    from meridian.lib.core.resolved_context import ResolvedContext
+    from meridian.lib.core.types import SpawnId
 
-        env.update(
-            ResolvedContext(
-                spawn_id=SpawnId(row.spawn_id),
-                project_root=row.project_root,
-                runtime_root=row.runtime_root,
-                chat_id=row.chat_id,
-            ).child_env_overrides(increment_depth=False)
-        )
+    env = scrubbed_env(os.environ)
+    env.update(
+        ResolvedContext(
+            spawn_id=SpawnId(row.spawn_id),
+            project_root=row.project_root,
+            runtime_root=row.runtime_root,
+            chat_id=row.chat_id,
+        ).child_env_overrides(increment_depth=False)
+    )
     return env
 
 
@@ -128,15 +128,22 @@ def build_server(holds: ConversationHolds | None) -> FastMCP[Any]:
     server = FastMCP("meridian", lifespan=lifespan)
 
     async def meridian(args: list[str], ctx: Context[Any, Any, Any]) -> str:
+        # No row, no run: a command without the session's identity would start children
+        # with no parent and a session nobody can message, and say nothing.
         root = root_conversation(_request_meta(ctx))
-        row = (
-            await asyncio.to_thread(holds.row_for, root)
-            if holds is not None and root is not None
-            else None
-        )
-        stdout, stderr, code = await run_meridian(
-            args, env=call_env(row), cwd=row.cwd if row is not None else None
-        )
+        if root is None:
+            raise ToolError("agy sent no conversation ID with this call, so nothing ran.")
+        if holds is None:
+            raise ToolError(
+                "Meridian could not find the agy process that started this server (its "
+                "SessionStart hook did not run), so nothing ran. Check that `meridian mars "
+                "sync` installed the plugin's hooks."
+            )
+        try:
+            row = await asyncio.to_thread(holds.row_for, root)
+        except HoldError as exc:
+            raise ToolError(str(exc)) from None
+        stdout, stderr, code = await run_meridian(args, env=call_env(row), cwd=row.cwd)
         return format_result(stdout, stderr, code)
 
     server.add_tool(meridian, name="meridian", description=TOOL_DESCRIPTION)
