@@ -340,10 +340,14 @@ class WorkShowOutput(BaseModel):
                 lines.append("  (no active spawns)")
             if finished:
                 breakdown = ", ".join(f"{count} {status}" for status, count in finished.items())
+                finished_total = sum(finished.values())
+                # `--view all` reserves slots for active rows, so the limit must
+                # cover every associated spawn, not only the finished ones.
+                hint_limit = sum(self.spawn_counts.values())
                 lines.append(
-                    f"  {sum(finished.values())} finished ({breakdown}): "
+                    f"  {finished_total} finished ({breakdown}): "
                     f"meridian spawn list --work {self.name} --view all "
-                    f"--limit {sum(finished.values())}"
+                    f"--limit {hint_limit}"
                 )
         lines.append("")
         lines.append("Sessions:")
