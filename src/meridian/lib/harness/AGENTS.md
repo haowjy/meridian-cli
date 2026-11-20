@@ -59,11 +59,13 @@ capture and legacy import. An unlaunched harness's chat never has a native key
 look an adapter up by key (`session log`, the search index, legacy import) away from it.
 Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
 the owed-notice sweep); a second one is a package with `commands.run_command` and
-`notices.send_owed_notices` plus a line there. `agy/` holds what the plugin runs:
+`notices.send_owed_notices` plus a line in `_PACKAGES`, which `HarnessId.launched_by_meridian`
+also reads. `agy/` holds what the plugin runs:
 
 - `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
-  heavy. No blocking locks, no output for no opinion, catch everything. It writes only
-  request files and claims inbox entries.
+  heavy. No blocking locks (registering a request file waits at most 0.5 s for the
+  conversation's lock, the one the notice sweep decides closed-ness under), no output for
+  no opinion, catch everything. It writes only request files and claims inbox entries.
 - `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
   `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:

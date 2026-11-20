@@ -14,6 +14,9 @@ from collections.abc import Sequence
 
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
+# ``HarnessId.launched_by_meridian`` reads this, so the enum and the dispatch cannot drift.
+NAMES = frozenset(_PACKAGES)
+
 
 def run_command(argv: Sequence[str]) -> int | None:
     """Run an unlaunched harness's argv command, or return None when ``argv`` is not one."""
@@ -31,4 +34,4 @@ def send_owed_notices() -> None:
         importlib.import_module(f"{package}.notices").send_owed_notices()
 
 
-__all__ = ["run_command", "send_owed_notices"]
+__all__ = ["NAMES", "run_command", "send_owed_notices"]

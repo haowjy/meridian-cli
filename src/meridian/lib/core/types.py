@@ -5,6 +5,8 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator, StringConstraints
 
+from meridian.lib.harness.unlaunched import NAMES as UNLAUNCHED_NAMES
+
 
 class HarnessId(StrEnum):
     """Known harness identifiers."""
@@ -20,7 +22,7 @@ class HarnessId(StrEnum):
         """False for a harness the person starts themselves (``agy``): it has sessions
         and rows Meridian reads and routes to, but no adapter, shortcut or launch."""
 
-        return self is not HarnessId.AGY
+        return self.value not in UNLAUNCHED_NAMES
 
     @classmethod
     def _missing_(cls, value: object) -> HarnessId | None:
