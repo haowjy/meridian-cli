@@ -1,8 +1,8 @@
 # qa-validated: test-suite-redesign
 """Codex fork and session seeding tests for primary process launch.
 
-Verifies that Codex fork materializes a new session via the adapter,
-and that the native-continue-fork contract skips the fork call.
+Verifies that Codex fork creates a new session through the adapter's pre-exec port,
+and that an adapter whose port returns None launches on the source session.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.adapter import ForkMaterializationMode
+from meridian.lib.harness.adapter import PreExecSessionRequest
 from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
@@ -144,8 +144,9 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
             assert spec.native_identity.session_id == captured["build_continue_session"]
         return [*base_command, "resume", spec.continue_session_id or ""]
 
-    def fake_fork_session(source_session_id: str) -> str:
-        captured["fork_source_session"] = source_session_id
+    def fake_create_session(request: PreExecSessionRequest) -> str:
+        assert request.operation == "fork"
+        captured["fork_source_session"] = request.source_session_id
         return "00000000-0000-4000-8000-000000000002"
 
     def fake_run_primary_attach(
@@ -182,7 +183,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         "project_subprocess_spec",
         fake_project_subprocess_spec,
     )
-    monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
+    monkeypatch.setattr(codex_adapter, "create_session_before_exec", fake_create_session)
 
     outcome = run_harness_process(
         launch_context,
@@ -211,7 +212,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
 
 
 @pytest.mark.slow
-def test_run_harness_process_fork_materialization_comes_from_contract(
+def test_run_harness_process_fork_materialization_comes_from_adapter_port(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -221,16 +222,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     harness_registry = get_default_harness_registry()
     config = load_config(project_root)
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
-    native_fork_contract = codex_adapter.contract.model_copy(
-        update={
-            "fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-        }
-    )
-    monkeypatch.setattr(
-        type(codex_adapter),
-        "contract",
-        property(lambda _self: native_fork_contract),
-    )
+    monkeypatch.setattr(codex_adapter, "create_session_before_exec", lambda request: None)
     launch_context = build_launch_context(
         spawn_id="dry-run-primary",
         request=SpawnRequest(
@@ -269,9 +261,6 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         captured["build_continue_session"] = spec.continue_session_id
         return [*base_command, "resume", spec.continue_session_id or ""]
 
-    def fail_if_forked(source_session_id: str) -> str:
-        raise AssertionError(f"Unexpected fork materialization for session {source_session_id}")
-
     def fake_run_primary_attach(
         harness_id: Any,
         launch: Any,
@@ -306,7 +295,6 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         "project_subprocess_spec",
         fake_project_subprocess_spec,
     )
-    monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
 
     outcome = run_harness_process(
         launch_context,

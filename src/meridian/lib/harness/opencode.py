@@ -22,7 +22,6 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     NativeRelocation,
@@ -353,7 +352,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             primary_attach_failure_policy="fallback_to_blackbox",
             sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,

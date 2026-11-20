@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 
 from meridian.lib.core.delivery import MessageRoute
-from meridian.lib.harness.bundle import PrimaryMessageRoute
+from meridian.lib.harness.bundle import PrimaryMessageRoute, PrimaryRouteContext
 from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
@@ -38,7 +38,11 @@ async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncGenera
 
 
 def _serve_when_routable(
-    launch: LaunchPaths, factory: PrimaryMessageRoute, pid: int, stop: threading.Event
+    launch: LaunchPaths,
+    factory: PrimaryMessageRoute,
+    pid: int,
+    payload: object | None,
+    stop: threading.Event,
 ) -> None:
     """Thread body: wait for a route, then serve it until *stop*. Logs, never raises."""
 
@@ -49,7 +53,7 @@ def _serve_when_routable(
     try:
         route: MessageRoute | None = None
         while not stop.is_set():
-            route = factory(launch, pid)
+            route = factory(PrimaryRouteContext(launch, pid, payload))
             if route is not None:
                 break
             stop.wait(_ROUTE_POLL_SECONDS)
@@ -61,7 +65,7 @@ def _serve_when_routable(
 
 @contextmanager
 def primary_control_socket(
-    launch: LaunchPaths, factory: PrimaryMessageRoute | None
+    launch: LaunchPaths, factory: PrimaryMessageRoute | None, payload: object | None = None
 ) -> Generator[Callable[[int], None], None, None]:
 
     stop = threading.Event()
@@ -75,7 +79,7 @@ def primary_control_socket(
         try:
             thread = threading.Thread(
                 target=_serve_when_routable,
-                args=(launch, factory, pid, stop),
+                args=(launch, factory, pid, payload, stop),
                 name=f"meridian-primary-control-{launch.spawn_id}",
                 daemon=True,
             )

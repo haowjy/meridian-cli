@@ -72,6 +72,15 @@ Implement the primitives rather than overriding `plan_native_identity()` or
 | `plan_native_relocate()`, `apply_native_relocations()` | Plan and apply what `session relocate` changes in the harness's own state. Relocate decides the move (`cwd_from` is `native_cwd()`, `cwd_to` its rebased form); the harness only changes its own record, using the `--native` file when given (a harness without one refuses it: the base method refuses `--native` unless `native_transcript_choice` is set, and a harness implements `_plan_native_relocate`). The plan names the `source` file apply acts on; apply gets only plans without a refusal; defaults change nothing |
 | `observe_after_exit()` | Return `PostExit` evidence; do not bind or persist it |
 
+An adapter that must create the native session itself before exec (Codex fork today)
+overrides `create_session_before_exec(request)`; the default returns `None`. The request
+names the operation (`create` for a fresh launch, `fork` with its source session; a resume
+never calls the port) and carries the native store, the prepared launch surface (`None` for
+a spawn fork a background worker launches), the working directory, and a child environment
+built from the base one. `HarnessPrelaunchState.route_payload` carries in-memory launch facts to the
+bundle's `primary_message_route`, which receives a `PrimaryRouteContext`. The guarantees
+are in `src/meridian/lib/launch/.context/CONTEXT.md`.
+
 Launch owns entry binding, exit allocation, and invocation attribution. Transcript
 reads use the recorded `(harness, native_store, id)`; ambiguity is an error, never a
 reason to choose a replacement.

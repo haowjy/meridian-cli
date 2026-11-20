@@ -10,10 +10,13 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.native_identity import NativeIdentityError, NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    NativeIdentityError,
+    NativeSessionUnavailable,
+    PrecreatedSession,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
-    ForkMaterializationMode,
     HarnessPrelaunchState,
     StreamEvent,
 )
@@ -28,7 +31,7 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
     materialize_launch_context,
 )
-from meridian.lib.launch.fork import materialize_fork
+from meridian.lib.launch.pre_exec_session import create_session_before_exec
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchRuntime,
@@ -179,34 +182,34 @@ async def _prepare_execution_handoff(
         resolved_request = resolved_request.model_copy(
             update={"agent": session_context.resolved_agent_name}
         )
-        # Spawn row AND chat row now both exist. Harnesses that
-        # declare MERIDIAN_MATERIALIZED_FORK fork here so the spawn row
-        # receives the forked session ID via update_spawn (not pre-populated on
-        # the start row). Other harnesses keep continue_fork native for launch
-        # projection.
-        if (
-            harness_adapter.contract.fork_materialization
-            is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
-            and resolved_session.continue_fork
-            and resolved_session.requested_harness_session_id
-        ):
+        # Spawn row AND chat row now both exist. A harness whose adapter creates the fork
+        # itself does it here, so the spawn row receives the forked session ID via
+        # update_spawn (not pre-populated on the start row). Other harnesses keep
+        # continue_fork native for launch projection. A spawn's fresh session is the
+        # connection's to create, so only a fork reaches the port.
+        forked: PrecreatedSession | None = None
+        if resolved_session.continue_fork and resolved_session.requested_harness_session_id:
             try:
-                forked_session_id = materialize_fork(
+                forked = create_session_before_exec(
                     adapter=harness_adapter,
+                    operation="fork",
                     source_session_id=resolved_session.requested_harness_session_id,
                     native_store=resolved_session.source_native_store,
+                    surface=prepared,
+                    cwd=Path(execution_cwd),
                     runtime_root=runtime_root,
-                    spawn_id=spawn.spawn_id,
+                    launch=launch,
                 )
             except NativeSessionUnavailable:
                 raise
             except ValueError as exc:
                 raise LaunchUserInputError(str(exc)) from exc
+        if forked is not None:
             resolved_request = resolved_request.model_copy(
                 update={
                     "session": resolved_request.session.model_copy(
                         update={
-                            "requested_harness_session_id": forked_session_id,
+                            "requested_harness_session_id": forked.session_id,
                             "continue_fork": False,
                         }
                     )

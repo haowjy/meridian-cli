@@ -22,7 +22,6 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
@@ -261,7 +260,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             primary_stderr_log=True,
             forbidden_child_env_keys=_PI_FORBIDDEN_CHILD_ENV,
         )

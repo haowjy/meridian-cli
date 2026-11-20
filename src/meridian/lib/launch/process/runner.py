@@ -22,6 +22,7 @@ from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
     NativeSessionUnavailable,
+    PrecreatedSession,
 )
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -31,7 +32,6 @@ from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
-    ForkMaterializationMode,
     HarnessContract,
     HarnessPrelaunchState,
     NativePrimaryRuntimeMetadata,
@@ -91,7 +91,8 @@ from ..context import (
     bind_launch_context,
     materialize_launch_context,
 )
-from ..fork import fork_usage_seed, materialize_fork
+from ..fork import fork_usage_seed
+from ..pre_exec_session import create_session_before_exec
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
@@ -435,6 +436,7 @@ def _execute_primary_process(
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[ProcessIdentity], None],
     usage_seed: UsageSeed,
+    route_payload: object | None,
 ) -> PrimaryExecutionResult:
 
     terminal_surface_mode = harness_contract.capabilities.terminal_surface_mode
@@ -481,7 +483,7 @@ def _execute_primary_process(
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(launch.stderr_log)
 
     with primary_control_socket(
-        launch, get_harness_bundle(harness_id).primary_message_route
+        launch, get_harness_bundle(harness_id).primary_message_route, route_payload
     ) as serve_control_socket:
 
         def record_blackbox_started(identity: ProcessIdentity) -> None:
@@ -535,6 +537,7 @@ def _finalize_lifecycle(
     native_key: NativeKey | None = None,
     cancellation_observed: bool = False,
     native_identity_error: str | None = None,
+    launch_failure: str | None = None,
 ) -> int:
     """Complete execution after native identity validation and attribution."""
 
@@ -558,7 +561,8 @@ def _finalize_lifecycle(
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
                     failure_reason=(
-                        native_identity_error or ("cancelled" if cancellation_observed else None)
+                        native_identity_error
+                        or ("cancelled" if cancellation_observed else launch_failure)
                     ),
                     cancellation_observed=cancellation_observed,
                     durable_report_completion=(
@@ -873,15 +877,10 @@ def run_harness_process(
             )
             identity_error: NativeIdentityError | None = None
             identity_error_phase = "pre_exec"
+            launch_failure: str | None = None
             lifecycle: LifecycleLog | None = None
             try:
                 write_native_primary_metadata = False
-                should_fork = (
-                    session_mode == SessionMode.FORK
-                    and harness_adapter.contract.fork_materialization
-                    is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
-                    and bool((preview_request.session.requested_harness_session_id or "").strip())
-                )
                 launch = (
                     LaunchPaths.for_row(runtime_root, reopened)
                     if reopened is not None
@@ -889,9 +888,7 @@ def run_harness_process(
                         primary_reservation(
                             chat_id=chat_id,
                             work_id=attached_work_id,
-                            harness_session_id=(
-                                None if should_fork else resolved_harness_session_id
-                            ),
+                            harness_session_id=resolved_harness_session_id,
                         ),
                         launch_lock=launch_lock,
                     )
@@ -902,21 +899,31 @@ def run_harness_process(
                 primary_spawn_id = launch.spawn_id
                 update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
                 lifecycle = LifecycleLog.for_launch(launch)
-                forked_session_id: str | None = None
-                if should_fork:
-                    source_session_id = (
-                        preview_request.session.requested_harness_session_id or ""
-                    ).strip()
-                    forked_session_id = materialize_fork(
-                        adapter=harness_adapter,
-                        source_session_id=source_session_id,
-                        native_store=preview_request.session.source_native_store,
-                        runtime_root=runtime_root,
-                        spawn_id=primary_spawn_id,
-                    )
-                    resolved_harness_session_id = forked_session_id
-                if forked_session_id:
-                    expected_harness_session_id = forked_session_id
+                precreated: PrecreatedSession | None = None
+                if session_mode != SessionMode.RESUME:
+                    fork = session_mode == SessionMode.FORK
+                    try:
+                        precreated = create_session_before_exec(
+                            adapter=harness_adapter,
+                            operation="fork" if fork else "create",
+                            source_session_id=(
+                                (preview_request.session.requested_harness_session_id or "").strip()
+                                or None
+                                if fork
+                                else None
+                            ),
+                            native_store=preview_request.session.source_native_store,
+                            surface=prepared,
+                            cwd=execution_cwd,
+                            runtime_root=runtime_root,
+                            launch=launch,
+                        )
+                    except Exception as exc:
+                        launch_failure = str(exc) or type(exc).__name__
+                        raise
+                if precreated is not None:
+                    resolved_harness_session_id = precreated.session_id
+                    expected_harness_session_id = precreated.session_id
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -945,9 +952,8 @@ def run_harness_process(
                     bindings=RuntimeBindings(
                         launch=launch,
                         runtime_work_id=attached_work_id,
-                        forked_harness_session_id=forked_session_id,
+                        precreated=precreated,
                         chat_id=chat_id,
-                        continue_fork_override=False if should_fork else None,
                         plan_overrides=plan_overrides,
                     ),
                     runtime=runtime,
@@ -963,7 +969,7 @@ def run_harness_process(
                 command = runtime_context.binding.argv
                 resolved_harness_session_id = (
                     (runtime_context.binding.effective_harness_session_id or "")
-                    if session_mode == SessionMode.RESUME or forked_session_id
+                    if session_mode == SessionMode.RESUME or precreated is not None
                     else ""
                 )
                 persisted_launch_policy_snapshot = (
@@ -1112,6 +1118,7 @@ def run_harness_process(
                         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                         run_primary_attach_fn=run_primary_attach_fn,
                         on_running=_record_primary_started,
+                        route_payload=prelaunch_state.route_payload,
                         usage_seed=(
                             reopened.prior_usage.harness_cumulative if reopened else usage_seed
                         ),
@@ -1189,6 +1196,7 @@ def run_harness_process(
                             native_identity_error=identity_error.failure_code
                             if identity_error
                             else None,
+                            launch_failure=launch_failure,
                         )
                         if write_native_primary_metadata and launch is not None:
                             _write_native_primary_metadata(
