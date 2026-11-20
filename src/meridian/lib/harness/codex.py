@@ -257,7 +257,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
-    native_identity = True
+    native_identity: ClassVar[bool] = True
     refused_identity_flags = frozenset(["--session-id", "--resume", "--fork"])
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
 

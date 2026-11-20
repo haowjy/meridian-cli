@@ -9,31 +9,38 @@ _bootstrap_imports: tuple[object, ...] = ()
 _bootstrap_lock = threading.RLock()
 
 HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
-    "src/meridian/lib/core/types.py (HarnessId/TransportId registration)",
+    "src/meridian/lib/core/types.py (HarnessId member; help text and shortcuts derive from it)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
-        "(adapter + explicit HarnessContract + bundle registration + transport map side effect)"
-    ),
-    "src/meridian/lib/harness/__init__.py::_run_bootstrap() (bootstrap import wiring)",
-    (
-        "src/meridian/lib/harness/projections/project_<new_harness>_subprocess.py "
-        "+ project_<new_harness>_streaming.py (spec/workspace projection seams)"
+        "(adapter, its HarnessContract and handled_fields, and the register_harness_bundle() "
+        "call that binds adapter, spec class, extractor, transport connections, projection "
+        "ports and semantics)"
     ),
     (
-        "src/meridian/lib/harness/extractors/<new_harness>.py "
-        "(report/session/usage extraction seams)"
+        "src/meridian/lib/harness/__init__.py::_run_bootstrap() "
+        "(import the adapter, projection and extractor modules so they register)"
     ),
     (
         "src/meridian/lib/harness/registry.py::HarnessRegistry.with_defaults() "
-        "(default adapter registry)"
+        "(import and register the adapter instance)"
     ),
     (
-        "src/meridian/lib/harness/launch_spec.py::"
-        "_enforce_spawn_params_accounting() (handled_fields drift guard)"
+        "src/meridian/lib/harness/projections/project_<new_harness>*.py "
+        "(spec to argv/env/transport payloads, with import-time drift guards)"
     ),
+    (
+        "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
+        "(the compile of the permission policy and its enforcement report; register the "
+        "report and effective-network function as HarnessProjectionPorts)"
+    ),
+    ("src/meridian/lib/harness/extractors/<new_harness>.py (report, session and usage extraction)"),
     (
         "src/meridian/lib/harness/connections/<new_harness>_<transport>.py "
-        "(concrete streaming transport implementation)"
+        "(streaming transport; only when the bundle declares one)"
+    ),
+    (
+        "src/meridian/lib/launch/workspace_projection.py::WORKSPACE_PROJECTING_HARNESSES "
+        "(only when the harness can take workspace roots; `config show` reports these)"
     ),
     (
         "src/meridian/lib/harness/adapter.py::create_session_before_exec() "
@@ -42,11 +49,6 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "must then return LaunchIntent.precreated_session_id; "
         "HarnessPrelaunchState.route_payload hands in-memory facts to "
         "HarnessBundle.primary_message_route)"
-    ),
-    (
-        "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
-        "(the harness's compile of the permission policy and its enforcement report; "
-        "register its report and effective-network function as HarnessProjectionPorts)"
     ),
 )
 

@@ -85,14 +85,15 @@ def read_last_executed_model(
     """
 
     normalized_session_id = harness_session_id.strip()
-    if not normalized_session_id or harness not in {"claude", "codex", "opencode", "pi"}:
+    if not normalized_session_id:
         return None
     try:
         if context.native_store is not None:
-            from meridian.lib.core.types import HarnessId
             from meridian.lib.harness.registry import get_default_harness_registry
 
-            adapter = get_default_harness_registry().get(HarnessId(harness))
+            adapter = get_default_harness_registry().find(harness)
+            if adapter is None:
+                return None
             native = adapter.resolve_native_session_file(
                 session_id=normalized_session_id,
                 native_store=Path(context.native_store),

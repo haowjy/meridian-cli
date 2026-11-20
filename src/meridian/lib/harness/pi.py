@@ -200,7 +200,7 @@ def _project_pi_subprocess_cli_args(
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """Pi harness implementation for native installed ``pi`` launches."""
 
-    native_identity = True
+    native_identity: ClassVar[bool] = True
     refused_identity_flags = frozenset(
         [
             "--session",

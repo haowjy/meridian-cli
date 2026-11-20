@@ -303,7 +303,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `opencode`."""
 
-    native_identity = True
+    native_identity: ClassVar[bool] = True
     refused_identity_flags = frozenset(
         ["--session", "--session-id", "-s", "--continue", "-c", "--fork"]
     )

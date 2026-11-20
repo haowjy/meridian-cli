@@ -23,8 +23,6 @@ from meridian.lib.platform import get_home_path
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 
-SUPPORTED = frozenset({"claude", "codex", "opencode", "pi"})
-
 
 class LegacyNativeStores:
     """One import's Codex inventory; other harness candidates are direct paths."""

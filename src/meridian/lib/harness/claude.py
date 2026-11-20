@@ -224,7 +224,7 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
 class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `claude`."""
 
-    native_identity = True
+    native_identity: ClassVar[bool] = True
     refused_identity_flags = frozenset(
         ["--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"]
     )

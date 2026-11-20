@@ -19,8 +19,8 @@ from meridian.lib.config.workspace import (
     get_projectable_roots,
     resolve_workspace_snapshot,
 )
-from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.workspace_projection import (
+    WORKSPACE_PROJECTING_HARNESSES,
     WorkspaceApplicability,
     project_workspace_roots,
 )
@@ -72,18 +72,11 @@ class ConfigSurfaceWorkspace(BaseModel):
                 skipped=snapshot.roots_count - len(projectable_roots),
             ),
             applicability={
-                HarnessId.CLAUDE.value: project_workspace_roots(
-                    harness_id=HarnessId.CLAUDE,
+                harness_id.value: project_workspace_roots(
+                    harness_id=harness_id,
                     roots=projectable_roots,
-                ).applicability,
-                HarnessId.CODEX.value: project_workspace_roots(
-                    harness_id=HarnessId.CODEX,
-                    roots=projectable_roots,
-                ).applicability,
-                HarnessId.OPENCODE.value: project_workspace_roots(
-                    harness_id=HarnessId.OPENCODE,
-                    roots=projectable_roots,
-                ).applicability,
+                ).applicability
+                for harness_id in WORKSPACE_PROJECTING_HARNESSES
             },
             roots_detail=tuple(
                 ConfigSurfaceWorkspaceRootDetail(

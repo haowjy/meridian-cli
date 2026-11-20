@@ -7,6 +7,8 @@ from pathlib import Path
 import psutil
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.adapter import BootstrapMode
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
@@ -64,8 +66,12 @@ def terminate_managed_primary_processes(
 def is_managed_primary_candidate(record: SpawnRecord) -> bool:
     """Conservatively identify managed-primary rows when metadata is unavailable."""
 
-    harness = (record.harness or "").strip().lower()
-    return record.kind == "primary" and harness in {"codex", "opencode"}
+    if record.kind != "primary":
+        return False
+    entry = get_default_harness_registry().find((record.harness or "").strip().lower())
+    return (
+        entry is not None and entry.contract.bootstrap_mode is BootstrapMode.MANAGED_PRIMARY_ATTACH
+    )
 
 
 def tear_down_dead_launch(

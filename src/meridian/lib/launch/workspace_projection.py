@@ -35,6 +35,15 @@ class ProjectionResult(BaseModel):
     diagnostics: tuple[WorkspaceProjectionDiagnostic, ...] = ()
 
 
+# Harnesses with a workspace projection; `config show` reports only these. Any other
+# harness projects as unsupported, so a new harness that supports roots is added here.
+WORKSPACE_PROJECTING_HARNESSES: tuple[HarnessId, ...] = (
+    HarnessId.CLAUDE,
+    HarnessId.CODEX,
+    HarnessId.OPENCODE,
+)
+
+
 def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
     projected: list[str] = []
     for root in roots:
@@ -68,6 +77,7 @@ def project_workspace_roots(
 
 
 __all__ = [
+    "WORKSPACE_PROJECTING_HARNESSES",
     "ProjectionResult",
     "WorkspaceApplicability",
     "WorkspaceProjectionDiagnostic",

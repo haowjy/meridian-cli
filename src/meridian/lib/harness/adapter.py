@@ -517,6 +517,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         native_store: Path,
     ) -> Path | None: ...
 
+    native_identity: ClassVar[bool]
     continues_in_source_store: ClassVar[frozenset[Operation]]
     # The harness's own TUI asks for a new directory when its recorded one is gone, so a
     # launch that relocate could not repair is still worth offering.

@@ -34,9 +34,16 @@ Read these contracts before implementing:
 
 `HARNESS_EXTENSION_TOUCHPOINTS` in
 [`harness/__init__.py`](../src/meridian/lib/harness/__init__.py) lists the registration
-seams. Add the harness ID and CLI routing, then register a `HarnessBundle` with its
-adapter, spec class, extractor, transport map, projection ports, and semantics.
-`HarnessRegistry.with_defaults()` includes the default adapter.
+seams. Add the `HarnessId` member, then register a `HarnessBundle` with its adapter,
+spec class, extractor, transport map, projection ports, and semantics; import the
+modules in `_run_bootstrap()` and register the adapter in
+`HarnessRegistry.with_defaults()`. Everything else asks the adapter or the registry:
+`native_identity = True` is what makes a harness eligible for legacy native-session
+import, `contract.bootstrap_mode` is what marks a managed primary, and CLI help and
+shortcuts derive from `HarnessId`. Add the harness to
+`WORKSPACE_PROJECTING_HARNESSES` only if it can take workspace roots. Do not add a
+harness-name list or `== "claude"` branch outside `lib/harness/`; give the adapter a
+capability instead.
 
 The adapter declares capabilities and a `HarnessContract`, resolves `SpawnParams`
 into a launch spec, and projects composed content onto the harness's actual
