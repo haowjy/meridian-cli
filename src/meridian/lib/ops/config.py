@@ -135,10 +135,7 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"workspace.roots.count = {self.workspace.roots.count}")
         lines.append(f"workspace.roots.projected = {self.workspace.roots.projected}")
         lines.append(f"workspace.roots.skipped = {self.workspace.roots.skipped}")
-        for harness in ("claude", "codex", "opencode"):
-            applicability = self.workspace.applicability.get(harness)
-            if applicability is None:
-                continue
+        for harness, applicability in self.workspace.applicability.items():
             lines.append(f"workspace.applicability.{harness} = {applicability}")
         if verbosity > 0:
             for index, root in enumerate(self.workspace.roots_detail):

@@ -80,6 +80,7 @@ from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
+from meridian.lib.core.types import harness_names_text
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.telemetry import emit_telemetry
@@ -328,7 +329,7 @@ def root(
         str | None,
         Parameter(
             name="--harness",
-            help="Force harness id (claude, codex, opencode, or pi).",
+            help=f"Force harness id ({harness_names_text()}).",
         ),
     ] = None,
     agent: Annotated[

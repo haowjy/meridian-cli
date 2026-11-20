@@ -495,7 +495,10 @@ class PrimaryAttachLauncher:
 
         try:
             await stack.enter_async_context(
-                serving_route(self._launch, MessageRoute(self._connection.send_user_message))
+                serving_route(
+                    self._launch,
+                    MessageRoute(lambda text, _: self._connection.send_user_message(text)),
+                )
             )
         except Exception:
             logger.warning(

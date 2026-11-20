@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Final, Literal
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.project_opencode_config import opencode_model_parts
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
-from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
+
+BASE_COMMAND_OPENCODE_STREAMING: Final[tuple[str, ...]] = ("opencode", "serve")
 
 _SERVE_COMMAND_FIELDS: frozenset[str] = frozenset(
     {

@@ -47,6 +47,42 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 - **`model_observation.observe_session_model` is the one writer of model observations.**
 - Native idle parsing stays in `*_idle.py`; `lib/idle/` owns policy.
 
+## `agy/` is not a launched harness
+
+Meridian never starts Antigravity, so `HarnessId.AGY` has no adapter, bundle or shortcut:
+`launched_by_meridian` is false, and the registry holds only harnesses Meridian launches.
+Readers of stored rows ask `is_unlaunched_harness(name)`, never `== "agy"`: it makes
+`spawn cancel` refuse (a server holds every conversation of one `agy` process, and nothing
+Meridian may signal stops `agy`), `--continue`/`--fork`/`--from` refuse, and skips native
+capture and legacy import. An unlaunched harness's chat never has a native key
+(`NativeKeyFields.complete()` returns None for it), which is what keeps the readers that
+look an adapter up by key (`session log`, the search index, legacy import) away from it.
+Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
+the owed-notice sweep); a second one is a package with `commands.run_command` and
+`notices.send_owed_notices` plus a line in `_PACKAGES`, which `HarnessId.launched_by_meridian`
+also reads. `agy/` holds what the plugin runs:
+
+- `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
+  heavy. No blocking locks (registering a request file waits at most 0.5 s for the
+  conversation's lock, the one the notice sweep decides closed-ness under), no output for
+  no opinion, catch everything. It writes only request files and claims inbox entries.
+- `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
+  `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
+  no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
+  logging goes to stderr, and each command runs with piped stdio and the identity of
+  the calling conversation's row, never the server's inherited `MERIDIAN_*`.
+- `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
+  `PreInvocation` and confirmed against `agy`'s transcript; a message injected three times
+  without showing there stays in flight, uninjected, and is owed a notice. The sender
+  arrives as data (`MessageSender`, from `spawn message` through the route), never parsed
+  from the text. Nothing is sent at exit (the server has about 400 ms before SIGKILL);
+  `send_owed_notices` runs at the next server start and in primary-launch recovery, from the
+  sender's project, removing each entry only after its notice was attempted. A tool call
+  with no held row returns an error and never runs anonymously.
+
+The shell guard and Mars declarations are in `src/meridian/mars/`; the guard hard-codes the
+paths in `agy/state.py` and `agy/inbox.py`.
+
 ## Adding a Harness
 
 Follow [`docs/harness-integration.md`](../../../../docs/harness-integration.md) and touch

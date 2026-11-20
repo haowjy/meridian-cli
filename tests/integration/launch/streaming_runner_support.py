@@ -72,7 +72,8 @@ class _IdleResidentBackend:
 class _ReportThenHangConnection:
     completion_signals_available = True
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._project_root: Path | None = None
@@ -175,7 +176,8 @@ class _OpenCodeTerminalWithScopeConnection:
     terminal_payload_session_key = "sessionID"
     completion_signals_available = True
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._project_root: Path | None = None
@@ -321,7 +323,8 @@ class _ResidentDeadlineConnection:
     resident_deadlines: ClassVar[list[float]] = []
     completion_signals_available = True
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._session_id = "thread-resident-deadline"
@@ -416,7 +419,8 @@ class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
         cls.starts = 0
         cls.runtime_root = runtime_root
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         super().__init__()
         self._project_root: Path | None = None
 
@@ -457,7 +461,8 @@ class _EndMonotonicFailsClock(FakeClock):
 class _TimeoutAbortPiConnection(FakePiConnection):
     """Idle Pi fake whose slow multi-frame abort tail outlives bounded drain."""
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         super().__init__([])
         self._stopping = asyncio.Event()
 

@@ -8,17 +8,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from meridian.lib.harness.capture_qualify import CaptureObserver, observer_for
+from meridian.lib.harness.capture_qualify import CaptureObserver
 from meridian.lib.harness.opencode_transcript import (
-    detect_opencode_db_schema,
     iter_opencode_db_session_events,
 )
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.native_snapshot import (
     SnapshotObservation,
@@ -37,13 +36,6 @@ class _Digest(Protocol):
     def hexdigest(self) -> str: ...
 
 
-_DIALECT = {
-    "pi": "pi.session",
-    "claude": "claude.jsonl",
-    "codex": "codex.rollout",
-    "opencode": "opencode.transcript.v1",
-}
-_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
 _SCOPE = "native-session"
 
 
@@ -59,6 +51,7 @@ class NativeCapture:
     session_id: str
     kind: str
     path: Path | None
+    observer: CaptureObserver | None
     scope: str = _SCOPE
     status: CaptureStatus = "complete"
     reason: str | None = None
@@ -78,9 +71,9 @@ class NativeCapture:
         return record
 
     def records(self) -> Iterator[SnapshotRecord]:
-        if self.status != "complete":
+        observer = self.observer
+        if self.status != "complete" or observer is None:
             return
-        observer = observer_for(self.harness, self.session_id, self.dialect)
         if self.kind == "opencode_db":
             yield from self._opencode_records(observer)
             return
@@ -160,9 +153,8 @@ def native_capture(
     path: Path | None,
 ) -> NativeCapture:
     normalized = (harness or "").strip().lower()
-    dialect = _DIALECT.get(normalized)
-    if dialect is not None and kind == "opencode_db" and _opencode_db_is_v2(path):
-        dialect = _OPENCODE_V2_DIALECT
+    adapter = get_default_harness_registry().find(normalized)
+    dialect = adapter.capture_dialect(kind=kind, path=path) if adapter else None
     capture = NativeCapture(
         source=session_id,
         dialect=dialect or "unsupported",
@@ -170,6 +162,11 @@ def native_capture(
         session_id=session_id,
         kind=kind,
         path=path,
+        observer=(
+            adapter.capture_observer(session_id=session_id, dialect=dialect)
+            if adapter and dialect
+            else None
+        ),
     )
     if dialect is None:
         capture.fail(
@@ -181,13 +178,6 @@ def native_capture(
     elif kind == "native_file" and path is None:
         raise FileNotFoundError(f"Session file for '{session_id}' not found")
     return capture
-
-
-def _opencode_db_is_v2(path: Path | None) -> bool:
-    try:
-        return detect_opencode_db_schema(path) == "sqlite_v2"
-    except (OSError, sqlite3.Error):
-        return False
 
 
 def _revision(path: Path) -> tuple[int, int, int, int]:

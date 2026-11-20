@@ -9,36 +9,67 @@ _bootstrap_imports: tuple[object, ...] = ()
 _bootstrap_lock = threading.RLock()
 
 HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
-    "src/meridian/lib/core/types.py (HarnessId/TransportId registration)",
+    "src/meridian/lib/core/types.py (HarnessId member; help text and shortcuts derive from it)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
-        "(adapter + explicit HarnessContract + bundle registration + transport map side effect)"
-    ),
-    "src/meridian/lib/harness/__init__.py::_run_bootstrap() (bootstrap import wiring)",
-    (
-        "src/meridian/lib/harness/projections/project_<new_harness>_subprocess.py "
-        "+ project_<new_harness>_streaming.py (spec/workspace projection seams)"
+        "(adapter, its HarnessContract and handled_fields, and the register_harness_bundle() "
+        "call that binds adapter, spec class, extractor, transport connections, projection "
+        "ports and semantics)"
     ),
     (
-        "src/meridian/lib/harness/extractors/<new_harness>.py "
-        "(report/session/usage extraction seams)"
+        "src/meridian/lib/harness/__init__.py::_run_bootstrap() "
+        "(import the adapter, projection and extractor modules so they register)"
     ),
     (
         "src/meridian/lib/harness/registry.py::HarnessRegistry.with_defaults() "
-        "(default adapter registry)"
+        "(import and register the adapter instance)"
     ),
     (
-        "src/meridian/lib/harness/launch_spec.py::"
-        "_enforce_spawn_params_accounting() (handled_fields drift guard)"
-    ),
-    (
-        "src/meridian/lib/harness/connections/<new_harness>_<transport>.py "
-        "(concrete streaming transport implementation)"
+        "src/meridian/lib/harness/projections/project_<new_harness>*.py "
+        "(spec to argv/env/transport payloads, with import-time drift guards)"
     ),
     (
         "src/meridian/lib/harness/projections/permissions_<new_harness>.py "
-        "(the harness's compile of the permission policy and its enforcement report; "
-        "register its report and effective-network function as HarnessProjectionPorts)"
+        "(the compile of the permission policy and its enforcement report; register the "
+        "report and effective-network function as HarnessProjectionPorts)"
+    ),
+    ("src/meridian/lib/harness/extractors/<new_harness>.py (report, session and usage extraction)"),
+    (
+        "src/meridian/lib/harness/connections/<new_harness>_<transport>.py "
+        "(streaming transport; only when the bundle declares one)"
+    ),
+    (
+        "HarnessContract.workspace_roots, set in the adapter "
+        "(ADD_DIR_ARGS, ENV, or the default NONE; `config show` lists the harnesses that "
+        "take roots)"
+    ),
+    (
+        "adapter read_last_model() and native_session_evidence() "
+        "(override to read the model from, and to repair, a native session file; the "
+        "defaults read nothing and refuse `session repair --native`)"
+    ),
+    (
+        "src/meridian/lib/config/harness_models.py::HarnessConfig "
+        "(one field and profile model per harness; without it a `[harness.<id>]` table is "
+        "dropped silently and harness_profile() returns None)"
+    ),
+    (
+        "src/meridian/lib/launch/context.py (the `harness.id ==` branches that bind "
+        "launch-artifact paths into the spec: system prompt file, settings file, report "
+        "output path; add one when the harness's spec takes them)"
+    ),
+    (
+        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() and "
+        "ops/session_search_index.py (optional: candidate listing without --native, and a "
+        "store shared by many sessions, as OpenCode's database is)"
+    ),
+    (
+        "src/meridian/lib/harness/adapter.py::create_session_before_exec() "
+        "(override only when Meridian must create the native session before exec, on a "
+        "fresh launch or a fork, never a resume; an assign_session_id() override "
+        "must then return LaunchIntent.precreated_session_id; "
+        "HarnessPrelaunchState.route_payload hands in-memory facts to "
+        "HarnessBundle.primary_message_route)"
     ),
 )
 

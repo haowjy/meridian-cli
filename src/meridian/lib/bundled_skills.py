@@ -83,11 +83,13 @@ def _parse_skill_metadata(text: str, *, folder_name: str) -> BundledSkill:
 
 
 def _skills_root() -> Traversable:
-    return files("meridian.skills")
+    return files("meridian.mars.skills")
 
 
-def _package_dir() -> Path:
-    return Path(meridian.__file__).resolve().parent
+def _provided_dir() -> Path:
+    """The directory handed to ``mars provide``: its ``skills/``, ``hooks/`` and ``mcp/``."""
+
+    return Path(meridian.__file__).resolve().parent / "mars"
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +130,7 @@ def provide_bundled_skills(
     command = [
         executable,
         "provide",
-        f"meridian@{__version__}={_package_dir()}",
+        f"meridian@{__version__}={_provided_dir()}",
         "--root",
         primary_root.as_posix(),
         "--json",

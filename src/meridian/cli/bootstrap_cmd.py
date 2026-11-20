@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from cyclopts import App, Parameter
 
 from meridian.cli.invocation import emit, get_global_options
+from meridian.lib.core.types import harness_names_text
 
 
 def register_bootstrap_command(app: App) -> None:
@@ -33,7 +34,7 @@ def register_bootstrap_command(app: App) -> None:
             str | None,
             Parameter(
                 name="--harness",
-                help="Force harness id (claude, codex, opencode, or pi).",
+                help=f"Force harness id ({harness_names_text()}).",
             ),
         ] = None,
         agent: Annotated[

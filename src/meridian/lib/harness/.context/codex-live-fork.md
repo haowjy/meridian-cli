@@ -13,7 +13,7 @@ incomplete record at the snapshot boundary is expected live-writer state and is
 dropped.
 
 Rollout publication and Codex SQLite registration form one compensated action.
-If registration raises, `fork_session` reopens the database to determine whether
+If registration raises, the fork reopens the database to determine whether
 the row committed: a committed row wins, an unregistered rollout is removed,
 and an indeterminate reconciliation preserves the rollout for recovery. Do not
 replace this with an unbounded file copy or unconditional cleanup.

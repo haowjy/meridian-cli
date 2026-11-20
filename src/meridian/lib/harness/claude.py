@@ -19,6 +19,7 @@ from meridian.lib.core.native_identity import (
     NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     NativeStoreMove,
     Operation,
@@ -29,7 +30,6 @@ from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
@@ -38,12 +38,14 @@ from meridian.lib.harness.adapter import (
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
+    WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, ClaudeObserver
 from meridian.lib.harness.claude_boundary import (
     claude_boundary_journal_path,
     read_observations,
@@ -77,6 +79,8 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.legacy_native_stores import claude_session_evidence
+from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.projections.network_claude import (
     effective_claude_policy,
 )
@@ -104,10 +108,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
     render_system_instruction_blocks,
     render_task_context,
-)
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CLAUDE_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_CLAUDE,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -235,8 +235,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     resolves_untracked_source = True
     native_transcript_choice = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = (
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    )
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("claude",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -277,7 +283,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+            workspace_roots=WorkspaceRoots.ADD_DIR_ARGS,
+            # Names one launch's starting-prompt file; a launch that delivers no prompt
+            # through the mod must not inherit its parent's.
+            forbidden_child_env_keys=frozenset({FIRST_TURN_PATH_ENV}),
         )
 
     @property
@@ -611,6 +620,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> None:
         _ = runtime_root, spawn_id, chat_id, state
 
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "claude.jsonl"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id, dialect
+        return ClaudeObserver()
+
     def seed_session(
         self,
         *,
@@ -705,6 +722,22 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             session_id=session_id,
             native_store=native_store,
         )
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id
+        last: str | None = None
+        for payload in iter_json_objects(native, tail_bytes):
+            if payload.get("type") == "assistant":
+                last = nested_str(payload, "message", "model") or last
+        return last
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = recorded_session_id
+        return claude_session_evidence(path)
 
     def resolve_session_file(
         self,

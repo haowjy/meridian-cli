@@ -1,5 +1,24 @@
 # Upgrade notes
 
+## Meridian from a plain Antigravity (`agy`) session
+
+New in this release. Nothing changes until you link Antigravity: `meridian mars link agy`, then
+`meridian mars sync`. [Using Meridian from Antigravity](antigravity.md) covers what it installs
+and does. Meridian does not launch `agy`.
+
+- **Needs Mars 0.38.0**, which this release pins. `meridian mars sync` installs Meridian's hooks
+  and one MCP server into `.agy/`, and moves where Meridian's own skills are provided from
+  (`src/meridian/mars/skills/`); no action on your side.
+- **New state under `~/.meridian/agy/`**: a directory per running `agy` process and a message
+  inbox per conversation. Older builds ignore it.
+- **`agy` sessions are rows with harness `agy`.** Older builds list and show them, answer
+  `session log` and `--continue` with `unbound`, and treat `--from` as a chat with no
+  transcript. Rolling back works; a running `agy` session's row reads as crashed once its server is
+  gone, and `spawn cancel --force` from an older build signals nothing.
+- **`spawn cancel` refuses an `agy` session** ("this session runs in agy; end it there").
+- **`mcp` is pinned below 2.** `meridian serve` and the `agy` server use `mcp.server.fastmcp`,
+  which `mcp` 2.0 renamed.
+
 ## Cursor is removed
 
 Needs Mars 0.38.0, which this release pins; it also dropped Cursor.

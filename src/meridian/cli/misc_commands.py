@@ -10,6 +10,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.invocation import emit, get_global_options
 from meridian.cli.streaming_serve import streaming_serve
+from meridian.lib.core.types import harness_names_text
 
 
 def _normalize_completion_shell(shell: str) -> Literal["bash", "zsh", "fish"]:
@@ -78,7 +79,7 @@ def register_misc_commands(
         ] = "",
         harness: Annotated[
             str | None,
-            Parameter(name="--harness", help="Harness id: claude, codex, opencode, or pi."),
+            Parameter(name="--harness", help=f"Harness id: {harness_names_text()}."),
         ] = None,
         model: Annotated[
             str | None,

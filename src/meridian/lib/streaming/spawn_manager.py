@@ -71,7 +71,7 @@ def _default_control_server_factory(
 ) -> ControlSocketServer:
     return ControlSocketServer(
         socket_path,
-        MessageRoute(lambda text: manager.deliver(spawn_id, text, source="control_socket")),
+        MessageRoute(lambda text, _: manager.deliver(spawn_id, text, source="control_socket")),
     )
 
 

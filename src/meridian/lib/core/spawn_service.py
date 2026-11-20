@@ -32,7 +32,7 @@ from meridian.lib.core.telemetry import (
     LifecycleObserverTier,
     register_observer,
 )
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, is_unlaunched_harness
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.composition_spawn import (
@@ -93,6 +93,20 @@ if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
+
+
+def _runs_managed_primary(record: SpawnRecord) -> bool:
+    """Whether a row's harness runs a managed primary: the fallback when launch metadata is gone."""
+    from meridian.lib.harness.adapter import BootstrapMode
+    from meridian.lib.harness.registry import get_default_harness_registry
+
+    if record.kind != "primary":
+        return False
+    adapter = get_default_harness_registry().find((record.harness or "").strip().lower())
+    return (
+        adapter is not None
+        and adapter.contract.bootstrap_mode is BootstrapMode.MANAGED_PRIMARY_ATTACH
+    )
 
 
 _CANCEL_GRACE_SECS = CANCEL_GRACE_SECS
@@ -566,6 +580,10 @@ class SpawnApplicationService:
         if self.is_terminal(row.status):
             self._cleanup_orphan_managed_primary(spawn_id, row)
             return _cancel_outcome_from_record(str(spawn_id), row, already_terminal=True)
+        if is_unlaunched_harness(row.harness):
+            # Its server holds every conversation of one agy process, and no signal
+            # Meridian may send stops agy itself, so force does not lift this.
+            raise RuntimeError(f"this session runs in {row.harness}; end it there")
         launch = LaunchPaths.for_row(self._runtime_root, row)
         primary_metadata = read_primary_metadata(launch)
         if not force and _is_live_managed_primary(self._runtime_root, row, primary_metadata):
@@ -668,7 +686,13 @@ class SpawnApplicationService:
         spawn_id = SpawnId(row.id)
 
         def sweep(stored: SpawnRecord) -> None:
-            tear_down_dead_launch(self._runtime_root, stored, primary_metadata, until=deadline)
+            tear_down_dead_launch(
+                self._runtime_root,
+                stored,
+                primary_metadata,
+                managed_if_unrecorded=_runs_managed_primary(stored),
+                until=deadline,
+            )
 
         lock = await self._locks.acquire(row.id)
         async with lock:
@@ -785,8 +809,6 @@ class SpawnApplicationService:
             if before_finalize is not None:
                 await asyncio.to_thread(before_finalize, claimed.stored)
 
-            from meridian.lib.state.managed_primary import is_managed_primary_candidate
-
             outcome = await self._complete_spawn_unlocked(
                 spawn_id,
                 claimed.status,
@@ -794,7 +816,7 @@ class SpawnApplicationService:
                 origin=claimed.terminal.origin,
                 error=claimed.terminal.error,
                 managed_scopes_pending=(
-                    not scopes_torn_down and is_managed_primary_candidate(claimed.stored)
+                    not scopes_torn_down and _runs_managed_primary(claimed.stored)
                 ),
                 finished_at=claimed.terminal.finished_at,
             )
@@ -819,7 +841,12 @@ class SpawnApplicationService:
             return
         from meridian.lib.state.managed_primary import release_managed_primary_scopes
 
-        release_managed_primary_scopes(self._runtime_root, spawn_id, record)
+        release_managed_primary_scopes(
+            self._runtime_root,
+            spawn_id,
+            record,
+            managed_if_unrecorded=_runs_managed_primary(record),
+        )
 
     async def complete_spawn(
         self,

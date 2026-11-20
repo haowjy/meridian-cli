@@ -15,6 +15,7 @@ from meridian.lib.core.native_identity import (
     NativeIdentity,
     NativeIdentityError,
     NativeKeyFields,
+    NativeSessionEvidence,
     Operation,
     PostExit,
 )
@@ -22,7 +23,6 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
@@ -37,9 +37,12 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, PiObserver
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.connections.pi_rpc import BASE_COMMAND_PI, PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.legacy_native_stores import pi_session_evidence
+from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_idle import detect_ttl
@@ -98,10 +101,6 @@ from meridian.lib.launch.composition import (
     render_system_instruction_blocks,
     render_task_context,
 )
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_PI_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_PI,
-)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state import pi_lifecycle
@@ -119,6 +118,18 @@ logger = structlog.get_logger(__name__)
 PI_OWED_PARENT_IDS_ENV = "_MERIDIAN_PI_OWED_PARENT_IDS"
 PI_CONTROL_SOCKET_ENV = "_MERIDIAN_PI_CONTROL_SOCKET"
 PI_LAUNCH_PROMPT_ENV = "_MERIDIAN_PI_LAUNCH_PROMPT"
+# A nested launch derives its own scope, endpoint and prompt; the managed-bash task that ran
+# this launcher is not its child's.
+_PI_FORBIDDEN_CHILD_ENV = frozenset(
+    {
+        LEGACY_PI_POLICY_ENV,
+        PI_OWED_PARENT_IDS_ENV,
+        PI_CONTROL_SOCKET_ENV,
+        PI_LAUNCH_PROMPT_ENV,
+        "_MERIDIAN_PI_BASH_ID",
+        "_MERIDIAN_PI_BASH_HOLD_DIR",
+    }
+)
 
 
 def _pi_owed_parent_ids(
@@ -210,8 +221,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     tui_recovers_directory: ClassVar[bool] = True
     resolves_untracked_source = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("pi",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -252,8 +263,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
-            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             primary_stderr_log=True,
+            forbidden_child_env_keys=_PI_FORBIDDEN_CHILD_ENV,
         )
 
     @property
@@ -298,8 +309,40 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
         return intent.source_session_id if intent.operation == "resume" else mint_session_id(store)
 
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "pi.session"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = dialect
+        return PiObserver(session_id)
+
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id
+        last: str | None = None
+        fallback: str | None = None
+        for payload in iter_json_objects(native, tail_bytes):
+            event_type = payload.get("type")
+            if event_type == "model_change":
+                last = nested_str(payload, "modelId") or last
+            elif event_type == "session":
+                fallback = (
+                    nested_str(payload, "model")
+                    or nested_str(payload, "model", "modelId")
+                    or fallback
+                )
+        return last or fallback
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = recorded_session_id
+        return pi_session_evidence(path)
 
     def native_cwd(
         self,

@@ -6,7 +6,6 @@ from meridian.lib.harness.semantics import PI_INCOMPLETE_STOP_REASONS
 from meridian.lib.utils.json_shapes import json_list, json_object, loads_json_object
 
 _OPENCODE_PENDING = frozenset({"pending", "running"})
-_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
 _OPENCODE_V2_TERMINAL_OUTCOMES = frozenset({"succeeded", "failed", "interrupted"})
 _CLAUDE_ERROR_STOP = frozenset({"error", "interrupted", "interruption", "cancellation", "canceled"})
 
@@ -204,28 +203,6 @@ class OpenCodeV2Observer:
         if outcome in _OPENCODE_V2_TERMINAL_OUTCOMES:
             return outcome
         return None
-
-
-class _IdleObserver:
-    def observe(self, event: dict[str, object]) -> None:
-        return
-
-    def incomplete_reason(self) -> str | None:
-        return None
-
-
-def observer_for(harness: str, session_id: str, dialect: str | None = None) -> CaptureObserver:
-    if harness == "pi":
-        return PiObserver(session_id)
-    if harness == "claude":
-        return ClaudeObserver()
-    if harness == "codex":
-        return CodexObserver()
-    if harness == "opencode":
-        if dialect == _OPENCODE_V2_DIALECT:
-            return OpenCodeV2Observer()
-        return OpenCodeObserver()
-    return _IdleObserver()
 
 
 def _require_json_payload(row: object) -> dict[str, object]:

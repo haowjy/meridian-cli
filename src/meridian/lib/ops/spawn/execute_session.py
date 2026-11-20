@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
-from meridian.lib.launch.session_scope import SessionAttempt, session_scope
+from meridian.lib.launch.session_scope import SessionAttempt, session_scope, warm_close_imports
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store
 from meridian.lib.state.launch_lock import LaunchSlot
@@ -59,7 +59,7 @@ def _resolve_session_continuation(
                     resolved_continue_fork = False
 
     # Fork materialization is deferred to the calling executor, which
-    # calls materialize_fork() via the sole owner in launch/fork.py, after both
+    # calls create_session_before_exec() (launch/pre_exec_session.py), after both
     # the spawn row and chat row exist.  resolved_continue_fork=True is preserved
     # here so the executor knows a fork is needed.
 
@@ -85,6 +85,7 @@ def _session_execution_context(
     spawn_id: str | None = None,
     launch_slot: LaunchSlot,
 ) -> Generator[_SessionExecutionContext, None, None]:
+    warm_close_imports()
     with session_scope(
         runtime_root=runtime_root,
         metadata=metadata,

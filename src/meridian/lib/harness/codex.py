@@ -10,15 +10,16 @@ from typing import ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import LaunchIntent, Operation
+from meridian.lib.core.native_identity import LaunchIntent, NativeSessionEvidence, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
     BootstrapMode,
-    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
+    PreExecSessionRequest,
     SpawnParams,
+    WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -26,6 +27,7 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, CodexObserver
 from meridian.lib.harness.codex_idle import (
     CODEX_NATIVE_IDLE_HOOK,
     primary_idle_sensor,
@@ -48,6 +50,8 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.legacy_native_stores import codex_session_evidence
+from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.native_config import reject_removed_codex_native_config
@@ -80,10 +84,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
     render_system_instruction_blocks,
     render_task_context,
-)
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CODEX_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_CODEX,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -264,8 +264,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     refused_identity_flags = frozenset(["--session-id", "--resume", "--fork"])
     continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = ("codex", "exec", "--json")
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("codex",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "model",
@@ -306,7 +306,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             transport_ids=(TransportId.STREAMING,),
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
-            fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
+            workspace_roots=WorkspaceRoots.ADD_DIR_ARGS,
+            sends_server_requests=True,
             primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
             primary_session_runtime_event_surface=(
                 PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
@@ -335,7 +336,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def validate_intent(self, intent: LaunchIntent) -> None:
-        source = intent.source_session_id or intent.preforked_session_id
+        source = intent.source_session_id or intent.precreated_session_id
         if source:
             from uuid import UUID
 
@@ -349,8 +350,36 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
         child_env["CODEX_HOME"] = str(Path(store).parent)
 
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "codex.rollout"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id, dialect
+        return CodexObserver()
+
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return find_rollout(native_store, session_id)
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id
+        last: str | None = None
+        fallback: str | None = None
+        for payload in iter_json_objects(native, tail_bytes):
+            event_type = payload.get("type")
+            if event_type == "turn_context":
+                last = nested_str(payload, "payload", "model") or last
+            elif event_type == "world_state":
+                fallback = nested_str(payload, "payload", "state", "model") or fallback
+        return last or fallback
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = recorded_session_id
+        return codex_session_evidence(path)
 
     def native_store_for_launch(
         self,
@@ -472,10 +501,15 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             native_store=sessions_root,
         )
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
-        normalized_source_session_id = source_session_id.strip()
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None:
+        """Fork the source rollout into a new registered Codex thread; a fresh launch
+        creates nothing, Codex makes its own session."""
+        if request.operation == "create":
+            return None
+        normalized_source_session_id = (request.source_session_id or "").strip()
         if not normalized_source_session_id:
             raise ValueError("source_session_id is required.")
+        native_store = request.native_store
 
         db_path = (
             Path(native_store).parent if native_store else resolve_codex_home(os.environ)

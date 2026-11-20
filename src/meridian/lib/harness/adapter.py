@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -21,15 +21,18 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
     LaunchIntent,
     NativeIdentity,
     NativeKey,
     NativeKeyFields,
     NativeObservationBatch,
+    NativeSessionEvidence,
     NativeSessionUnavailable,
     NativeStoreMove,
     Operation,
     PostExit,
+    PrecreatedSession,
 )
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
@@ -56,7 +59,10 @@ from meridian.lib.safety.policy import NetworkPolicy
 from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.capture_qualify import CaptureObserver
     from meridian.lib.harness.extractors.base import AttemptFold
+    from meridian.lib.harness.transcript import TranscriptEventParser
+    from meridian.lib.launch.context import PreparedLaunchSurface
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -74,13 +80,6 @@ class BootstrapMode(StrEnum):
 
     SUBPROCESS_ONLY = "subprocess_only"
     MANAGED_PRIMARY_ATTACH = "managed_primary_attach"
-
-
-class ForkMaterializationMode(StrEnum):
-    """How continue-fork requests are materialized for one harness."""
-
-    NATIVE_CONTINUE_FORK = "native_continue_fork"
-    MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
 
 
 class HarnessCapabilities(BaseModel):
@@ -107,6 +106,16 @@ class HarnessCapabilities(BaseModel):
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
 
+class WorkspaceRoots(StrEnum):
+    """How a harness takes extra workspace roots."""
+
+    NONE = "none"
+    # `--add-dir <root>` arguments on the launch command.
+    ADD_DIR_ARGS = "add_dir_args"
+    # The adapter's `project_launch_env` carries the roots.
+    ENV = "env"
+
+
 class HarnessContract(BaseModel):
     """Inspectable contract surface for one harness adapter."""
 
@@ -116,7 +125,7 @@ class HarnessContract(BaseModel):
     transport_ids: tuple[TransportId, ...]
     launch_spec_cls: str
     bootstrap_mode: BootstrapMode
-    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    workspace_roots: WorkspaceRoots = WorkspaceRoots.NONE
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     #: Whether the black-box primary child needs the stderr log path env var
     #: injected so its runtime writes stderr to the spawn dir.
@@ -127,6 +136,15 @@ class HarnessContract(BaseModel):
     primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
         PrimaryRuntimeEventSurface.NONE
     )
+    #: Whether the harness sends requests to Meridian over its server connection
+    #: (approvals and the like), so a headless spawn needs a ``PermissionBroker``.
+    #: Static: ``supports_runtime_hitl`` only exists once the connection does.
+    sends_server_requests: bool = False
+    #: Environment names (case-insensitive) no child inherits, whichever harness the
+    #: child runs: the parent's own scope or secrets, not the child's to receive.
+    forbidden_child_env_keys: frozenset[str] = frozenset()
+    #: Same, for every name starting with one of these (case-insensitive).
+    forbidden_child_env_prefixes: tuple[str, ...] = ()
 
 
 class SpawnUsageContractVariants(BaseModel):
@@ -239,6 +257,9 @@ class HarnessPrelaunchState(BaseModel):
 
     env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
     metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
+    # In-memory facts for this launch's primary message route (a per-launch secret, say):
+    # never serialized, logged or written to disk.
+    route_payload: object | None = Field(default=None, repr=False, exclude=True)
 
 
 class NativePrimaryRuntimeMetadata(BaseModel):
@@ -286,6 +307,27 @@ class NativeRelocationResult:
     refusal: str | None = None
 
 
+@dataclass(frozen=True)
+class PreExecSessionRequest:
+    """What an adapter's ``create_session_before_exec`` gets for one launch.
+
+    ``operation`` is ``create`` for a fresh launch (``source_session_id`` is None) or
+    ``fork`` (``source_session_id`` is the session to fork); a resume never reaches the
+    port. ``surface`` holds the projected content, model selection and request; it is
+    None for a spawn fork started by a background worker, which composes its surface
+    after the fork. ``env`` is the base environment through ``inherit_child_env``, with
+    no per-launch bindings. ``surface`` and ``env`` stay out of ``repr``: the request's
+    environment overrides and the child environment can hold secrets.
+    """
+
+    operation: Literal["create", "fork"]
+    source_session_id: str | None
+    native_store: str | None
+    surface: PreparedLaunchSurface | None = field(repr=False)
+    cwd: Path
+    env: dict[str, str] = field(repr=False)
+
+
 @runtime_checkable
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
@@ -317,7 +359,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def handled_fields(self) -> frozenset[str]: ...
 
     def plan_native_identity(
-        self, run: SpawnParams, *, preforked_session_id: str | None = None
+        self, run: SpawnParams, *, precreated: PrecreatedSession | None = None
     ) -> LaunchIntent | None: ...
 
     def native_store_for_launch(
@@ -407,7 +449,12 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         primary_mode: bool,
     ) -> dict[str, str]: ...
 
-    def blocked_child_env_vars(self) -> frozenset[str]: ...
+    def blocked_child_env_vars(self) -> frozenset[str]:
+        """Names kept from this harness's own children only.
+
+        ``HarnessContract.forbidden_child_env_*`` are kept from every child.
+        """
+        ...
 
     def prepare_prelaunch(
         self,
@@ -458,12 +505,41 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
+    def transcript_parser(self) -> TranscriptEventParser:
+        """Turn this harness's native transcript events into messages for ``session log``."""
+        ...
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        """Name of the native format a capture of this source seals; None when the harness
+        has no native capture."""
+        ...
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        """Decide from the records of a ``capture_dialect`` capture whether its tail is
+        complete."""
+        ...
+
     def resolve_native_session_file(
         self,
         *,
         session_id: str,
         native_store: Path,
     ) -> Path | None: ...
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        """The last model the native session file ``native`` ran, verbatim; None if unread.
+
+        ``tail_bytes`` limits a JSONL history to its last N bytes."""
+        ...
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        """Read ``path`` as one of this harness's sessions for ``session repair``; raises
+        ``InvalidNativeSession`` when it is not, or the harness has no such reader."""
+        ...
 
     continues_in_source_store: ClassVar[frozenset[Operation]]
     # The harness's own TUI asks for a new directory when its recorded one is gone, so a
@@ -515,7 +591,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent: ...
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None: ...
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool: ...
 
@@ -555,7 +631,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         self,
         run: SpawnParams,
         *,
-        preforked_session_id: str | None = None,
+        precreated: PrecreatedSession | None = None,
     ) -> LaunchIntent | None:
         if not self.native_identity:
             return None
@@ -565,8 +641,8 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
                     f"{self.id} managed identity refuses {token} in passthrough extra_args"
                 )
         source = (run.continue_harness_session_id or "").strip() or None
-        if preforked_session_id:
-            intent = LaunchIntent("fork", preforked_session_id=preforked_session_id)
+        if precreated is not None:
+            intent = LaunchIntent(precreated.operation, precreated_session_id=precreated.session_id)
         else:
             intent = LaunchIntent(
                 "fork" if source and run.continue_fork else "resume" if source else "create", source
@@ -615,7 +691,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             lookup = source_store or self._store(
                 child_env, child_cwd, spawn_id, "resume", interactive
             )
-            wanted = intent.source_session_id or intent.preforked_session_id
+            wanted = intent.source_session_id or intent.precreated_session_id
             source = self._require_source(
                 wanted,
                 Path(lookup),
@@ -706,7 +782,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return (
             intent.source_session_id
             if intent.operation == "resume"
-            else intent.preforked_session_id
+            else intent.precreated_session_id
         )
 
     def observe_after_exit(
@@ -783,10 +859,16 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = name, description, prompt
         return ""
 
-    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
+    def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None:
+        """Create the native session Meridian launches on, or ``None`` to let the harness
+        create its own.
 
-        _ = source_session_id
-        raise NotImplementedError
+        Runs after the spawn row exists and before the harness execs: on a fresh primary
+        launch (``create``) and on a fork of either kind (``fork``), never on a resume. A
+        returned ID is recorded on the row and launched on; an exception fails the launch.
+        """
+        _ = request
+        return None
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         _ = project_root, session_ref
@@ -898,6 +980,18 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "native_file"
 
+    def transcript_parser(self) -> TranscriptEventParser:
+        from meridian.lib.harness.transcript import DefaultTranscriptEventParser
+
+        return DefaultTranscriptEventParser()
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return None
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        raise NotImplementedError(f"{self.id} declares capture dialect {dialect!r} but no observer")
+
     def resolve_native_session_file(
         self,
         *,
@@ -905,6 +999,18 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         native_store: Path,
     ) -> Path | None:
         return None
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id, native, tail_bytes
+        return None
+
+    def native_session_evidence(
+        self, path: Path, *, recorded_session_id: str | None
+    ) -> NativeSessionEvidence:
+        _ = path, recorded_session_id
+        raise InvalidNativeSession(f"session repair does not support {self.id} chats")
 
     def classify_store_move(self, *, recorded: str, attempted: str) -> NativeStoreMove | None:
         """Why a resume's store differs from the recorded one; only the adapter knows

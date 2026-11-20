@@ -39,7 +39,8 @@ from tests.support.launch_paths import launch_paths
 class _ClaudeSeedPersistenceConnection:
     observed_start_session_id: str | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._project_root: Path | None = None
@@ -118,7 +119,8 @@ class _ClaudeSeedPersistenceConnection:
 class _UnboundOpenCodeConnection:
     observed_start_session_id: str | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self.capabilities = ConnectionCapabilities(
@@ -191,7 +193,8 @@ class _UnboundOpenCodeConnection:
 class _OpenCodeConnectSessionConnection:
     observed_start_session_id: str | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: object | None = None) -> None:
+        _ = request_handler
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._session_id = "connect-opencode-session"

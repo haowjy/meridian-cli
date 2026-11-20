@@ -191,7 +191,6 @@ def session_scope(
         [Path, str, LaunchHandle | None], object
     ] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[SessionAttempt, None, None]:
-    warm_close_imports()
     if request.initial_model_selection is not None:
         record_model_selection(runtime_root, request.initial_model_selection)
     started = _start_session(

@@ -1,6 +1,9 @@
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, Literal
+
+from meridian.lib.core.types import is_unlaunched_harness
 
 Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
@@ -54,7 +57,14 @@ class NativeKeyFields:
         object.__setattr__(self, "session_id", self.session_id or None)
 
     def complete(self) -> NativeKey | None:
-        if self.harness is None or self.native_store is None or self.session_id is None:
+        # A harness Meridian never launches has no native store to read through an
+        # adapter, so no binding is ever complete: readers of a key can't reach a missing one.
+        if (
+            self.harness is None
+            or self.native_store is None
+            or self.session_id is None
+            or is_unlaunched_harness(self.harness)
+        ):
             return None
         return NativeKey(self.harness, self.native_store, self.session_id)
 
@@ -186,7 +196,15 @@ class LaunchIntent:
 
     operation: Operation
     source_session_id: str | None = None
-    preforked_session_id: str | None = None
+    precreated_session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PrecreatedSession:
+    """A native session Meridian created before exec, and how it came to exist."""
+
+    session_id: str
+    operation: Literal["create", "fork"]
 
 
 @dataclass(frozen=True)
@@ -215,3 +233,21 @@ class PostExit:
     entry_observed: NativeKey | None = None
     exit: NativeKey | None = None
     trampoline_successor_id: str | None = None
+
+
+@dataclass(frozen=True)
+class NativeSessionEvidence:
+    """One validated native session: its exact key plus what it records."""
+
+    harness: str
+    path: Path
+    native_store: Path
+    session_id: str
+    cwd: str | None
+    started_at: datetime | None
+    first_user: str | None = None
+    final_assistant: str | None = None
+
+
+class InvalidNativeSession(ValueError):
+    """The file is not a valid, exactly resolvable native session."""

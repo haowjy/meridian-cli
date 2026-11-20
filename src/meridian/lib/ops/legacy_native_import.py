@@ -16,19 +16,19 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from uuid import UUID
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import NativeKeyFields, NativeSessionUnavailable
-from meridian.lib.core.types import ChatId
-
-if TYPE_CHECKING:
-    from meridian.lib.harness.legacy_native_stores import (
-        NativeSessionEvidence,
-    )
+from meridian.lib.core.native_identity import (
+    InvalidNativeSession,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
+from meridian.lib.core.types import ChatId, is_unlaunched_harness
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import read_events, utc_now_iso
@@ -142,6 +142,8 @@ def report_legacy_native_import(
                 ids[spawn.chat_id].add(spawn.harness_session_id.strip())
     stores = LegacyNativeStores()
     for chat in chats:
+        if is_unlaunched_harness(chat.harness):
+            continue  # no older build wrote its chats, so there is nothing to import
         if chat.native_store and chat.harness_session_id:
             if chat.chat_id in previously_imported:
                 report.record(chat, "imported")
@@ -548,10 +550,7 @@ def recover_legacy_pi_sessions(
     retained starting prompt (or, with no prompt retained, the report body).
     Primaries shared one root, so they are never bound here.
     """
-    from meridian.lib.harness.legacy_native_stores import (
-        InvalidNativeSession,
-        pi_session_evidence,
-    )
+    from meridian.lib.harness.legacy_native_stores import pi_session_evidence
 
     marker = runtime_root / MARKER
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):

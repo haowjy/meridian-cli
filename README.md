@@ -137,6 +137,7 @@ graph TB
 - [History](docs/history.md) — indexed discovery, ZIP retention, transfer and restore
 - [MCP Tools](docs/mcp-tools.md) — tool surface and payload examples
 - [Troubleshooting](docs/troubleshooting.md) — common issues and diagnostics
+- [Antigravity](docs/antigravity.md) — using Meridian from a plain `agy` session
 - [INSTALL.md](INSTALL.md) — agent-friendly install guide
 
 ## Development

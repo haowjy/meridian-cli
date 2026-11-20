@@ -12,13 +12,14 @@ from meridian.lib.core.delivery import (
     DeliveryKind,
     DeliveryRefused,
     MessageRoute,
+    MessageSender,
     TransportDead,
 )
+from meridian.lib.harness.bundle import PrimaryRouteContext
 from meridian.lib.harness.claude_boundary import (
     claude_boundary_journal_path,
     latest_messaging_socket,
 )
-from meridian.lib.state.paths import LaunchPaths
 
 _SOCKET_TIMEOUT_SECONDS = 3.0
 _ROUTE_NOTE = (
@@ -55,18 +56,19 @@ def _post(inbox: Path, text: str) -> None:
             pass
 
 
-def claude_primary_message_route(launch: LaunchPaths, pid: int) -> MessageRoute | None:
-    """The route to Claude process *pid*, or ``None`` until it has published an inbox.
+def claude_primary_message_route(context: PrimaryRouteContext) -> MessageRoute | None:
+    """The route to Claude process ``context.pid``, or ``None`` until it has published an inbox.
 
     Each send looks the inbox up again: the journal is the authority for which socket
     is current.
     """
 
-    journal = claude_boundary_journal_path(launch)
+    pid = context.pid
+    journal = claude_boundary_journal_path(context.launch)
     if latest_messaging_socket(journal, pid=pid) is None:
         return None
 
-    async def deliver(text: str) -> DeliveryKind:
+    async def deliver(text: str, _: MessageSender | None) -> DeliveryKind:
         inbox = latest_messaging_socket(journal, pid=pid)
         if inbox is None:
             raise TransportDead("Claude's inbox is gone")

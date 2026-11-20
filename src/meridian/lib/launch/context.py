@@ -35,6 +35,7 @@ from meridian.lib.core.caller_boundary import (
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.execution_policy import NativeConfig
+from meridian.lib.core.native_identity import PrecreatedSession
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -326,8 +327,7 @@ class RuntimeBindings:
     launch: LaunchPaths
     runtime_work_id: str | None = None
     chat_id: str | None = None
-    forked_harness_session_id: str | None = None
-    continue_fork_override: bool | None = None
+    precreated: PrecreatedSession | None = None
     plan_overrides: dict[str, str] = field(default_factory=lambda: {})
     dry_run: bool = False
 
@@ -1439,7 +1439,11 @@ def bind_launch_context(
         ignore_direnv = config.environment.ignore_direnv
     base_env = undo_direnv(os.environ) if ignore_direnv else dict(os.environ)
     harness = prepared.harness
-    effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
+    effective_session_id = (
+        bindings.precreated.session_id
+        if bindings.precreated is not None
+        else prepared.seed_harness_session_id
+    )
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
@@ -1492,7 +1496,7 @@ def bind_launch_context(
         )
     )
     workspace_projection = project_workspace_roots(
-        harness_id=harness.id,
+        support=harness.contract.workspace_roots,
         roots=projected_roots,
     )
     if workspace_projection.diagnostics:
@@ -1719,11 +1723,9 @@ def bind_launch_context(
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
-        continue_fork=(
-            bindings.continue_fork_override
-            if bindings.continue_fork_override is not None
-            else resolved_request.session.continue_fork
-        ),
+        # A pre-created session already exists: the launch continues it, whichever way it
+        # came to exist.
+        continue_fork=resolved_request.session.continue_fork and bindings.precreated is None,
         reference_items=loaded_references,
         permission_policy=permission_policy,
         native_config=resolved_request.execution_policy.native_config,
@@ -1792,9 +1794,7 @@ def bind_launch_context(
     pin_warnings = (
         (CompositionWarning(code="cli_shim_skipped", message=pin_warning),) if pin_warning else ()
     )
-    intent = harness.plan_native_identity(
-        run_params, preforked_session_id=bindings.forked_harness_session_id
-    )
+    intent = harness.plan_native_identity(run_params, precreated=bindings.precreated)
     if intent is not None:
         spec = spec.model_copy(
             update={

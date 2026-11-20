@@ -33,7 +33,6 @@ from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -45,6 +44,16 @@ from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
+
+BASE_COMMAND_CLAUDE_STREAMING: Final[tuple[str, ...]] = (
+    "claude",
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+)
 
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 10.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB

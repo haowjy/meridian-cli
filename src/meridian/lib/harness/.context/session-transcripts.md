@@ -13,7 +13,10 @@ headers/seals never become conversational events. A shared `TranscriptValidation
 stays partial until verified EOF, separately from `rendering_reason`; search
 withholds unverified matches. Capture qualification: `transcript_capture.py` streams, hashes, and records
 status (complete, known-incomplete, unavailable, or unsupported);
-`capture_qualify.py` observers own dialect tails. Only complete observations are sealed into
+`capture_qualify.py` holds the observers that own dialect tails; each adapter names its
+capture dialect and picks its observer (`capture_dialect`, `capture_observer`), and a harness
+without a dialect is unsupported. Each adapter also supplies the event parser `session log`
+uses (`transcript_parser`); the default is the shape-based shared parser. Only complete observations are sealed into
 `native-transcript.jsonl`. JSONL capture keeps raw lines; OpenCode keeps versioned
 raw-row envelopes. Unfinished dialect tails refuse publication.
 Resolved native files are distinct from explicit file inputs: their known native
