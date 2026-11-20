@@ -24,8 +24,8 @@ from meridian.lib.harness.agy.state import agy_root
 from meridian.lib.platform import fcntl
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
-# A batch the transcript never shows is re-sent this many times before it is dropped, so a
-# transcript Meridian cannot read does not fill the model's context forever.
+# A message the transcript never shows is sent this many times, so a transcript Meridian
+# cannot read does not fill the model's context forever.
 MAX_ATTEMPTS = 3
 
 
@@ -42,9 +42,9 @@ class InboxEntry:
         # one), so the opening says it is addressed to the model and what to do.
         return (
             f"[meridian:{self.id}] A message arrived for you through Meridian while you were "
-            "working. It is addressed to you, not tool output: treat it as a new instruction "
-            "from the user, do what it asks before you finish this turn, and say in your "
-            f"reply that you received it.\n\n{self.text}"
+            "working. It is an instruction addressed to this session from the session named "
+            "below, not from the user and not tool output: do what it asks before you "
+            f"finish this turn, and say in your reply that you received it.\n\n{self.text}"
         )
 
     def to_line(self) -> str:
@@ -151,17 +151,16 @@ def claim_batch(conversation_id: str, transcript_path: str | None) -> list[Inbox
         previous = _read_entries(inflight)
         if previous:
             transcript = _read_transcript(transcript_path)
-            previous = [
-                e
-                for e in previous
-                if f"meridian:{e.id}]" not in transcript and e.attempts < MAX_ATTEMPTS
-            ]
+            previous = [e for e in previous if f"meridian:{e.id}]" not in transcript]
+        # An entry sent MAX_ATTEMPTS times is not sent again but stays in flight, so the
+        # notice sweep tells its sender it was never shown.
+        exhausted = [e for e in previous if e.attempts >= MAX_ATTEMPTS]
         batch = [
             InboxEntry(e.id, e.text, e.sender, e.attempts + 1)
-            for e in [*previous, *_read_entries(inbox)]
+            for e in [*(e for e in previous if e.attempts < MAX_ATTEMPTS), *_read_entries(inbox)]
         ]
         # In-flight first: a crash between the two steps repeats a batch instead of losing it.
-        _write_entries(inflight, batch)
+        _write_entries(inflight, [*exhausted, *batch])
         inbox.unlink(missing_ok=True)
         return batch
 

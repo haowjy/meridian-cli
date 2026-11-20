@@ -13,7 +13,8 @@ if [ -r "/proc/$pid/stat" ]; then
   set -- $s
   birth=${20}
 else
-  birth=$(ps -o lstart= -p "$pid" 2>/dev/null | tr -c 'A-Za-z0-9\n' _)
+  # Trim before mapping, as state.py does: ps pads the start time on some systems.
+  birth=$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -c 'A-Za-z0-9\n' _)
 fi
 root=${MERIDIAN_HOME:-$HOME/.meridian}/agy
 if [ -e "$root/$pid-$birth/requests/$c.json" ] \

@@ -317,7 +317,7 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
 
     import threading
 
-    from meridian.lib.harness.agy.notices import send_owed_notices
+    from meridian.lib.harness.unlaunched import send_owed_notices
 
     # These imports run on the calling thread. Modules the repair thread imports first
     # itself can race other threads' imports through package-init cycles

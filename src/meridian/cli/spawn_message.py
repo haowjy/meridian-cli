@@ -249,10 +249,7 @@ async def send_message(
         if delivery == DeliveryKind.ACKNOWLEDGED:
             print(f"Message delivered to spawn {normalized_spawn_id}")
         elif delivery == DeliveryKind.QUEUED:
-            print(
-                f"Message queued for spawn {normalized_spawn_id}; "
-                "it will be seen at the session's next model call"
-            )
+            print(f"Message queued for spawn {normalized_spawn_id}")
         else:
             print(f"Message posted to spawn {normalized_spawn_id} (no receipt)")
         note = parsed.get("note")

@@ -1,7 +1,8 @@
 """Argv entry for the ``agy`` commands that run before the full CLI loads.
 
 ``harness-hook`` runs before every model call of a person's TUI, so it is dispatched from
-``cli/entrypoint.py`` like ``--version``, importing nothing beyond this package.
+``cli/entrypoint.py`` (through ``harness/unlaunched.py``) like ``--version``, importing
+nothing beyond this package.
 """
 
 from __future__ import annotations
@@ -12,11 +13,7 @@ from collections.abc import Sequence
 _HOOK_USAGE = "usage: meridian harness-hook agy <SessionStart|PreInvocation> --agy-pid PID\n"
 
 
-def is_agy_command(argv: Sequence[str]) -> bool:
-    return len(argv) >= 2 and argv[0] in ("harness-hook", "harness-mcp") and argv[1] == "agy"
-
-
-def run_agy_command(argv: Sequence[str]) -> int:
+def run_command(argv: Sequence[str]) -> int:
     if argv[0] == "harness-mcp":
         from meridian.lib.harness.agy.mcp_server import run_server
 
@@ -43,4 +40,4 @@ def _flag(args: list[str], name: str) -> str | None:
     return args[args.index(name) + 1] if name in args[:-1] else None
 
 
-__all__ = ["is_agy_command", "run_agy_command"]
+__all__ = ["run_command"]

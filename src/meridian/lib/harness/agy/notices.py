@@ -30,9 +30,10 @@ _SEND_TIMEOUT_SECONDS = 40.0
 
 def _notice_text(entry: inbox.InboxEntry, session: str) -> str:
     return (
-        f"Your message to {session} was not delivered: its Antigravity session ended before "
-        "its next model call, so the message was dropped. Send it again once the session "
-        f"is running.\n\nThe message began: {entry.text.partition(chr(10) * 2)[2][:120]}"
+        f"Your message to {session} was not delivered: it never reached the model (the "
+        "Antigravity session ended first, or its transcript never showed the message). "
+        "Send it again if it still matters.\n\n"
+        f"The message began: {entry.text.partition(chr(10) * 2)[2][:120]}"
     )
 
 

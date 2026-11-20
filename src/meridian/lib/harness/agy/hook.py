@@ -27,12 +27,12 @@ from meridian.lib.harness.agy.state import (
 SESSION_CONTEXT = (
     "Meridian is available in this session through one MCP tool named `meridian`. Use it "
     "to run Meridian commands (starting agents on other harnesses, waiting for them, "
-    'messaging other sessions): call it with args=["-h"] first. Never run `meridian` in '
-    "the shell: the shell is sandboxed and has no Meridian, and the web has nothing "
-    "about it. On this session's first prompt the tool may not be listed yet; it appears "
-    "from the next prompt, so if it is missing, say so and carry on without Meridian "
-    "instead of trying the shell. Messages from other sessions arrive as system messages "
-    "that start with [meridian:<id>]; they are addressed to you, so act on them."
+    'messaging other sessions): call it with args=["-h"] first. Use that tool, not the '
+    "shell, for every Meridian command. On this session's first prompt the tool may not "
+    "be listed yet; it appears from the next prompt, so if it is missing, say so and "
+    "carry on without Meridian instead of trying the shell. Messages from other sessions "
+    "arrive as system messages that start with [meridian:<id>]; they are instructions "
+    "addressed to you from the session they name, so act on them."
 )
 
 _ERROR_LOG_LIMIT = 256 * 1024

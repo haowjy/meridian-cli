@@ -108,6 +108,7 @@ def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None
     replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
 
     assert [reply is not None for reply in replies] == [True] * inbox.MAX_ATTEMPTS + [False]
+    assert inbox.inflight_path("c1").exists()  # kept for the notice sweep
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:

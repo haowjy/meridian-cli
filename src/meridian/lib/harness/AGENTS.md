@@ -54,7 +54,12 @@ Meridian never starts Antigravity, so `HarnessId.AGY` has no adapter, bundle or 
 Readers of stored rows ask `is_unlaunched_harness(name)`, never `== "agy"`: it makes
 `spawn cancel` refuse (a server holds every conversation of one `agy` process, and nothing
 Meridian may signal stops `agy`), `--continue`/`--fork`/`--from` refuse, and skips native
-capture and legacy import. `agy/` holds what the plugin runs:
+capture and legacy import. An unlaunched harness's chat never has a native key
+(`NativeKeyFields.complete()` returns None for it), which is what keeps the readers that
+look an adapter up by key (`session log`, the search index, legacy import) away from it.
+Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
+the owed-notice sweep); a second one is a package with `commands.run_command` and
+`notices.send_owed_notices` plus a line there. `agy/` holds what the plugin runs:
 
 - `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
   heavy. No blocking locks, no output for no opinion, catch everything. It writes only
@@ -65,9 +70,13 @@ capture and legacy import. `agy/` holds what the plugin runs:
   logging goes to stderr, and each command runs with piped stdio and the identity of
   the calling conversation's row, never the server's inherited `MERIDIAN_*`.
 - `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
-  `PreInvocation` and confirmed against `agy`'s transcript. Nothing is sent at exit (the
-  server has about 400 ms before SIGKILL); `send_owed_notices` runs at the next server start
-  and in primary-launch recovery.
+  `PreInvocation` and confirmed against `agy`'s transcript; a message injected three times
+  without showing there stays in flight, uninjected, and is owed a notice. The sender
+  arrives as data (`MessageSender`, from `spawn message` through the route), never parsed
+  from the text. Nothing is sent at exit (the server has about 400 ms before SIGKILL);
+  `send_owed_notices` runs at the next server start and in primary-launch recovery, from the
+  sender's project, removing each entry only after its notice was attempted. A tool call
+  with no held row returns an error and never runs anonymously.
 
 The shell guard and Mars declarations are in `src/meridian/mars/`; the guard hard-codes the
 paths in `agy/state.py` and `agy/inbox.py`.

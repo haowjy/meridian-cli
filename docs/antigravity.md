@@ -2,8 +2,10 @@
 
 Meridian never starts Antigravity (`agy`). You start `agy` yourself; Meridian installs a
 plugin that lets the session spawn agents on other harnesses, wait for them, and receive
-messages from other sessions. Meridian reads only what the plugin gives it: it does not
-read `agy`'s transcript or store, and it cannot stop `agy`.
+messages from other sessions. Meridian cannot stop `agy`. It reads two things of `agy`'s
+own: the conversation's transcript, to see whether a queued message reached the model, and
+the `subagents` folder of its conversation store, to tell a native subagent from a session.
+Nothing else of `agy`'s is read, and its sessions can't be opened with `session log`.
 
 ## Install
 
@@ -48,10 +50,16 @@ Native `agy` subagents are not sessions: they don't appear in `spawn list`.
   ("this session runs in agy; end it there"), `--continue`, `--fork` and `--from` refuse an
   `agy` chat, `session log` finds no transcript, and `meridian agy` and `harness: agy` in a
   profile don't exist. Resume a conversation in `agy`; Meridian reopens the same chat for it.
-- **Deliver to a session that ended.** A message queued for a conversation whose `agy`
-  process exits is not delivered. The sender gets a message saying so the next time a
-  Meridian `agy` server starts or a primary session starts in that project. Only senders
-  that are Meridian sessions are told.
+- **Deliver to a session that ended.** A message that `agy` never showed its model is not
+  delivered: the process exited first, or the transcript did not show it after three
+  injections (the message is then not injected again). The sender is told, but late: the
+  notice goes out when the next `agy` server starts or the next primary session starts,
+  in any project, not at the moment the session ends. A sender that has finished by then
+  gets nothing, and so does one with no Meridian session. A notice can repeat.
+- **Run a command with no session to run as.** If the conversation has no row (the
+  hook did not register it, or another `agy` process holds it), the tool returns an error
+  that says why instead of running the command. Close the other `agy` process or send
+  another prompt, and call again.
 
 ## Terms
 
