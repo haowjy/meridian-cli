@@ -49,12 +49,28 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 
 ## `agy/` is not a launched harness
 
-Meridian never starts Antigravity. `agy/` holds what its plugin runs: the
-`harness-hook agy` fast path (dispatched in `cli/entrypoint.py`, so import nothing heavy;
-no blocking locks, no output for no opinion, catch everything) and the `harness-mcp agy`
-server, whose child commands get no inherited `MERIDIAN_*` identity. The shell guard and
-Mars declarations are in `src/meridian/mars/`; the guard hard-codes the paths in
-`agy/state.py` and `agy/inbox.py`. It has no `HarnessId` yet.
+Meridian never starts Antigravity, so `HarnessId.AGY` has no adapter, bundle or shortcut:
+`launched_by_meridian` is false, and the registry holds only harnesses Meridian launches.
+Readers of stored rows ask `is_unlaunched_harness(name)`, never `== "agy"`: it makes
+`spawn cancel` refuse (a server holds every conversation of one `agy` process, and nothing
+Meridian may signal stops `agy`), `--continue`/`--fork`/`--from` refuse, and skips native
+capture and legacy import. `agy/` holds what the plugin runs:
+
+- `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
+  heavy. No blocking locks, no output for no opinion, catch everything. It writes only
+  request files and claims inbox entries.
+- `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
+  `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
+  no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
+  logging goes to stderr, and each command runs with piped stdio and the identity of
+  the calling conversation's row, never the server's inherited `MERIDIAN_*`.
+- `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
+  `PreInvocation` and confirmed against `agy`'s transcript. Nothing is sent at exit (the
+  server has about 400 ms before SIGKILL); `send_owed_notices` runs at the next server start
+  and in primary-launch recovery.
+
+The shell guard and Mars declarations are in `src/meridian/mars/`; the guard hard-codes the
+paths in `agy/state.py` and `agy/inbox.py`.
 
 ## Adding a Harness
 

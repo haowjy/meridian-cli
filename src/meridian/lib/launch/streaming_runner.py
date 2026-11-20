@@ -35,7 +35,6 @@ from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
-from meridian.lib.harness.connections.cursor_subprocess import CURSOR_INACTIVITY_TIMEOUT_SECONDS
 from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,

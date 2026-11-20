@@ -7,9 +7,18 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.agy import inbox
+from meridian.lib.harness.agy.holds import HeldRow
 from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
-from meridian.lib.harness.agy.mcp_server import format_result
-from meridian.lib.harness.agy.state import process_dir, read_json, request_path, scrubbed_env
+from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_conversation
+from meridian.lib.harness.agy.notices import collect_owed_notices
+from meridian.lib.harness.agy.state import (
+    agy_root,
+    process_dir,
+    read_json,
+    request_path,
+    scrubbed_env,
+    write_private_json,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -126,3 +135,36 @@ def test_mcp_child_env_drops_identity_but_keeps_home() -> None:
 def test_tool_result_shows_stdout_stderr_and_exit_code() -> None:
     assert format_result("out\n", "", 0) == "out\n[exit code 0]"
     assert format_result("", "bad\n", 2) == "[stderr]\nbad\n[exit code 2]"
+
+
+def test_tool_call_runs_as_its_root_conversations_row() -> None:
+    meta = {
+        "antigravity.google/conversation_id": "kid",
+        "antigravity.google/root_conversation_id": "root",
+    }
+    assert root_conversation(meta) == "root"
+    assert root_conversation({"antigravity.google/conversation_id": "solo"}) == "solo"
+    assert root_conversation({"antigravity.google/root_conversation_id": "../x"}) is None
+
+    row = HeldRow("p4", "c4", Path("/proj"), Path("/runtime"), Path("/proj"))
+    env = call_env(row)
+    assert (env["MERIDIAN_SPAWN_ID"], env["MERIDIAN_CHAT_ID"]) == ("p4", "c4")
+    assert env["MERIDIAN_PROJECT_DIR"] == "/proj"
+    assert env["_MERIDIAN_DEPTH"] == "0"
+    assert "MERIDIAN_SPAWN_ID" not in call_env(None)
+
+
+def test_closed_conversation_owes_notices_only_for_undelivered_messages(agy_home: Path) -> None:
+    transcript = agy_home / "t.jsonl"
+    write_private_json(
+        agy_root() / "999999-1" / "requests" / "c1.json",
+        {"role": "primary", "transcript_path": str(transcript)},
+    )
+    seen = inbox.enqueue("c1", "[Meridian] Message from spawn p8 (chat c8). x\n\nfirst")
+    inbox.enqueue("c1", "[Meridian] Message from spawn p9 (chat c9). x\n\nsecond")
+    inbox.claim_batch("c1", None)  # both go out; the transcript will show only the first
+    transcript.write_text(f"[meridian:{seen.id}] first\n")
+
+    assert [notice.sender for notice in collect_owed_notices()] == ["p9"]
+    assert not inbox.inflight_path("c1").exists()
+    assert collect_owed_notices() == []

@@ -53,6 +53,12 @@ that harness has. `legacy_native_stores.SUPPORTED` is a closed list of the harne
 older builds wrote chats for; a new harness never joins it. Do not add another harness-name list or
 `== "claude"` branch outside `lib/harness/`; give the adapter a capability instead.
 
+A harness the person starts themselves, like Antigravity, is the exception: Meridian never
+launches it, so it gets a `HarnessId` member with `launched_by_meridian` false and no adapter
+or bundle. Its plugin calls `meridian` commands, and rows it holds are read through
+`is_unlaunched_harness`; see [`lib/harness/AGENTS.md`](../src/meridian/lib/harness/AGENTS.md)
+and [Using Meridian from Antigravity](antigravity.md).
+
 The adapter declares capabilities and a `HarnessContract`, resolves `SpawnParams`
 into a launch spec, and projects composed content onto the harness's actual
 instruction and user-turn channels. Declare every `SpawnParams` field in

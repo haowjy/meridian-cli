@@ -56,6 +56,7 @@ def harness_names_text() -> str:
     names = [harness.value for harness in launched_harnesses()]
     return f"{', '.join(names[:-1])}, or {names[-1]}"
 
+
 class TransportId(StrEnum):
     """Known transport identifiers."""
 
