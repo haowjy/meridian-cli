@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-20
+
+### Added
+- `meridian spawn list --work <id|current>` filters spawns to one work item and composes with the existing `--view`, `--status`, `--model`, `--profile`, `--primary` and `--limit` filters.
+
+### Changed
+- `meridian work show <id>` now lists only active spawns, with a one-line count of finished spawns and the exact command to see them. Its `--json` output applies the same filter and adds a `spawn_counts` field with totals by status.
+
 ## [0.24.0] - 2026-11-19
 
 ### Upgrade notes
