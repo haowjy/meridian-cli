@@ -31,7 +31,7 @@ from meridian.lib.launch.resolve import (
     resolve_agent_launch_input,
     resolve_startup_timeout_seconds,
 )
-from meridian.lib.launch.session_scope import session_scope
+from meridian.lib.launch.session_scope import session_scope, warm_close_imports
 from meridian.lib.launch.streaming_runner import run_streaming_spawn
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -135,6 +135,7 @@ async def streaming_serve(
         failure_message: str | None = None
         lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
         try:
+            warm_close_imports()
             with session_scope(
                 runtime_root=runtime_root,
                 metadata=build_session_metadata(launch_ctx.resolved_request),
