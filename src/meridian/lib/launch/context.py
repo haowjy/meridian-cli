@@ -415,7 +415,7 @@ _CURSOR_DEPRECATION_WARNING = CompositionWarning(
     code="harness_deprecated",
     message=(
         "Cursor support is deprecated and goes away in the next minor release. "
-        "Use claude, codex, opencode or pi: pass --harness, or route the model there."
+        "Use another harness: pass --harness, or route the model to one."
     ),
 )
 

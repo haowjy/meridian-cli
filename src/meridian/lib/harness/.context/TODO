@@ -13,6 +13,12 @@ Jimmy approved the removal. Delete:
 
 - Adapter files: `harness/cursor.py`, `connections/cursor_subprocess.py`,
   `projections/project_cursor.py`, `projections/permissions_cursor.py`, `extractors/cursor.py`.
+- Order with the `agy` harness work: its first refactor makes the CLI shortcut names and the
+  `--harness` help strings come from the registry, the `[harness.<id>]` config keys from
+  `HarnessId`, and rewrites `HARNESS_EXTENSION_TOUCHPOINTS`. If it has landed, the removal
+  only deletes the registration; skip the edits below to `cli/bootstrap.py`,
+  `cli/bootstrap_cmd.py`, `cli/main.py`, `cli/startup/help.py`, `cli/misc_commands.py` and
+  `HARNESS_EXTENSION_TOUCHPOINTS`.
 - Wiring: `HarnessId.CURSOR` in `core/types.py`; the Cursor imports in
   `harness/__init__.py::_run_bootstrap` and `registry.py::with_defaults`;
   `BASE_COMMAND_CURSOR_SUBPROCESS` and `CURSOR_INACTIVITY_TIMEOUT_SECONDS` in
