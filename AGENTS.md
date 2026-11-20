@@ -1,6 +1,6 @@
 # meridian-cli
 
-Meridian lets agents in Claude Code, Codex, OpenCode, Cursor and Pi spawn each other.
+Meridian lets agents in Claude Code, Codex, OpenCode, Cursor (deprecated) and Pi spawn each other.
 It launches, tracks and reports; orchestration belongs in agent prompts, not here.
 
 ## Who It's For
