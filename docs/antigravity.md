@@ -1,0 +1,71 @@
+# Using Meridian from Antigravity
+
+Meridian never starts Antigravity (`agy`). You start `agy` yourself; Meridian installs a
+plugin that lets the session spawn agents on other harnesses, wait for them, and receive
+messages from other sessions. Meridian reads only what the plugin gives it: it does not
+read `agy`'s transcript or store, and it cannot stop `agy`.
+
+## Install
+
+Antigravity needs Meridian's Mars 0.38.0 or newer (`meridian --version` shows the build;
+`meridian mars --version` shows Mars).
+
+```bash
+meridian mars link agy     # once per project: adds the .agy target
+meridian mars sync         # installs the hooks, the MCP server and Meridian's skills into .agy
+agy --agent <profile>      # as usual
+```
+
+`mars sync` writes two entries into `.agy/`, named `meridian-session` (hooks) and `meridian`
+(MCP server). Nothing else changes; remove them with `meridian mars unlink agy`. If
+`meridian` is not on `agy`'s `PATH`, the hooks do nothing and `agy` works as before.
+
+## What the session can do
+
+- **One tool, `meridian`.** It takes the arguments after `meridian`: `["spawn", "-m",
+  "claude-haiku-5-5", "-p", "..."]`, `["spawn", "wait", "p1"]`, `["spawn", "list"]`. The
+  agent finds commands with `["-h"]`. It runs outside `agy`'s shell sandbox, so children
+  start as they would from your own terminal. `agy` asks you before the first call in a
+  conversation (once, for the conversation, or always); allowing it allows every Meridian
+  command for that conversation.
+- **A row in `spawn list --primary`.** The first prompt of a conversation registers it;
+  the row stays running until `agy` exits. Children the session spawns are its children,
+  and a no-argument `spawn wait` works.
+- **Messages.** `meridian spawn message <spawn or chat> --message "..."` to the session
+  prints `queued`: `agy` has no way to push a message in, so it reaches the model at the
+  session's next model call, in the middle of a turn or at the start of the next one.
+
+Native `agy` subagents are not sessions: they don't appear in `spawn list`.
+
+## What it can't do
+
+- **Wake an idle session.** A queued message waits until the model next runs, which
+  means until you type or the current turn makes another model call.
+- **Show the tool on the first prompt.** `agy` often offers the tool only from a
+  conversation's second prompt. The session context tells the model to carry on without
+  Meridian until it appears.
+- **Cancel, continue, fork or read it.** `spawn cancel` on an `agy` session is refused
+  ("this session runs in agy; end it there"), `--continue`, `--fork` and `--from` refuse an
+  `agy` chat, `session log` finds no transcript, and `meridian agy` and `harness: agy` in a
+  profile don't exist. Resume a conversation in `agy`; Meridian reopens the same chat for it.
+- **Deliver to a session that ended.** A message queued for a conversation whose `agy`
+  process exits is not delivered. The sender gets a message saying so the next time a
+  Meridian `agy` server starts or a primary session starts in that project. Only senders
+  that are Meridian sessions are told.
+
+## Terms
+
+Google's terms for Antigravity on a personal sign-in forbid using `agy` as another
+vendor's agent's worker. Messages from any session reach an `agy` session, so a Claude or
+Codex session that sends an `agy` session tasks is using it that way. Your own typing
+and `agy`'s own children are not. Meridian does not warn at launch or refuse such
+messages.
+
+## Reference
+
+State is under `~/.meridian/agy/`: one directory per running `agy` process
+(`<pid>-<birth>`) with a request file per conversation (written by the hook) and the row
+the server holds, and a message inbox per conversation. A server that is killed leaves its
+rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
+for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars
+installs.
