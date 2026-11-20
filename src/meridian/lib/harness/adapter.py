@@ -420,7 +420,12 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         primary_mode: bool,
     ) -> dict[str, str]: ...
 
-    def blocked_child_env_vars(self) -> frozenset[str]: ...
+    def blocked_child_env_vars(self) -> frozenset[str]:
+        """Names kept from this harness's own children only.
+
+        ``HarnessContract.forbidden_child_env_*`` are kept from every child.
+        """
+        ...
 
     def prepare_prelaunch(
         self,
