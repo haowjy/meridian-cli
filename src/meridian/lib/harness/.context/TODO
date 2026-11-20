@@ -24,6 +24,15 @@ Jimmy approved the removal. Delete:
   `HarnessId.CURSOR` branch in `launch/streaming_runner.py`; `TriggerKind.INACTIVITY` and
   `inactivity_task` in `launch/streaming/terminal_arbitrator.py`;
   `SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS` if nothing else uses it.
+- Capability flags only Cursor turned off; each becomes a constant, so delete the flag and
+  its branch: `accepts_messages` (`adapter.py`; sole read `cli/spawn_message.py::_harness_accepts_messages`,
+  whose check becomes unconditional), `supports_primary_launch` (`adapter.py`; the Cursor
+  primary refusal in `launch/context.py`, and `launch/resolve.py::validate_harness_compatibility`,
+  which has no caller and is only re-exported), `structured_reasoning` on
+  `connections/base.py` (written, never read). Shrink `HARNESS_EXTENSION_TOUCHPOINTS` in
+  `harness/__init__.py` to match.
+- Raise `_MARS_BUNDLE_MIN_VERSION` in `launch/bundle_adapter.py` to the Mars minor that drops
+  Cursor, so an older Mars that still routes to it is refused with the upgrade remedy.
 - Tests: the inactivity watchdog tests and `test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive`
   in `tests/integration/launch/test_streaming_runner_watchdog.py`,
   `test_inactivity_terminal_outcome` in `tests/unit/launch/test_streaming_run_conclusion.py`,
