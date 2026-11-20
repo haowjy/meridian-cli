@@ -36,9 +36,10 @@ def spawn_work_id(spawn: SpawnRecord, active_work_ids: dict[str, str]) -> str | 
 
 
 def active_spawns(runtime_root: Path) -> list[SpawnRecord]:
-    """Every spawn active in stored state, with derived status applied."""
+    """Every spawn currently active, with derived status applied."""
     rows = HistoryIndex(runtime_root).spawns(status=set(ACTIVE_SPAWN_STATUSES))
-    return overlay_derived(runtime_root, SpawnScan.ordered(rows, ()).records)
+    overlaid = overlay_derived(runtime_root, SpawnScan.ordered(rows, ()).records)
+    return [row for row in overlaid if is_active_spawn_status(row.status)]
 
 
 def work_spawns(runtime_root: Path, work_id: str) -> list[SpawnRecord]:

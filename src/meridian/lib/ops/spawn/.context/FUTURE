@@ -1,5 +1,16 @@
 # Spawn follow-ups
 
+- The `work_id` column in `spawn list` reports the row's chat *current* work item,
+  while `--work` filters on spawn membership. They disagree for finished primaries
+  whose session switched items: `--primary --view all` can show a row whose
+  `work_id` is another item, and `--work <that item>` returns nothing. Decide
+  whether the column should mean membership or chat attachment, then document or
+  change it — changing the field's meaning is a CLI-output decision.
+- `spawn list --work <unknown>` returns `(no spawns)` with exit 0, while
+  `work show <unknown>` errors. This matches `cancel-all --work`, but it can hide
+  a typo; decide whether list should validate the work id, including the case of
+  a work item that has since been deleted.
+
 - Untangle in the rewrite: `api.py` renews a wait lease on every poll, even
   though the lease lasts at least 30 seconds and polling defaults to 0.25 seconds.
   Renew when the pending set changes or a portion of the lease has elapsed.

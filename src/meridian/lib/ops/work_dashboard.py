@@ -435,8 +435,6 @@ def work_dashboard_sync(
     ungrouped: list[WorkDashboardSpawn] = []
 
     for spawn in active_spawns(runtime_state_root):
-        if not is_active_spawn_status(spawn.status):
-            continue
         row = _dashboard_spawn(spawn)
         work_id = spawn_work_id(spawn, active_work_ids)
         if work_id:
