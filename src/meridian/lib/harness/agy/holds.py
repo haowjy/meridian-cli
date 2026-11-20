@@ -249,15 +249,20 @@ def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reope
     target = spawn_store.get_spawn(runtime_root, str(owner)) if owner is not None else None
     if target is None:
         return None
-    hold = begin_continue(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        target=target,
-        chat_id=chat_id,
-        parent_id=None,
-        caller_spawn_id=None,
-        dry_run=False,
-    )
+    try:
+        hold = begin_continue(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            target=target,
+            chat_id=chat_id,
+            parent_id=None,
+            caller_spawn_id=None,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        # Its text ends in CLI advice ("; use spawn message ... or --fork ..."), which the
+        # agy model cannot act on: keep the cause.
+        raise ValueError(str(exc).partition("; ")[0]) from exc
     return None if hold is None else _Reopen(chat_id, hold)
 
 
