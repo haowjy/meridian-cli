@@ -31,7 +31,7 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
     materialize_launch_context,
 )
-from meridian.lib.launch.pre_exec_session import create_session_before_exec
+from meridian.lib.launch.pre_exec_session import LaunchCancelledError, create_session_before_exec
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchRuntime,
@@ -105,7 +105,9 @@ def _log_launch_failure_without_traceback(
     spawn_id: SpawnId,
     exc: Exception,
 ) -> None:
-    if isinstance(exc, (LaunchUserInputError, NativeIdentityError, ChatBusyError)):
+    if isinstance(
+        exc, (LaunchUserInputError, NativeIdentityError, ChatBusyError, LaunchCancelledError)
+    ):
         logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
         return
     logger.exception(message, spawn_id=str(spawn_id))

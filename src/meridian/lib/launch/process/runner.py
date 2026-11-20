@@ -92,7 +92,7 @@ from ..context import (
     materialize_launch_context,
 )
 from ..fork import fork_usage_seed
-from ..pre_exec_session import create_session_before_exec
+from ..pre_exec_session import LaunchCancelledError, create_session_before_exec
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
@@ -902,25 +902,21 @@ def run_harness_process(
                 precreated: PrecreatedSession | None = None
                 if session_mode != SessionMode.RESUME:
                     fork = session_mode == SessionMode.FORK
-                    try:
-                        precreated = create_session_before_exec(
-                            adapter=harness_adapter,
-                            operation="fork" if fork else "create",
-                            source_session_id=(
-                                (preview_request.session.requested_harness_session_id or "").strip()
-                                or None
-                                if fork
-                                else None
-                            ),
-                            native_store=preview_request.session.source_native_store,
-                            surface=prepared,
-                            cwd=execution_cwd,
-                            runtime_root=runtime_root,
-                            launch=launch,
-                        )
-                    except Exception as exc:
-                        launch_failure = str(exc) or type(exc).__name__
-                        raise
+                    precreated = create_session_before_exec(
+                        adapter=harness_adapter,
+                        operation="fork" if fork else "create",
+                        source_session_id=(
+                            (preview_request.session.requested_harness_session_id or "").strip()
+                            or None
+                            if fork
+                            else None
+                        ),
+                        native_store=preview_request.session.source_native_store,
+                        surface=prepared,
+                        cwd=execution_cwd,
+                        runtime_root=runtime_root,
+                        launch=launch,
+                    )
                 if precreated is not None:
                     resolved_harness_session_id = precreated.session_id
                     expected_harness_session_id = precreated.session_id
@@ -1142,6 +1138,12 @@ def run_harness_process(
             except NativeIdentityError as exc:
                 identity_error = exc
                 exit_code = 1
+            except LaunchCancelledError as exc:
+                exit_code = exc.exit_code
+                cancelled = True
+            except Exception as exc:
+                launch_failure = str(exc) or type(exc).__name__
+                raise
             finally:
                 # Hold the mask from here through the terminal write: the exit path and the
                 # recorded outcome are decided in this block, and a signal between them would

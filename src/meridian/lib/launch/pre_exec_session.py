@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from pathlib import Path
 from typing import Literal
 
@@ -9,12 +10,19 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import PreExecSessionRequest, SubprocessHarness
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.signals import signal_to_exit_code
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.spawn_status import read_cancel_intent
 
 
 class LaunchCancelledError(RuntimeError):
-    """A cancel was requested before the session was created."""
+    """A cancel was requested before the session was created; the launch ends cancelled."""
+
+    def __init__(self, message: str, *, exit_code: int, error: str | None) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+        self.error = error
 
 
 def create_session_before_exec(
@@ -36,8 +44,15 @@ def create_session_before_exec(
     launch killed before exec leaves a row that names the session instead of an unrecorded
     one. A failure propagates and fails the launch; nothing is retried or cleaned up here.
     """
-    if launch.cancel.exists():
-        raise LaunchCancelledError(f"{launch.spawn_id} was cancelled before its session started")
+    row = spawn_store.get_spawn(runtime_root, SpawnId(launch.spawn_id))
+    intent = read_cancel_intent(launch, row) if row is not None else None
+    if intent is not None or launch.cancel.exists():
+        # An unreadable cancel.json is still a cancel.
+        raise LaunchCancelledError(
+            f"{launch.spawn_id} was cancelled before its session started",
+            exit_code=intent.exit_code if intent else signal_to_exit_code(signal.SIGTERM),
+            error=intent.error if intent else None,
+        )
 
     created = adapter.create_session_before_exec(
         PreExecSessionRequest(
