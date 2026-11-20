@@ -7,17 +7,41 @@ from pydantic import BeforeValidator, StringConstraints
 class HarnessId(StrEnum):
     """Known harness identifiers."""
 
+    AGY = "agy"
     CLAUDE = "claude"
     CODEX = "codex"
     CURSOR = "cursor"
     OPENCODE = "opencode"
     PI = "pi"
 
+    @property
+    def launched_by_meridian(self) -> bool:
+        """False for a harness the person starts themselves (``agy``): it has sessions
+        and rows Meridian reads and routes to, but no adapter, shortcut or launch."""
+
+        return self is not HarnessId.AGY
+
+
+def is_unlaunched_harness(name: str | None) -> bool:
+    """Whether a stored harness name is one the person starts themselves.
+
+    A name no build knows (a removed harness) is not: its rows keep their old rules.
+    """
+
+    try:
+        return not HarnessId(name or "").launched_by_meridian
+    except ValueError:
+        return False
+
+
+def launched_harnesses() -> tuple[HarnessId, ...]:
+    return tuple(harness for harness in HarnessId if harness.launched_by_meridian)
+
 
 def harness_names_text() -> str:
-    """Every harness id as ``a, b, or c``, for help text."""
+    """Every launchable harness id as ``a, b, or c``, for help text."""
 
-    names = [harness.value for harness in HarnessId]
+    names = [harness.value for harness in launched_harnesses()]
     return f"{', '.join(names[:-1])}, or {names[-1]}"
 
 

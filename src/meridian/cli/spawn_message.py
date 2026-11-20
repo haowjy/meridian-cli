@@ -13,7 +13,6 @@ from typing import Never, cast
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS, DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.locate import locate_run
@@ -105,11 +104,8 @@ def _can_receive_reply(sender: SpawnRecord, sender_root: Path) -> bool:
 
 
 def _harness_accepts_messages(harness: str | None) -> bool:
-    try:
-        harness_id = HarnessId(harness)
-    except ValueError:
-        return True
-    return get_default_harness_registry().get_contract(harness_id).capabilities.accepts_messages
+    adapter = get_default_harness_registry().find(harness)
+    return adapter is None or adapter.capabilities.accepts_messages
 
 
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:

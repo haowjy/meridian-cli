@@ -8,8 +8,8 @@ import pytest
 
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
-from meridian.lib.harness.agy.mcp_server import format_result, scrubbed_env
-from meridian.lib.harness.agy.state import process_dir, read_json, request_path
+from meridian.lib.harness.agy.mcp_server import format_result
+from meridian.lib.harness.agy.state import process_dir, read_json, request_path, scrubbed_env
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +51,7 @@ def test_subagent_is_marked_and_ignored(agy_home: Path) -> None:
     (parent_subagents / "kid.json").write_text("{}")
     pid = os.getpid()
     run_hook("SessionStart", pid, _payload("par", agy_home))
-    inbox.enqueue("kid", "p1", "hello")
+    inbox.enqueue("kid", "hello")
 
     assert run_hook("SessionStart", pid, _payload("kid", agy_home)) is None
     assert run_hook("PreInvocation", pid, _payload("kid", agy_home)) is None
@@ -69,14 +69,13 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     pid = os.getpid()
     payload = _payload("c1", agy_home)
     transcript = Path(json.loads(payload)["transcriptPath"])
-    entry = inbox.enqueue("c1", "p7", "ping")
+    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping")
 
     first = run_hook("PreInvocation", pid, payload)
     assert first is not None
     steps = json.loads(first)["injectSteps"]
-    assert [s["systemMessage"]["systemMessage"] for s in steps] == [
-        f"Message from p7 [meridian:{entry.id}]\nping"
-    ]
+    assert [s["systemMessage"]["systemMessage"] for s in steps] == [entry.render()]
+    assert entry.sender == "p7"
 
     # Not in the transcript yet: the next call hands it back.
     assert run_hook("PreInvocation", pid, payload) is not None
@@ -90,7 +89,7 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
 def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
     pid = os.getpid()
     payload = _payload("c1", agy_home)
-    inbox.enqueue("c1", "p7", "ping")
+    inbox.enqueue("c1", "ping")
 
     replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
 
@@ -100,7 +99,7 @@ def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
     from meridian.lib.platform import fcntl
 
-    inbox.enqueue("c1", "p7", "ping")
+    inbox.enqueue("c1", "ping")
     lock_path = inbox._lock_path("c1")  # pyright: ignore[reportPrivateUsage]
     fd = os.open(lock_path, os.O_RDWR)
     try:

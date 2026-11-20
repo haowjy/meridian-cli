@@ -19,7 +19,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import launched_harnesses
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
@@ -59,11 +59,12 @@ async def streaming_serve(
         raise ValueError("model cannot be empty")
     agent_launch = resolve_agent_launch_input(agent)
 
-    try:
-        harness_id = HarnessId(normalized_harness)
-    except ValueError as exc:
-        supported = ", ".join(item.value for item in HarnessId)
-        raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}") from exc
+    harness_id = next(
+        (item for item in launched_harnesses() if item.value == normalized_harness), None
+    )
+    if harness_id is None:
+        supported = ", ".join(item.value for item in launched_harnesses())
+        raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}")
 
     prepared = prepare_for_runtime_write(resolve_cli_project_root())
     project_root = prepared.project_root

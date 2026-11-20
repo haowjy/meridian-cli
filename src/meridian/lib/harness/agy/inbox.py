@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -28,19 +29,31 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 MAX_ATTEMPTS = 3
 
 
+_SENDER = re.compile(r"Message from spawn (p\d+)")
+
+
 @dataclass(frozen=True)
 class InboxEntry:
     id: str
-    sender: str
     text: str
+    # The sending spawn, read from the frame `spawn message` puts on the text; None when
+    # the text has no frame (a sender with no identity cannot be told anything).
+    sender: str | None
     attempts: int = 0
 
     def render(self) -> str:
-        return f"Message from {self.sender} [meridian:{self.id}]\n{self.text}"
+        # A hook's system message is easy for a model to read past (a GPT-OSS run ignored
+        # one), so the opening says it is addressed to the model and what to do.
+        return (
+            f"[meridian:{self.id}] A message arrived for you through Meridian while you were "
+            "working. It is addressed to you, not tool output: treat it as a new instruction "
+            "from the user, do what it asks before you finish this turn, and say in your "
+            f"reply that you received it.\n\n{self.text}"
+        )
 
     def to_line(self) -> str:
         return json.dumps(
-            {"id": self.id, "sender": self.sender, "text": self.text, "attempts": self.attempts},
+            {"id": self.id, "text": self.text, "sender": self.sender, "attempts": self.attempts},
             separators=(",", ":"),
         )
 
@@ -73,8 +86,11 @@ def _locked(conversation_id: str, *, blocking: bool) -> Generator[bool]:
         os.close(fd)  # closing releases the flock
 
 
-def enqueue(conversation_id: str, sender: str, text: str) -> InboxEntry:
-    entry = InboxEntry(id=uuid.uuid4().hex[:12], sender=sender, text=text)
+def enqueue(conversation_id: str, text: str) -> InboxEntry:
+    match = _SENDER.search(text)
+    entry = InboxEntry(
+        id=uuid.uuid4().hex[:12], text=text, sender=match.group(1) if match else None
+    )
     path = inbox_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _locked(conversation_id, blocking=True):
@@ -99,8 +115,8 @@ def _read_entries(path: Path) -> list[InboxEntry]:
             entries.append(
                 InboxEntry(
                     id=str(doc["id"]),
-                    sender=str(doc["sender"]),
                     text=str(doc["text"]),
+                    sender=doc["sender"] if isinstance(doc.get("sender"), str) else None,
                     attempts=int(doc.get("attempts", 0)),
                 )
             )
@@ -143,13 +159,33 @@ def claim_batch(conversation_id: str, transcript_path: str | None) -> list[Inbox
                 if f"meridian:{e.id}]" not in transcript and e.attempts < MAX_ATTEMPTS
             ]
         batch = [
-            InboxEntry(e.id, e.sender, e.text, e.attempts + 1)
+            InboxEntry(e.id, e.text, e.sender, e.attempts + 1)
             for e in [*previous, *_read_entries(inbox)]
         ]
         # In-flight first: a crash between the two steps repeats a batch instead of losing it.
         _write_entries(inflight, batch)
         inbox.unlink(missing_ok=True)
         return batch
+
+
+def take_undelivered(conversation_id: str, transcript_path: str | None) -> list[InboxEntry]:
+    """Remove and return what the session never showed the model, for its senders' notices.
+
+    Entries the transcript carries were delivered. Takes the lock blocking: only the
+    notice sweep calls this, after the ``agy`` process is gone.
+    """
+
+    with _locked(conversation_id, blocking=True):
+        transcript = _read_transcript(transcript_path)
+        inflight = [
+            e
+            for e in _read_entries(inflight_path(conversation_id))
+            if f"meridian:{e.id}]" not in transcript
+        ]
+        owed = [*inflight, *_read_entries(inbox_path(conversation_id))]
+        inflight_path(conversation_id).unlink(missing_ok=True)
+        inbox_path(conversation_id).unlink(missing_ok=True)
+        return owed
 
 
 def _read_transcript(transcript_path: str | None) -> str:
@@ -161,4 +197,12 @@ def _read_transcript(transcript_path: str | None) -> str:
         return ""
 
 
-__all__ = ["MAX_ATTEMPTS", "InboxEntry", "claim_batch", "enqueue", "inbox_path", "inflight_path"]
+__all__ = [
+    "MAX_ATTEMPTS",
+    "InboxEntry",
+    "claim_batch",
+    "enqueue",
+    "inbox_path",
+    "inflight_path",
+    "take_undelivered",
+]

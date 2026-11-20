@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,7 +14,6 @@ from meridian.lib.state.user_paths import get_user_home
 
 CONVERSATION_ID_KEY = "antigravity.google/conversation_id"
 ROOT_CONVERSATION_ID_KEY = "antigravity.google/root_conversation_id"
-PARENT_CONVERSATION_ID_KEY = "antigravity.google/parent_conversation_id"
 
 
 def agy_root() -> Path:
@@ -52,6 +52,43 @@ def process_dir(pid: int) -> Path | None:
     return None if birth is None else agy_root() / f"{pid}-{birth}"
 
 
+def process_dirs() -> list[tuple[Path, bool]]:
+    """Every ``agy`` process directory, with whether that process (birth-matched) still runs."""
+
+    root = agy_root()
+    found: list[tuple[Path, bool]] = []
+    for path in sorted(root.glob("*-*")):
+        pid, _, birth = path.name.partition("-")
+        if path.is_dir() and pid.isdigit() and birth:
+            found.append((path, process_birth(int(pid)) == birth))
+    return found
+
+
+def request_path(proc_dir: Path, conversation_id: str) -> Path:
+    return proc_dir / "requests" / f"{conversation_id}.json"
+
+
+def row_path(proc_dir: Path, conversation_id: str) -> Path:
+    """The Meridian row the server holds for a conversation: ``spawn_id``, ``chat_id``, roots."""
+
+    return proc_dir / "rows" / f"{conversation_id}.json"
+
+
+# MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
+# launch state that belongs to whichever session started the server.
+_KEPT_ENV = frozenset({"MERIDIAN_HOME"})
+
+
+def scrubbed_env(base: Mapping[str, str]) -> dict[str, str]:
+    """``base`` without Meridian identity, which an ``agy`` started in a session would leak."""
+
+    return {
+        key: value
+        for key, value in base.items()
+        if key in _KEPT_ENV or not key.upper().startswith(("MERIDIAN_", "_MERIDIAN_"))
+    }
+
+
 def write_private_json(path: Path, doc: dict[str, Any]) -> None:
     atomic_write_text(
         path, json.dumps(doc, separators=(",", ":")), durable=False, permissions=PRIVATE_FILE_MODE
@@ -64,29 +101,6 @@ def read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
     return cast("dict[str, Any]", doc) if isinstance(doc, dict) else None
-
-
-def request_path(proc_dir: Path, conversation_id: str) -> Path:
-    return proc_dir / "requests" / f"{conversation_id}.json"
-
-
-def record_call(proc_dir: Path, meta: dict[str, Any], now: float) -> str | None:
-    """Record that a tool call arrived for a root conversation; return that root ID."""
-
-    conversation = meta.get(CONVERSATION_ID_KEY)
-    root = meta.get(ROOT_CONVERSATION_ID_KEY) or conversation
-    if not isinstance(root, str) or not _is_safe_id(root):
-        return None
-    write_private_json(
-        proc_dir / "calls" / f"{root}.json",
-        {
-            "root_conversation_id": root,
-            "conversation_id": conversation,
-            "parent_conversation_id": meta.get(PARENT_CONVERSATION_ID_KEY),
-            "last_call_at": now,
-        },
-    )
-    return root
 
 
 def _is_safe_id(value: str) -> bool:
@@ -106,8 +120,10 @@ __all__ = [
     "is_safe_id",
     "process_birth",
     "process_dir",
+    "process_dirs",
     "read_json",
-    "record_call",
     "request_path",
+    "row_path",
+    "scrubbed_env",
     "write_private_json",
 ]
