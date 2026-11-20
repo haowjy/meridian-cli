@@ -12,7 +12,7 @@ class _ReportObject(BaseModel):
 
 
 class TargetSourceReport(_ReportObject):
-    field: Literal["targets", "managed_root", "none"]
+    field: Literal["targets", "none"]
     origin: Literal["project", "local", "unset"]
     path: str | None
 
