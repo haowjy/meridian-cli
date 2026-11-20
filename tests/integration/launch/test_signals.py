@@ -48,7 +48,8 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     class _SignalDrivenConnection:
         send_cancel_calls = 0
 
-        def __init__(self) -> None:
+        def __init__(self, request_handler: object | None = None) -> None:
+            _ = request_handler
             self.state = "created"
             self._spawn_id = SpawnId("")
             self.capabilities = ConnectionCapabilities(

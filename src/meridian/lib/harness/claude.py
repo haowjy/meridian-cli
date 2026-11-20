@@ -281,6 +281,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
             fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+            # Names one launch's starting-prompt file; a launch that delivers no prompt
+            # through the mod must not inherit its parent's.
+            forbidden_child_env_keys=frozenset({FIRST_TURN_PATH_ENV}),
         )
 
     @property
