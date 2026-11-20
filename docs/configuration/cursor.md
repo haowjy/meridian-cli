@@ -1,6 +1,6 @@
 # Cursor harness configuration
 
-> The Cursor harness is unmaintained: it still ships but is no longer tested or extended.
+> **Deprecated.** Cursor support goes away in the next minor release after 0.25. Each Cursor launch warns; use `claude`, `codex`, `opencode` or `pi`. It is unmaintained until then: it is no longer tested or extended. See [Cursor deprecation](../upgrading.md#cursor-is-deprecated).
 
 ## Model Selection
 

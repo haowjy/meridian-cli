@@ -411,6 +411,14 @@ def _build_composition_warnings(
     return tuple(warnings)
 
 
+_CURSOR_DEPRECATION_WARNING = CompositionWarning(
+    code="harness_deprecated",
+    message=(
+        "Cursor support is deprecated and goes away in the next minor release. "
+        "Use claude, codex, opencode or pi: pass --harness, or route the model there."
+    ),
+)
+
 _INLINE_FILE_REFS_WARNING_THRESHOLD = 5
 
 _INLINE_FILE_REFS_WARNING_MESSAGE = (
@@ -1223,6 +1231,8 @@ def prepare_launch_surface(
         missing_skills_warning=missing_skills_warning,
         continuation_warning=continuation.warning,
     )
+    if policies.harness == HarnessId.CURSOR:
+        composition_warnings = (*composition_warnings, _CURSOR_DEPRECATION_WARNING)
     inline_file_refs_warning = _build_inline_file_refs_warning(content)
     if inline_file_refs_warning is not None:
         composition_warnings = (*composition_warnings, inline_file_refs_warning)

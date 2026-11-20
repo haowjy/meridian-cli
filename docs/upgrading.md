@@ -1,5 +1,13 @@
 # Upgrade notes
 
+## Cursor is deprecated
+
+Cursor support goes away in the next minor release after 0.25. Until then it works as before, and every launch on it warns.
+
+- **Stop naming Cursor.** `--harness cursor`, `harness: cursor` in an agent profile or config, and a model that routes to Cursor each print `Cursor support is deprecated and goes away in the next minor release` once per command. Use `--harness claude|codex|opencode|pi`, change the profile's `harness`, or route the model to another harness in `mars.toml`.
+- **Old Cursor spawns and chats stay readable** now and after removal: `meridian spawn list` and `spawn show` read the stored records without the adapter. Resuming, forking or reading the transcript of a Cursor session will fail with an unknown-harness error once it is removed.
+- **Nothing on disk changes**, and rolling back works.
+
 ## Git contexts sync through a daemon, not the `git-autosync` hook
 
 Needs `meridian-sync`, which every install now carries.

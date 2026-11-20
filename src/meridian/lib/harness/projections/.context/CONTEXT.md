@@ -101,6 +101,6 @@ and user config remain in charge.
 Claude cannot turn thinking off on current models: even `MAX_THINKING_TOKENS=0` was
 observed to think. Pi maps `none` to `off` and clamps effort to the model. OpenCode V1
 uses variants; V2 has no working effort channel. Cursor receives a model already resolved
-with effort by Mars. Cursor is unmaintained; keep it building without adding parity work.
+with effort by Mars. Cursor is deprecated and unmaintained; keep it building without adding parity work.
 Additional workspace roots are best-effort: Cursor receives only `task_cwd` as its
 workspace.

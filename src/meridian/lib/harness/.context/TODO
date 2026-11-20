@@ -4,3 +4,44 @@
 - `pi_idle.py`: Revisit the estimated `openai-codex` 1800-second TTL if the backend publishes one or observed cache hits fall. Local data showed 90% hits after 20–30 minute idle gaps.
 - `extractors/opencode.py`: Native denials use OpenCode's generic reason and unavailable tools produce no attempted-call event. Reporting Meridian's reason or the missing calls needs an upstream seam or a mediating hook.
 - `transcript.py`: Claude compaction setup currently captures the boundary text while the summary lands in the next entry. Once the summary fills the setup slot, narrow the sessions skill's read from two entries to one.
+
+# Remove Cursor (next minor after 0.25)
+
+Cursor is deprecated in 0.25: every launch that resolves to it warns (`harness_deprecated`,
+`_CURSOR_DEPRECATION_WARNING` in `launch/context.py`). The next minor release deletes it;
+Jimmy approved the removal. Delete:
+
+- Adapter files: `harness/cursor.py`, `connections/cursor_subprocess.py`,
+  `projections/project_cursor.py`, `projections/permissions_cursor.py`, `extractors/cursor.py`.
+- Wiring: `HarnessId.CURSOR` in `core/types.py`; the Cursor imports in
+  `harness/__init__.py::_run_bootstrap` and `registry.py::with_defaults`;
+  `BASE_COMMAND_CURSOR_SUBPROCESS` and `CURSOR_INACTIVITY_TIMEOUT_SECONDS` in
+  `launch/constants.py`; `"cursor"` in `cli/bootstrap.py::HARNESS_SHORTCUT_NAMES` and in the
+  `--harness` help of `cli/bootstrap_cmd.py`, `cli/main.py`, `cli/startup/help.py` and
+  `cli/misc_commands.py`; `_CURSOR_DEPRECATION_WARNING` in `launch/context.py`.
+- The Cursor-only inactivity watchdog, which then has no user: `_inactivity_watchdog`,
+  `_inactivity_terminal_outcome`, `last_event_at`, `terminated_by_inactivity` and the
+  `HarnessId.CURSOR` branch in `launch/streaming_runner.py`; `TriggerKind.INACTIVITY` and
+  `inactivity_task` in `launch/streaming/terminal_arbitrator.py`;
+  `SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS` if nothing else uses it.
+- Tests: the inactivity watchdog tests and `test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive`
+  in `tests/integration/launch/test_streaming_runner_watchdog.py`,
+  `test_inactivity_terminal_outcome` in `tests/unit/launch/test_streaming_run_conclusion.py`,
+  `tests/smoke/spawn-cursor-subprocess.md` (and its row in `tests/smoke/README.md`); rename the
+  "Cursor subprocess" failure text in the two `test_streaming_run_conclusion.py` files.
+- Docs: `docs/configuration/cursor.md` and its link in `docs/configuration.md`, the Cursor rows
+  and sentences in `docs/agent-profiles.md` (harness list, effort table, native config,
+  permissions table, spawn-only note, approval notes, child-spawn guardrail), the table row and
+  paragraph in `docs/getting-started.md`, `.cursor` in `docs/configuration/mars.md`, `INSTALL.md`,
+  `README.md`, `.gitignore`, root `AGENTS.md`, the Cursor sentences in
+  `harness/.context/CONTEXT.md`, `projections/.context/CONTEXT.md`, and the two bundled skill
+  pages `escalation__meridian/SKILL.md` and `prompt-authoring__meridian/resources/agents.md`.
+- Old state must keep reading: make `HarnessId._missing_` raise a clear error for `cursor` ("Cursor
+  support was removed in 0.26.0; its sessions can no longer be launched, resumed or read"),
+  because about 25 call sites build `HarnessId(value)` and would otherwise say `'cursor' is not a
+  valid HarnessId` on `session log`, `--continue` and `--fork` of an old Cursor session. `spawn
+  list` and `spawn show` need no change (the record's `harness` is a string). Keep the `cursor`
+  chat in `tests/integration/ops/test_legacy_native_import.py` and the `harness_id: "cursor"` line
+  in `tests/fixtures/history/wire_envelopes.jsonl`.
+- Add an upgrade section for that release, and keep Mars's matching removal in step: a Mars that
+  still routes to Cursor then hits `bundle_adapter._parse_harness_id`'s unsupported-routing error.

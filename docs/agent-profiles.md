@@ -50,7 +50,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `name` | str | filename stem | Profile identifier used with `-a NAME` |
 | `description` | str | `""` | One-line description shown in `mars list` |
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
-| `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor`, or `pi` |
+| `harness` | str | — | Force a specific harness: `claude`, `codex`, `opencode`, `cursor` (deprecated; removed in the next minor release), or `pi` |
 | `mode` | str | `subagent` | `primary` or `subagent` — marks leads in `meridian spawn subagents` and decides which lead-only Meridian guidance the prompt carries; see [`mode`](#mode) |
 | `model-invocable` | bool | `true` | `false` hides the agent from `meridian spawn subagents` unless `--all` is given; explicit `-a NAME` invocation still works. Skills have their own `model-invocable`; see [Skills](#skills-and-skill-variants) |
 | `skills` | list[str] or `{load, available}` | `[]` | Skills the agent loads into its system prompt; the mapping form also lists skills it may load itself. See [Skills](#skills-and-skill-variants) |
