@@ -11,7 +11,7 @@ from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.holds import HeldRow
 from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
 from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_conversation
-from meridian.lib.harness.agy.notices import collect_owed_notices
+from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
     agy_root,
     process_dir,
@@ -159,7 +159,14 @@ def test_tool_call_runs_as_its_root_conversations_row() -> None:
     assert "MERIDIAN_SPAWN_ID" not in call_env(None)
 
 
-def test_closed_conversation_owes_notices_only_for_undelivered_messages(agy_home: Path) -> None:
+def test_closed_conversation_notifies_only_for_undelivered_messages(
+    agy_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "meridian.lib.harness.agy.notices._send",
+        lambda sender, text: sent.append(sender.spawn_id),
+    )
     transcript = agy_home / "t.jsonl"
     write_private_json(
         agy_root() / "999999-1" / "requests" / "c1.json",
@@ -167,9 +174,14 @@ def test_closed_conversation_owes_notices_only_for_undelivered_messages(agy_home
     )
     seen = inbox.enqueue("c1", "first", _sender("p8"))
     inbox.enqueue("c1", "second", _sender("p9"))
-    inbox.claim_batch("c1", None)  # both go out; the transcript will show only the first
+    inbox.enqueue("c1", "third", None)
+    inbox.claim_batch("c1", None)  # all go out; the transcript will show only the first
     transcript.write_text(f"[meridian:{seen.id}] first\n")
 
-    assert [notice.sender for notice in collect_owed_notices()] == [_sender("p9")]
+    send_owed_notices()
+
+    assert sent == ["p9"]
     assert not inbox.inflight_path("c1").exists()
-    assert collect_owed_notices() == []
+    assert not inbox.inbox_path("c1").exists()
+    send_owed_notices()
+    assert sent == ["p9"]

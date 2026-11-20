@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -166,24 +166,33 @@ def claim_batch(conversation_id: str, transcript_path: str | None) -> list[Inbox
         return batch
 
 
-def take_undelivered(conversation_id: str, transcript_path: str | None) -> list[InboxEntry]:
-    """Remove and return what the session never showed the model, for its senders' notices.
+def settle_undelivered(
+    conversation_id: str, transcript_path: str | None, settle: Callable[[InboxEntry], None]
+) -> None:
+    """Call ``settle`` for each message the session never showed the model, then forget it.
 
-    Entries the transcript carries were delivered. Takes the lock blocking: only the
-    notice sweep calls this, after the ``agy`` process is gone.
+    Entries the transcript carries were delivered. An entry is removed only after its
+    ``settle`` returns, so a sweeper killed halfway leaves the rest (and at most the entry
+    in progress, which the next sweeper repeats). Holds the lock blocking, across every
+    ``settle``: only the notice sweep calls this, after the ``agy`` process is gone.
     """
 
     with _locked(conversation_id, blocking=True):
         transcript = _read_transcript(transcript_path)
-        inflight = [
+        owed = [
             e
-            for e in _read_entries(inflight_path(conversation_id))
+            for e in [
+                *_read_entries(inflight_path(conversation_id)),
+                *_read_entries(inbox_path(conversation_id)),
+            ]
             if f"meridian:{e.id}]" not in transcript
         ]
-        owed = [*inflight, *_read_entries(inbox_path(conversation_id))]
+        # One file from here on: a crash between these two steps repeats entries, never loses.
+        _write_entries(inbox_path(conversation_id), owed)
         inflight_path(conversation_id).unlink(missing_ok=True)
-        inbox_path(conversation_id).unlink(missing_ok=True)
-        return owed
+        for position, entry in enumerate(owed, start=1):
+            settle(entry)
+            _write_entries(inbox_path(conversation_id), owed[position:])
 
 
 def _read_transcript(transcript_path: str | None) -> str:
@@ -202,5 +211,5 @@ __all__ = [
     "enqueue",
     "inbox_path",
     "inflight_path",
-    "take_undelivered",
+    "settle_undelivered",
 ]
