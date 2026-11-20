@@ -1,8 +1,9 @@
 """``meridian harness-mcp agy``: the one-tool MCP server an ``agy`` plugin starts.
 
 ``agy`` starts one server per ``agy`` process and closes its stdin when it exits, so the
-server's parent is the ``agy`` process whose conversations it will serve. Stdout is the
-MCP transport: nothing here prints, and each command runs with stdio piped.
+server's parent is the ``agy`` process whose conversations it will serve. The server holds
+a Meridian row for each (``holds.py``) and runs each tool call as its conversation's row.
+Stdout is the MCP transport: nothing here prints, and each command runs with stdio piped.
 """
 
 from __future__ import annotations
