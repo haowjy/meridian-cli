@@ -14,9 +14,10 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian --task-dir PATH` | Override the source-edit directory for this primary launch only. Does not modify the work item's `task_dir` setting. Relative `-f` paths resolve against this directory. Rejected with `--continue` — use `--fork --task-dir` to diverge. |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
-| `meridian spawn list` | See running and recent spawns |
+| `meridian spawn list` | See running and recently finished spawns (default: active view, limit 20) |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn list --work SLUG\|current --view all --limit N` | Show a work item's spawn history, finished ones included; set `N` to the number of spawns to list |
 | `meridian spawn subagents` | List the agents in the calling agent's `subagents:` list, with descriptions and routing markers |
 | `meridian spawn subagents --all` | List every installed agent, including `model-invocable: false` ones and those outside the caller's list |
 | `meridian spawn wait` | Wait for this session's running descendants and return up to 32 unconsumed finished background children as lookup headers; children waited to completion retain full reports; on return, list children that appeared while waiting without consuming them; yields a retry checkpoint if concurrent history writes delay discovery |
@@ -103,8 +104,11 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage; a chat or a primary's spawn shows the session, with the report of the spawn that ran it; with no report to show, the block lists the catch-up steps: the work item's recorded state, `session log <chat> --tail 20`, then `session search`. Also inherits the source's work item as a fallback (see Work Precedence below). |
 | `--desc "label"` | Human-readable label in dashboards |
-| `--work SLUG` | Attach to a specific work item (overrides ambient and --from inheritance) |
+| `--work SLUG\|current` | On launch, attach to that work item (overrides ambient and --from inheritance). On `spawn list`, include only spawns of that item: a primary belongs to the item its session is attached to, and only while it runs. Composes with the other `spawn list` filters |
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
+| `--view VIEW` | `spawn list` only: status preset — `active` (default), `recent`, `all`, `running`, `completed`, `failed`, `cancelled`, `timed_out` |
+| `--status STATUS` | `spawn list` only: one status — `running`, `succeeded`, `failed`, `cancelled`, `timed_out` |
+| `--limit N` | `spawn list` only: maximum rows (default 20). The `--all` shortcut drops the default to 5; use `--view all --limit N` to list a work item's full history |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
@@ -293,7 +297,7 @@ Runner-history pruning is explicit, never automatic; see
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
 | `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
-| `meridian work show [SLUG]` | Show one work item, its directory, and attached spawns (default: this session's active work item) |
+| `meridian work show [SLUG]` | Show one work item, its directory, its active spawns, a count of finished ones, and the `spawn list --work ...` command that lists them (default: this session's active work item). In `--json`, `spawns` holds only active spawns and `spawn_counts` holds totals by status |
 | `meridian work switch SLUG\|current` | Set active work item |
 | `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
 | `meridian work update [SLUG] --status/--desc/--goal` | Update a work item (default: this session's active work item) |

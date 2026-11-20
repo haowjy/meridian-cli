@@ -885,6 +885,13 @@ def _spawn_list(
         bool,
         Parameter(name="--primary", help="Only show primary spawns."),
     ] = False,
+    work: Annotated[
+        str | None,
+        Parameter(
+            name="--work",
+            help="Only spawns of this work item ('current' = this session's).",
+        ),
+    ] = None,
     limit: Annotated[
         int, Parameter(name="--limit", help="Maximum number of spawns to return.")
     ] = 20,
@@ -931,6 +938,7 @@ def _spawn_list(
             model=model,
             profile=profile,
             primary=primary,
+            work=work,
             limit=limit,
             failed=False,
         ),
