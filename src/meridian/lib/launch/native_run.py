@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from meridian.lib.core.native_identity import (
+    BindSource,
     NativeEntryMismatch,
     NativeIdentity,
     NativeIdentityError,
@@ -271,8 +272,6 @@ def bind_entry(
     on_accepted: Callable[[str], None] | None = None,
 ) -> NativeRun:
     """Final binding: the generation owns its policy and entry before native exec."""
-    if policy is not None:
-        attempt.own_policy(policy)
     identity = spec.native_identity
     if identity is None:
         assigned = spec.continue_session_id if not spec.continue_fork else None
@@ -284,21 +283,41 @@ def bind_entry(
         if identity.operation == "fork" and assigned is None:
             fork_source = identity.source_session_id
         entry = identity.entry_fields()
+    return _bind(attempt, identity, entry, assigned, fork_source, policy, on_accepted, "assigned")
+
+
+def bind_observed_entry(
+    attempt: SessionAttempt,
+    *,
+    harness: str,
+    session_id: str,
+    policy: LaunchPolicySnapshot | None,
+) -> NativeRun:
+    """Binding for a session the caller saw running: its ID is exact and nothing was planned."""
+    entry = NativeKeyFields(harness, session_id=session_id)
+    return _bind(attempt, None, entry, session_id, None, policy, None, "observed")
+
+
+def _bind(
+    attempt: SessionAttempt,
+    identity: NativeIdentity | None,
+    entry: NativeKeyFields,
+    assigned: str | None,
+    fork_source: str | None,
+    policy: LaunchPolicySnapshot | None,
+    on_accepted: Callable[[str], None] | None,
+    source: BindSource,
+) -> NativeRun:
+    if policy is not None:
+        attempt.own_policy(policy)
     if assigned:
-        outcome = attempt.bind(entry, "assigned")
+        outcome = attempt.bind(entry, source)
         if isinstance(outcome, Conflict):
             raise NativeEntryMismatch(outcome.kept, outcome.attempted)
         entry = outcome.key
         if on_accepted is not None:
             on_accepted(assigned)
-    return NativeRun(
-        attempt,
-        identity,
-        entry,
-        assigned,
-        fork_source,
-        on_accepted,
-    )
+    return NativeRun(attempt, identity, entry, assigned, fork_source, on_accepted)
 
 
 @dataclass(frozen=True)

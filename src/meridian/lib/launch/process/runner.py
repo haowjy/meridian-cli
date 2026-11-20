@@ -6,9 +6,8 @@ import os
 import signal
 import threading
 import time
-import uuid
-from collections.abc import Callable, Generator, Mapping
-from contextlib import contextmanager, nullcontext, suppress
+from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,19 +16,11 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
-    NativeKey,
     NativeSessionUnavailable,
     PrecreatedSession,
 )
-from meridian.lib.core.spawn_lifecycle import (
-    ExecutionTerminalFacts,
-    SpawnReservation,
-)
-from meridian.lib.core.spawn_service import SpawnApplicationService
-from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     HarnessContract,
@@ -51,14 +42,11 @@ from meridian.lib.harness.passthrough.registry import get_passthrough
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.idle.service import close_on_launch
 from meridian.lib.launch.artifact_io import (
-    LifecycleLog,
-    record_identity_failure,
     write_projection_artifacts,
 )
 from meridian.lib.launch.continue_launch import ContinueHold
-from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
+from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.signals import (
     SignalCallbackReceiver,
     signal_coordinator,
@@ -68,7 +56,6 @@ from meridian.lib.ops.work_attachment import activate_work
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.platform.process_scope.base import scope_from_identity
 from meridian.lib.state import spawn_store
-from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import (
     ActivityState,
@@ -79,10 +66,8 @@ from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     update_session_claude_config_dir,
-    update_session_spawn_id,
 )
-from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE, SpawnRecord
-from meridian.lib.streaming.control_socket import control_socket_path
+from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 
 from ..context import (
     LaunchContext,
@@ -93,8 +78,9 @@ from ..context import (
 )
 from ..fork import fork_usage_seed
 from ..pre_exec_session import LaunchCancelledError, create_session_before_exec
+from ..primary_hold import PrimaryRow, primary_hold
 from ..request import LaunchCompositionSurface
-from ..session_scope import session_scope
+from ..session_scope import warm_close_imports
 from ..types import SessionMode
 from .native_launcher import native_sigint_shield
 from .ports import (
@@ -525,65 +511,6 @@ def _execute_primary_process(
     )
 
 
-def _finalize_lifecycle(
-    *,
-    launch: LaunchPaths | None,
-    exit_code: int,
-    harness_adapter: Any,
-    policy: LaunchPolicySnapshot | None,
-    primary_started: float,
-    spawn_service: SpawnApplicationService,
-    facts: AttemptFacts,
-    native_key: NativeKey | None = None,
-    cancellation_observed: bool = False,
-    native_identity_error: str | None = None,
-    launch_failure: str | None = None,
-) -> int:
-    """Complete execution after native identity validation and attribution."""
-
-    resolved_exit_code = exit_code
-    if launch is not None:
-        primary_spawn_id = launch.spawn_id
-        extraction = enrich_finalize(
-            extractor=get_harness_bundle(harness_adapter.id).extractor,
-            facts=facts,
-            native_key=native_key,
-            launch=launch,
-            harness_id=harness_adapter.id,
-            policy=policy,
-        )
-        duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        durable_report_completion = extraction.durable_report_completion
-        usage = extraction.usage
-        execution_outcome = asyncio.run(
-            spawn_service.complete_execution(
-                primary_spawn_id,
-                ExecutionTerminalFacts(
-                    exit_code=exit_code,
-                    failure_reason=(
-                        native_identity_error
-                        or ("cancelled" if cancellation_observed else launch_failure)
-                    ),
-                    cancellation_observed=cancellation_observed,
-                    durable_report_completion=(
-                        durable_report_completion and native_identity_error is None
-                    ),
-                ),
-                origin="launcher",
-                duration_secs=duration,
-                usage=usage,
-            )
-        )
-        resolved_exit_code = execution_outcome.resolved.exit_code
-        outcome = execution_outcome.completion
-        if not outcome.wrote:
-            logger.info(
-                "Launcher finalize skipped; spawn already terminal or missing: %s",
-                primary_spawn_id,
-            )
-    return resolved_exit_code
-
-
 def _create_managed_primary_connection(
     *,
     connection_factory: Callable[..., HarnessConnection[Any]],
@@ -777,95 +704,38 @@ def run_harness_process(
     native_primary_metadata_command: tuple[str, ...] = command
     native_primary_runtime_metadata = NativePrimaryRuntimeMetadata()
     child_env: dict[str, str] = {}
-    startup_attempt_id = uuid.uuid4().hex
-    # The session's first event names the spawn that runs it. A crash between this
-    # reservation and the row write leaves a link to no row, which readers skip.
-    # A continue keeps its spawn's ID and commits its next launch before the session starts.
-    reopened: SpawnRecord | None = None
 
     # A fork resumes its source's native session, whose running total already holds the
     # source's usage: count this launch from there.
     usage_seed = fork_usage_seed(runtime_root, preview_request.session)
 
-    def primary_reservation(
-        *, chat_id: str | None, work_id: str | None, harness_session_id: str | None
-    ) -> SpawnReservation:
-        # A primary's goal is its conversation's identity, so a `--continue` inherits it
-        # from the row.
-        return SpawnReservation(
-            chat_id=chat_id,
-            session_metadata=session_metadata,
-            spawn_id=str(reserved_spawn_id),
-            kind="primary",
-            prompt=preview_request.prompt,
-            harness_session_id=harness_session_id,
-            control_root=str(control_root),
-            task_cwd=None,
-            execution_cwd=str(execution_cwd),
-            launch_mode=FOREGROUND_LAUNCH_MODE,
-            work_id=work_id,
-            goal=preview_request.goal,
-            runner_pid=os.getpid(),
-            metadata=SpawnStartMetadata(usage_seed=usage_seed),
-        )
-
-    @contextmanager
-    def fail_unstarted_launch() -> Generator[None]:
-        """The next launch was committed but its session could not start (the chat is held,
-        or Ctrl-C arrived while waiting): no runner will write its outcome, so write it
-        before the launch lock is released."""
-        try:
-            yield
-        except BaseException as exc:
-            if reopened is not None and chat_id is None:
-                asyncio.run(
-                    spawn_service.complete_spawn(
-                        SpawnId(reopened.id),
-                        "failed",
-                        1,
-                        origin="launcher",
-                        error=str(exc) or type(exc).__name__,
-                    )
-                )
-            raise
-
+    # The session's first event names the spawn that runs it. A crash between this
+    # reservation and the row write leaves a link to no row, which readers skip.
+    # A continue keeps its spawn's ID and commits its next launch before the session starts.
     reserved_spawn_id = (
         SpawnId(hold.spawn.id)
         if hold is not None
         else spawn_store.reserve_launch(runtime_root).spawn_id
     )
+    row = PrimaryRow(
+        spawn_id=reserved_spawn_id,
+        session_metadata=session_metadata,
+        session_request=preview_request.session,
+        prompt=preview_request.prompt,
+        control_root=control_root,
+        execution_cwd=execution_cwd,
+        task_cwd=task_cwd,
+        resume_chat_id=resume_chat_id,
+        work_id=preview_context.work_id,
+        harness_session_id=resolved_harness_session_id,
+        goal=preview_request.goal,
+        usage_seed=usage_seed,
+        runner_pid=os.getpid(),
+    )
     try:
-        if hold is not None:
-            # The hold is the launch lock: any control socket here is a dead launcher's.
-            # Removing it before the spawn reads as active sends a sender to the
-            # normal poll instead of a refused connection.
-            control_socket_path(runtime_root, reserved_spawn_id).unlink(missing_ok=True)
-            reopened = lifecycle_service.reopen(
-                primary_reservation(
-                    chat_id=resume_chat_id,
-                    work_id=preview_context.work_id,
-                    harness_session_id=resolved_harness_session_id,
-                ),
-                launch_lock=hold.slot,
-            )
-        with (
-            nullcontext(hold.slot) if hold is not None else LaunchSlot() as launch_lock,
-            fail_unstarted_launch(),
-            session_scope(
-                runtime_root=runtime_root,
-                metadata=session_metadata,
-                request=preview_request.session,
-                chat_id=resume_chat_id,
-                control_root=str(control_root),
-                task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
-                execution_cwd=str(execution_cwd),
-                kind="primary",
-                spawn_id=str(reserved_spawn_id),
-                startup_attempt_id=startup_attempt_id,
-                launch_slot=launch_lock,
-            ) as managed,
-        ):
-            chat_id = managed.chat_id
+        warm_close_imports()
+        with primary_hold(row, spawn_service=spawn_service, continue_hold=hold) as primary:
+            chat_id = primary.chat_id
             attached_work_id = resolve_attached_work_id(
                 project_root=config_root,
                 runtime_root=runtime_root,
@@ -878,27 +748,10 @@ def run_harness_process(
             identity_error: NativeIdentityError | None = None
             identity_error_phase = "pre_exec"
             launch_failure: str | None = None
-            lifecycle: LifecycleLog | None = None
             try:
                 write_native_primary_metadata = False
-                launch = (
-                    LaunchPaths.for_row(runtime_root, reopened)
-                    if reopened is not None
-                    else lifecycle_service.start(
-                        primary_reservation(
-                            chat_id=chat_id,
-                            work_id=attached_work_id,
-                            harness_session_id=resolved_harness_session_id,
-                        ),
-                        launch_lock=launch_lock,
-                    )
-                )
-                # The start event already names the spawn; the spawn's history ID only
-                # exists once its row is written, and the session listing matches
-                # archived primaries to their session by it.
+                launch = primary.start(work_id=attached_work_id)
                 primary_spawn_id = launch.spawn_id
-                update_session_spawn_id(runtime_root, chat_id, str(primary_spawn_id))
-                lifecycle = LifecycleLog.for_launch(launch)
                 precreated: PrecreatedSession | None = None
                 if session_mode != SessionMode.RESUME:
                     fork = session_mode == SessionMode.FORK
@@ -980,8 +833,7 @@ def run_harness_process(
                     )
                 launch_child_cwd = runtime_context.binding.child_cwd
                 child_env = dict(runtime_context.binding.environment.final_env)
-                if managed.chat_id:
-                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
+                child_env["MERIDIAN_CHAT_ID"] = chat_id
                 selected_task_cwd = runtime_context.task_cwd
                 spawn_store.update_spawn(
                     runtime_root,
@@ -999,8 +851,7 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                native_run = bind_entry(
-                    managed,
+                native_run = primary.bind_identity(
                     launch_spec,
                     harness=str(harness_adapter.id),
                     policy=persisted_launch_policy_snapshot,
@@ -1014,12 +865,11 @@ def run_harness_process(
                         primary_spawn_id,
                         claude_config_dir=config_dir,
                     )
-                    if managed.chat_id:
-                        update_session_claude_config_dir(
-                            runtime_root,
-                            managed.chat_id,
-                            claude_config_dir=config_dir,
-                        )
+                    update_session_claude_config_dir(
+                        runtime_root,
+                        chat_id,
+                        claude_config_dir=config_dir,
+                    )
 
                 try:
                     prelaunch_state = harness_adapter.prepare_prelaunch(
@@ -1032,7 +882,7 @@ def run_harness_process(
                     )
                 except NativeSessionUnavailable as exc:
                     # The adapter knows the native session id; the user knows the chat.
-                    raise exc.for_ref(managed.chat_id or exc.ref) from exc
+                    raise exc.for_ref(chat_id) from exc
                 if prelaunch_state.env_overrides:
                     child_env.update(prelaunch_state.env_overrides)
                 command = harness_adapter.resolve_primary_command(
@@ -1116,7 +966,9 @@ def run_harness_process(
                         on_running=_record_primary_started,
                         route_payload=prelaunch_state.route_payload,
                         usage_seed=(
-                            reopened.prior_usage.harness_cumulative if reopened else usage_seed
+                            primary.reopened.prior_usage.harness_cumulative
+                            if primary.reopened
+                            else usage_seed
                         ),
                     )
                     exit_code = execution_result.exit_code
@@ -1150,54 +1002,37 @@ def run_harness_process(
                 # leave the spawn reading as crashed. A signal it defers is a cancel.
                 with signal_coordinator().mask_termination():
                     try:
-                        if (
-                            native_run is not None
-                            and primary_spawn_id is not None
-                            and lifecycle is not None
-                        ):
-                            outcome = conclude_native_run(
-                                native_run,
-                                harness_adapter,
-                                context=runtime_context,
-                                spawn_id=primary_spawn_id,
-                                child_env=child_env,
-                                child_cwd=launch_child_cwd,
-                                pid=native_primary_tui_pid,
-                                started=native_primary_tui_pid is not None,
-                                started_at_epoch=primary_started_epoch or None,
-                                prior_error=identity_error,
-                                prior_error_phase=identity_error_phase,
-                                facts=facts,
-                                connection_session_id=None,
-                                lifecycle=lifecycle,
-                                probe_turn=True,
-                            )
+                        outcome = primary.conclude_identity(
+                            harness_adapter,
+                            context=runtime_context,
+                            child_env=child_env,
+                            child_cwd=launch_child_cwd,
+                            pid=native_primary_tui_pid,
+                            started=native_primary_tui_pid is not None,
+                            started_at_epoch=primary_started_epoch or None,
+                            prior_error=identity_error,
+                            prior_error_phase=identity_error_phase,
+                            facts=facts,
+                            probe_turn=True,
+                        )
+                        if outcome is not None:
                             identity_error = outcome.error
                             resolved_harness_session_id = outcome.harness_session_id or ""
                             turn_observed = outcome.turn_observed
-                        elif identity_error is not None and lifecycle is not None:
-                            record_identity_failure(
-                                identity_error, phase="pre_exec", lifecycle=lifecycle
-                            )
                         deferred_signal = signal_coordinator().deferred_signal()
                         if deferred_signal is not None and not cancelled:
                             exit_code = signal_to_exit_code(deferred_signal)
                             cancelled = True
                         if identity_error is not None:
                             exit_code = 1
-                        exit_code = _finalize_lifecycle(
-                            launch=launch,
+                        exit_code = primary.complete(
                             exit_code=exit_code,
-                            harness_adapter=harness_adapter,
+                            harness_id=harness_adapter.id,
                             policy=runtime_context.resolved_request.launch_policy_snapshot,
-                            primary_started=primary_started,
-                            spawn_service=spawn_service,
+                            started_monotonic=primary_started,
                             facts=facts,
-                            native_key=native_run.entry.complete() if native_run else None,
                             cancellation_observed=cancelled,
-                            native_identity_error=identity_error.failure_code
-                            if identity_error
-                            else None,
+                            identity_error=identity_error,
                             launch_failure=launch_failure,
                         )
                         if write_native_primary_metadata and launch is not None:
@@ -1222,7 +1057,7 @@ def run_harness_process(
                                 harness_adapter.cleanup_prelaunch(
                                     runtime_root=runtime_root,
                                     spawn_id=primary_spawn_id,
-                                    chat_id=managed.chat_id,
+                                    chat_id=chat_id,
                                     state=prelaunch_state,
                                 )
                             except Exception:

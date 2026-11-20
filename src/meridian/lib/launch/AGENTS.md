@@ -17,6 +17,10 @@ for a real launch.
 - Spawn execution uses `LaunchArgvIntent.SPEC_ONLY`; primary launch also uses
   `REQUIRED` to construct its command. Preserve JSON-safe request fields for the
   background worker's disk round trip.
+- `primary_hold.py` holds one primary row: launch slot, session scope, row start or reopen,
+  native identity bind and outcome. It holds no process-wide state (signal masking,
+  `warm_close_imports()`, runner PID), so one process may hold several rows; the caller
+  owns those. Its calls block.
 - Use `session_scope()` for managed backend cleanup; do not add competing cleanup
   after its exit.
 
