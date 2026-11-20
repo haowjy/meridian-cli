@@ -37,8 +37,9 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, PiObserver
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.connections.pi_rpc import BASE_COMMAND_PI, PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
@@ -97,10 +98,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
     render_system_instruction_blocks,
     render_task_context,
-)
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_PI_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_PI,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
@@ -210,8 +207,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     tui_recovers_directory: ClassVar[bool] = True
     resolves_untracked_source = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("pi",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -298,6 +295,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
         return intent.source_session_id if intent.operation == "resume" else mint_session_id(store)
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "pi.session"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = dialect
+        return PiObserver(session_id)
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)

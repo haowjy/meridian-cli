@@ -46,7 +46,6 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -57,6 +56,8 @@ from meridian.lib.observability.trace_helpers import (
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
+
+BASE_COMMAND_PI: Final[tuple[str, ...]] = ("pi", "--mode", "rpc")
 _HARNESS_NAME: Final = HarnessId.PI.value
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
 _STDERR_SNIPPET_LIMIT: Final[int] = 4096
@@ -479,7 +480,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         command = project_subprocess_spec(
             self.harness_id,
             spec,
-            base_command=BASE_COMMAND_PI_SUBPROCESS,
+            base_command=BASE_COMMAND_PI,
         )
         env = dict(config.child_env)
         launch_role = "spawned"

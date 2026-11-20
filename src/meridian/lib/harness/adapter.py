@@ -56,7 +56,9 @@ from meridian.lib.safety.policy import NetworkPolicy
 from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.capture_qualify import CaptureObserver
     from meridian.lib.harness.extractors.base import AttemptFold
+    from meridian.lib.harness.transcript import TranscriptEventParser
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -461,6 +463,20 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     ) -> ServerRequestHandler | None: ...
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
+
+    def transcript_parser(self) -> TranscriptEventParser:
+        """Turn this harness's native transcript events into messages for ``session log``."""
+        ...
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        """Name of the native format a capture of this source seals; None when the harness
+        has no native capture."""
+        ...
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        """Decide from the records of a ``capture_dialect`` capture whether its tail is
+        complete."""
+        ...
 
     def resolve_native_session_file(
         self,
@@ -901,6 +917,18 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "native_file"
+
+    def transcript_parser(self) -> TranscriptEventParser:
+        from meridian.lib.harness.transcript import DefaultTranscriptEventParser
+
+        return DefaultTranscriptEventParser()
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return None
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        raise NotImplementedError(f"{self.id} declares capture dialect {dialect!r} but no observer")
 
     def resolve_native_session_file(
         self,

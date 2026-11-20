@@ -44,6 +44,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.capture_qualify import CaptureObserver, ClaudeObserver
 from meridian.lib.harness.claude_boundary import (
     claude_boundary_journal_path,
     read_observations,
@@ -104,10 +105,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
     render_system_instruction_blocks,
     render_task_context,
-)
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CLAUDE_SUBPROCESS,
-    PRIMARY_BASE_COMMAND_CLAUDE,
 )
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -235,8 +232,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     resolves_untracked_source = True
     native_transcript_choice = True
 
-    BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
-    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
+    BASE_COMMAND: ClassVar[tuple[str, ...]] = (
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    )
+    PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("claude",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",
@@ -611,6 +614,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         state: HarnessPrelaunchState,
     ) -> None:
         _ = runtime_root, spawn_id, chat_id, state
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return "claude.jsonl"
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        _ = session_id, dialect
+        return ClaudeObserver()
 
     def seed_session(
         self,
