@@ -22,7 +22,7 @@ class TransportId(StrEnum):
 
 
 def normalize_mars_target_name(name: str) -> str:
-    """Normalize a mars target or ``managed_root`` name to its bare harness id.
+    """Normalize a mars target or target name to its bare harness id.
 
     Mars target names may be written dotted (``".claude"``) or bare (``"claude"``),
     with surrounding whitespace or mixed case. Producers (init scaffolding) and
