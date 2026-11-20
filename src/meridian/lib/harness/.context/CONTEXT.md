@@ -22,7 +22,7 @@ OpenCode does so only before a parent scope is known, because its global stream 
 carries child events.
 
 A connection delivers specific terminal evidence before EOF; a later generic close must
-not hide it. Cursor's successful process exit is its success boundary. Pi's `agent_end`
+not hide it. Pi's `agent_end`
 is an attempt outcome, not completion: settlement, native idle and quiescence must all
 hold. Pi remains alive for child completion and notifications, so process exit cannot
 signal completion. Resident Codex and OpenCode also wait for persisted descendants.
@@ -38,7 +38,7 @@ a write leaves delivery uncertain and must not cause a replay.
 Claude's stdin write has no acceptance receipt. Codex may fall back from a
 rejected steer RPC to start, but not after timeout or transport failure. OpenCode's
 message receipt does not prove a turn was scheduled; its V1 path has not been run
-against a 1.x server. Cursor has no injection transport.
+against a 1.x server.
 
 Managed Codex and OpenCode primary routes remain attached through idle silence, but
 refuse sends after detecting the TUI has moved to another session. They stay scoped to

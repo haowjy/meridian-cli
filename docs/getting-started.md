@@ -8,12 +8,9 @@ Meridian is a coordination layer — it needs at least one harness installed to 
 | ----------- | ----------------------------------------- | -------------------------------------------------------------------- |
 | Claude Code | `claude-*`, `sonnet*`, `opus*`            | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
 | Codex CLI   | `gpt-*`, `codex*`, `o3*`, `o4*`          | [github.com/openai/codex](https://github.com/openai/codex) |
-| Cursor      | `composer*`, `gpt-5.5*`, `claude-opus-*` | [cursor.com/downloads](https://cursor.com/downloads) |
 | OpenCode    | anything else                             | [opencode.ai](https://opencode.ai) |
 
 **Claude Code** is the most mature primary-session harness. Codex also supports managed primary TUI passthrough, including hidden instruction routing and managed session tracking. See [codex-tui-passthrough.md](codex-tui-passthrough.md).
-
-**Cursor** is deprecated and goes away in the next minor release after 0.25; each Cursor launch warns. Until then it is unmaintained: it still ships but is no longer tested or extended, and it may break without notice. It runs as a subprocess harness via `cursor agent`. Use another harness for new work.
 
 **Platform**: macOS, Linux, and Linux under WSL. Native Windows is not supported.
 
@@ -125,7 +122,7 @@ meridian bootstrap --add haowjy/meridian-dev-workflow --link .claude
 
 Setup flags (`--add`, `--link`) cannot be combined with `--dry-run`.
 
-To expose already-installed package content to a harness tool directory (`.claude/`, `.cursor/`, etc.), use the top-level convenience flag:
+To expose already-installed package content to a harness tool directory (`.claude/`, `.codex/`, etc.), use the top-level convenience flag:
 
 ```bash
 meridian init --link .claude

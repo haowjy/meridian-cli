@@ -168,7 +168,6 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
                 supports_steer=True,
                 supports_cancel=True,
                 runtime_model_switch=False,
-                structured_reasoning=False,
             )
 
         @property
@@ -500,7 +499,6 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
                 supports_steer=True,
                 supports_cancel=True,
                 runtime_model_switch=False,
-                structured_reasoning=False,
             )
 
         @property

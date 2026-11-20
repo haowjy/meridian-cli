@@ -49,7 +49,6 @@ class _ClaudeSeedPersistenceConnection:
             supports_steer=False,
             supports_cancel=False,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property
@@ -129,7 +128,6 @@ class _UnboundOpenCodeConnection:
             supports_steer=False,
             supports_cancel=False,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property
@@ -205,7 +203,6 @@ class _OpenCodeConnectSessionConnection:
             supports_steer=False,
             supports_cancel=False,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property

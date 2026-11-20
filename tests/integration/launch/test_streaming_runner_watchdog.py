@@ -11,18 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
-from meridian.lib.streaming.spawn_session import DrainOutcome
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
     _EndMonotonicFailsClock,
@@ -86,57 +84,6 @@ async def test_report_watchdog_wakes_immediately_on_completion(
 
     assert await asyncio.wait_for(task, timeout=2.0) is False
     assert manager.stop_calls == []
-
-
-@pytest.mark.asyncio
-async def test_inactivity_watchdog_wakes_immediately_on_completion() -> None:
-    loop = asyncio.get_running_loop()
-    completion_event = asyncio.Event()
-    manager = _WatchdogManager()
-    task = asyncio.create_task(
-        streaming_runner_module._inactivity_watchdog(
-            last_event_at=[loop.time()],
-            completion_event=completion_event,
-            manager=manager,
-            spawn_id=SpawnId("inactivity-completion"),
-            timeout_seconds=120.0,
-            poll_seconds=60.0,
-        )
-    )
-    await asyncio.sleep(0)
-    completion_event.set()
-
-    assert await asyncio.wait_for(task, timeout=2.0) is False
-    assert manager.stop_calls == []
-
-
-@pytest.mark.asyncio
-async def test_inactivity_watchdog_stops_spawn_at_timeout() -> None:
-    loop = asyncio.get_running_loop()
-    manager = _WatchdogManager()
-    spawn_id = SpawnId("inactivity-timeout")
-
-    stopped = await asyncio.wait_for(
-        streaming_runner_module._inactivity_watchdog(
-            last_event_at=[loop.time()],
-            completion_event=asyncio.Event(),
-            manager=manager,
-            spawn_id=spawn_id,
-            timeout_seconds=0.01,
-            poll_seconds=60.0,
-        ),
-        timeout=2.0,
-    )
-
-    assert stopped is True
-    assert manager.stop_calls == [
-        {
-            "spawn_id": spawn_id,
-            "status": SpawnStatus.FAILED,
-            "exit_code": 1,
-            "error": "inactivity_stall",
-        }
-    ]
 
 
 @pytest.mark.asyncio
@@ -205,119 +152,6 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
 
     assert attempt.start_error == "startup phase timeout after 0.010s"
     assert start_cancelled.is_set()
-
-
-@pytest.mark.asyncio
-async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    queue: asyncio.Queue[NormalizedHarnessEvent | None] = asyncio.Queue()
-    completion = asyncio.Event()
-
-    class SlowActiveManager:
-        async def join_teardown(self, spawn_id):
-            pass
-
-        def __init__(self, request_handler: object | None = None) -> None:
-            _ = request_handler
-            self.stop_calls: list[dict[str, object]] = []
-            self.producer: asyncio.Task[None] | None = None
-
-        async def start_spawn(
-            self,
-            _config: ConnectionConfig,
-            _spec: ResolvedLaunchSpec,
-            *,
-            event_hook=None,
-        ) -> object:
-            async def produce_events() -> None:
-                for index in range(15):
-                    await asyncio.sleep(0.05)
-                    queue.put_nowait(
-                        NormalizedHarnessEvent(
-                            raw=RawHarnessEvent(
-                                event_type="assistant/analysis",
-                                harness_id=HarnessId.CURSOR.value,
-                                payload={"index": index},
-                            ),
-                            semantics=EventSemantics(activity="turn_active"),
-                        )
-                    )
-                completion.set()
-                queue.put_nowait(None)
-
-            self.producer = asyncio.create_task(produce_events())
-            return type("Connection", (), {"subprocess_pid": None})()
-
-        def raw_terminal_frames_are_authoritative(self, _spawn_id: SpawnId) -> bool:
-            return False
-
-        def subscribe(
-            self,
-            _spawn_id: SpawnId,
-        ) -> asyncio.Queue[NormalizedHarnessEvent | None]:
-            return queue
-
-        async def wait_for_completion(self, _spawn_id: SpawnId) -> DrainOutcome:
-            await completion.wait()
-            return DrainOutcome(status="succeeded", exit_code=0)
-
-        def unsubscribe(self, _spawn_id: SpawnId) -> None:
-            return None
-
-        def get_connection(self, _spawn_id: SpawnId) -> None:
-            return None
-
-        async def stop_spawn(self, spawn_id: SpawnId, **kwargs: object) -> None:
-            # Real SpawnManager only joins teardown after terminal publication;
-            # it does not send another cancellation to a completed session.
-            if not completion.is_set():
-                self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
-
-    manager = SlowActiveManager()
-    monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.5)
-    run = Spawn(
-        spawn_id=SpawnId("fresh-events"),
-        prompt="hello",
-        model=ModelId("composer-2.5"),
-        status="running",
-    )
-
-    attempt = await asyncio.wait_for(
-        streaming_runner_module._run_streaming_attempt(
-            run=run,
-            launch=launch_paths(tmp_path, run.spawn_id),
-            launch_mode=FOREGROUND_LAUNCH_MODE,
-            manager=manager,  # type: ignore[arg-type]
-            config=ConnectionConfig(
-                launch=launch_paths(tmp_path, run.spawn_id),
-                harness_id=HarnessId.CURSOR,
-                prompt=run.prompt,
-                control_root=tmp_path,
-                child_env={},
-            ),
-            run_spec=ResolvedLaunchSpec(
-                model=str(run.model),
-                harness=HarnessId.CURSOR,
-            ),
-            budget_tracker=None,
-            signal_event=asyncio.Event(),
-            received_signal=[None],
-            timeout_seconds=None,
-            startup_timeout_seconds=0.1,
-            event_observer=None,
-            stream_stdout_to_terminal=False,
-            lifecycle_service=_LifecycleRecorder(),  # type: ignore[arg-type]
-        ),
-        timeout=3.0,
-    )
-    if manager.producer is not None:
-        await manager.producer
-
-    assert attempt.drain_exit_code == 0
-    assert attempt.terminated_by_inactivity is False
-    assert manager.stop_calls == []
 
 
 @pytest.mark.asyncio

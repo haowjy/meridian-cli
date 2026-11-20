@@ -123,7 +123,6 @@ OPENCODE_V1_CAPABILITIES: Final[ConnectionCapabilities] = ConnectionCapabilities
     supports_steer=False,
     supports_cancel=True,
     runtime_model_switch=False,
-    structured_reasoning=True,
     supports_primary_observer=True,
     supported_startup_phases=frozenset(
         phase.value

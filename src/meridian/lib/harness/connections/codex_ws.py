@@ -214,7 +214,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             supports_steer=True,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
             supports_primary_observer=True,
             supports_runtime_hitl=not self._request_handler.no_runtime_hitl,
             supported_startup_phases=frozenset(

@@ -51,7 +51,6 @@ from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
     load_agent_profile_with_fallback,
-    validate_harness_compatibility,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -875,5 +874,4 @@ __all__ = [
     "SurfacePolicyInput",
     "resolve_launch_policy",
     "resolve_policy_fields",
-    "validate_harness_compatibility",
 ]

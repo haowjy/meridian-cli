@@ -13,8 +13,8 @@ Meridian now has two configuration surfaces:
 Meridian reads agents and skills from project packages first, then user packages
 under `~/.meridian/mars/.mars/`, then built-in defaults. Project routing config,
 targets, aliases, and the models cache still come from the active Mars root.
-Harness-specific directories such as `.claude/`, `.codex/`, `.opencode/`, `.pi/`,
-and `.cursor/` are Mars targets, not Meridian discovery roots.
+Harness-specific directories such as `.claude/`, `.codex/`, `.opencode/`, and
+`.pi/` are Mars targets, not Meridian discovery roots.
 
 ## Quick Start
 
@@ -664,10 +664,6 @@ Context config locates active work, knowledge bases, and work archives. See
 ## Model Catalog
 
 See [model catalog configuration](configuration/model-catalog.md).
-
-## Cursor Harness
-
-See [Cursor harness configuration](configuration/cursor.md).
 
 ## Environment Variables
 

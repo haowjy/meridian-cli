@@ -386,7 +386,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             # only to fail at the connection. The policy layer downgrades an
             # unsupported fork to in-place resume with a warning.
             supports_session_fork=False,
-            supports_primary_launch=True,
             # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
             # V1 cannot switch the model on resume: the streaming transport fails
             # loudly in ``OpenCodeV1Connection._create_session``, and the

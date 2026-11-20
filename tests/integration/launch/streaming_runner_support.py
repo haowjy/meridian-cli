@@ -84,7 +84,6 @@ class _ReportThenHangConnection:
             supports_steer=True,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property
@@ -201,7 +200,6 @@ class _OpenCodeTerminalWithScopeConnection:
             supports_steer=False,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property
@@ -336,7 +334,6 @@ class _ResidentDeadlineConnection:
             supports_steer=True,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
         )
 
     @property
