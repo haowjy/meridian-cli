@@ -5,17 +5,19 @@ the next model call. A drained batch moves to ``inflight/<conversation>.jsonl`` 
 there until a later ``PreInvocation`` finds every entry's marker in ``agy``'s transcript;
 entries the transcript lacks go out again. Delivery is at least once.
 
-Writers take the conversation's lock blocking; the hook takes it without blocking and
-gives up for this model call when someone holds it.
+Writers take the conversation's lock blocking. The hook never waits long: ``claim_batch``
+takes it without blocking and gives up for this model call when someone holds it, and the
+hook's registration waits at most ``REGISTER_WAIT_SECONDS`` (see ``hold``).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -27,6 +29,10 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 # A message the transcript never shows is sent this many times, so a transcript Meridian
 # cannot read does not fill the model's context forever.
 MAX_ATTEMPTS = 3
+
+# How long the hook waits for a conversation's lock to register it. The notice sweep holds
+# the lock across notice sends (seconds), so the hook gives up and registers on its next call.
+REGISTER_WAIT_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -72,26 +78,44 @@ def _lock_path(conversation_id: str) -> Path:
 
 
 @contextmanager
-def _locked(conversation_id: str, *, blocking: bool) -> Generator[bool]:
+def _locked(conversation_id: str, *, wait: float | None) -> Generator[bool]:
+    """Hold the conversation's lock; ``wait`` is seconds to wait for it, None to block."""
+
     path = _lock_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        except BlockingIOError:
-            yield False
-            return
+        deadline = None if wait is None else time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if deadline is None else fcntl.LOCK_NB))
+                break
+            except BlockingIOError:
+                if deadline is None or time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.02)
         yield True
     finally:
         os.close(fd)  # closing releases the flock
+
+
+def hold(conversation_id: str, *, wait: float) -> AbstractContextManager[bool]:
+    """Take the conversation's lock for up to ``wait`` seconds; yields whether it was taken.
+
+    The hook registers a conversation's request file under it, so the notice sweep, which
+    checks for that file under the same lock, never settles a conversation that a new
+    process has just opened.
+    """
+
+    return _locked(conversation_id, wait=wait)
 
 
 def enqueue(conversation_id: str, text: str, sender: MessageSender | None) -> InboxEntry:
     entry = InboxEntry(id=uuid.uuid4().hex[:12], text=text, sender=sender)
     path = inbox_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _locked(conversation_id, blocking=True):
+    with _locked(conversation_id, wait=None):
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o600)
         try:
             os.write(fd, (entry.to_line() + "\n").encode())
@@ -143,7 +167,7 @@ def claim_batch(conversation_id: str, transcript_path: str | None) -> list[Inbox
     everything queued since. Returns nothing when another process holds the lock.
     """
 
-    with _locked(conversation_id, blocking=False) as acquired:
+    with _locked(conversation_id, wait=0) as acquired:
         if not acquired:
             return []
         inflight = inflight_path(conversation_id)
@@ -166,9 +190,16 @@ def claim_batch(conversation_id: str, transcript_path: str | None) -> list[Inbox
 
 
 def settle_undelivered(
-    conversation_id: str, transcript_path: str | None, settle: Callable[[InboxEntry], None]
+    conversation_id: str,
+    transcript_path: str | None,
+    settle: Callable[[InboxEntry], None],
+    is_open: Callable[[], bool],
 ) -> None:
     """Call ``settle`` for each message the session never showed the model, then forget it.
+
+    Does nothing when ``is_open()`` is true. It is asked under the conversation's lock, which
+    the hook's registration also takes, so a conversation a new process opens after a
+    sweep began is never settled.
 
     Entries the transcript carries were delivered. An entry is removed only after its
     ``settle`` returns, so a sweeper killed halfway leaves the rest (and at most the entry
@@ -176,7 +207,9 @@ def settle_undelivered(
     ``settle``: only the notice sweep calls this, after the ``agy`` process is gone.
     """
 
-    with _locked(conversation_id, blocking=True):
+    with _locked(conversation_id, wait=None):
+        if is_open():
+            return
         transcript = _read_transcript(transcript_path)
         owed = [
             e
@@ -206,8 +239,10 @@ def _read_transcript(transcript_path: str | None) -> str:
 __all__ = [
     "MAX_ATTEMPTS",
     "InboxEntry",
+    "REGISTER_WAIT_SECONDS",
     "claim_batch",
     "enqueue",
+    "hold",
     "inbox_path",
     "inflight_path",
     "settle_undelivered",

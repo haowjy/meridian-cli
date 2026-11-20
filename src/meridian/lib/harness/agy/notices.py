@@ -4,7 +4,8 @@
 to SIGKILL), and a notice can block for as long as a message send does, so nothing is sent
 at exit. The queue files stay, and whoever runs ``send_owed_notices`` next sends the notices:
 the next MCP server at startup and primary-launch recovery. A conversation is owed a notice when
-no running ``agy`` process has a request file for it; one resumed in a new process is not.
+no running ``agy`` process has a request file for it, checked under the conversation's lock
+just before settling it: one resumed in a new process, even mid-sweep, is not.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from contextlib import suppress
 from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import (
+    open_conversations,
     process_dirs,
     read_json,
     request_path,
@@ -70,17 +72,11 @@ def send_owed_notices() -> None:
     reached; its notice is dropped with the entry.
     """
 
-    dirs = process_dirs()
-    running = {
-        path.stem for proc, alive in dirs if alive for path in (proc / "requests").glob("*.json")
-    }
-    for proc, alive in dirs:
+    for proc, alive in process_dirs():
         if alive:
             continue
         for path in sorted((proc / "requests").glob("*.json")):
             conversation = path.stem
-            if conversation in running:
-                continue
             request = read_json(request_path(proc, conversation)) or {}
             row = read_json(row_path(proc, conversation)) or {}
             transcript = request.get("transcript_path")
@@ -91,7 +87,10 @@ def send_owed_notices() -> None:
                     _send(entry.sender, _notice_text(entry, session))
 
             inbox.settle_undelivered(
-                conversation, transcript if isinstance(transcript, str) else None, settle
+                conversation,
+                transcript if isinstance(transcript, str) else None,
+                settle,
+                lambda conversation=conversation: conversation in open_conversations(),
             )
         shutil.rmtree(proc, ignore_errors=True)
 

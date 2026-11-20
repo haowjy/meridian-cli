@@ -64,6 +64,17 @@ def process_dirs() -> list[tuple[Path, bool]]:
     return found
 
 
+def open_conversations() -> set[str]:
+    """Conversations a running ``agy`` process has registered, read fresh on every call."""
+
+    return {
+        path.stem
+        for proc, alive in process_dirs()
+        if alive
+        for path in (proc / "requests").glob("*.json")
+    }
+
+
 def request_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "requests" / f"{conversation_id}.json"
 
@@ -118,6 +129,7 @@ __all__ = [
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
     "is_safe_id",
+    "open_conversations",
     "process_birth",
     "process_dir",
     "process_dirs",

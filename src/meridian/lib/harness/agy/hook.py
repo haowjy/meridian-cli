@@ -1,6 +1,7 @@
 """``meridian harness-hook agy <event>``: the ``SessionStart`` and ``PreInvocation`` hooks.
 
-``agy`` runs this before model calls and waits for it, so it takes no blocking locks,
+``agy`` runs this before model calls and waits for it, so it takes no blocking locks (at most
+a 0.5 s wait to register a conversation),
 starts no process, and prints nothing when it has no opinion (never ``{}``: ``agy`` reads
 some empty replies as a decision). Every failure is swallowed: a broken hook must not
 break the person's session.
@@ -68,7 +69,13 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
 
     request = read_json(request_path(proc_dir, conversation))
     if request is None:
-        request = _register(proc_dir, conversation, payload)
+        # Under the conversation's lock, so a notice sweep that is settling this
+        # conversation finishes first. A held lock means a sweep is mid-notice (seconds):
+        # skip this call and register on the next hook instead of making the model wait.
+        with inbox.hold(conversation, wait=inbox.REGISTER_WAIT_SECONDS) as acquired:
+            if not acquired:
+                return None
+            request = _register(proc_dir, conversation, payload)
     if request.get("role") == "subagent":
         return None
 
