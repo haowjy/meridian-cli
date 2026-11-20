@@ -87,3 +87,9 @@ that crosses a boundary others depend on (CLI commands, flags or output, a confi
 profile format, files under `~/.meridian/`, the harness adapter seam, the Mars package
 contract) needs Jimmy's approval before it starts. Before opening a PR or merging, read
 [docs/releasing.md](docs/releasing.md).
+
+Patch changes merge to `main` on their own once the checks pass. Anything greater than a
+patch (`release:minor` or `release:major`) is different: land its parts on the release
+branch and leave the release PR as a draft. Other minor or major changes may still be in
+flight toward that branch. Wait for Jimmy to say the release is complete before marking it
+ready or merging — never decide on your own that the part you landed is the last.

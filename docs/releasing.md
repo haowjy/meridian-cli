@@ -54,8 +54,12 @@ merge to `main` on their own.
    renderer, so part PRs merged into the release branch never render on their own.
 3. The agent leading the release merges its part PRs into the release branch once each
    passes its own review and CI, without asking.
-4. When the last part lands and the combined change passes the full gate, mark the
-   release PR ready and merge it; CI releases everything once.
+4. Leave the release PR as a draft until the person running the release says the set
+   of parts is complete. Other minor and major changes may still be in flight toward the
+   branch; do not mark it ready just because one part PR has merged, and do not decide on
+   your own that the part you landed is the last. Once the release is confirmed complete
+   and the combined change passes the full gate, mark the release PR ready and merge it;
+   CI releases everything once.
 
 Work that must ship separately (for example, a part another release depends on) gets its
 own release. Decide that when the work is planned, not at merge time.
