@@ -456,7 +456,7 @@ def parse_session_target(
     read = native_read or read_native_source(target.source, budget=budget)
     try:
         harness = target.source.harness
-        adapter = get_default_harness_registry().find(harness) if harness else None
+        adapter = get_default_harness_registry().find_reader(harness)
         parsed = parse_transcript_events_with_prologues(
             read.events, parser=adapter.transcript_parser() if adapter else None
         )

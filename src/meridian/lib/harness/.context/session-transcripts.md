@@ -39,3 +39,8 @@ parts and malformed material retain an explicit rendering reason. Rendering
 support is not native capture qualification: a consistent DB transaction can
 still contain unfinished work. Do not use normalized display events as capture
 input or treat iterator creation as completed source validation.
+
+`agy` (never launched) reads through the same ports: its `NativeStoreReader` supplies
+`transcript_parser` and the file path, with no capture dialect, so capture is unsupported.
+Its parser is stateless per step, tolerates unknown step types (flagged through
+`rendering_reason`) and relies on the shared JSONL reader to drop torn lines.

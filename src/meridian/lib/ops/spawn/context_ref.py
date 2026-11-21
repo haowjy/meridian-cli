@@ -7,7 +7,6 @@ from meridian.lib.core.context_ref import (
     SpawnContextRef,
 )
 from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.types import is_unlaunched_harness
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.work_attachment import resolve_active_work_id
@@ -44,14 +43,6 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
     )
 
 
-def _refuse_unlaunched(harness: str | None, ref: str) -> None:
-    if is_unlaunched_harness(harness):
-        raise ValueError(
-            f"--from can't read {ref}: it ran in {harness}, which Meridian doesn't launch, "
-            "so it has no transcript or report here."
-        )
-
-
 def _load_report_text(project_root: Path, row: SpawnRecord) -> str | None:
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
@@ -82,7 +73,6 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         row = read_spawn_row(project_root, located.spawn.id, runtime_root=root)
         if row is None:
             raise RefNotFound(located.spawn.id, "spawn")
-        _refuse_unlaunched(row.harness, normalized)
         if row.kind != "primary" or not row.continue_chat_id:
             return _spawn_context_ref(row, project_root, root)
         # A primary's spawn is its conversation: show the session form, built from the
@@ -93,7 +83,6 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         return _session_context_ref(row, chat_hit.chat, project_root, root)
 
     chat = located.chat
-    _refuse_unlaunched(chat.harness, normalized)
     owner = chat_spawn(located)
     owner_row = spawn_store.get_spawn(root, owner) if owner is not None else None
     if owner_row is not None:

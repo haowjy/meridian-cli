@@ -153,7 +153,7 @@ def native_capture(
     path: Path | None,
 ) -> NativeCapture:
     normalized = (harness or "").strip().lower()
-    adapter = get_default_harness_registry().find(normalized)
+    adapter = get_default_harness_registry().find_reader(normalized)
     dialect = adapter.capture_dialect(kind=kind, path=path) if adapter else None
     capture = NativeCapture(
         source=session_id,
