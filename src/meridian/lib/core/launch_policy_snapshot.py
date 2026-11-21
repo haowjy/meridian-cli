@@ -20,7 +20,7 @@ class LaunchPolicySnapshot(BaseModel):
     skills: tuple[str, ...] = ()
     loaded_skills: tuple[SkillContent, ...] = ()
     # On-demand skills the first launch listed under `# Available Skills`. Only names,
-    # descriptions and paths: an exact continue recomposes the same listing without
+    # types and paths: an exact continue recomposes the same listing without
     # re-resolving the bundle. Empty on snapshots an older build wrote.
     available_skills: tuple[AvailableSkillEntry, ...] = ()
     extra_args: tuple[str, ...] = ()

@@ -24,7 +24,7 @@ when to open it.
   `model-invocable`.
 - **`--skills NAME`** on a launch does the same for that run. A caller learns what it can
   attach from the agent's description.
-- **`skills.available`** lists the name and description under `# Available Skills`,
+- **`skills.available`** lists the name under `# Available Skills`,
   grouped by type, for the agent to load itself through the harness's skill tool.
 - **The harness's own list** offers every model-invocable skill in its skill directory to
   any model running there. `meridian mars sync` fills that directory only for linked

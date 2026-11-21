@@ -338,7 +338,7 @@ directory).
 |---|---|
 | `load` (or the flat list) | The skill's full text, in the system prompt after the profile body, when the conversation starts. An exact `--continue` recomposes the prompt from the launch snapshot, so profile and skill edits take effect on the next fresh launch, not mid-conversation. |
 | `--skills NAME` on `meridian spawn` or `meridian start` | Same as `load`, for that launch |
-| `available` | The skill's name and description under `# Available Skills`, grouped by [`metadata.type`](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#metadata). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
+| `available` | The skill's name under `# Available Skills`, grouped by [`metadata.type`](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md#metadata). The agent loads it itself through the harness's own skill mechanism, such as Claude Code's Skill tool |
 
 **Loaded skills ignore the skill's `model-invocable`.** A skill's own
 `model-invocable: false` only keeps it out of the harness's skill list, the list
@@ -372,13 +372,13 @@ the `.mars/` directory schema, skill variant selection, and compilation:
 
 ```
 Mars launch-bundle → skills.loaded[{name, skill_type, source_path, body}]
-                   → skills.available[{name, skill_type, description, source_path}]
+                   → skills.available[{name, skill_type, source_path}]
                    → skills.missing[name]
 ```
 
 Meridian receives already-resolved content and:
 - Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
-- Lists available skills by name and description, grouped by `metadata.type`, with a load nudge
+- Lists available skills by name, grouped by `metadata.type`, with a load nudge
 - Unknown skill names produce a warning, not a failed launch
 
 **Variant selection** happens inside Mars. If a skill has
