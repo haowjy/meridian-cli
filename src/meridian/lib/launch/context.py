@@ -42,7 +42,7 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import (
     bind_launch_spec,
-    get_harness_bundle,
+    get_launch_ports,
     materialize_launch_spec,
     project_effective_policy,
 )
@@ -271,7 +271,7 @@ class LaunchContext:
 
     def enforcement_report(self) -> EnforcementReport:
 
-        return get_harness_bundle(self.harness.id).projections.permission_report(self.binding.spec)
+        return get_launch_ports(self.harness.id).projections.permission_report(self.binding.spec)
 
 
 @dataclass(frozen=True)
@@ -502,6 +502,7 @@ def materialize_launch_artifacts(
     control_root: str | None = None,
     task_cwd: str | None = None,
     projected_roots: tuple[Path, ...] = (),
+    workspace_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
     continue_fork: bool = False,
@@ -526,6 +527,7 @@ def materialize_launch_artifacts(
         control_root=control_root,
         task_cwd=task_cwd,
         projected_roots=projected_roots,
+        workspace_roots=workspace_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
@@ -1724,6 +1726,9 @@ def bind_launch_context(
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
         projected_roots=projected_roots,
+        workspace_roots=tuple(
+            root for root in workspace_authority_roots if root != resolved_control_root
+        ),
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
         # A pre-created session already exists: the launch continues it, whichever way it

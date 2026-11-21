@@ -32,7 +32,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.idle_types import IdleSensorContext
-from meridian.lib.harness.registry import get_harness_bundle
+from meridian.lib.harness.registry import get_process_ports
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -212,11 +212,11 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._durable = durable
         self._on_running = on_running
-        self._harness_bundle = get_harness_bundle(connection.harness_id)
-        self._fold = fold or self._harness_bundle.extractor.create_fold()
+        self._process_ports = get_process_ports(connection.harness_id)
+        self._fold = fold or self._process_ports.extractor.create_fold()
         self._event_hooks: tuple[Callable[[RawHarnessEvent], None], ...] = (self._fold,)
         if durable:
-            self._event_hooks += self._harness_bundle.event_sinks(launch)
+            self._event_hooks += self._process_ports.event_sinks(launch)
         self._facts = self._fold.facts
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata(managed_backend=True)
@@ -244,7 +244,7 @@ class PrimaryAttachLauncher:
         env: dict[str, str],
         launch_task: asyncio.Future[LaunchedProcess],
     ) -> None:
-        sensor_factory = self._harness_bundle.primary_idle_sensor
+        sensor_factory = self._process_ports.primary_idle_sensor
         if sensor_factory is None:
             return
 
@@ -281,7 +281,7 @@ class PrimaryAttachLauncher:
                 sensor,
                 ctx,
                 error_reporter=error_reporter,
-                detect_ttl=self._harness_bundle.detect_ttl,
+                detect_ttl=self._process_ports.detect_ttl,
             )
         )
 

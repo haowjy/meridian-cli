@@ -1,7 +1,7 @@
 """Argv entry for the ``agy`` commands that run before the full CLI loads.
 
 ``harness-hook`` runs before every model call of a person's TUI, so it is dispatched from
-``cli/entrypoint.py`` (through ``harness/unlaunched.py``) like ``--version``, importing
+``cli/entrypoint.py`` (through ``harness/plugin_hosted.py``) like ``--version``, importing
 nothing beyond this package.
 """
 

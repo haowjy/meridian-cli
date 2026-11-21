@@ -1,5 +1,23 @@
 # Upgrade notes
 
+## `meridian agy` prints an Antigravity launch
+
+New in this release; needs the Mars release that routes a `--harness agy` pin to `agy` (Mars
+0.39.0). `meridian agy` (or `--harness agy`) builds the launch and prints the `agy` command
+for you to run; Meridian still never runs `agy`. See [Using Meridian from
+Antigravity](antigravity.md#start-agy-the-meridian-way).
+
+- **`meridian --continue <agy chat>` works**: it prints the resume command. It used to refuse.
+  `--fork` of an `agy` chat still refuses.
+- **`meridian agy` writes only a script** under `~/.meridian/agy/launch/` for a long command;
+  it creates no row, chat, work item or lock.
+- **Shortcut names now include `agy`**, so `meridian agy` is a command rather than an error.
+- **New `agy` row fields**: a session run from a printed command records its agent and
+  approval, and the model it runs on. Older builds ignore them, and rows without them keep
+  working (a continue then needs `-m`).
+- **`spawn` never uses `agy`**: `spawn --harness agy` and a model that only `agy` serves are
+  refused.
+
 ## Meridian from a plain Antigravity (`agy`) session
 
 New in this release. Nothing changes until you link Antigravity: `meridian mars link agy`, then

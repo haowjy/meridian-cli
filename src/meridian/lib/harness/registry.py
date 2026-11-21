@@ -3,18 +3,13 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness import unlaunched
 from meridian.lib.harness.adapter import HarnessContract, NativeStoreReader, SubprocessHarness
-from meridian.lib.harness.bundle import get_connection_cls, get_harness_bundle
+from meridian.lib.harness.bundle import get_connection_cls, get_launch_ports, get_process_ports
 
 type HarnessEntry = SubprocessHarness
 
 
 def _empty_adapters() -> dict[HarnessId, HarnessEntry]:
-    return {}
-
-
-def _empty_readers() -> dict[HarnessId, NativeStoreReader]:
     return {}
 
 
@@ -24,7 +19,6 @@ class HarnessRegistry(BaseModel):
     model_config = ConfigDict()
 
     _adapters: dict[HarnessId, HarnessEntry] = PrivateAttr(default_factory=_empty_adapters)
-    _readers: dict[HarnessId, NativeStoreReader] = PrivateAttr(default_factory=_empty_readers)
 
     @classmethod
     def with_defaults(cls) -> Self:
@@ -35,18 +29,18 @@ class HarnessRegistry(BaseModel):
         from meridian.lib.harness import ensure_bootstrap
 
         ensure_bootstrap()
+        from meridian.lib.harness.agy.adapter import AgyAdapter
         from meridian.lib.harness.claude import ClaudeAdapter
         from meridian.lib.harness.codex import CodexAdapter
         from meridian.lib.harness.opencode import OpenCodeAdapter
         from meridian.lib.harness.pi import PiAdapter
 
         registry = cls()
+        registry.register(AgyAdapter())
         registry.register(ClaudeAdapter())
         registry.register(CodexAdapter())
         registry.register(OpenCodeAdapter())
         registry.register(PiAdapter())
-        for name, reader in unlaunched.readers().items():
-            registry._readers[HarnessId(name)] = reader
         return registry
 
     def register(self, adapter: HarnessEntry) -> None:
@@ -66,7 +60,7 @@ class HarnessRegistry(BaseModel):
 
     def get_reader(self, harness_id: HarnessId) -> NativeStoreReader:
         """What reads a harness's native sessions, launched by Meridian or not."""
-        reader = self._adapters.get(harness_id) or self._readers.get(harness_id)
+        reader = self._adapters.get(harness_id)
         if reader is None:
             raise KeyError(f"Unknown harness '{harness_id}'")
         return reader
@@ -85,10 +79,16 @@ class HarnessRegistry(BaseModel):
         return self.get(harness_id).contract
 
     def contracts(self) -> dict[HarnessId, HarnessContract]:
-        return {harness_id: adapter.contract for harness_id, adapter in self._adapters.items()}
+        """The contracts of the harnesses Meridian may exec."""
+        return {
+            harness_id: adapter.contract
+            for harness_id, adapter in self._adapters.items()
+            if harness_id.launched_by_meridian
+        }
 
     def ids(self) -> tuple[HarnessId, ...]:
-        return tuple(sorted(self._adapters))
+        """The harnesses Meridian may exec."""
+        return tuple(sorted(h for h in self._adapters if h.launched_by_meridian))
 
 
 _default_registry: HarnessRegistry | None = None
@@ -107,5 +107,6 @@ __all__ = [
     "HarnessRegistry",
     "get_connection_cls",
     "get_default_harness_registry",
-    "get_harness_bundle",
+    "get_launch_ports",
+    "get_process_ports",
 ]

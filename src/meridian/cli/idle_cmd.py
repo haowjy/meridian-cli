@@ -122,9 +122,9 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
         return IdleService(env=os.environ, interactive=interactive)
 
     from meridian.lib.core.types import HarnessId
-    from meridian.lib.harness.registry import get_harness_bundle
+    from meridian.lib.harness.registry import get_process_ports
 
-    bundle = get_harness_bundle(HarnessId(harness))
+    bundle = get_process_ports(HarnessId(harness))
     return IdleService(
         env=os.environ,
         interactive=interactive,

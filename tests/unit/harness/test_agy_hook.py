@@ -309,3 +309,23 @@ def test_reopened_hold_releases_its_launch_slot_when_the_hold_fails(
     with pytest.raises(RuntimeError, match="hold failed"):
         holds._hold_row(holds._Hold("conv"), {"cwd": str(agy_home)}, agy_home)
     assert slot.released
+
+
+def test_launch_directory_handle_files_the_row_under_the_launch_project(
+    agy_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = agy_home / "project"
+    context = agy_home / "home" / "context" / "p" / "archive" / "work"
+    # agy reports cwd as the first of its sorted workspace paths.
+    payload = _payload(
+        "c1", agy_home, cwd=str(context), workspacePaths=[str(context), str(project)]
+    )
+    monkeypatch.setenv("_MERIDIAN_AGY_PROJECT", str(project))
+
+    run_hook("SessionStart", os.getpid(), payload)
+    proc_dir = process_dir(os.getpid())
+    assert proc_dir is not None
+    request = read_json(request_path(proc_dir, "c1"))
+
+    assert request is not None
+    assert request["cwd"] == str(project)

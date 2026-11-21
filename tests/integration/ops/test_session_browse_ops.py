@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
@@ -74,7 +71,7 @@ def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
     assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
 
 
-def test_unlaunched_agy_chat_refuses_continue_fork_and_reentry(tmp_path: Path) -> None:
+def test_agy_chat_resolves_for_a_printed_continue(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     chat_id = session_store.start_session(
         runtime_root,
@@ -84,10 +81,14 @@ def test_unlaunched_agy_chat_refuses_continue_fork_and_reentry(tmp_path: Path) -
         kind="primary",
     ).chat_id
 
+    # Open in a terminal until the plugin's server ends the chat.
     assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
-    # --continue and --fork both resolve their source through resolve_session_reference.
-    with pytest.raises(NativeSessionUnavailable, match="doesn't launch"):
-        resolve_session_reference(project_root, chat_id)
+    session_store.stop_session(runtime_root, chat_id)
+    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
+    resolved = resolve_session_reference(project_root, chat_id)
+    # agy's plugin records no store: its own layout completes the key.
+    assert not resolved.missing_harness_session_id
+    assert resolved.authoritative_harness_session_id == "c0ffee"
 
 
 def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> None:

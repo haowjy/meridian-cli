@@ -21,7 +21,7 @@ from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
-from meridian.lib.harness.registry import get_harness_bundle
+from meridian.lib.harness.registry import get_process_ports
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
@@ -132,7 +132,7 @@ class SpawnManager:
             raise ValueError(msg)
         if event_hook is not None:
             self.register_event_hook(spawn_id, event_hook)
-        for sink in get_harness_bundle(config.harness_id).event_sinks(launch):
+        for sink in get_process_ports(config.harness_id).event_sinks(launch):
             self.register_event_hook(spawn_id, sink)
 
         started_monotonic = time.monotonic()

@@ -13,7 +13,7 @@ from meridian.cli.command_groups import (
     HUMAN_ROOT_ORDER,
 )
 from meridian.cli.startup.catalog import COMMAND_CATALOG
-from meridian.lib.core.types import harness_names_text, launched_harnesses
+from meridian.lib.core.types import HarnessId, harness_choices_text
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,11 @@ class Option:
 
 OPTIONS: tuple[Option, ...] = (
     Option("-m, --model TEXT", "Model id or alias for primary harness.", False),
-    Option("--harness TEXT", f"Force harness id ({harness_names_text()}).", False),
+    Option(
+        "--harness TEXT",
+        f"Force harness id ({harness_choices_text()}).",
+        False,
+    ),
     Option("--format TEXT", "Set output format: text or json.", False),
     Option("--json", "Emit command output as JSON.", False),
     Option("-C, --directory PATH", "Resolve project root from this path instead of CWD.", True),
@@ -141,7 +145,7 @@ def render_root_help(*, agent_mode: bool) -> str:
             "  `meridian context -h`"
         )
     else:
-        harness_prefixes = "/".join(harness.value for harness in launched_harnesses())
+        harness_prefixes = "/".join(harness.value for harness in HarnessId)
         sections.append(
             f"Global harness selection: --harness (or prefix with {harness_prefixes})\n\n"
             "Bundled package manager: meridian mars ARGS...\n\n"

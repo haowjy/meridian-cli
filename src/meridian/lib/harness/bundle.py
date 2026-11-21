@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
@@ -18,6 +18,7 @@ from meridian.lib.harness.idle_types import (
     NativeIdleHook,
 )
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 from meridian.lib.safety.policy import (
@@ -122,16 +123,47 @@ def _no_event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], No
 
 
 @dataclass(frozen=True)
-class HarnessBundle(Generic[SpecT]):
-    """Bundle binding one harness adapter to spec, extractor, transports, and projections."""
+class PrintedLaunchPorts:
+    """What printing the launch of a harness Meridian may not exec needs.
+
+    Registered exactly for the plugin-hosted harnesses (``is_plugin_hosted``).
+    """
+
+    # Option -> why a printed command cannot honour it. Keys are CLI flags (``--fork``) and
+    # the person's passthrough flags (``refused_passthrough``).
+    refused_options: Mapping[str, str]
+    refused_passthrough: Mapping[str, str]
+    # Said when ``--work`` or ``--task-dir`` only adds directories to the session.
+    workspace_note: str
+    # Where a command too long for a shell line spills.
+    script_dir: Callable[[], Path]
+
+
+@dataclass(frozen=True)
+class LaunchPorts(Generic[SpecT]):
+    """What building one harness's launch needs: adapter, spec, projections, semantics.
+
+    Every harness has these, whether or not Meridian runs it.
+    """
 
     harness_id: HarnessId
     adapter: HarnessAdapter[SpecT]
     spec_cls: type[SpecT]
-    extractor: HarnessExtractor[SpecT]
-    connections: Mapping[TransportId, type[HarnessConnection[SpecT]]]
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
+    printed: PrintedLaunchPorts | None = None
+
+
+@dataclass(frozen=True)
+class ProcessPorts(Generic[SpecT]):
+    """What running one harness's process needs: extractor, connections, idle sensors,
+    primary message route and event sinks.
+
+    A harness whose plugin hosts its sessions has none: no runner of Meridian's runs it.
+    """
+
+    extractor: HarnessExtractor[SpecT]
+    connections: Mapping[TransportId, type[HarnessConnection[SpecT]]]
     event_sinks: EventSinks = _no_event_sinks
     primary_message_route: PrimaryMessageRoute | None = None
     primary_idle_sensor: PrimaryIdleSensor | None = None
@@ -139,101 +171,104 @@ class HarnessBundle(Generic[SpecT]):
     detect_ttl: DetectIdleTtl | None = None
 
 
-_REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
+_LAUNCH: dict[HarnessId, LaunchPorts[Any]] = {}
+_PROCESS: dict[HarnessId, ProcessPorts[Any]] = {}
 
 
-def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
+def register_harness(launch: LaunchPorts[Any], process: ProcessPorts[Any] | None = None) -> None:
+    """Register one harness; ``process`` is given exactly when its plugin does not host it."""
+
     # Adapter modules call this at import time. Keep this explicit side effect
     # listed in HARNESS_EXTENSION_TOUCHPOINTS for new harness onboarding.
-
-    raw_extractor: object = bundle.extractor
-    if raw_extractor is None:  # pyright: ignore[reportUnnecessaryComparison]  # Runtime registration validates dynamically constructed bundles.
-        raise TypeError(
-            f"HarnessBundle for {bundle.harness_id} is missing extractor "
-            "(every harness must declare a HarnessExtractor)"
+    harness_id = launch.harness_id
+    if harness_id in _LAUNCH:
+        existing = type(_LAUNCH[harness_id].adapter).__name__
+        incoming = type(launch.adapter).__name__
+        raise ValueError(
+            f"duplicate harness registration for {harness_id}: "
+            f"existing adapter={existing}, incoming adapter={incoming}"
+        )
+    hosted = is_plugin_hosted(harness_id.value)
+    if hosted != (launch.printed is not None):
+        raise ValueError(
+            f"harness {harness_id} "
+            + (
+                "is hosted by its plugin and must register printed-launch ports"
+                if hosted
+                else "is run by Meridian and must register no printed-launch ports"
+            )
+        )
+    if hosted == (process is not None):
+        raise ValueError(
+            f"harness {harness_id} "
+            + (
+                "is hosted by its plugin and must register no process ports"
+                if hosted
+                else "must register process ports: Meridian runs it"
+            )
         )
 
-    if not isinstance(raw_extractor, HarnessExtractor):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed bundles.
+    raw_semantics: object = launch.semantics
+    if not isinstance(raw_semantics, HarnessSemantics):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed ports.
+        raise TypeError(f"harness {harness_id} is missing a valid HarnessSemantics port")
+
+    _validate_contract_alignment(launch)
+    if process is None:
+        if launch.adapter.contract.transport_ids:
+            raise ValueError(f"harness {harness_id} has no process but declares transports")
+        _LAUNCH[harness_id] = launch
+        return
+
+    raw_extractor: object = process.extractor
+    if not isinstance(raw_extractor, HarnessExtractor):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed ports.
         raise TypeError(
-            f"HarnessBundle for {bundle.harness_id} has invalid extractor "
+            f"harness {harness_id} has invalid extractor "
             f"{type(raw_extractor).__name__}; expected HarnessExtractor"
         )
-
-    raw_semantics: object = bundle.semantics
-    if not isinstance(raw_semantics, HarnessSemantics):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed bundles.
-        raise TypeError(
-            f"HarnessBundle for {bundle.harness_id} is missing a valid HarnessSemantics port"
-        )
-
-    if not bundle.connections:
+    if not process.connections:
         raise ValueError(
-            f"HarnessBundle for {bundle.harness_id} has no connections; "
+            f"harness {harness_id} has no connections; "
             "must declare at least one transport connection"
         )
-
     validated_connections: dict[TransportId, type[HarnessConnection[Any]]] = {}
-    raw_connections = dict(cast("Mapping[object, object]", bundle.connections))
+    raw_connections = dict(cast("Mapping[object, object]", process.connections))
     for raw_transport_id, raw_connection_cls in raw_connections.items():
         if not isinstance(raw_transport_id, TransportId):
             raise ValueError(
-                f"HarnessBundle for {bundle.harness_id} declares unsupported "
-                f"transport key {raw_transport_id!r}"
+                f"harness {harness_id} declares unsupported transport key {raw_transport_id!r}"
             )
         if not isinstance(raw_connection_cls, type) or not issubclass(
             raw_connection_cls,
             HarnessConnection,
         ):
             raise TypeError(
-                f"HarnessBundle for {bundle.harness_id} transport {raw_transport_id} "
+                f"harness {harness_id} transport {raw_transport_id} "
                 f"uses invalid connection class {raw_connection_cls!r}"
             )
         validated_connections[raw_transport_id] = cast(
             "type[HarnessConnection[Any]]",
             raw_connection_cls,
         )
-
-    if bundle.harness_id in _REGISTRY:
-        existing = type(_REGISTRY[bundle.harness_id].adapter).__name__
-        incoming = type(bundle.adapter).__name__
-        raise ValueError(
-            f"duplicate harness bundle for {bundle.harness_id}: "
-            f"existing adapter={existing}, incoming adapter={incoming}"
-        )
-
-    frozen_connections: Mapping[TransportId, type[HarnessConnection[Any]]] = MappingProxyType(
-        dict(validated_connections)
-    )
-    _validate_contract_alignment(bundle)
-    declared_transport_ids = frozenset(bundle.adapter.contract.transport_ids)
-    actual_transport_ids = frozenset(frozen_connections)
+    declared_transport_ids = frozenset(launch.adapter.contract.transport_ids)
+    actual_transport_ids = frozenset(validated_connections)
     if declared_transport_ids != actual_transport_ids:
         raise ValueError(
-            f"HarnessBundle for {bundle.harness_id} declares transport contract "
+            f"harness {harness_id} declares transport contract "
             f"{sorted(t.value for t in declared_transport_ids)} but registers "
             f"{sorted(t.value for t in actual_transport_ids)}"
         )
-    _REGISTRY[bundle.harness_id] = HarnessBundle(
-        harness_id=bundle.harness_id,
-        adapter=bundle.adapter,
-        spec_cls=bundle.spec_cls,
-        extractor=bundle.extractor,
-        connections=frozen_connections,
-        projections=bundle.projections,
-        semantics=bundle.semantics,
-        event_sinks=bundle.event_sinks,
-        primary_message_route=bundle.primary_message_route,
-        primary_idle_sensor=bundle.primary_idle_sensor,
-        native_idle_hook=bundle.native_idle_hook,
-        detect_ttl=bundle.detect_ttl,
+    _LAUNCH[harness_id] = launch
+    _PROCESS[harness_id] = replace(
+        process, connections=MappingProxyType(dict(validated_connections))
     )
 
 
-def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
+def _validate_contract_alignment(bundle: LaunchPorts[Any]) -> None:
     contract: HarnessContract = bundle.adapter.contract
 
     if contract.launch_spec_cls != bundle.spec_cls.__name__:
         raise ValueError(
-            f"HarnessBundle for {bundle.harness_id} declares launch_spec_cls "
+            f"harness {bundle.harness_id} declares launch_spec_cls "
             f"{contract.launch_spec_cls!r} but registers spec_cls "
             f"{bundle.spec_cls.__name__!r}"
         )
@@ -242,41 +277,53 @@ def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
     if contract.bootstrap_mode is BootstrapMode.MANAGED_PRIMARY_ATTACH:
         if not has_managed_primary_ports:
             raise ValueError(
-                f"HarnessBundle for {bundle.harness_id} requires managed-primary "
+                f"harness {bundle.harness_id} requires managed-primary "
                 "projection ports but none were registered"
             )
         return
 
     if has_managed_primary_ports:
         raise ValueError(
-            f"HarnessBundle for {bundle.harness_id} registered managed-primary "
+            f"harness {bundle.harness_id} registered managed-primary "
             "projection ports but bootstrap mode is not managed_primary_attach"
         )
 
 
-def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
+def get_launch_ports(harness_id: HarnessId) -> LaunchPorts[Any]:
 
     from meridian.lib.harness import ensure_bootstrap
 
     ensure_bootstrap()
     try:
-        return _REGISTRY[harness_id]
+        return _LAUNCH[harness_id]
     except KeyError as exc:
         raise KeyError(f"unknown harness: {harness_id}") from exc
 
 
-def registered_bundles() -> Mapping[HarnessId, HarnessBundle[Any]]:
-    """Return what is registered so far, without triggering the bootstrap."""
-
-    return MappingProxyType(_REGISTRY)
-
-
-def get_bundle_registry() -> Mapping[HarnessId, HarnessBundle[Any]]:
+def get_process_ports(harness_id: HarnessId) -> ProcessPorts[Any]:
+    """The process ports of a harness Meridian runs; ``KeyError`` for any other."""
 
     from meridian.lib.harness import ensure_bootstrap
 
     ensure_bootstrap()
-    return registered_bundles()
+    try:
+        return _PROCESS[harness_id]
+    except KeyError as exc:
+        raise KeyError(f"harness {harness_id} has no process of Meridian's") from exc
+
+
+def registered_launch_ports() -> Mapping[HarnessId, LaunchPorts[Any]]:
+    """Return what is registered so far, without triggering the bootstrap."""
+
+    return MappingProxyType(_LAUNCH)
+
+
+def get_launch_registry() -> Mapping[HarnessId, LaunchPorts[Any]]:
+
+    from meridian.lib.harness import ensure_bootstrap
+
+    ensure_bootstrap()
+    return registered_launch_ports()
 
 
 def get_connection_cls(
@@ -284,20 +331,20 @@ def get_connection_cls(
     transport_id: TransportId,
 ) -> type[HarnessConnection[Any]]:
 
-    bundle = get_harness_bundle(harness_id)
+    ports = get_process_ports(harness_id)
     try:
-        return bundle.connections[transport_id]
+        return ports.connections[transport_id]
     except KeyError as exc:
         raise KeyError(
             f"harness {harness_id} has no connection for transport {transport_id}"
         ) from exc
 
 
-def _require_bundle_spec(
+def _require_launch_spec(
     harness_id: HarnessId,
     spec: object,
-) -> HarnessBundle[Any]:
-    bundle = get_harness_bundle(harness_id)
+) -> LaunchPorts[Any]:
+    bundle = get_launch_ports(harness_id)
     if not isinstance(spec, bundle.spec_cls):
         raise TypeError(
             f"harness {harness_id} expected {bundle.spec_cls.__name__}, got {type(spec).__name__}"
@@ -320,7 +367,7 @@ def bind_launch_spec(
     child_cwd: Path,
 ) -> SpecT:
 
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     if bundle.projections.bind_spec is None:
         return spec
     return cast("SpecT", bundle.projections.bind_spec(spec, env, child_cwd))
@@ -334,7 +381,7 @@ def project_effective_policy(
 ) -> EffectivePolicy:
     """Project the sandbox and network a launch really gets, from inputs Meridian owns."""
 
-    projector = get_harness_bundle(harness_id).projections.effective_policy
+    projector = get_launch_ports(harness_id).projections.effective_policy
     if projector is None:
         return UNENFORCED_POLICY
     return projector(policy, native_config=native_config)
@@ -348,7 +395,7 @@ def materialize_launch_spec(
     child_cwd: Path,
 ) -> SpecT:
 
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     if bundle.projections.materialize_spec is None:
         return spec
     return cast("SpecT", bundle.projections.materialize_spec(spec, env, child_cwd))
@@ -361,7 +408,7 @@ def project_subprocess_spec(
     base_command: tuple[str, ...],
 ) -> list[str]:
 
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     return bundle.projections.subprocess_cli_args(
         cast("Any", spec),
         base_command=base_command,
@@ -376,7 +423,7 @@ def project_managed_primary_backend_command(
     port: int,
 ) -> list[str]:
 
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     managed_primary = bundle.projections.managed_primary
     if managed_primary is None:
         raise ValueError(f"harness {harness_id} does not declare managed-primary ports")
@@ -390,7 +437,7 @@ def project_managed_primary_bootstrap(
     project_root: Path,
 ) -> object:
 
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     managed_primary = bundle.projections.managed_primary
     if managed_primary is None:
         raise ValueError(f"harness {harness_id} does not declare managed-primary ports")
@@ -406,7 +453,7 @@ def project_managed_primary_preview(
     *,
     project_root: Path,
 ) -> ManagedPrimaryPreview | None:
-    bundle = _require_bundle_spec(harness_id, spec)
+    bundle = _require_launch_spec(harness_id, spec)
     managed = bundle.projections.managed_primary
     if managed is None or managed.preview is None:
         return None
@@ -414,19 +461,22 @@ def project_managed_primary_preview(
 
 
 __all__ = [
-    "HarnessBundle",
     "HarnessProjectionPorts",
+    "LaunchPorts",
     "ManagedPrimaryProjectionPorts",
     "PrimaryMessageRoute",
+    "PrintedLaunchPorts",
+    "ProcessPorts",
     "bind_launch_spec",
-    "get_bundle_registry",
     "get_connection_cls",
-    "get_harness_bundle",
+    "get_launch_ports",
+    "get_launch_registry",
+    "get_process_ports",
     "materialize_launch_spec",
     "project_effective_policy",
     "project_managed_primary_backend_command",
     "project_managed_primary_bootstrap",
     "project_subprocess_spec",
-    "register_harness_bundle",
-    "registered_bundles",
+    "register_harness",
+    "registered_launch_ports",
 ]

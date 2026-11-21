@@ -5,7 +5,7 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator, StringConstraints
 
-from meridian.lib.harness.unlaunched import NAMES as UNLAUNCHED_NAMES
+from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
 
 
 class HarnessId(StrEnum):
@@ -19,10 +19,10 @@ class HarnessId(StrEnum):
 
     @property
     def launched_by_meridian(self) -> bool:
-        """False for a harness the person starts themselves (``agy``): it has sessions
-        and rows Meridian reads and routes to, but no adapter, shortcut or launch."""
+        """Whether Meridian may exec this harness. False for a plugin-hosted one (``agy``):
+        Meridian reads its sessions and builds its command, and never runs it."""
 
-        return self.value not in UNLAUNCHED_NAMES
+        return self.value not in PLUGIN_HOSTED
 
     @classmethod
     def _missing_(cls, value: object) -> HarnessId | None:
@@ -36,27 +36,22 @@ class HarnessId(StrEnum):
         return None
 
 
-def is_unlaunched_harness(name: str | None) -> bool:
-    """Whether a stored harness name is one the person starts themselves.
-
-    A name no build knows (a removed harness) is not: its rows keep their old rules.
-    """
-
-    try:
-        return not HarnessId(name or "").launched_by_meridian
-    except ValueError:
-        return False
-
-
 def launched_harnesses() -> tuple[HarnessId, ...]:
     return tuple(harness for harness in HarnessId if harness.launched_by_meridian)
 
 
 def harness_names_text() -> str:
-    """Every launchable harness id as ``a, b, or c``, for help text."""
+    """Every harness id Meridian may exec as ``a, b, or c``, for help text."""
 
     names = [harness.value for harness in launched_harnesses()]
     return f"{', '.join(names[:-1])}, or {names[-1]}"
+
+
+def harness_choices_text() -> str:
+    """``harness_names_text`` plus the harnesses whose launch is printed, for ``--harness`` help."""
+
+    printed = [harness.value for harness in HarnessId if not harness.launched_by_meridian]
+    return f"{harness_names_text()}; {', '.join(printed)} prints its command"
 
 
 class TransportId(StrEnum):

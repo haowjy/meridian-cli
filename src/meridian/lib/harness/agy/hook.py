@@ -10,6 +10,7 @@ break the person's session.
 from __future__ import annotations
 
 import json
+import os
 import time
 import traceback
 from pathlib import Path
@@ -18,6 +19,10 @@ from typing import Any
 from meridian.lib.harness.agy import guidance, inbox
 from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
+    AGENT_ENV,
+    APPROVAL_ENV,
+    PRINTED_APPROVALS,
+    PROJECT_ENV,
     agy_root,
     briefed_path,
     is_safe_id,
@@ -80,7 +85,7 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         texts = _guidance(
             proc_dir,
             conversation,
-            Path(str(payload.get("cwd") or Path.cwd())),
+            Path(str(request.get("cwd") or Path.cwd())),
             transcript,
             registered=registered,
         )
@@ -155,13 +160,22 @@ def _guidance(
 def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Write this conversation's request file: its marker, and what the server will adopt."""
 
+    approval = os.environ.get(APPROVAL_ENV) or None
+    if approval is not None and approval not in PRINTED_APPROVALS:
+        _log_error(f"ignored {APPROVAL_ENV}={approval!r}: not an approval Meridian prints")
+        approval = None
     request: dict[str, Any] = {
         "conversation_id": conversation,
         "role": "subagent" if _is_subagent(proc_dir, conversation, payload) else "primary",
-        "cwd": payload.get("cwd"),
+        # agy's ``cwd`` is the first of its sorted workspace paths, not the launch
+        # directory; the printed command's handle is, and a plain ``agy`` run has none.
+        "cwd": os.environ.get(PROJECT_ENV) or payload.get("cwd"),
         "workspace_paths": payload.get("workspacePaths"),
         "transcript_path": payload.get("transcriptPath"),
         "model": payload.get("modelName"),
+        # What ``meridian agy`` printed into the command's environment, if the person ran it.
+        "agent": os.environ.get(AGENT_ENV) or None,
+        "approval": approval,
         "registered_at": time.time(),
     }
     write_private_json(request_path(proc_dir, conversation), request)

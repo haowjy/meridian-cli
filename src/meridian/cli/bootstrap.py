@@ -12,7 +12,7 @@ from pathlib import Path
 from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mode
 from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
 from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
-from meridian.lib.core.types import launched_harnesses
+from meridian.lib.core.types import HarnessId
 
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
     {
@@ -35,7 +35,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--no-ignore-direnv",
     }
 )
-HARNESS_SHORTCUT_NAMES = frozenset(harness.value for harness in launched_harnesses())
+HARNESS_SHORTCUT_NAMES = frozenset(harness.value for harness in HarnessId)
 
 
 @dataclass(frozen=True)

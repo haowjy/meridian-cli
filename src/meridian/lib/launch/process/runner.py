@@ -29,7 +29,7 @@ from meridian.lib.harness.adapter import (
     SubprocessHarness,
 )
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import get_launch_ports, get_process_ports
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
@@ -469,7 +469,7 @@ def _execute_primary_process(
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(launch.stderr_log)
 
     with primary_control_socket(
-        launch, get_harness_bundle(harness_id).primary_message_route, route_payload
+        launch, get_process_ports(harness_id).primary_message_route, route_payload
     ) as serve_control_socket:
 
         def record_blackbox_started(identity: ProcessIdentity) -> None:
@@ -499,7 +499,7 @@ def _execute_primary_process(
             run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
             on_running=record_blackbox_started,
         )
-    fold = get_harness_bundle(harness_id).extractor.create_fold(usage_seed)
+    fold = get_process_ports(harness_id).extractor.create_fold(usage_seed)
     if output_log_path is not None and output_log_path.is_file():
         fold.fold_stdout(output_log_path, harness_id)
     return PrimaryExecutionResult(
@@ -565,8 +565,8 @@ async def _run_primary_attach(
 
     try:
         passthrough = get_passthrough(harness_id)
-        harness_bundle = get_harness_bundle(harness_id)
-        harness_adapter = cast("SubprocessHarness", harness_bundle.adapter)
+        process_ports = get_process_ports(harness_id)
+        harness_adapter = cast("SubprocessHarness", get_launch_ports(harness_id).adapter)
         connection_factory = cast(
             "Callable[..., HarnessConnection[Any]]",
             get_connection_class(harness_id),
@@ -584,7 +584,7 @@ async def _run_primary_attach(
             task_cwd=task_cwd,
             env=env,
         )
-        fold = harness_bundle.extractor.create_fold(usage_seed)
+        fold = process_ports.extractor.create_fold(usage_seed)
 
         launcher = PrimaryAttachLauncher(
             launch=launch,

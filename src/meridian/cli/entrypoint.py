@@ -12,7 +12,7 @@ from meridian.cli.bootstrap import (
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
-from meridian.lib.harness.unlaunched import run_command as run_unlaunched_command
+from meridian.lib.harness.plugin_hosted import run_command as run_plugin_hosted_command
 from meridian.lib.platform import IS_WINDOWS
 
 
@@ -46,9 +46,9 @@ def _main_impl() -> None:
             if isinstance(stream, io.TextIOWrapper):
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
-    unlaunched_exit = run_unlaunched_command(sys.argv[1:])
-    if unlaunched_exit is not None:
-        raise SystemExit(unlaunched_exit)
+    hosted_exit = run_plugin_hosted_command(sys.argv[1:])
+    if hosted_exit is not None:
+        raise SystemExit(hosted_exit)
 
     args = canonicalize_argv(sys.argv[1:])
 

@@ -135,6 +135,3 @@ class AgyReader(BaseNativeStoreReader):
             return None
         path = native_store / session_id / ".system_generated" / "logs" / "transcript_full.jsonl"
         return path if path.is_file() else None
-
-
-READER = AgyReader()

@@ -113,6 +113,33 @@ class SessionAttempt:
             snapshot,
         )
 
+    def record_observed_model(self, *, harness: str, harness_session_id: str, model: str) -> None:
+        """Record the model a session Meridian did not launch runs on: a continue replays it.
+
+        The harness's own name for the model is both what was chosen and what runs.
+        """
+        record_model_selection(
+            self.runtime_root,
+            SessionModelSelectionEvent(
+                kind="invocation_started",
+                harness=harness,
+                harness_session_id=HarnessSessionId(harness_session_id),
+                chat_id=ChatId(self.chat_id),
+                session_instance_id=self.session_instance_id,
+                spawn_id=str(self.spawn_id) if self.spawn_id is not None else None,
+                startup_attempt_id=self.startup_attempt_id,
+                recorded_at=utc_now_iso(),
+                selection=ConversationModelSelection(
+                    requested_token=model,
+                    selected_token=model,
+                    canonical_model_id=model,
+                    harness_model_id=model,
+                    model_mode="named",
+                    selection_source="initial_launch",
+                ),
+            ),
+        )
+
     def record_started(
         self,
         context: LaunchContext,

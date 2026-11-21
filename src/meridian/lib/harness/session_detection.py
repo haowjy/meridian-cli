@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.bundle import get_bundle_registry
+from meridian.lib.harness.bundle import get_launch_registry
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 
 
@@ -19,7 +19,7 @@ def infer_harness_from_untracked_session_ref(
 
     seen_harnesses: set[HarnessId] = set()
     owners: set[HarnessId] = set()
-    for harness_id, bundle in get_bundle_registry().items():
+    for harness_id, bundle in get_launch_registry().items():
         seen_harnesses.add(harness_id)
         owns_untracked = cast(
             "Any",

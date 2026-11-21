@@ -12,9 +12,9 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
     "src/meridian/lib/core/types.py (HarnessId member; help text and shortcuts derive from it)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
-        "(adapter, its HarnessContract and handled_fields, and the register_harness_bundle() "
-        "call that binds adapter, spec class, extractor, transport connections, projection "
-        "ports and semantics)"
+        "(adapter, its HarnessContract and handled_fields, and the register_harness() "
+        "call: LaunchPorts bind adapter, spec class, projection ports and semantics; "
+        "ProcessPorts bind extractor, transport connections and idle, route and event ports)"
     ),
     (
         "src/meridian/lib/harness/__init__.py::_run_bootstrap() "
@@ -69,7 +69,7 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "fresh launch or a fork, never a resume; an assign_session_id() override "
         "must then return LaunchIntent.precreated_session_id; "
         "HarnessPrelaunchState.route_payload hands in-memory facts to "
-        "HarnessBundle.primary_message_route)"
+        "ProcessPorts.primary_message_route)"
     ),
 )
 
@@ -80,10 +80,11 @@ def _run_bootstrap() -> None:
 
     # Import order is load-bearing.
     #
-    # 1) Adapter modules register HarnessBundle entries as module-load side effects.
+    # 1) Adapter modules register LaunchPorts and ProcessPorts as module-load side effects.
     # 2) Projection modules execute import-time drift guards.
     # 3) Extractor modules bind runtime-checkable Protocol implementations.
     # 4) Cross-adapter SpawnParams accounting runs after all registrations.
+    from meridian.lib.harness.agy import adapter as _agy
     from meridian.lib.harness import claude as _claude
     from meridian.lib.harness import codex as _codex
     from meridian.lib.harness import opencode as _opencode
@@ -109,10 +110,11 @@ def _run_bootstrap() -> None:
     from meridian.lib.harness.extractors import opencode as _opencode_extractor
     from meridian.lib.harness.extractors import pi as _pi_extractor
 
-    from meridian.lib.harness.bundle import registered_bundles
+    from meridian.lib.harness.bundle import registered_launch_ports
     from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 
     _bootstrap_imports = (
+        _agy,
         _claude,
         _codex,
         _opencode,
@@ -129,7 +131,7 @@ def _run_bootstrap() -> None:
         _pi_extractor,
     )
     # The public registry accessor would re-enter ensure_bootstrap.
-    _enforce_spawn_params_accounting(registered_bundles())
+    _enforce_spawn_params_accounting(registered_launch_ports())
     _bootstrapped = True
 
 
