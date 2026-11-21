@@ -23,6 +23,7 @@ class InitAddResult:
     declared_targets: list[str]
     declared_primary_agent: str | None
     content: dict[str, list[str]] = field(default_factory=_empty_content)
+    diagnostics: list[str] = field(default_factory=lambda: [])
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class InitResult(BaseModel):
     content: dict[str, list[str]]
     primary_agent: PrimaryAgentAction | None = None
     note: str | None = None
+    diagnostics: list[str] = []
     next_step: str = "Run `meridian` to start."
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -77,7 +79,11 @@ def _run_mars_json(
     args: list[str],
     *,
     executable: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[str]]:
+    """Run ``mars --json``; return its payload and its warning/error diagnostics as lines.
+
+    On failure those lines go to stderr after Mars's own, then init exits with Mars's code.
+    """
 
     from meridian.cli.mars_passthrough import (
         execute_mars_passthrough,
@@ -87,11 +93,19 @@ def _run_mars_json(
     full_args = ["--root", project_root.as_posix(), "--json", command, *args]
     request = parse_mars_passthrough(full_args, executable=executable, output_format="json")
     result = execute_mars_passthrough(request)
+    payload: dict[str, Any] = json.loads(result.stdout_text) if result.stdout_text else {}
+    lines = [
+        f"{entry['level']}: {entry['message']}"
+        for entry in payload.get("diagnostics", [])
+        if entry.get("level") in {"warning", "error"}
+    ]
     if result.returncode != 0:
         if result.stderr_text:
             sys.stderr.write(result.stderr_text)
+        for line in lines:
+            print(line, file=sys.stderr)
         raise SystemExit(result.returncode)
-    return json.loads(result.stdout_text) if result.stdout_text else {}
+    return payload, lines
 
 
 def _scan_mars_content(project_root: Path) -> dict[str, list[str]]:
@@ -126,7 +140,7 @@ def run_mars_add_json(
     executable: str,
 ) -> InitAddResult:
 
-    parsed = _run_mars_json(project_root, "add", sources, executable=executable)
+    parsed, diagnostics = _run_mars_json(project_root, "add", sources, executable=executable)
     content = _scan_mars_content(project_root)
     declared_targets: list[str] = parsed.get("declared_targets", [])
     declared_primary_agent: str | None = parsed.get("declared_primary_agent")
@@ -134,6 +148,7 @@ def run_mars_add_json(
         declared_targets=declared_targets,
         declared_primary_agent=declared_primary_agent,
         content=content,
+        diagnostics=diagnostics,
     )
 
 
@@ -265,19 +280,23 @@ def run_init_flow(
         )
         raise SystemExit(1)
 
+    diagnostics: list[str] = []
     mars_toml = project_root / "mars.toml"
     if not mars_toml.is_file():
-        _run_mars_json(project_root, "init", [], executable=executable)
+        _, init_diagnostics = _run_mars_json(project_root, "init", [], executable=executable)
+        diagnostics.extend(init_diagnostics)
 
     add_result: InitAddResult | None = None
     if add_sources:
         add_result = run_mars_add_json(project_root, add_sources, executable=executable)
+        diagnostics.extend(add_result.diagnostics)
 
     declared_targets = add_result.declared_targets if add_result else []
     targets: list[str] = link_targets if link_targets is not None else declared_targets
 
     for target in targets:
-        _run_mars_json(project_root, "link", [target], executable=executable)
+        _, link_diagnostics = _run_mars_json(project_root, "link", [target], executable=executable)
+        diagnostics.extend(link_diagnostics)
 
     maybe_scaffold_claude_agent_copy(project_root, targets)
 
@@ -295,8 +314,11 @@ def run_init_flow(
         content=content,
         primary_agent=primary_action,
         note=config_result.note,
+        diagnostics=diagnostics,
     )
 
     if output_format == "json":
         return result.model_dump()
+    for line in diagnostics:
+        print(line, file=sys.stderr)
     return result
