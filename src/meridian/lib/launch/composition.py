@@ -208,6 +208,12 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
+def render_guidance_blocks(guidance_blocks: tuple[CompositionBlock, ...]) -> str:
+
+    ordered = sorted(guidance_blocks, key=lambda b: (b.phase, b.priority))
+    return join_content_blocks(*(block.content for block in ordered))
+
+
 def has_capabilities_block(guidance_blocks: tuple[CompositionBlock, ...]) -> bool:
 
     return any(block.name == CAPABILITIES_BLOCK_NAME for block in guidance_blocks)
@@ -316,10 +322,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
                 ordered_blocks.append(listing)
             continue
         if field_name == "guidance_blocks":
-            ordered = sorted(content.guidance_blocks, key=lambda b: (b.phase, b.priority))
-            for block in ordered:
-                if block.content.strip():
-                    ordered_blocks.append(block.content)
+            ordered_blocks.append(render_guidance_blocks(content.guidance_blocks))
             continue
         ordered_blocks.append(getattr(content, field_name))
     return join_content_blocks(*ordered_blocks, *content.passthrough_system_fragments)
@@ -388,6 +391,7 @@ __all__ = [
     "has_capabilities_block",
     "join_content_blocks",
     "project_inline_content",
+    "render_guidance_blocks",
     "render_system_instruction_blocks",
     "render_task_context",
     "replace_capabilities_block",

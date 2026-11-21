@@ -9,7 +9,7 @@ import pytest
 from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.holds import HeldRow
-from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
+from meridian.lib.harness.agy.hook import run_hook
 from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_conversation
 from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
@@ -45,12 +45,13 @@ def _payload(conversation: str, store: Path, **extra: object) -> str:
 
 
 def test_session_start_injects_one_system_message(agy_home: Path) -> None:
-    reply = run_hook("SessionStart", os.getpid(), _payload("c1", agy_home))
+    reply = run_hook("SessionStart", os.getpid(), _payload("c1", agy_home, cwd=str(agy_home)))
 
     assert reply is not None
-    assert json.loads(reply) == {
-        "injectSteps": [{"systemMessage": {"systemMessage": SESSION_CONTEXT}}]
-    }
+    (step,) = json.loads(reply)["injectSteps"]
+    text = step["systemMessage"]["systemMessage"]
+    assert "# Meridian capabilities" in text
+    assert "# Meridian spawn rules" in text
 
 
 def test_no_opinion_prints_nothing_and_bad_input_never_raises(agy_home: Path) -> None:

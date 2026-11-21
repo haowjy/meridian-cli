@@ -172,6 +172,7 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
     from meridian.lib.core.types import SpawnId
     from meridian.lib.launch.primary_hold import PrimaryRow, primary_hold
     from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.launch.session_links import republish_chat_links
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.ops.runtime import resolve_runtime_root
     from meridian.lib.state import spawn_store
@@ -211,9 +212,19 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         primary.bind_observed_identity(conversation, harness="agy", policy=None)
         service.lifecycle.bootstrap_from_disk(str(launch.spawn_id))
         hold.row = HeldRow(str(launch.spawn_id), primary.chat_id, project_root, runtime_root, cwd)
+        # A launched primary gets its links from launch preparation; this one has none, and
+        # its hook names them to the model.
+        republish_chat_links(
+            project_root, runtime_root, hold.row.chat_id, spawn_id=hold.row.spawn_id
+        )
         write_private_json(
             row_path(proc_dir, conversation),
-            {"spawn_id": hold.row.spawn_id, "chat_id": hold.row.chat_id},
+            {
+                "spawn_id": hold.row.spawn_id,
+                "chat_id": hold.row.chat_id,
+                "project_root": project_root.as_posix(),
+                "runtime_root": runtime_root.as_posix(),
+            },
         )
         hold.ready.set()
         try:

@@ -30,6 +30,14 @@ agy --agent <profile>      # as usual
   start as they would from your own terminal. `agy` asks you before the first call in a
   conversation (once, for the conversation, or always); allowing it allows every Meridian
   command for that conversation.
+- **Meridian's guidance, as other harnesses get at launch.** `SessionStart` injects the
+  skills index, the capabilities, the spawn rules and prompting guidance, worded for the
+  `meridian` tool (one command per call, no shell, `spawn wait` blocks the turn). The
+  session's own chat ID, spawn ID and work and task links follow in one more message at the
+  first model call after its row exists, so they are missing from the first prompt. Both are
+  built at run time by the same builders a launch uses, so they never go stale. The hook
+  payload names no agent, so the session is treated as able to spawn and `meridian spawn
+  subagents` lists what it may start. Native subagents get nothing.
 - **A row in `spawn list --primary`.** The first prompt of a conversation registers it;
   the row stays running until `agy` exits. Children the session spawns are its children,
   and a no-argument `spawn wait` works.
@@ -44,8 +52,8 @@ Native `agy` subagents are not sessions: they don't appear in `spawn list`.
 - **Wake an idle session.** A queued message waits until the model next runs, which
   means until you type or the current turn makes another model call.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
-  conversation's second prompt. The session context tells the model to carry on without
-  Meridian until it appears.
+  conversation's second prompt, and the session's chat ID arrives with it. Until then the
+  model has the guidance but may find no tool.
 - **Cancel, continue, fork or read it.** `spawn cancel` on an `agy` session is refused
   ("this session runs in agy; end it there"), `--continue`, `--fork` and `--from` refuse an
   `agy` chat, `session log` finds no transcript, and `meridian agy` and `harness: agy` in a

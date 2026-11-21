@@ -111,6 +111,33 @@ def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str
     )
 
 
+_TOOL_INTRO = (
+    "Run Meridian through the `meridian` tool: `args` is the command after `meridian`, "
+    'for example `["task-dir"]`. Make one command per call: the tool has no shell, so '
+    "pipes, `cd ... &&`, `$()` and `VAR=1` do not work.",
+    "Every command has `-h`; if one is refused, tell your caller or the human—do "
+    "not work around it. The tool may not be listed on a conversation's first prompt; if "
+    "it is missing, say so and carry on without Meridian instead of trying the shell.",
+)
+
+
+def _chat_lines(chat_id: str | None, project_root: Path) -> list[str]:
+    resolved_chat_id = (chat_id or "").strip()
+    if not resolved_chat_id:
+        return []
+    # Only a primary renders this: its chat is the conversation's own, so it survives
+    # resume. A spawn's launching chat is per-launch and lives in the `# Meridian spawn`
+    # block. Chat IDs count per project, so the bare ID is ambiguous to a peer in
+    # another repo; the command carries the project it belongs to.
+    return [
+        f"- `{resolved_chat_id}` — this conversation's chat "
+        "(`$MERIDIAN_CHAT_ID`); use it in names and as a handoff's `--from`.",
+        "- To message this session from another session or repo: "
+        f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
+        f'{resolved_chat_id} --message "..."`.',
+    ]
+
+
 def build_capabilities_prompt(
     *,
     spawn_capable: bool,
@@ -123,7 +150,11 @@ def build_capabilities_prompt(
     chat_id: str | None = None,
     context_config: ContextConfig | None = None,
     resolved_context: ResolvedContextPaths | None = None,
+    via_tool: bool = False,
 ) -> str:
+    """``via_tool``: the session has no shell and runs Meridian through one tool whose
+    ``args`` list is the command, so shell guidance and the shell cwd are left out."""
+
     # Per-launch facts belong in the user turn so sibling prompts share a cache prefix.
 
     if resolved_context is None:
@@ -133,16 +164,20 @@ def build_capabilities_prompt(
             context_config = load_context_config(project_root) or ContextConfig()
         resolved_context = resolve_context_paths(project_root, context_config)
 
-    lines = [
-        "# Meridian capabilities",
-        "",
-        "Run each Meridian command as its own shell call, for example `meridian task-dir`.",
-        "Restricted shells refuse `cd ... && meridian ...`, pipes, `$()`, `VAR=1`, and "
-        "`$VAR` expansion.",
-        "Every command has `-h`; if one is refused, tell your caller or the human—do "
-        "not work around it.",
-        "",
-    ]
+    lines = (
+        ["# Meridian capabilities", "", *_TOOL_INTRO, ""]
+        if via_tool
+        else [
+            "# Meridian capabilities",
+            "",
+            "Run each Meridian command as its own shell call, for example `meridian task-dir`.",
+            "Restricted shells refuse `cd ... && meridian ...`, pipes, `$()`, `VAR=1`, and "
+            "`$VAR` expansion.",
+            "Every command has `-h`; if one is refused, tell your caller or the human—do "
+            "not work around it.",
+            "",
+        ]
+    )
     if spawn_capable:
         lines.append(_SPAWN_CAPABILITIES)
     lines.extend(_GENERAL_CAPABILITIES)
@@ -159,22 +194,7 @@ def build_capabilities_prompt(
     # stale after `work switch`.
     lines.append("- Your work item's goal and status: run `meridian work show`.")
 
-    resolved_chat_id = (chat_id or "").strip()
-    if resolved_chat_id:
-        # Only a primary renders this: its chat is the conversation's own, so it
-        # survives resume. A spawn's launching chat is per-launch and lives in the
-        # `# Meridian spawn` block.
-        lines.append(
-            f"- `{resolved_chat_id}` — this conversation's chat "
-            "(`$MERIDIAN_CHAT_ID`); use it in names and as a handoff's `--from`."
-        )
-        # Chat IDs count per project, so the bare ID is ambiguous to a peer in
-        # another repo; the command carries the project it belongs to.
-        lines.append(
-            "- To message this session from another session or repo: "
-            f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-            f'{resolved_chat_id} --message "..."`.'
-        )
+    lines.extend(_chat_lines(chat_id, project_root))
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()
@@ -184,7 +204,15 @@ def build_capabilities_prompt(
         if spawn_capable
         else ""
     )
-    if task_link is not None:
+    if via_tool:
+        # The tool runs in the session's cwd and has no shell to cd in; the session's
+        # own links arrive in its `# Meridian session` message once its row exists.
+        lines.append(
+            "- Your work directory and source checkout are the links the `# Meridian "
+            "session` message names; write those literal paths, never the directories "
+            f"they resolve to. Inspect: `meridian task-dir`{spawn_suffix}."
+        )
+    elif task_link is not None:
         # A per-chat link: every task-dir change repoints it, so the literal path is
         # the one the session keeps using, and the directory it resolves to is not.
         lines.append(
@@ -275,11 +303,37 @@ def build_launch_facts_prompt(
     return "\n".join(("# Meridian spawn", "", *lines))
 
 
-def build_spawn_usage_contract(variants: SpawnUsageContractVariants, *, kind: SpawnKind) -> str:
+def build_session_facts_prompt(
+    *,
+    spawn_id: str,
+    chat_id: str,
+    project_root: Path,
+    work_link: Path,
+    task_link: Path,
+) -> str:
+    """The facts of a primary whose row came after its guidance was written."""
 
-    wait_rules = _PRIMARY_WAIT_BULLET
-    if kind != "primary":
-        wait_rules = f"{_CHILD_WAIT_BULLET}\n{_CHILD_CLOSE_BULLET}"
+    return "\n".join(
+        (
+            "# Meridian session",
+            "",
+            f"- `{spawn_id}` — this session's spawn ID (`$MERIDIAN_SPAWN_ID`); use it in names.",
+            *_chat_lines(chat_id, project_root),
+            _work_link_line(work_link),
+            _task_link_line(task_link),
+        )
+    )
+
+
+def build_spawn_usage_contract(
+    variants: SpawnUsageContractVariants, *, kind: SpawnKind, wait_rules: str | None = None
+) -> str:
+    """``wait_rules`` replaces the wait bullets for a harness whose waiting differs."""
+
+    if wait_rules is None:
+        wait_rules = _PRIMARY_WAIT_BULLET
+        if kind != "primary":
+            wait_rules = f"{_CHILD_WAIT_BULLET}\n{_CHILD_CLOSE_BULLET}"
     return f"""\
 # Meridian spawn rules
 
@@ -300,18 +354,14 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
 
 def build_guidance_blocks(
     *,
-    profile: AgentProfile | None,
-    kind: SpawnKind,
+    spawn_capable: bool,
+    lead: bool,
     loaded_skills: frozenset[str],
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
     waiting_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
     blocks: list[CompositionBlock] = []
-    spawn_capable = has_spawn_capability(profile)
-    # A root launch is the session the user steers, whatever its profile says; a
-    # spawn is a lead only when its profile says `mode: primary`.
-    lead = kind == "primary" or (profile is not None and profile.mode == "primary")
     blocks.append(
         CompositionBlock(
             "meridian-skills",
@@ -357,6 +407,7 @@ __all__ = [
     "build_capabilities_prompt",
     "build_guidance_blocks",
     "build_launch_facts_prompt",
+    "build_session_facts_prompt",
     "build_spawn_usage_contract",
     "has_spawn_capability",
 ]

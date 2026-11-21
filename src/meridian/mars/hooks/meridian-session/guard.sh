@@ -1,6 +1,7 @@
 # Run by agy's `sh -c` handler as: sh guard.sh <event> <agy pid>.
-# Starts Meridian only when this conversation has no request file yet or has queued or
-# unconfirmed messages, so a session with nothing to do pays for a shell, not for Python.
+# Starts Meridian only when this conversation has no request file yet, has queued or
+# unconfirmed messages, or has a row the hook has not yet briefed it on, so a session with
+# nothing to do pays for a shell, not for Python.
 # Paths mirror lib/harness/agy/state.py and inbox.py.
 command -v meridian >/dev/null 2>&1 || exit 0
 event=$1
@@ -18,7 +19,8 @@ else
 fi
 root=${MERIDIAN_HOME:-$HOME/.meridian}/agy
 if [ -e "$root/$pid-$birth/requests/$c.json" ] \
-  && [ ! -s "$root/inbox/$c.jsonl" ] && [ ! -s "$root/inflight/$c.jsonl" ]; then
+  && [ ! -s "$root/inbox/$c.jsonl" ] && [ ! -s "$root/inflight/$c.jsonl" ] \
+  && { [ ! -e "$root/$pid-$birth/rows/$c.json" ] || [ -e "$root/$pid-$birth/briefed/$c" ]; }; then
   exit 0
 fi
 exec meridian harness-hook agy "$event" --agy-pid "$pid"

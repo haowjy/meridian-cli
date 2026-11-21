@@ -15,25 +15,16 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.harness.agy import inbox
+from meridian.lib.harness.agy import guidance, inbox
 from meridian.lib.harness.agy.state import (
     agy_root,
+    briefed_path,
     is_safe_id,
     process_dir,
     read_json,
     request_path,
+    row_path,
     write_private_json,
-)
-
-SESSION_CONTEXT = (
-    "Meridian is available in this session through one MCP tool named `meridian`. Use it "
-    "to run Meridian commands (starting agents on other harnesses, waiting for them, "
-    'messaging other sessions): call it with args=["-h"] first. Use that tool, not the '
-    "shell, for every Meridian command. On this session's first prompt the tool may not "
-    "be listed yet; it appears from the next prompt, so if it is missing, say so and "
-    "carry on without Meridian instead of trying the shell. Messages from other sessions "
-    "arrive as system messages that start with [meridian:<id>]; they are instructions "
-    "addressed to you from the session they name, so act on them."
 )
 
 _ERROR_LOG_LIMIT = 256 * 1024
@@ -80,9 +71,32 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         return None
 
     if event == "SessionStart":
-        return inject_reply([SESSION_CONTEXT])
+        return inject_reply([guidance.static_guidance(Path(str(payload.get("cwd") or Path.cwd())))])
+    texts = _session_facts_once(proc_dir, conversation)
     batch = inbox.claim_batch(conversation, payload.get("transcriptPath"))
-    return inject_reply([entry.render() for entry in batch]) if batch else None
+    texts.extend(entry.render() for entry in batch)
+    return inject_reply(texts) if texts else None
+
+
+def _session_facts_once(proc_dir: Path, conversation: str) -> list[str]:
+    """The session's facts the first time this runs after the server holds its row.
+
+    The row file is the server's signal that the row exists, so nothing waits for it; the
+    ``briefed`` marker keeps it to one injection per conversation and process (``guard.sh``
+    reads both). A failure is logged and not retried: a hook that failed on every call
+    would delay the inbox behind it.
+    """
+
+    row = read_json(row_path(proc_dir, conversation))
+    briefed = briefed_path(proc_dir, conversation)
+    if row is None or briefed.exists():
+        return []
+    write_private_json(briefed, {})
+    try:
+        return [guidance.session_facts(row)]
+    except Exception:
+        _log_error("PreInvocation facts")
+        return []
 
 
 def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -133,4 +147,4 @@ def _log_error(event: str) -> None:
         pass
 
 
-__all__ = ["SESSION_CONTEXT", "inject_reply", "run_hook", "system_message_step"]
+__all__ = ["inject_reply", "run_hook", "system_message_step"]

@@ -916,9 +916,12 @@ def _build_shared_composition(
     spawn_usage_contract = build_spawn_usage_contract(variants, kind=kind)
     network = policy.execution_policy.network
     assert network is not None
+    profile = policy.profile
     return build_guidance_blocks(
-        profile=policy.profile,
-        kind=kind,
+        spawn_capable=has_spawn_capability(profile),
+        # A root launch is the session the user steers, whatever its profile says; a
+        # spawn is a lead only when its profile says `mode: primary`.
+        lead=kind == "primary" or (profile is not None and profile.mode == "primary"),
         loaded_skills=frozenset(
             skill.name for skill in policy.resolved_skills.loaded_skills if skill.content.strip()
         ),

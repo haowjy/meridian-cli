@@ -85,6 +85,12 @@ def row_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "rows" / f"{conversation_id}.json"
 
 
+def briefed_path(proc_dir: Path, conversation_id: str) -> Path:
+    """Marks that the hook told this conversation its row's facts; ``guard.sh`` reads it."""
+
+    return proc_dir / "briefed" / conversation_id
+
+
 # MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
 # launch state that belongs to whichever session started the server.
 _KEPT_ENV = frozenset({"MERIDIAN_HOME"})
@@ -128,6 +134,7 @@ __all__ = [
     "CONVERSATION_ID_KEY",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
+    "briefed_path",
     "is_safe_id",
     "open_conversations",
     "process_birth",
