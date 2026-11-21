@@ -3,7 +3,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness import unlaunched
+from meridian.lib.harness import plugin_hosted
 from meridian.lib.harness.adapter import HarnessContract, NativeStoreReader, SubprocessHarness
 from meridian.lib.harness.bundle import get_connection_cls, get_harness_bundle
 
@@ -45,7 +45,7 @@ class HarnessRegistry(BaseModel):
         registry.register(CodexAdapter())
         registry.register(OpenCodeAdapter())
         registry.register(PiAdapter())
-        for name, reader in unlaunched.readers().items():
+        for name, reader in plugin_hosted.readers().items():
             registry._readers[HarnessId(name)] = reader
         return registry
 

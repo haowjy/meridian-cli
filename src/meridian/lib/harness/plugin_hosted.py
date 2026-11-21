@@ -1,4 +1,8 @@
-"""The one entry for harnesses the person starts themselves (``agy``).
+"""The one entry for harnesses whose plugin hosts their sessions (``agy``).
+
+The person starts the session and the harness's plugin (hook and MCP server) writes its
+row, so Meridian runs no runner for it: nothing to cancel, repair or import. Whether
+Meridian may exec the harness is a different question: ``HarnessId.launched_by_meridian``.
 
 Their package holds what runs inside the person's session: ``commands.run_command(argv)``
 for ``meridian harness-hook|harness-mcp <harness> ...``, and ``notices.send_owed_notices()``
@@ -20,12 +24,20 @@ if TYPE_CHECKING:
 
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
-# ``HarnessId.launched_by_meridian`` reads this, so the enum and the dispatch cannot drift.
-NAMES = frozenset(_PACKAGES)
+PLUGIN_HOSTED = frozenset(_PACKAGES)
+
+
+def is_plugin_hosted(name: str | None) -> bool:
+    """Whether a stored harness name is one whose plugin hosts its sessions.
+
+    A name no build knows (a removed harness) is not: its rows keep their old rules.
+    """
+
+    return name in PLUGIN_HOSTED
 
 
 def run_command(argv: Sequence[str]) -> int | None:
-    """Run an unlaunched harness's argv command, or return None when ``argv`` is not one."""
+    """Run a plugin-hosted harness's argv command, or return None when ``argv`` is not one."""
 
     if len(argv) < 2 or argv[0] not in ("harness-hook", "harness-mcp") or argv[1] not in _PACKAGES:
         return None
@@ -34,7 +46,7 @@ def run_command(argv: Sequence[str]) -> int | None:
 
 
 def native_store(name: str) -> str | None:
-    """Where an unlaunched harness keeps its native sessions, or None for any other name.
+    """Where a plugin-hosted harness keeps its native sessions, or None for any other name.
 
     Fixed by the harness's own layout, so a chat's record never stores it and older builds
     read the record unchanged. Light: key completion calls it.
@@ -46,7 +58,7 @@ def native_store(name: str) -> str | None:
 
 
 def readers() -> dict[str, NativeStoreReader]:
-    """Each unlaunched harness's reader of its native sessions, by harness name."""
+    """Each plugin-hosted harness's reader of its native sessions, by harness name."""
 
     return {
         name: importlib.import_module(f"{package}.transcript").READER
@@ -61,4 +73,11 @@ def send_owed_notices() -> None:
         importlib.import_module(f"{package}.notices").send_owed_notices()
 
 
-__all__ = ["NAMES", "native_store", "readers", "run_command", "send_owed_notices"]
+__all__ = [
+    "PLUGIN_HOSTED",
+    "is_plugin_hosted",
+    "native_store",
+    "readers",
+    "run_command",
+    "send_owed_notices",
+]

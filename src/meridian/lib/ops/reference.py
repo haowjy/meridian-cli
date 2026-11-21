@@ -6,7 +6,7 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.types import is_unlaunched_harness
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
@@ -117,7 +117,7 @@ def _build_tracked_reference(
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     source_goal: str | None = None,
 ) -> ResolvedSessionReference:
-    if is_unlaunched_harness(stored_harness):
+    if is_plugin_hosted(stored_harness):
         raise NativeSessionUnavailable(
             source_chat_id or source_spawn_id or "this session",
             "unbound",
