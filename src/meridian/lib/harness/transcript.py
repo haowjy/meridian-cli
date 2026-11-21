@@ -113,7 +113,7 @@ def text_from_value(value: object) -> str:
     return ""
 
 
-def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
+def preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
     compact = " ".join(value.split())
     if len(compact) <= limit:
         return compact
@@ -127,7 +127,7 @@ _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 _TOOL_BODY_KEYS = ("file_path", "path", "command", "pattern", "description", "skill")
 
 
-def _normalize_tool(name: str, body: str) -> ToolCall:
+def normalize_tool(name: str, body: str) -> ToolCall:
     lowered = name.strip().lower()
 
     if lowered == "bash":
@@ -162,15 +162,15 @@ def _tool_use_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
     name = str(block.get("name", "tool")).strip() or "tool"
     tool_input = block.get("input")
     if not isinstance(tool_input, dict):
-        return f"[tool: {name}]", _normalize_tool(name, "")
+        return f"[tool: {name}]", normalize_tool(name, "")
 
     input_payload = cast("dict[str, object]", tool_input)
     for key in _TOOL_BODY_KEYS:
         value = input_payload.get(key)
         if isinstance(value, str) and value.strip():
             body = value.strip()
-            return f"[tool: {name} {_preview(body)}]", _normalize_tool(name, body)
-    return f"[tool: {name}]", _normalize_tool(name, "")
+            return f"[tool: {name} {preview(body)}]", normalize_tool(name, body)
+    return f"[tool: {name}]", normalize_tool(name, "")
 
 
 def _tool_result_summary(block: dict[str, object]) -> str:
@@ -303,8 +303,8 @@ def _pi_tool_call_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
     body = _json_preview_payload(block.get("arguments"))
     rendered = f"[tool: {name}]"
     if body:
-        rendered = f"[tool: {name} {_preview(body)}]"
-    return rendered, _normalize_tool(name, body)
+        rendered = f"[tool: {name} {preview(body)}]"
+    return rendered, normalize_tool(name, body)
 
 
 def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscriptEvent:
@@ -432,10 +432,10 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
     if item_type in {"function_call", "custom_tool_call"}:
         name = str(payload.get("name", "tool")).strip() or "tool"
         arguments = text_from_value(payload.get("arguments", payload.get("input")))
-        tool_call = _normalize_tool(name, arguments)
+        tool_call = normalize_tool(name, arguments)
         rendered = f"[tool: {name}]"
         if arguments:
-            rendered = f"[tool: {name} {_preview(arguments)}]"
+            rendered = f"[tool: {name} {preview(arguments)}]"
         return [TranscriptMessage(role="assistant", content=rendered, tool_call=tool_call)]
 
     if item_type in {"function_call_output", "custom_tool_call_output"}:
@@ -483,7 +483,7 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
             return [
                 TranscriptMessage(
                     role="assistant",
-                    content=f"[tool: bash {_preview(command)}]",
+                    content=f"[tool: bash {preview(command)}]",
                     tool_call=tool_call,
                 )
             ]

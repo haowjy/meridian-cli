@@ -2,10 +2,11 @@
 
 Meridian never starts Antigravity (`agy`). You start `agy` yourself; Meridian installs a
 plugin that lets the session spawn agents on other harnesses, wait for them, and receive
-messages from other sessions. Meridian cannot stop `agy`. It reads two things of `agy`'s
-own: the conversation's transcript, to see whether a queued message reached the model, and
+messages from other sessions. Meridian cannot stop `agy`. It reads three things of `agy`'s
+own: the conversation's transcript (`transcript_full.jsonl`, under `~/.gemini/antigravity-cli/brain/<conversation>/`),
+to show it and to see whether a queued message reached the model, and
 the `subagents` folder of its conversation store, to tell a native subagent from a session.
-Nothing else of `agy`'s is read, and its sessions can't be opened with `session log`.
+Nothing else of `agy`'s is read.
 
 ## Install
 
@@ -37,7 +38,15 @@ agy --agent <profile>      # as usual
   prints `queued`: `agy` has no way to push a message in, so it reaches the model at the
   session's next model call, in the middle of a turn or at the start of the next one.
 
-Native `agy` subagents are not sessions: they don't appear in `spawn list`.
+- **Reading.** `meridian session log <chat or spawn>`, `session search` and `spawn --from <chat>`
+  work on an `agy` chat as on any other: the whole conversation, including turns after you
+  resumed it in `agy`. Messages Meridian injected show as injected messages (`--tools`).
+  Google doesn't document the transcript format and it can change with any `agy` version
+  (read against 1.5.10 to 1.5.13). Entries Meridian doesn't recognise are skipped and the
+  log says its rendering is incomplete.
+
+Native `agy` subagents are not sessions: they don't appear in `spawn list`, and their
+conversation IDs can't be read as sessions.
 
 ## What it can't do
 
@@ -46,10 +55,9 @@ Native `agy` subagents are not sessions: they don't appear in `spawn list`.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
   conversation's second prompt. The session context tells the model to carry on without
   Meridian until it appears.
-- **Cancel, continue, fork or read it.** `spawn cancel` on an `agy` session is refused
-  ("this session runs in agy; end it there"), `--continue`, `--fork` and `--from` refuse an
-  `agy` chat, `session log` finds no transcript, and `meridian agy` and `harness: agy` in a
-  profile don't exist. Resume a conversation in `agy`; Meridian reopens the same chat for it.
+- **Cancel, continue or fork it.** `spawn cancel` on an `agy` session is refused
+  ("this session runs in agy; end it there"), `--continue` and `--fork` refuse an
+  `agy` chat, and `meridian agy` and `harness: agy` in a profile don't exist. Resume a conversation in `agy`; Meridian reopens the same chat for it.
 - **Deliver to a session that ended.** A message that `agy` never showed its model is not
   delivered: the process exited first, or the transcript did not show it after three
   injections (the message is then not injected again). The sender is told, but late: the

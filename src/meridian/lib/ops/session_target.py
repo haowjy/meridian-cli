@@ -67,9 +67,9 @@ class TranscriptSource(NamedTuple):
     @classmethod
     def native(cls, harness: str, session_id: str, path: Path) -> TranscriptSource:
         """The one native source rule: the adapter names the kind of its own file."""
-        adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(harness))
+        reader = get_default_harness_registry().get_reader(HarnessId(harness))
         return cls(
-            kind=adapter.native_transcript_kind(path),
+            kind=reader.native_transcript_kind(path),
             session_id=session_id,
             harness=harness,
             source_label=native_source_label(harness),
@@ -167,8 +167,8 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
 
 
 def _native_target(key: NativeKey, record: session_store.SessionRecord) -> SessionLogTarget:
-    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(key.harness))
-    candidate = adapter.resolve_native_session_file(
+    reader = get_default_harness_registry().get_reader(HarnessId(key.harness))
+    candidate = reader.resolve_native_session_file(
         session_id=key.session_id, native_store=Path(key.native_store)
     )
     if candidate is None or not candidate.is_file():

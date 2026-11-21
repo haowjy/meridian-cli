@@ -50,17 +50,28 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 ## `agy/` is not a launched harness
 
 Meridian never starts Antigravity, so `HarnessId.AGY` has no adapter, bundle or shortcut:
-`launched_by_meridian` is false, and the registry holds only harnesses Meridian launches.
+`launched_by_meridian` is false, and the registry's adapters are only harnesses Meridian launches.
 Readers of stored rows ask `is_unlaunched_harness(name)`, never `== "agy"`: it makes
 `spawn cancel` refuse (a server holds every conversation of one `agy` process, and nothing
-Meridian may signal stops `agy`), `--continue`/`--fork`/`--from` refuse, and skips native
-capture and legacy import. An unlaunched harness's chat never has a native key
-(`NativeKeyFields.complete()` returns None for it), which is what keeps the readers that
-look an adapter up by key (`session log`, the search index, legacy import) away from it.
+Meridian may signal stops `agy`), `--continue`/`--fork` refuse, blocks resume in
+`decide_reentry`, and skips legacy import. Reading is not launching: the registry's
+`NativeStoreReader` (`registry.get_reader`/`find_reader`, the read half of an adapter, which
+`SubprocessHarness` extends) serves `session log`, search, capture and `--from` for every
+harness, and `agy/transcript.py` registers one for `agy`. Readers of a stored key go
+through it, never `get_subprocess_harness`. An `agy` chat records no native store: its
+layout names it (`unlaunched.native_store`, used by `NativeKeyFields.complete()`), so the
+chat record is unchanged and older builds read it as before. `agy` has no capture dialect,
+so capture reports it unsupported.
 Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
-the owed-notice sweep); a second one is a package with `commands.run_command` and
-`notices.send_owed_notices` plus a line in `_PACKAGES`, which `HarnessId.launched_by_meridian`
-also reads. `agy/` holds what the plugin runs:
+the owed-notice sweep, store, reader); a second one is a package with `commands.run_command`,
+`notices.send_owed_notices`, `state.native_store` and `transcript.READER` plus a line in
+`_PACKAGES`, which `HarnessId.launched_by_meridian` also reads.
+
+`agy/transcript.py`: `transcript_full.jsonl` is the file (`transcript.jsonl` truncates
+  fields). The parser skips and flags what it doesn't recognise; Google documents no format
+  and it changes with `agy` versions, so check `agy --version` against the module docstring.
+
+`agy/` also holds what the plugin runs:
 
 - `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
   heavy. No blocking locks (registering a request file waits at most 0.5 s for the

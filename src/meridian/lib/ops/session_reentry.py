@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from meridian.lib.core.types import is_unlaunched_harness
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.state.session_store import (
@@ -56,9 +57,11 @@ type Launch = Resume | Fork | StartFromLaunch
 
 
 def decide_reentry(
-    *, chat_id: str, live: bool, has_harness_session: bool
+    *, chat_id: str, live: bool, has_harness_session: bool, harness: str | None
 ) -> SessionReentryDecision:
 
+    if is_unlaunched_harness(harness):
+        return Blocked(f"runs in {harness}, which Meridian doesn't launch; resume it there")
     if not has_harness_session:
         return Blocked("no harness session recorded; cannot resume or fork")
     if live:
@@ -89,6 +92,7 @@ def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDe
     return decide_reentry(
         chat_id=chat_id,
         live=is_session_lease_owner_alive(roots.runtime_root, chat_id),
+        harness=record.harness,
         has_harness_session=recover_recorded_chat_harness_session_id(
             roots.runtime_root,
             chat_id,
