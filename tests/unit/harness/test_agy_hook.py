@@ -83,6 +83,67 @@ def test_static_guidance_and_session_facts_are_each_injected_once(agy_home: Path
     assert run_hook("PreInvocation", pid, payload) is None
 
 
+def test_guidance_follows_the_model_context_across_resume_and_compaction(
+    agy_home: Path,
+) -> None:
+    pid = os.getpid()
+    payload = _payload("c1", agy_home, cwd=str(agy_home))
+    transcript = Path(json.loads(payload)["transcriptPath"])
+    transcript.parent.mkdir(parents=True)
+    proc = process_dir(pid)
+    assert proc is not None
+    write_private_json(
+        proc / "rows" / "c1.json",
+        {
+            "spawn_id": "p1",
+            "chat_id": "c1",
+            "project_root": str(agy_home),
+            "runtime_root": str(agy_home / "runtime"),
+        },
+    )
+
+    def step(kind: str, text: str = "") -> str:
+        return json.dumps({"type": kind, "content": text}, separators=(",", ":")) + "\n"
+
+    # A resumed conversation: this process registers it, and the transcript already holds both.
+    held = _messages(run_hook("PreInvocation", pid, payload))
+    transcript.write_text("".join(step("SYSTEM_MESSAGE", text) for text in held))
+    for entry in (proc / "requests", proc / "briefed", proc / "seen"):
+        for path in entry.glob("*"):
+            path.unlink()
+    assert run_hook("PreInvocation", pid, payload) is None
+
+    # A compaction drops both; a half-written last line is not read yet.
+    with transcript.open("a") as handle:
+        handle.write(step("CHECKPOINT", "summary"))
+        handle.write('{"type":"USER_INPUT","con')
+    after = _messages(run_hook("PreInvocation", pid, payload))
+    assert [text.startswith("# Meridian") for text in after] == [True, True]
+    assert run_hook("PreInvocation", pid, payload) is None
+
+
+def test_unwritable_markers_never_stop_the_inbox(agy_home: Path) -> None:
+    pid = os.getpid()
+    payload = _payload("c1", agy_home, cwd=str(agy_home))
+    run_hook("PreInvocation", pid, payload)
+    proc = process_dir(pid)
+    assert proc is not None
+    for marker in ("seen", "briefed"):
+        for path in (proc / marker).glob("*"):
+            path.unlink()
+        if (proc / marker).exists():
+            (proc / marker).rmdir()
+        (proc / marker).write_text("not a directory")
+    write_private_json(
+        proc / "rows" / "c1.json",
+        {"spawn_id": "p1", "chat_id": "c1", "project_root": str(agy_home), "runtime_root": "r"},
+    )
+    inbox.enqueue("c1", "hello", _sender("p9"))
+
+    texts = _messages(run_hook("PreInvocation", pid, payload))
+    assert any("hello" in text for text in texts)
+
+
 def test_no_opinion_prints_nothing_and_bad_input_never_raises(agy_home: Path) -> None:
     assert run_hook("PreInvocation", os.getpid(), "not json") is None
     assert run_hook("Stop", os.getpid(), _payload("c1", agy_home)) is None

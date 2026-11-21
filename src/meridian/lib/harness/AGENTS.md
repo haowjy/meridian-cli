@@ -78,12 +78,17 @@ the owed-notice sweep, store, reader); a second one is a package with `commands.
 - `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
   heavy at module level. No blocking locks (registering a request file waits at most 0.5 s for the
   conversation's lock, the one the notice sweep decides closed-ness under), no output for
-  no opinion, catch everything. It writes only request files and `briefed` markers, and
+  no opinion, catch everything. It writes only request files, `briefed` and `seen` markers, and
   claims inbox entries. Its guidance comes from the launch builders in `guidance.py` (local
-  imports, about 0.4 s, so only the call that registers a conversation and the one `PreInvocation`
-  after the row appears pay it); never fork that text. The row file the server writes is the signal that
+  imports, about 0.4 s, so only the call that registers a conversation, the one `PreInvocation`
+  after the row appears and the first one after a compaction pay it); never fork that text. The row file the server writes is the signal that
   the session's facts can be injected, and `guard.sh` lets the hook run for it until the
-  `briefed` marker exists.
+  `briefed` marker exists. Whether the model's context holds a block is read from the
+  transcript (`context.py`: the steps after the last `CHECKPOINT`), never from "this
+  process injected it": a resume starts a new process over a context that has the blocks,
+  and a compaction empties the context of a process that injected them. `agy` has no
+  compaction hook; `guard.sh` greps the transcript bytes after the `seen` offset for
+  `CHECKPOINT`.
 - `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
   `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
