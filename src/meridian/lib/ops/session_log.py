@@ -135,7 +135,7 @@ def _window_hints(
     if tools_hidden:
         hints.append(
             "Tool calls, output and injected messages (plugin, hook, peer, Meridian) are hidden "
-            "(entry numbers skip them); add --tools."
+            "(entry numbers skip them, the entry count includes them); add --tools."
         )
     return tuple(hints)
 
@@ -243,7 +243,9 @@ def _segment_boundary_commands(
         return (None, None)
 
     segment_index = address_space.segment_index
-    touches_top = page.start_ordinal == address_space.first_ordinal
+    # `page.has_previous` is relative to what this view can reach: a segment's setup entry
+    # (hidden from a default `--tail`) or an injected first message is not "above" the page.
+    touches_top = not page.has_previous
     touches_bottom = not page.has_next
     window_size = _window_navigation_size(payload)
 
