@@ -70,13 +70,12 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
             request = _register(proc_dir, conversation, payload)
         if request.get("role") == "primary":
             # Registration happens once per conversation and process, so the static text
-            # rides on it whatever the event. If the text can't be built, the request is
-            # withdrawn so the next call registers, and tries the text, again.
+            # rides on it whatever the event. A failure is logged, not retried: it must
+            # not keep the conversation unregistered or delay the inbox behind it.
             try:
                 texts.append(guidance.static_guidance(Path(str(payload.get("cwd") or Path.cwd()))))
             except Exception:
-                request_path(proc_dir, conversation).unlink(missing_ok=True)
-                raise
+                _log_error("static guidance")
     if request.get("role") == "subagent":
         return None
 
