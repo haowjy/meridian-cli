@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-11-21
+
+### Fixed
+- `meridian init` now shows the warnings and errors Mars reports while it runs `mars init`, `add` and `link` (for example `target-unmanaged-collision`, when one of your own files sits where Mars would install). They print on stderr, or appear in the `diagnostics` list of `meridian --json init`. Before, they were dropped when Mars exited 0.
+
 ## [0.26.0] - 2026-11-21
 
 ### Upgrade notes
