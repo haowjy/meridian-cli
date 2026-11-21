@@ -7,18 +7,23 @@ context is the transcript's steps after its last ``CHECKPOINT`` (``agy`` 1.5.14 
 nothing earlier is rewritten), so a block is held when an injected message after that step
 carries it.
 
-``guard.sh`` greps the bytes after a recorded offset for ``CHECKPOINT``; keep ``CHECKPOINT``
-here and there the same.
+``guard.sh`` greps the bytes after a recorded offset for ``CHECKPOINT``, and ``transcript.py``
+documents the format for the session log reader. A format change for a newer ``agy`` updates
+all three.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import NamedTuple, cast
 
 CHECKPOINT = b'"type":"CHECKPOINT"'
 _SYSTEM_MESSAGE = b'"type":"SYSTEM_MESSAGE"'
+# What ``InboxEntry.render`` opens a queued message with. Such a message quotes whatever its
+# sender wrote, including a block's heading, so it never counts as the block itself.
+_QUEUED = re.compile(r"\[meridian:[^\]\s]+\]")
 
 
 class Segment(NamedTuple):
@@ -50,13 +55,35 @@ def read_segment(path: str | None) -> Segment:
             content = (
                 cast("dict[str, object]", step).get("content") if isinstance(step, dict) else None
             )
-            if isinstance(content, str):
+            if isinstance(content, str) and not _QUEUED.search(content):
                 texts.append(content)
     return Segment(texts, end)
 
 
-def compacted_since(path: str | None, offset: int) -> bool:
-    return CHECKPOINT in _read(path, offset)
+class Scan(NamedTuple):
+    """What the transcript gained since an offset.
+
+    ``recheck`` is true when the model's context may have changed: a compaction, or a file
+    shorter than the offset (rewritten or rewound). ``end`` is the offset after the last
+    complete line read.
+    """
+
+    recheck: bool
+    end: int
+
+
+def scan_since(path: str | None, offset: int) -> Scan:
+    try:
+        if path:
+            with Path(path).open("rb") as handle:
+                if handle.seek(0, 2) < offset:
+                    return Scan(True, offset)
+                handle.seek(offset)
+                data = handle.read()
+            return Scan(CHECKPOINT in data, offset + data.rfind(b"\n") + 1)
+    except OSError:
+        pass
+    return Scan(False, offset)
 
 
 def _read(path: str | None, offset: int) -> bytes:

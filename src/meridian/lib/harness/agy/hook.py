@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.harness.agy import guidance, inbox
-from meridian.lib.harness.agy.context import compacted_since, read_segment
+from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
     agy_root,
     briefed_path,
@@ -75,13 +75,19 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         return None
 
     transcript = payload.get("transcriptPath")
-    texts = _guidance(
-        proc_dir,
-        conversation,
-        Path(str(payload.get("cwd") or Path.cwd())),
-        transcript if isinstance(transcript, str) else None,
-        registered=registered,
-    )
+    transcript = transcript if isinstance(transcript, str) else None
+    try:
+        texts = _guidance(
+            proc_dir,
+            conversation,
+            Path(str(payload.get("cwd") or Path.cwd())),
+            transcript,
+            registered=registered,
+        )
+    except Exception:
+        # Guidance is best effort: a failure here must not delay the inbox below.
+        _log_error("guidance")
+        texts = []
     texts.extend(entry.render() for entry in inbox.claim_batch(conversation, transcript))
     return inject_reply(texts) if texts else None
 
@@ -97,19 +103,25 @@ def _guidance(
     """The guidance blocks the model's current context lacks.
 
     Checked when this process registers the conversation (a resumed one may already hold
-    them), when the server's row first exists (its facts), and when the transcript shows a
-    compaction since the last check, which drops both blocks. ``guard.sh`` starts the hook
-    for the last two. The row file is the server's signal that the row exists, so nothing
-    waits for it. Markers are written before the text is built: a failure is logged and not
-    retried, as a hook that failed on every call would delay the inbox behind it.
+    them), when the server's row first exists (its facts), and when the context may have
+    changed: a compaction, a transcript shorter than the last offset, or no ``seen`` file
+    for a registered primary (an older build registered it). ``guard.sh`` starts the hook
+    for the row and the first two. The row file is the server's signal that the row exists,
+    so nothing waits for it. Markers are written before the text is built: a failure is
+    logged by the caller and not retried, as a hook that failed on every call would delay
+    the inbox behind it. Whenever this runs, ``seen`` advances to what it read, so
+    ``guard.sh`` never rescans it.
     """
 
     seen = read_seen_offset(proc_dir, conversation)
-    compacted = seen is not None and compacted_since(transcript, seen)
+    scan = scan_since(transcript, seen) if seen is not None else None
+    recheck = scan is None or scan.recheck
     row = read_json(row_path(proc_dir, conversation))
     briefed = briefed_path(proc_dir, conversation)
     facts_due = row is not None and not briefed.exists()
-    if not (registered or compacted or facts_due):
+    if not (registered or recheck or facts_due):
+        if scan is not None and scan.end != seen:
+            write_seen(proc_dir, conversation, scan.end, transcript)
         return []
 
     segment = read_segment(transcript)
@@ -121,12 +133,12 @@ def _guidance(
     texts: list[str] = []
     # Capabilities differ across a project's first calls (its state ID appears with its
     # first row), so the static block is matched by its heading, the facts by their text.
-    if (registered or compacted) and not segment.holds(guidance.STATIC_HEADING):
+    if (registered or recheck) and not segment.holds(guidance.STATIC_HEADING):
         try:
             texts.append(guidance.static_guidance(cwd))
         except Exception:
             _log_error("static guidance")
-    if row is not None and (facts_due or compacted):
+    if row is not None and (facts_due or recheck):
         try:
             facts = guidance.session_facts(row)
             if not segment.holds(facts):

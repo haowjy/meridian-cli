@@ -15,6 +15,9 @@ keep after exit. ``transcript.jsonl`` beside it has the same steps with long fie
 - ``SYSTEM_MESSAGE``: text a hook or the harness injected, inside ``<SYSTEM_MESSAGE>``.
 - ``CHECKPOINT``: the summary after a compaction. ``ERROR_MESSAGE``: a failed model call.
 
+``context.py`` and the ``meridian-session`` hook's ``guard.sh`` match ``CHECKPOINT`` and
+``SYSTEM_MESSAGE`` lines by their raw bytes; a format change for a newer ``agy`` updates all three.
+
 An unknown ``type`` is skipped and flagged through ``rendering_reason``, so a newer ``agy``
 never fails a read. The generic JSONL reader already drops malformed lines and an unfinished
 last line.
