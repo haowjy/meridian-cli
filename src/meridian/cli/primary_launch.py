@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.relocate_prompt import RelocateStop
@@ -20,9 +20,10 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import HarnessId
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.bundle import get_launch_ports
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
-from meridian.lib.harness.plugin_hosted import launch_script_dir
 from meridian.lib.harness.printed import PrintedLaunch, print_launch
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
@@ -81,6 +82,10 @@ class PrimaryLaunchOutput(BaseModel):
     resume_command: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
+    # A dry run of a harness Meridian prints the command for: where the command runs and
+    # what it sets.
+    command_cwd: str | None = None
+    command_env: dict[str, str] = Field(default_factory=dict)
     launcher_diagnostics_path: Path | None = None
     # Set instead of the fields above when the harness's command is printed, not run.
     printed: PrintedLaunch | None = None
@@ -120,6 +125,9 @@ class PrimaryLaunchOutput(BaseModel):
             if self.terminal_surface_mode:
                 lines.append(f"Terminal surface mode: {self.terminal_surface_mode}")
             lines.append(shlex.join(self.command))
+            if self.command_cwd:
+                lines.append(f"cwd: {self.command_cwd}")
+                lines.extend(f"env: {key}={value}" for key, value in self.command_env.items())
         elif self.resume_command:
             if self.forked_from:
                 lines.append(f"Session forked from {self.forked_from}.")
@@ -243,25 +251,6 @@ def run_primary_launch(
     command of a harness Meridian may not exec and prints it. The launch runs as a dry run,
     which writes nothing, and the output carries ``printed`` instead of a report.
     """
-    if print_only:
-        refuse_unreachable_options(
-            {
-                "--fork": fork_ref is not None,
-                "--fork-fresh": fork_fresh_ref is not None,
-                "--from": from_ref is not None,
-                "-f": bool(reference_files),
-                "--skills": bool(skills),
-                "--goal": goal is not None,
-                "--sandbox": sandbox is not None,
-                "--network": network is not None,
-                "--network-allow": bool(network_allow),
-                "--network-deny": bool(network_deny),
-                "--autocompact": autocompact is not None,
-                "--autocompact-pct": autocompact_pct is not None,
-                "--timeout": timeout is not None,
-            },
-            passthrough,
-        )
     report_only = dry_run
     dry_run = dry_run or print_only
     if continue_ref is not None and model is not None:
@@ -552,6 +541,35 @@ def run_primary_launch(
             )
         )
 
+    printed_ports = None
+    if print_only:
+        assert launch_harness is not None
+        printed_ports = get_launch_ports(HarnessId(launch_harness)).printed
+        if printed_ports is None:
+            raise ValueError(
+                f"`meridian {harness}` prints a command and cannot launch the "
+                f"{launch_harness} chat it resumes or forks."
+            )
+        refuse_unreachable_options(
+            {
+                "--fork": fork_ref is not None,
+                "--fork-fresh": fork_fresh_ref is not None,
+                "--from": from_ref is not None,
+                "-f": bool(reference_files),
+                "--skills": bool(skills),
+                "--goal": goal is not None,
+                "--sandbox": sandbox is not None,
+                "--network": network is not None,
+                "--network-allow": bool(network_allow),
+                "--network-deny": bool(network_deny),
+                "--autocompact": autocompact is not None,
+                "--autocompact-pct": autocompact_pct is not None,
+                "--timeout": timeout is not None,
+            },
+            passthrough,
+            printed_ports,
+        )
+
     hold: ContinueHold | None = None
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
@@ -636,13 +654,8 @@ def run_primary_launch(
 
     if print_only and not report_only:
         assert launch_result.command_cwd is not None
-        note = (
-            "--work and --task-dir only add their directories to agy's workspace: the "
-            "session starts in the project directory and is not attached to the work item."
-            if work.strip() or normalized_task_dir
-            else None
-        )
-        assert launch_harness is not None
+        assert printed_ports is not None
+        note = printed_ports.workspace_note if work.strip() or normalized_task_dir else None
         return PrimaryLaunchOutput(
             message="Launch printed.",
             exit_code=0,
@@ -653,7 +666,7 @@ def run_primary_launch(
                 warnings=tuple(
                     item for item in (continue_warning, launch_result.warning, note) if item
                 ),
-                script_dir=launch_script_dir(launch_harness),
+                script_dir=printed_ports.script_dir(),
             ),
         )
 
@@ -703,5 +716,7 @@ def run_primary_launch(
             launch_result.warning,
         ),
         terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
+        command_cwd=launch_result.command_cwd.as_posix() if launch_result.command_cwd else None,
+        command_env=launch_result.command_env,
         launcher_diagnostics_path=launch_result.launcher_diagnostics_path,
     )

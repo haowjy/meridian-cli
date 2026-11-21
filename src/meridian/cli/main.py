@@ -81,8 +81,8 @@ from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
-from meridian.lib.core.types import harness_names_text
-from meridian.lib.harness.printed import EVAL_HINT, PrintedLaunch
+from meridian.lib.core.types import harness_choices_text
+from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.telemetry import emit_telemetry
@@ -331,7 +331,7 @@ def root(
         str | None,
         Parameter(
             name="--harness",
-            help=f"Force harness id ({harness_names_text()}; agy prints its command).",
+            help=f"Force harness id ({harness_choices_text()}).",
         ),
     ] = None,
     agent: Annotated[
@@ -546,7 +546,7 @@ def _emit_printed(printed: PrintedLaunch) -> None:
 
     sink = current_output_sink()
     emit(printed)
-    sink.status(f"hint: {EVAL_HINT}")
+    sink.status(f"hint: {eval_hint(printed.argv[0])}")
     for warning in printed.warnings:
         sink.warning(warning)
 

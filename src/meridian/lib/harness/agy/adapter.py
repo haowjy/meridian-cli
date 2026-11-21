@@ -26,11 +26,12 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
-from meridian.lib.harness.agy.state import AGENT_ENV, APPROVAL_ENV
+from meridian.lib.harness.agy.state import AGENT_ENV, APPROVAL_ENV, launch_script_dir
 from meridian.lib.harness.agy.transcript import AgyReader
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     LaunchPorts,
+    PrintedLaunchPorts,
     register_harness,
 )
 from meridian.lib.harness.semantics import HarnessSemantics
@@ -52,19 +53,17 @@ from meridian.lib.safety.policy import (
 _OWN_CUSTOMIZATIONS = (".agy", ".agents")
 
 
-def _workspace_roots(spec: ResolvedLaunchSpec) -> tuple[Path, ...]:
-    """The roots beyond the working directory the session may use: the workspace's, the
-    context directories' and the task directory. Bind records them as the write roots a
-    sandbox would protect; the runtime and temp roots it also projects are not among them."""
-
-    roots = tuple(Path(root) for root in spec.permission_policy.sandbox_write_roots)
-    return roots[1:]  # the first is the control root, which is where ``agy`` starts
+class AgyLaunchSpec(ResolvedLaunchSpec):
+    # The roots beyond the working directory the session may use (``SpawnParams``): the
+    # command adds them with ``--add-dir``.
+    workspace_roots: tuple[Path, ...] = ()
 
 
 def _split_roots(spec: ResolvedLaunchSpec) -> tuple[list[Path], list[Path]]:
+    assert isinstance(spec, AgyLaunchSpec)  # the only spec this adapter resolves
     added: list[Path] = []
     skipped: list[Path] = []
-    for root in _workspace_roots(spec):
+    for root in spec.workspace_roots:
         has_own = any((root / name).exists() for name in _OWN_CUSTOMIZATIONS)
         (skipped if has_own else added).append(root)
     return added, skipped
@@ -74,7 +73,14 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
     BASE_COMMAND: ClassVar[tuple[str, ...]] = ("agy",)
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = ("agy",)
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"model", "agent", "extra_args", "user_turn_content", "continue_harness_session_id"}
+        {
+            "model",
+            "agent",
+            "extra_args",
+            "user_turn_content",
+            "continue_harness_session_id",
+            "workspace_roots",
+        }
     )
 
     @property
@@ -92,7 +98,7 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
         return HarnessContract(
             capabilities=self.capabilities,
             transport_ids=(),
-            launch_spec_cls="ResolvedLaunchSpec",
+            launch_spec_cls="AgyLaunchSpec",
             bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
             workspace_roots=WorkspaceRoots.ADD_DIR_ARGS,
         )
@@ -107,14 +113,15 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
         # through the plugin's hook, not the command.
         return frozenset(SpawnParams.model_fields) - self._CONSUMED_FIELDS
 
-    def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
-        return ResolvedLaunchSpec(
+    def resolve_launch_spec(self, run: SpawnParams) -> AgyLaunchSpec:
+        return AgyLaunchSpec(
             harness=HarnessId.AGY,
             model=str(run.model).strip() if run.model else None,
             agent_name=(run.agent or "").strip() or None,
             continue_session_id=(run.continue_harness_session_id or "").strip() or None,
             user_turn_content=(run.user_turn_content or "").strip() or None,
             extra_args=run.extra_args,
+            workspace_roots=run.workspace_roots,
             interactive=True,
         )
 
@@ -202,16 +209,51 @@ def agy_permission_report(spec: ResolvedLaunchSpec) -> EnforcementReport:
     return complete_report(policy, reported, harness="agy")
 
 
+# What the person's options would change, and why it cannot reach a session Meridian does not
+# start: the plugin's hook and server see the conversation only after the person runs the
+# command, and a command line has no place for these.
+_FORK_REASON = "a fork starts a conversation Meridian would have to create"
+_PROMPT_REASON = "the printed command carries only your own prompt"
+_NO_NETWORK_REASON = "agy has no network flag Meridian can set"
+_NO_COMPACTION_REASON = "agy has no compaction flag"
+
+_PRINTED = PrintedLaunchPorts(
+    refused_options={
+        "--fork": _FORK_REASON,
+        "--fork-fresh": _FORK_REASON,
+        "--from": _PROMPT_REASON,
+        "-f": _PROMPT_REASON,
+        "--skills": "agy loads skills from the project's synced plugin, not from the command",
+        "--goal": "a goal is a completion contract Meridian's runner enforces",
+        "--sandbox": "agy has no sandbox flag Meridian can set",
+        "--network": _NO_NETWORK_REASON,
+        "--network-allow": _NO_NETWORK_REASON,
+        "--network-deny": _NO_NETWORK_REASON,
+        "--autocompact": _NO_COMPACTION_REASON,
+        "--autocompact-pct": _NO_COMPACTION_REASON,
+        "--timeout": "Meridian does not run agy, so it cannot stop it",
+    },
+    refused_passthrough={
+        "--append-system-prompt": "agy has no system-prompt flag to carry it",
+    },
+    workspace_note=(
+        "--work and --task-dir only add their directories to agy's workspace: the "
+        "session starts in the project directory and is not attached to the work item."
+    ),
+    script_dir=launch_script_dir,
+)
+
 register_harness(
-    LaunchPorts(
+    LaunchPorts[ResolvedLaunchSpec](
         harness_id=HarnessId.AGY,
         adapter=AgyAdapter(),
-        spec_cls=ResolvedLaunchSpec,
+        spec_cls=AgyLaunchSpec,
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_agy_spec_to_cli_args,
             permission_report=agy_permission_report,
         ),
         # No events reach Meridian from ``agy``: the plugin writes the row.
         semantics=HarnessSemantics(events={}),
+        printed=_PRINTED,
     )
 )

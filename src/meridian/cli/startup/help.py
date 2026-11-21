@@ -13,7 +13,7 @@ from meridian.cli.command_groups import (
     HUMAN_ROOT_ORDER,
 )
 from meridian.cli.startup.catalog import COMMAND_CATALOG
-from meridian.lib.core.types import HarnessId, harness_names_text
+from meridian.lib.core.types import HarnessId, harness_choices_text
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ OPTIONS: tuple[Option, ...] = (
     Option("-m, --model TEXT", "Model id or alias for primary harness.", False),
     Option(
         "--harness TEXT",
-        f"Force harness id ({harness_names_text()}; agy prints its command).",
+        f"Force harness id ({harness_choices_text()}).",
         False,
     ),
     Option("--format TEXT", "Set output format: text or json.", False),

@@ -221,6 +221,8 @@ class SpawnParams(BaseModel):
     control_root: str | None = None
     task_cwd: str | None = None
     projected_roots: tuple[Path, ...] = ()
+    # ``projected_roots`` without Meridian's own runtime, temp and socket roots.
+    workspace_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
     continue_fork: bool = False

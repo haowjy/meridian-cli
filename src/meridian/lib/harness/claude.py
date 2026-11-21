@@ -266,6 +266,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
+            "workspace_roots",
             "model_override_explicit",
             "reference_items",
             "task_cwd",

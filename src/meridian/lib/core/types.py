@@ -5,9 +5,7 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator, StringConstraints
 
-# Harnesses Meridian prints the command for instead of exec'ing. Independent of
-# ``harness.plugin_hosted``: that says whose plugin writes the session's row.
-_NOT_EXECED = frozenset({"agy"})
+from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
 
 
 class HarnessId(StrEnum):
@@ -21,10 +19,10 @@ class HarnessId(StrEnum):
 
     @property
     def launched_by_meridian(self) -> bool:
-        """Whether Meridian may exec this harness. False for ``agy``: Meridian reads its
-        sessions and builds its command, and never runs it."""
+        """Whether Meridian may exec this harness. False for a plugin-hosted one (``agy``):
+        Meridian reads its sessions and builds its command, and never runs it."""
 
-        return self.value not in _NOT_EXECED
+        return self.value not in PLUGIN_HOSTED
 
     @classmethod
     def _missing_(cls, value: object) -> HarnessId | None:
@@ -47,6 +45,13 @@ def harness_names_text() -> str:
 
     names = [harness.value for harness in launched_harnesses()]
     return f"{', '.join(names[:-1])}, or {names[-1]}"
+
+
+def harness_choices_text() -> str:
+    """``harness_names_text`` plus the harnesses whose launch is printed, for ``--harness`` help."""
+
+    printed = [harness.value for harness in HarnessId if not harness.launched_by_meridian]
+    return f"{harness_names_text()}; {', '.join(printed)} prints its command"
 
 
 class TransportId(StrEnum):

@@ -2,7 +2,8 @@
 
 The person starts the session and the harness's plugin (hook and MCP server) writes its
 row, so Meridian runs no runner for it: nothing to cancel, repair or import. Whether
-Meridian may exec the harness is a different question: ``HarnessId.launched_by_meridian``.
+Meridian may exec the harness is the same fact: ``HarnessId.launched_by_meridian`` is false
+exactly for these, and their launch is printed (``PrintedLaunchPorts``).
 
 Their package holds what runs inside the person's session: ``commands.run_command(argv)``
 for ``meridian harness-hook|harness-mcp <harness> ...``, and ``notices.send_owed_notices()``
@@ -17,7 +18,6 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
-from pathlib import Path
 
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
@@ -54,13 +54,6 @@ def native_store(name: str) -> str | None:
     return str(importlib.import_module(f"{_PACKAGES[name]}.state").native_store())
 
 
-def launch_script_dir(name: str) -> Path:
-    """Where the command Meridian prints for a plugin-hosted harness spills when it is too
-    long for a shell line: under the harness's own state directory."""
-
-    return importlib.import_module(f"{_PACKAGES[name]}.state").launch_script_dir()
-
-
 def send_owed_notices() -> None:
     """Tell the senders of messages that closed sessions never showed their model."""
 
@@ -71,7 +64,6 @@ def send_owed_notices() -> None:
 __all__ = [
     "PLUGIN_HOSTED",
     "is_plugin_hosted",
-    "launch_script_dir",
     "native_store",
     "run_command",
     "send_owed_notices",

@@ -123,6 +123,23 @@ def _no_event_sinks(launch: LaunchPaths) -> tuple[Callable[[RawHarnessEvent], No
 
 
 @dataclass(frozen=True)
+class PrintedLaunchPorts:
+    """What printing the launch of a harness Meridian may not exec needs.
+
+    Registered exactly for the plugin-hosted harnesses (``is_plugin_hosted``).
+    """
+
+    # Option -> why a printed command cannot honour it. Keys are CLI flags (``--fork``) and
+    # the person's passthrough flags (``refused_passthrough``).
+    refused_options: Mapping[str, str]
+    refused_passthrough: Mapping[str, str]
+    # Said when ``--work`` or ``--task-dir`` only adds directories to the session.
+    workspace_note: str
+    # Where a command too long for a shell line spills.
+    script_dir: Callable[[], Path]
+
+
+@dataclass(frozen=True)
 class LaunchPorts(Generic[SpecT]):
     """What building one harness's launch needs: adapter, spec, projections, semantics.
 
@@ -134,6 +151,7 @@ class LaunchPorts(Generic[SpecT]):
     spec_cls: type[SpecT]
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
+    printed: PrintedLaunchPorts | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +189,15 @@ def register_harness(launch: LaunchPorts[Any], process: ProcessPorts[Any] | None
             f"existing adapter={existing}, incoming adapter={incoming}"
         )
     hosted = is_plugin_hosted(harness_id.value)
+    if hosted != (launch.printed is not None):
+        raise ValueError(
+            f"harness {harness_id} "
+            + (
+                "is hosted by its plugin and must register printed-launch ports"
+                if hosted
+                else "is run by Meridian and must register no printed-launch ports"
+            )
+        )
     if hosted == (process is not None):
         raise ValueError(
             f"harness {harness_id} "
@@ -438,6 +465,7 @@ __all__ = [
     "LaunchPorts",
     "ManagedPrimaryProjectionPorts",
     "PrimaryMessageRoute",
+    "PrintedLaunchPorts",
     "ProcessPorts",
     "bind_launch_spec",
     "get_connection_cls",

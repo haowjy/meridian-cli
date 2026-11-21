@@ -244,6 +244,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
+            "workspace_roots",
             "skills",
             "agent",
             "adhoc_agent_payload",

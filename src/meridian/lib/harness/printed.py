@@ -1,6 +1,6 @@
 """A launch Meridian prints for the person to run, because it may not exec the harness.
 
-Stdout is one shell line (``(cd DIR && agy ...)``, so ``eval`` leaves the caller's shell
+Stdout is one shell line (``(cd DIR && <harness> ...)``, so ``eval`` leaves the caller's shell
 where it was). A command that is long or holds a newline is written to a private script
 under the harness's state directory and stdout is ``sh <script>``: some shells and the
 agents that paste the line cap its length. ``env`` is only what the harness projects on top
@@ -23,7 +23,10 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
 _ONE_LINER_MAX_CHARS = 240
 _SCRIPT_MAX_AGE_SECONDS = 7 * 24 * 3600
-EVAL_HINT = 'eval "$(meridian agy ...)" runs it in your shell'
+
+
+def eval_hint(harness: str) -> str:
+    return f'eval "$(meridian {harness} ...)" runs it in your shell'
 
 
 class PrintedLaunch(BaseModel):
@@ -87,4 +90,4 @@ def _prune(script_dir: Path) -> None:
             continue  # another run pruned it first
 
 
-__all__ = ["EVAL_HINT", "PrintedLaunch", "print_launch"]
+__all__ = ["PrintedLaunch", "eval_hint", "print_launch"]

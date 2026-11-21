@@ -49,11 +49,10 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 
 ## `agy/` is hosted by its plugin
 
-Meridian never runs Antigravity, and two different facts say so; ask the one you mean.
-`HarnessId.launched_by_meridian` is false for `agy`: Meridian may not exec it, so a launch that
+Meridian never runs Antigravity. `plugin_hosted.PLUGIN_HOSTED` is the one list of such harnesses;
+`HarnessId.launched_by_meridian` derives from it. Because Meridian may not exec it, a launch that
 names it **prints** the command (`meridian agy`, `--harness agy`, `--continue <agy chat>`);
-shortcut names, `--harness` help and streaming serve ask this. `plugin_hosted.is_plugin_hosted(name)`
-is true: the harness's plugin writes the session's row and no Meridian runner exists, so
+shortcut names, `--harness` help and streaming serve ask this. The harness's plugin writes the session's row and no Meridian runner exists, so
 readers of stored rows ask it, never `== "agy"`. It makes `spawn cancel` refuse (a server
 holds every conversation of one `agy` process, and nothing Meridian may signal stops
 `agy`), keeps `spawn` off the harness (`_excluded_harnesses_for_surface` adds it to Mars's
@@ -68,9 +67,13 @@ bootstrap, no background repairs, autosync or telemetry maintenance), and `run_p
 runs it as a dry run and returns `PrimaryLaunchOutput.printed` (`printed.py`). Mars may name a
 harness Meridian may not exec only for a pin (`bundle_adapter._parse_harness_id`); any other
 launch naming one is an error. Everything the command needs reaches it through the adapter:
-`project_launch_env` is the printed environment overlay (`MERIDIAN_AGY_AGENT`, approval),
+`project_launch_env` is the printed environment overlay (`_MERIDIAN_AGY_AGENT`, approval),
 `project_content` drops Meridian's guidance (the hook delivers it), and workspace roots come
-from `spec.permission_policy.sandbox_write_roots` minus the control root. A root holding `.agy/`
+from `SpawnParams.workspace_roots` (the spec's `AgyLaunchSpec.workspace_roots`: projected roots
+minus Meridian's runtime, temp and socket roots and the control root). What printing needs of a
+harness (options it cannot honour and why, the `--work`/`--task-dir` note, where scripts spill)
+is its `LaunchPorts.printed` (`PrintedLaunchPorts`), required exactly for plugin-hosted harnesses;
+`print_only` and the CLI ask the ports and name no harness. A root holding `.agy/`
 or `.agents/` is not added (a warning says so). The hook copies the overlay into the request
 file and `holds.py` writes it, with the model, into the row's `LaunchPolicySnapshot` and
 model selection, which is what a continue replays; a row without them still continues with `-m`.

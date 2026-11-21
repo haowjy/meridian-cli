@@ -288,6 +288,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
+            "workspace_roots",
             "skills",
             "model_override_explicit",
             "reference_items",
