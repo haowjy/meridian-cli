@@ -6,7 +6,7 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.harness.plugin_hosted import is_plugin_hosted
+from meridian.lib.harness.plugin_hosted import native_store
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
@@ -117,15 +117,6 @@ def _build_tracked_reference(
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     source_goal: str | None = None,
 ) -> ResolvedSessionReference:
-    if is_plugin_hosted(stored_harness):
-        raise NativeSessionUnavailable(
-            source_chat_id or source_spawn_id or "this session",
-            "unbound",
-            hint=(
-                f"Its transcript is readable (session log), but it runs in {stored_harness}, "
-                "which Meridian doesn't launch: resume it there."
-            ),
-        )
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
         harness=stored_harness,
@@ -138,7 +129,9 @@ def _build_tracked_reference(
         source_spawn_id=source_spawn_id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_native_store=source_native_store,
+        # A plugin-hosted harness records no store: its own layout names it.
+        source_native_store=source_native_store
+        or (native_store(stored_harness) if stored_harness else None),
         source_launch_policy_snapshot=source_launch_policy_snapshot,
         source_goal=source_goal,
         tracked=True,

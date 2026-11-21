@@ -60,10 +60,14 @@ def decide_reentry(
     *, chat_id: str, live: bool, has_harness_session: bool, harness: str | None
 ) -> SessionReentryDecision:
 
-    if is_plugin_hosted(harness):
-        return Blocked(f"runs in {harness}, which Meridian doesn't launch; resume it there")
     if not has_harness_session:
         return Blocked("no harness session recorded; cannot resume or fork")
+    if is_plugin_hosted(harness):
+        # Resuming prints the command; a chat whose plugin still holds it is open in a
+        # terminal, and a fork of it would be a conversation Meridian cannot create.
+        if live:
+            return Blocked(f"open in {harness} already; close it there, then resume")
+        return Resume(chat_id)
     if live:
         return Fork(chat_id)
     return Resume(chat_id)

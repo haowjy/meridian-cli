@@ -10,6 +10,7 @@ break the person's session.
 from __future__ import annotations
 
 import json
+import os
 import time
 import traceback
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing import Any
 from meridian.lib.harness.agy import guidance, inbox
 from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
+    AGENT_ENV,
+    APPROVAL_ENV,
     agy_root,
     briefed_path,
     is_safe_id,
@@ -162,6 +165,9 @@ def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dic
         "workspace_paths": payload.get("workspacePaths"),
         "transcript_path": payload.get("transcriptPath"),
         "model": payload.get("modelName"),
+        # What ``meridian agy`` printed into the command's environment, if the person ran it.
+        "agent": os.environ.get(AGENT_ENV) or None,
+        "approval": os.environ.get(APPROVAL_ENV) or None,
         "registered_at": time.time(),
     }
     write_private_json(request_path(proc_dir, conversation), request)

@@ -169,6 +169,8 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
     # Imported here: the hook shares this package and must not load the launch stack.
     from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
     from meridian.lib.config.project_root import resolve_project_root_resolution
+    from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.core.types import SpawnId
     from meridian.lib.launch.primary_hold import PrimaryRow, primary_hold
     from meridian.lib.launch.request import SessionRequest
@@ -178,6 +180,16 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
     from meridian.lib.state import spawn_store
 
     conversation = hold.conversation
+    agent = str(request.get("agent") or "")
+    model = str(request.get("model") or "")
+    # The command the person ran named this agent and approval; the snapshot is what a
+    # continue replays, so ``meridian agy --continue`` restores them.
+    policy = LaunchPolicySnapshot(
+        model=model,
+        harness="agy",
+        agent=agent or None,
+        execution_policy=ResolvedExecutionPolicy(approval=request.get("approval") or None),
+    )
     cwd = Path(str(request.get("cwd") or Path.home()))
     project_root = resolve_project_root_resolution(execution_cwd=cwd, ignore_env=True).project_root
     runtime_root = resolve_runtime_root(project_root)
@@ -191,8 +203,8 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         ),
         session_metadata=PrimarySessionMetadata(
             harness="agy",
-            model=str(request.get("model") or ""),
-            agent="",
+            model=model,
+            agent=agent,
             agent_path="",
             skills=(),
             skill_paths=(),
@@ -214,7 +226,9 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         ) as primary,
     ):
         launch = primary.start(work_id=None)
-        primary.bind_observed_identity(conversation, harness="agy", policy=None)
+        primary.bind_observed_identity(
+            conversation, harness="agy", policy=policy, observed_model=model or None
+        )
         service.lifecycle.bootstrap_from_disk(str(launch.spawn_id))
         held = HeldRow(str(launch.spawn_id), primary.chat_id, project_root, runtime_root, cwd)
         # A launched primary gets its links from launch preparation; this one has none, and

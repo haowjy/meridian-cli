@@ -156,11 +156,19 @@ class PrimaryHold:
         *,
         harness: str,
         policy: LaunchPolicySnapshot | None,
+        observed_model: str | None = None,
     ) -> NativeRun:
-        """Bind a native session the caller observed running: exact, nothing to assign."""
+        """Bind a native session the caller observed running: exact, nothing to assign.
+
+        ``observed_model`` is the harness's name for the model it runs, which a continue
+        replays."""
         self.native_run = bind_observed_entry(
             self.attempt, harness=harness, session_id=session_id, policy=policy
         )
+        if observed_model:
+            self.attempt.record_observed_model(
+                harness=harness, harness_session_id=session_id, model=observed_model
+            )
         return self.native_run
 
     def conclude_identity(

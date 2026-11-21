@@ -9,6 +9,7 @@ from typing import cast
 import psutil
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
@@ -77,6 +78,10 @@ def _busy_error(
     runtime_root: Path, spawn_id: str, chat_id: str | None, caller_spawn_id: str | None
 ) -> ValueError:
     row = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+    if row is not None and is_plugin_hosted(row.harness):
+        # No runner to message and no fork to offer: its plugin's server holds the lock for
+        # as long as the person's terminal has the conversation open.
+        return ValueError(f"{spawn_id} is open in {row.harness}; close it there, then continue")
     if row is not None and is_process_dead_with_birth(row.runner_pid, row.runner_created_at_epoch):
         return ValueError(f"{spawn_id} is being continued or repaired")
     if caller_spawn_id == spawn_id:

@@ -1,9 +1,10 @@
 """The Meridian guidance an ``agy`` session gets from its hook, built by the launch builders.
 
-Other harnesses receive this text in their launch prompt; ``agy`` has no launch, so the hook
-delivers it: the static part on the call that registers the conversation, and the session's
-own facts (chat ID, links) once the server holds its row. Imports are local: only a hook
-that has something to say pays for the launch stack.
+Other harnesses receive this text in their launch prompt; the command ``meridian agy`` prints
+carries none of it (only the person's own ``-p``), so the hook delivers it: the static part on
+the call that registers the conversation, and the session's own facts (chat ID, links) once
+the server holds its row. Imports are local: only a hook that has something to say pays for
+the launch stack.
 
 The hook payload names no agent, so there is no profile to read. The session is treated as
 able to spawn: it was given the tool for that, and ``meridian spawn subagents`` lists what

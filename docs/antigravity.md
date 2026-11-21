@@ -1,7 +1,7 @@
 # Using Meridian from Antigravity
 
-Meridian never starts Antigravity (`agy`). You start `agy` yourself; Meridian installs a
-plugin that lets the session spawn agents on other harnesses, wait for them, and receive
+Meridian never starts Antigravity (`agy`). You start `agy` yourself, with a command Meridian
+prints (`meridian agy`, below) or your own; Meridian installs a plugin that lets the session spawn agents on other harnesses, wait for them, and receive
 messages from other sessions. Meridian cannot stop `agy`. It reads two things of `agy`'s
 own: the conversation's transcript (`transcript_full.jsonl`, under `~/.gemini/antigravity-cli/brain/<conversation>/`),
 to show it and to see whether a queued message reached the model, and
@@ -22,6 +22,45 @@ agy --agent <profile>      # as usual
 `mars sync` writes two entries into `.agy/`, named `meridian-session` (hooks) and `meridian`
 (MCP server). Nothing else changes; remove them with `meridian mars unlink agy`. If
 `meridian` is not on `agy`'s `PATH`, the hooks do nothing and `agy` works as before.
+
+## Start `agy` the Meridian way
+
+`meridian agy` builds the launch the way `meridian claude` does (Mars picks the model and
+effort, the profile, the workspace directories, `--continue`) and prints the `agy` command
+instead of running it, so you run it yourself:
+
+```bash
+meridian agy -m gemini-3.8-flash --effort high -a coder -p "fix the failing test"
+# (cd /path/to/project && MERIDIAN_AGY_AGENT=coder agy --model gemini-3.8-flash-high --agent coder ...)
+eval "$(meridian agy -m gemini-3.8-flash)"    # run it in your shell
+meridian agy --continue c12                   # resume a chat; keeps its model, agent and approval
+```
+
+- **It writes nothing** except a script for a long command. A command over about 240 characters
+  or with a newline (a multi-line `-p`) is written to `~/.meridian/agy/launch/<id>.sh` and
+  stdout is `sh <path>`; scripts older than 7 days are removed on the next run. Stdout is only
+  the command; the hint that `eval` runs it, and any warnings, go to stderr. `--json` prints
+  `{command, argv, cwd, env, script, warnings}`, where `env` is only what the command sets.
+  `meridian agy --dry-run` prints the usual dry-run report.
+- **The session registers when you run the command.** The plugin's hook and server create the
+  row, as for any `agy` you start. The command carries `MERIDIAN_AGY_AGENT` (and
+  `MERIDIAN_AGY_APPROVAL`) so the row knows the profile and approval; a continue replays them.
+- **Model and effort are one choice.** Mars folds `--effort` into the model slug (`-m
+  gemini-3.8-flash --effort high` is `--model gemini-3.8-flash-high`), because `agy` fails when
+  given a tiered slug and `--effort`. An effort the model's tiers lack moves to the nearest one
+  with a warning. A continue always passes `--model`: `agy` resumes on your default model
+  without it.
+- **Directories.** The command starts in the project directory. Workspace and context roots,
+  `--task-dir` and `--work`'s directory become `--add-dir`, except a directory with its own
+  `.agy/` or `.agents/`: its hooks and MCP servers would run beside the project's, so it is
+  skipped with a warning. `--work` and `--task-dir` add directories only; they do not attach
+  the session to a work item, and `--work` must name an existing item.
+- **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
+  `--sandbox`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
+  `--`. Arguments after `--` go to `agy`.
+- **`spawn` never routes to `agy`** (`spawn --harness agy`, `spawn --continue <agy chat>`), and
+  a profile's `harness: agy` without `meridian agy` falls through to another harness.
+- **A chat open in another `agy`** is refused: close that `agy` first. There is no fork.
 
 ## What the session can do
 
@@ -67,9 +106,9 @@ conversation IDs can't be read as sessions.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
   conversation's second prompt, and the session's chat ID arrives with it. Until then the
   model has the guidance but may find no tool.
-- **Cancel, continue or fork it.** `spawn cancel` on an `agy` session is refused
-  ("this session runs in agy; end it there"), `--continue` and `--fork` refuse an
-  `agy` chat, and `meridian agy` and `harness: agy` in a profile don't exist. Resume a conversation in `agy`; Meridian reopens the same chat for it.
+- **Cancel or fork it.** `spawn cancel` on an `agy` session is refused ("this session runs in
+  agy; end it there") and `--fork` refuses an `agy` chat. `meridian --continue <chat>` prints
+  the command that resumes it.
 - **Deliver to a session that ended.** A message that `agy` never showed its model is not
   delivered: the process exited first, or the transcript did not show it after three
   injections (the message is then not injected again). The sender is told, but late: the
