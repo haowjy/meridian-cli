@@ -22,6 +22,8 @@ from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.plugin_hosted import launch_script_dir
+from meridian.lib.harness.printed import PrintedLaunch, print_launch
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
@@ -37,6 +39,7 @@ from meridian.lib.launch.continue_replay import (
     reject_continue_policy_overrides,
 )
 from meridian.lib.launch.fork import require_replayed_agent
+from meridian.lib.launch.print_only import may_not_exec, refuse_unreachable_options
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -55,8 +58,10 @@ from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.work_state import slugify
+from meridian.lib.state.work_store import work_item_exists
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -77,6 +82,8 @@ class PrimaryLaunchOutput(BaseModel):
     warning: str | None = None
     terminal_surface_mode: str | None = None
     launcher_diagnostics_path: Path | None = None
+    # Set instead of the fields above when the harness's command is printed, not run.
+    printed: PrintedLaunch | None = None
 
     @property
     def shell_status(self) -> int:
@@ -227,9 +234,36 @@ def run_primary_launch(
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
     launch_anyway: bool = False,
+    print_only: bool = False,
 ) -> PrimaryLaunchOutput:
     """``launch_anyway`` skips the moved-directory gate: the user chose to let the
-    harness's own TUI recover a directory relocate could not repair."""
+    harness's own TUI recover a directory relocate could not repair.
+
+    ``print_only``: startup's decision (``launch_prints``) that this launch builds the
+    command of a harness Meridian may not exec and prints it. The launch runs as a dry run,
+    which writes nothing, and the output carries ``printed`` instead of a report.
+    """
+    if print_only:
+        refuse_unreachable_options(
+            {
+                "--fork": fork_ref is not None,
+                "--fork-fresh": fork_fresh_ref is not None,
+                "--from": from_ref is not None,
+                "-f": bool(reference_files),
+                "--skills": bool(skills),
+                "--goal": goal is not None,
+                "--sandbox": sandbox is not None,
+                "--network": network is not None,
+                "--network-allow": bool(network_allow),
+                "--network-deny": bool(network_deny),
+                "--autocompact": autocompact is not None,
+                "--autocompact-pct": autocompact_pct is not None,
+                "--timeout": timeout is not None,
+            },
+            passthrough,
+        )
+    report_only = dry_run
+    dry_run = dry_run or print_only
     if continue_ref is not None and model is not None:
         print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
         if not model.strip():
@@ -264,6 +298,17 @@ def run_primary_launch(
         return "; ".join(parts)
 
     project_root = project_root.resolve() if project_root is not None else Path.cwd().resolve()
+    if (
+        print_only
+        and work.strip()
+        and not work_item_exists(
+            resolve_project_paths(project_root).root_dir, slugify(work.strip())
+        )
+    ):
+        raise ValueError(
+            f"Work item '{work.strip()}' does not exist, and a printed launch creates "
+            "nothing: run `meridian work start` first."
+        )
     harness_registry = get_default_harness_registry()
     normalized_continue_ref = continue_ref.strip() if continue_ref is not None else ""
     resume_target = normalized_continue_ref if normalized_continue_ref else None
@@ -491,6 +536,22 @@ def run_primary_launch(
     context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
+    launch_harness = (
+        continue_harness
+        if (resume_target is not None or selected_fork_target is not None)
+        else harness
+    )
+    if may_not_exec(launch_harness) and not print_only:
+        raise ValueError(
+            f"Meridian does not run {launch_harness}"
+            + (
+                f", so it cannot fork its chat {selected_fork_target}: "
+                f"`meridian --continue {selected_fork_target}` prints the command that resumes it."
+                if selected_fork_target is not None
+                else f": `meridian {launch_harness} ...` prints the command to run."
+            )
+        )
+
     hold: ContinueHold | None = None
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
@@ -571,6 +632,29 @@ def run_primary_launch(
                 ),
             ),
             harness_registry=harness_registry,
+        )
+
+    if print_only and not report_only:
+        assert launch_result.command_cwd is not None
+        note = (
+            "--work and --task-dir only add their directories to agy's workspace: the "
+            "session starts in the project directory and is not attached to the work item."
+            if work.strip() or normalized_task_dir
+            else None
+        )
+        assert launch_harness is not None
+        return PrimaryLaunchOutput(
+            message="Launch printed.",
+            exit_code=0,
+            printed=print_launch(
+                argv=launch_result.command,
+                cwd=launch_result.command_cwd,
+                env=launch_result.command_env,
+                warnings=tuple(
+                    item for item in (continue_warning, launch_result.warning, note) if item
+                ),
+                script_dir=launch_script_dir(launch_harness),
+            ),
         )
 
     continue_chat_id = launch_result.continue_chat_id

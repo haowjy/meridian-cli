@@ -13,6 +13,11 @@ from meridian.lib.platform import get_home_path
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
 
+# What the command Meridian prints sets for the session: the hook reads them from its own
+# environment when it registers the conversation and the server writes them onto the row
+# (``agy`` has no flag that names either).
+AGENT_ENV = "MERIDIAN_AGY_AGENT"
+APPROVAL_ENV = "MERIDIAN_AGY_APPROVAL"
 CONVERSATION_ID_KEY = "antigravity.google/conversation_id"
 ROOT_CONVERSATION_ID_KEY = "antigravity.google/root_conversation_id"
 
@@ -25,6 +30,12 @@ def native_store() -> Path:
 
 def agy_root() -> Path:
     return get_user_home() / "agy"
+
+
+def launch_script_dir() -> Path:
+    """Where a printed command too long for a shell line spills (``lib/harness/printed.py``)."""
+
+    return agy_root() / "launch"
 
 
 def process_birth(pid: int) -> str | None:
@@ -161,11 +172,14 @@ def is_safe_id(value: object) -> bool:
 
 
 __all__ = [
+    "AGENT_ENV",
+    "APPROVAL_ENV",
     "CONVERSATION_ID_KEY",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
     "briefed_path",
     "is_safe_id",
+    "launch_script_dir",
     "native_store",
     "open_conversations",
     "process_birth",

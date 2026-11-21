@@ -56,6 +56,7 @@ from meridian.cli.hooks_authority import (
 from meridian.cli.invocation import (
     Caller,
     GlobalOptions,
+    current_output_sink,
     emit,
     get_global_options,
     invocation_scope,
@@ -81,6 +82,7 @@ from meridian.env_registry import is_project_scoped_env_name
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.core.types import harness_names_text
+from meridian.lib.harness.printed import EVAL_HINT, PrintedLaunch
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.telemetry import emit_telemetry
@@ -329,7 +331,7 @@ def root(
         str | None,
         Parameter(
             name="--harness",
-            help=f"Force harness id ({harness_names_text()}).",
+            help=f"Force harness id ({harness_names_text()}; agy prints its command).",
         ),
     ] = None,
     agent: Annotated[
@@ -517,18 +519,36 @@ def root(
                 skills=tuple(parsed_skills),
                 goal=goal,
                 launch_anyway=launch_anyway,
+                print_only=options.prints_launch,
             )
 
         output = launch_or_offer_relocate(
             launch,
             interactive=(
-                not dry_run and not options.no_input and sys.stdin.isatty() and sys.stderr.isatty()
+                not dry_run
+                and not options.prints_launch
+                and not options.no_input
+                and sys.stdin.isatty()
+                and sys.stderr.isatty()
             ),
         )
-        emit(output)
+        if output.printed is not None:
+            _emit_printed(output.printed)
+        else:
+            emit(output)
         if output.shell_status != 0:
             # The invocation's ExitStack still flushes the sink on the way out.
             raise SystemExit(output.shell_status)
+
+
+def _emit_printed(printed: PrintedLaunch) -> None:
+    """The command on stdout; the hint and warnings on stderr, whatever stdout is."""
+
+    sink = current_output_sink()
+    emit(printed)
+    sink.status(f"hint: {EVAL_HINT}")
+    for warning in printed.warnings:
+        sink.warning(warning)
 
 
 @app.command(name="serve")
@@ -882,6 +902,41 @@ def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | 
     return False
 
 
+def _continue_ref(argv: Sequence[str]) -> str | None:
+    for index, token in enumerate(argv):
+        if token == "--":
+            break
+        if token == "--continue":
+            return argv[index + 1] if index + 1 < len(argv) else None
+        if token.startswith("--continue="):
+            return token.partition("=")[2]
+    return None
+
+
+def _launch_prints(
+    argv: Sequence[str], *, harness: str | None, command_path: tuple[str, ...] | None
+) -> bool:
+    """Startup's one decision that a primary launch prints its command (``launch_prints``).
+
+    Called inside the invocation scope: ``--continue`` resolves its chat read-only against
+    the project root.
+    """
+
+    if command_path not in {None, ()}:
+        return False
+    continue_ref = _continue_ref(argv) if harness is None else None
+    if harness is None and continue_ref is None:
+        return False
+    from meridian.cli.utils import resolve_cli_project_root
+    from meridian.lib.launch.print_only import launch_prints
+
+    return launch_prints(
+        harness=harness,
+        continue_ref=continue_ref,
+        project_root=resolve_cli_project_root() if continue_ref is not None else Path.cwd(),
+    )
+
+
 def _is_launch_dry_run(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
 
     if command_path not in {(), ("spawn",)}:
@@ -1214,6 +1269,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     # Install options early so resolve_cli_project_root() sees project_root
     # from -C / --directory during bootstrap resolution.
     bootstrap_project_root = None
+    prints_launch = False
     with (
         invocation_scope(options),
         manual_hook_authority_scope(
@@ -1221,6 +1277,15 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         ),
     ):
         if not bootstrap_skipped:
+            # A printed launch writes nothing, so startup treats it like a dry run.
+            prints_launch = _launch_prints(
+                cleaned_args,
+                harness=options.harness,
+                command_path=descriptor.command_path if descriptor is not None else None,
+            )
+            if prints_launch:
+                launch_dry_run = True
+                bootstrap_plan = BootstrapPlan(StateRequirement.PROJECT_READ)
             bootstrap_project_root = maybe_bootstrap_runtime_state(
                 render_mode=options.render_mode,
                 plan=bootstrap_plan,
@@ -1262,6 +1327,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 "project_root": project_root,
                 "sink": active_sink,
                 "caller": caller,
+                "prints_launch": prints_launch,
             }
         )
         with ExitStack() as invocation_stack:

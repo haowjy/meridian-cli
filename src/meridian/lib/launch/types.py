@@ -89,6 +89,10 @@ class LaunchResult(BaseModel):
     terminal_surface_mode: str | None = None
     turn_observed: bool | None = None
     launcher_diagnostics_path: Path | None = None
+    # A dry run's command runs from here, with these variables added to the caller's: what a
+    # harness Meridian prints rather than runs needs to be told.
+    command_cwd: Path | None = None
+    command_env: dict[str, str] = Field(default_factory=dict)
 
 
 class PrimarySessionMetadata(BaseModel):

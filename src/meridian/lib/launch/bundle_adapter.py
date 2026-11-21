@@ -348,6 +348,7 @@ def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]
 def _parse_harness_id(
     raw_harness: object,
     *,
+    pinned: str | None,
     harness_registry: HarnessRegistry,
 ) -> HarnessId:
     harness_token = _normalize_str(raw_harness)
@@ -362,7 +363,9 @@ def _parse_harness_id(
             f"'{harness_token}'. Available harnesses: {supported}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         ) from exc
-    if not harness_id.launched_by_meridian:
+    # Only a pin routes to a harness Meridian may not exec, and only a printed launch pins
+    # one (startup decides that; ``run_primary_launch`` refuses any other).
+    if not harness_id.launched_by_meridian and pinned != harness_token:
         supported = ", ".join(str(harness) for harness in harness_registry.ids())
         raise ValueError(
             "Mars launch-bundle returned unavailable routing.harness "
@@ -654,6 +657,7 @@ def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str 
 def _parse_bundle_payload(
     payload: dict[str, object],
     *,
+    pinned_harness: str | None,
     harness_registry: HarnessRegistry,
     mars_executable: str,
 ) -> BundleResult:
@@ -670,7 +674,9 @@ def _parse_bundle_payload(
     routing = _required_object_field(payload, "routing")
     model = _normalize_str(routing.get("model"))
     model_token = _normalize_str(routing.get("model_token")) or model
-    harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
+    harness = _parse_harness_id(
+        routing.get("harness"), pinned=pinned_harness, harness_registry=harness_registry
+    )
     harness_model = _normalize_str(routing.get("harness_model")) or None
 
     report = RouteDecisionReport.model_validate(_required_object_field(routing, "route_trace"))
@@ -795,6 +801,7 @@ def request_and_resolve(
     payload = cast("dict[str, object]", payload_obj)
     bundle = _parse_bundle_payload(
         payload,
+        pinned_harness=request.harness_override,
         harness_registry=harness_registry,
         mars_executable=command[0],
     )

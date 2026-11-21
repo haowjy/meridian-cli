@@ -57,6 +57,8 @@ class GlobalOptions(BaseModel):
     project_root: Path | None = None
     directory_explicit: bool = False
     caller: Caller | None = None
+    # Startup's decision that a primary launch prints a command (``launch_prints``).
+    prints_launch: bool = False
 
 
 class Emitter(Protocol):

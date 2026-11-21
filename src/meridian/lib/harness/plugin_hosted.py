@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
+from pathlib import Path
 
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
@@ -53,6 +54,13 @@ def native_store(name: str) -> str | None:
     return str(importlib.import_module(f"{_PACKAGES[name]}.state").native_store())
 
 
+def launch_script_dir(name: str) -> Path:
+    """Where the command Meridian prints for a plugin-hosted harness spills when it is too
+    long for a shell line: under the harness's own state directory."""
+
+    return importlib.import_module(f"{_PACKAGES[name]}.state").launch_script_dir()
+
+
 def send_owed_notices() -> None:
     """Tell the senders of messages that closed sessions never showed their model."""
 
@@ -63,6 +71,7 @@ def send_owed_notices() -> None:
 __all__ = [
     "PLUGIN_HOSTED",
     "is_plugin_hosted",
+    "launch_script_dir",
     "native_store",
     "run_command",
     "send_owed_notices",
