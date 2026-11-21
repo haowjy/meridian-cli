@@ -280,8 +280,7 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
         else:
             lines.append(f"\n## {label}")
         for skill in group:
-            suffix = f": {skill.description}" if skill.description else ""
-            lines.append(f"- {skill.name}{suffix}")
+            lines.append(f"- {skill.name}")
 
     return "\n".join(lines)
 

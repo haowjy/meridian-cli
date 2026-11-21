@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-11-21
+
+### Fixed
+- The `# Available Skills` block in an agent's system prompt lists skill names only. It no longer repeats the descriptions the harness already shows, saving about 1–2k tokens per session.
+
 ## [0.25.0] - 2026-11-20
 
 ### Added

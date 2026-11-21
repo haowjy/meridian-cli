@@ -128,11 +128,10 @@ class SkillContent(BaseModel):
 
 
 class AvailableSkillEntry(BaseModel):
-    """Lightweight entry for an on-demand skill (name and trigger, no body)."""
+    """Lightweight entry for an on-demand skill (name and type, no body)."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
     skill_type: str = "reference"
-    description: str = ""
     source_path: str | None = None

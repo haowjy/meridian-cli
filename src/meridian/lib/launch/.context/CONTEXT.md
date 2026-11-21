@@ -112,6 +112,13 @@ no mode or match the profile's declared mode (default `subagent`). The agent cat
 up live through `meridian spawn subagents`, so a long session can see newly installed
 agents without embedding the catalog in every prompt.
 
+The `# Available Skills` block lists names only, grouped by type. Every launched harness
+already lists installed skills with their descriptions, so repeating them cost tokens for
+nothing. Mars still sends `description` in `skills.available`; Meridian leaves it unread
+(`bundle_adapter.py`). A skill both available and `model-invocable: false` is named here
+but absent from the harness's list and refused by its skill tool, with or without a
+description.
+
 ## Directories and references
 
 A session's work and task paths are literal symlinks that follow work switches and
