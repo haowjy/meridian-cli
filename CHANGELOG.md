@@ -6,6 +6,34 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-21
+
+### Upgrade notes
+- `--harness cursor` and a model or profile that routes to Cursor now fail, and old Cursor chats can no longer be resumed, forked or read. Cursor was removed without a deprecation release. Mars 0.38.0 also dropped Cursor: run `meridian mars unlink .cursor` to clear a leftover `.cursor` target, and replace `managed_root` in `mars.toml` with `targets`. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#cursor-is-removed).
+- This release ships with Mars 0.39.0, which changes what a sync does: taking a target out of `targets` removes what Mars installed there on the next `meridian mars sync` (files you edited stay), a `targets` list in `mars.local.toml` adds to the project's list instead of replacing it, and local-only lock records move to `.mars/machine.lock` (commit the `mars.lock` diff that removes them). See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#mars-0390).
+- New state under `~/.meridian/agy/`; older builds ignore it and can list and show `agy` rows. Rolling back works. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#meridian-from-a-plain-antigravity-agy-session).
+
+### Added
+- Use Meridian from a plain Antigravity (`agy`) session. `meridian mars link agy` then `meridian mars sync` installs Meridian's hooks and one MCP tool, `meridian`, into the project's `.agy` plugin. The session shows in `spawn list --primary`, runs any Meridian command through the tool (starting children on other harnesses, waiting for them), and receives messages from other sessions before its next model call. Meridian still never launches `agy`. See [Using Meridian from Antigravity](https://github.com/haowjy/meridian-cli/blob/main/docs/antigravity.md).
+- `spawn message` to an `agy` session prints `queued`: the message is read at the session's next model call. If the session never shows it to the model (it ends first, or its transcript never shows it after three injections), the sender gets a message saying so, when the next `agy` server or primary session starts.
+- `meridian session log`, `session search` and `spawn --from` work on an `agy` session: the whole conversation, including turns after it was resumed in `agy`. Messages Meridian injected show as injected messages, and tool calls show with `--tools`. A compaction in `agy` starts a new segment, so `--segment previous` works.
+- `agy` sessions get Meridian's guidance as other harnesses do: the skills index, capabilities and spawn rules when the session registers, and its chat ID, spawn ID, messaging command and work and task links from about its second model call. Both stay in the model's context once: a compaction in `agy` brings them back, and resuming the conversation doesn't add a second copy.
+- Internal commands `meridian harness-hook agy <event>` and `meridian harness-mcp agy`, run by the plugin.
+- `meridian agy` builds an Antigravity (`agy`) launch the way `meridian claude` does (Mars picks model and effort, the profile, workspace directories) and prints the `agy` command for you to run; Meridian still never runs `agy`. `meridian --continue <agy chat>` prints the resume command with the chat's model, agent and approval. `--approval confirm` is refused, since no `agy` mode asks before every edit. See [what changed](https://github.com/haowjy/meridian-cli/blob/main/docs/upgrading.md#meridian-agy-prints-an-antigravity-launch).
+- Shortcut names (`meridian <harness>`) are now every harness id, including `agy`.
+
+### Changed
+- Meridian now ships with Mars 0.39.0 (was 0.36.0). Mars 0.37 and 0.38 fix re-link deleting hook files, leftovers after a killed sync, `.agy` agent churn on every sync and empty settings files after unlink. Mars 0.39 builds the `agy` launch `meridian agy` prints, and changes how `targets` and `mars link` work; see its [upgrade notes](https://github.com/haowjy/mars-agents/releases/tag/v0.39.0).
+- `spawn cancel` on an `agy` session is refused ("this session runs in agy; end it there"), `--force` included. `--fork` of an `agy` chat is refused with a reason; `--continue` of one prints the `agy` resume command (see `meridian agy` above). `spawn` never routes to `agy`.
+- Meridian's own skills ship from `src/meridian/mars/skills/`; `meridian mars sync` provides that directory.
+
+### Removed
+- The Cursor harness: its adapter, `meridian cursor` shortcut, `--harness cursor` and the Cursor-only inactivity watchdog. Old Cursor rows still show in `meridian spawn list` and `spawn show`; `session log`, `--continue` and `--fork` of one fail with `Cursor support was removed in 0.26.0`.
+
+### Fixed
+- `meridian session log --tail` on a segment after a compaction now prints the `Previous segment:` command. It was dropped whenever the segment's first entry was hidden from the view, so an agent reading the log (or handed the chat with `--from`) saw only the post-compaction conversation.
+- `mcp` is pinned below 2. A fresh install resolved `mcp` 2.x, which renamed `FastMCP`, so `meridian serve` and the new `agy` server failed to start.
+
 ## [0.25.1] - 2026-11-21
 
 ### Fixed
