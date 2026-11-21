@@ -216,3 +216,35 @@ def test_closed_conversation_notifies_only_for_undelivered_messages(
     assert not inbox.inbox_path("c1").exists()
     send_owed_notices()
     assert sent == ["p9"]
+
+
+def test_reopened_hold_releases_its_launch_slot_when_the_hold_fails(
+    agy_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from meridian.lib.harness.agy import holds
+    from meridian.lib.launch import primary_hold
+
+    class Slot:
+        released = False
+
+        def __enter__(self) -> "Slot":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self.released = True
+
+    slot = Slot()
+    spawn = SimpleNamespace(id="p1")
+    reopened = holds._Reopen("c1", SimpleNamespace(slot=slot, spawn=spawn))  # pyright: ignore[reportArgumentType]
+    monkeypatch.setattr(holds, "_reopen", lambda *_: reopened)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("hold failed")
+
+    monkeypatch.setattr(primary_hold, "primary_hold", fail)
+
+    with pytest.raises(RuntimeError, match="hold failed"):
+        holds._hold_row(holds._Hold("conv"), {"cwd": str(agy_home)}, agy_home)
+    assert slot.released

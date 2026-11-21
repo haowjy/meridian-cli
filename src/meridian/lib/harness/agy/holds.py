@@ -16,6 +16,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -204,9 +205,14 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         harness_session_id=conversation,
     )
     started = time.monotonic()
-    with primary_hold(
-        row, spawn_service=service, continue_hold=resumed.hold if resumed else None
-    ) as primary:
+    # The reopened hold's launch slot is released here, whatever raises before or inside
+    # primary_hold.
+    with (
+        resumed.hold.slot if resumed else nullcontext(),
+        primary_hold(
+            row, spawn_service=service, continue_hold=resumed.hold if resumed else None
+        ) as primary,
+    ):
         launch = primary.start(work_id=None)
         primary.bind_observed_identity(conversation, harness="agy", policy=None)
         service.lifecycle.bootstrap_from_disk(str(launch.spawn_id))
