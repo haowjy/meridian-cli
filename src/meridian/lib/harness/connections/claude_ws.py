@@ -81,7 +81,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         supports_steer=False,
         supports_cancel=True,
         runtime_model_switch=False,
-        structured_reasoning=True,
         supported_startup_phases=frozenset(
             phase.value
             for phase in (

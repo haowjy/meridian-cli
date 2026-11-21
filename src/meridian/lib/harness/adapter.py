@@ -93,7 +93,6 @@ class HarnessCapabilities(BaseModel):
     # The harness's native agent definition carries the profile body; otherwise the body
     # goes in the system prompt.
     native_agent_carries_body: bool = False
-    supports_primary_launch: bool = False
     supports_named_primary_resume: bool = False
     # Whether primary launch needs a synthetic first user prompt to bootstrap
     # one session. Harnesses that can attach without a first-turn prompt keep
@@ -105,9 +104,16 @@ class HarnessCapabilities(BaseModel):
     # non-interactive print mode (Claude `--print`).
     captures_blackbox_output: bool = False
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
-    # Whether a running spawn takes a message sent to it. A sender on a harness
-    # that refuses messages is not offered a reply route.
-    accepts_messages: bool = True
+
+
+class WorkspaceRoots(StrEnum):
+    """How a harness takes extra workspace roots."""
+
+    NONE = "none"
+    # `--add-dir <root>` arguments on the launch command.
+    ADD_DIR_ARGS = "add_dir_args"
+    # The adapter's `project_launch_env` carries the roots.
+    ENV = "env"
 
 
 class WorkspaceRoots(StrEnum):

@@ -12,6 +12,7 @@ from meridian.lib.core.delivery import (
     DeliveryKind,
     DeliveryRefused,
     MessageRoute,
+    MessageSender,
     TransportDead,
 )
 from meridian.lib.harness.bundle import PrimaryRouteContext
@@ -67,7 +68,7 @@ def claude_primary_message_route(context: PrimaryRouteContext) -> MessageRoute |
     if latest_messaging_socket(journal, pid=pid) is None:
         return None
 
-    async def deliver(text: str) -> DeliveryKind:
+    async def deliver(text: str, _: MessageSender | None) -> DeliveryKind:
         inbox = latest_messaging_socket(journal, pid=pid)
         if inbox is None:
             raise TransportDead("Claude's inbox is gone")

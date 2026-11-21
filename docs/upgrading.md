@@ -1,5 +1,35 @@
 # Upgrade notes
 
+## Meridian from a plain Antigravity (`agy`) session
+
+New in this release. Nothing changes until you link Antigravity: `meridian mars link agy`, then
+`meridian mars sync`. [Using Meridian from Antigravity](antigravity.md) covers what it installs
+and does. Meridian does not launch `agy`.
+
+- **Needs Mars 0.38.0**, which this release pins. `meridian mars sync` installs Meridian's hooks
+  and one MCP server into `.agy/`, and moves where Meridian's own skills are provided from
+  (`src/meridian/mars/skills/`); no action on your side.
+- **New state under `~/.meridian/agy/`**: a directory per running `agy` process and a message
+  inbox per conversation. Older builds ignore it.
+- **`agy` sessions are rows with harness `agy`.** Older builds list and show them, answer
+  `session log` and `--continue` with `unbound`, and treat `--from` as a chat with no
+  transcript. Rolling back works; a running `agy` session's row reads as crashed once its server is
+  gone, and `spawn cancel --force` from an older build signals nothing.
+- **`spawn cancel` refuses an `agy` session** ("this session runs in agy; end it there").
+- **`mcp` is pinned below 2.** `meridian serve` and the `agy` server use `mcp.server.fastmcp`,
+  which `mcp` 2.0 renamed.
+
+## Cursor is removed
+
+Needs Mars 0.38.0, which this release pins; it also dropped Cursor.
+
+- **`--harness cursor` and `harness: cursor` now fail** with `Cursor support was removed in 0.26.0`. Use `--harness claude|codex|opencode|pi`, change the profile's `harness`, or route the model to another harness in `mars.toml`. A model alias that names `cursor` is dropped from `mars.lock` on the first sync, and Mars warns `field.retired` while it is still in `mars.toml`.
+- **Old Cursor spawns and chats stay listed.** `meridian spawn list` and `spawn show` read the stored records. Resuming, forking or reading the transcript of a Cursor session fails with the same removal error. Cursor's own session data in its app is untouched.
+- **Clean up `.cursor` by hand.** A project whose `targets` still names `.cursor` keeps syncing its other targets, and each sync warns `retired-target`. Run `meridian mars unlink .cursor` to remove what earlier syncs installed there (your own files stay).
+- **`managed_root` in `mars.toml` is no longer read.** A project that still relies on it has no targets, so a sync writes nothing to `.claude/`. Mars warns `field.retired` with the line to write instead, for example `targets = [".claude"]`.
+- **A target dropped from `targets` keeps its files** until you run `meridian mars unlink <target>`.
+- Nothing Meridian wrote to disk changes.
+
 ## Git contexts sync through a daemon, not the `git-autosync` hook
 
 Needs `meridian-sync`, which every install now carries.

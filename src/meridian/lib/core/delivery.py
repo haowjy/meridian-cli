@@ -21,6 +21,10 @@ class DeliveryKind(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     """The harness answered the request that carried the message."""
 
+    QUEUED = "queued"
+    """Held for a harness that pulls: the session reads it at its next model call, which
+    may be never if it ends first. The sender is told then."""
+
 
 class DeliveryError(RuntimeError):
     """A message was not confirmed delivered; it may have arrived unless a subclass says not."""
@@ -50,10 +54,25 @@ Deliver = Callable[[str], Awaitable[DeliveryKind]]
 
 
 @dataclass(frozen=True)
-class MessageRoute:
-    """Where one session's messages go: ``deliver`` raises ``DeliveryError`` on failure."""
+class MessageSender:
+    """The session that sent a message: its spawn and the project that spawn lives in."""
 
-    deliver: Deliver
+    spawn_id: str
+    project_root: str
+
+
+RouteDeliver = Callable[[str, MessageSender | None], Awaitable[DeliveryKind]]
+
+
+@dataclass(frozen=True)
+class MessageRoute:
+    """Where one session's messages go: ``deliver`` raises ``DeliveryError`` on failure.
+
+    ``deliver`` gets the sender as data, ``None`` when the message has no identity; a route
+    that tells the sender about a later failure needs it, and the text frame is for the model.
+    """
+
+    deliver: RouteDeliver
     note: str | None = None
     """A fact of the route, shown to the sender after a successful delivery."""
 
@@ -66,5 +85,7 @@ __all__ = [
     "DeliveryKind",
     "DeliveryRefused",
     "MessageRoute",
+    "MessageSender",
+    "RouteDeliver",
     "TransportDead",
 ]

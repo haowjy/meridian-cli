@@ -160,7 +160,6 @@ class FakeManagedConnection:
             supports_steer=True,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
             supports_primary_observer=True,
         )
 

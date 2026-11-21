@@ -22,6 +22,7 @@ from meridian.lib.core.native_identity import (
     NativeSessionUnavailable,
 )
 from meridian.lib.core.refs import RefNotFound
+from meridian.lib.core.types import is_unlaunched_harness
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
     LegacyNativeStores,
@@ -205,6 +206,11 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
     record = records.get(chat_id)
     if record is None:
         raise ValueError(f"Chat {chat_id} not found.")
+    if is_unlaunched_harness(record.harness):
+        raise ValueError(
+            f"Chat {chat_id} runs in {record.harness}: Meridian never binds a native "
+            "session for it, so there is nothing to repair."
+        )
     key = record.native_key()
     if key is not None:
         if payload.native:

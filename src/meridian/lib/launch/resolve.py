@@ -8,11 +8,9 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
-from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
-from meridian.lib.core.types import HarnessId, ModelId
-from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.core.types import HarnessId
 
 
 def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
@@ -116,54 +114,6 @@ def resolve_profile_path(profile: AgentProfile | None) -> str:
 
 def resolve_skill_paths(loaded_skills: tuple[SkillContent, ...]) -> tuple[str, ...]:
     return tuple(Path(skill.path).expanduser().resolve().as_posix() for skill in loaded_skills)
-
-
-def validate_harness_compatibility(
-    *,
-    model: str,
-    harness_id: HarnessId,
-    model_entry: AliasEntry | None,
-    harness_registry: HarnessRegistry,
-) -> None:
-
-    _ = model, model_entry
-
-    supported_primary_harnesses = tuple(
-        harness_id_candidate
-        for harness_id_candidate in harness_registry.ids()
-        if harness_registry.get(harness_id_candidate).capabilities.supports_primary_launch
-    )
-    supported_primary_set = set(supported_primary_harnesses)
-    if harness_id not in supported_primary_set:
-        supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
-        raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
-
-
-def resolve_harness(
-    *,
-    model: ModelId,
-    model_entry: AliasEntry | None,
-    harness_override: str | None,
-    harness_registry: HarnessRegistry,
-) -> HarnessId:
-
-    normalized_override = (harness_override or "").strip()
-    if not normalized_override:
-        if model_entry is None:
-            raise ValueError(
-                f"Unknown model '{model}'. Run `meridian mars models list` "
-                "to inspect supported models."
-            )
-        return model_entry.harness
-
-    override_harness = HarnessId(normalized_override)
-    validate_harness_compatibility(
-        model=str(model),
-        harness_id=override_harness,
-        model_entry=model_entry,
-        harness_registry=harness_registry,
-    )
-    return override_harness
 
 
 def _coerce_positive_timeout_seconds(value: object) -> float | None:
@@ -382,7 +332,6 @@ __all__ = [
     "load_agent_profile_with_fallback",
     "parse_duration_seconds",
     "resolve_agent_launch_input",
-    "resolve_harness",
     "resolve_pi_child_wave_timeout_seconds",
     "resolve_pi_task_ping_interval_seconds",
     "resolve_profile_path",
@@ -390,5 +339,4 @@ __all__ = [
     "resolve_resident_poll_seconds",
     "resolve_skill_paths",
     "resolve_startup_timeout_seconds",
-    "validate_harness_compatibility",
 ]

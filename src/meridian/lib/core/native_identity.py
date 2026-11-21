@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, Literal
 
+from meridian.lib.core.types import is_unlaunched_harness
+
 Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
 UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file", "store_moved"]
@@ -55,7 +57,14 @@ class NativeKeyFields:
         object.__setattr__(self, "session_id", self.session_id or None)
 
     def complete(self) -> NativeKey | None:
-        if self.harness is None or self.native_store is None or self.session_id is None:
+        # A harness Meridian never launches has no native store to read through an
+        # adapter, so no binding is ever complete: readers of a key can't reach a missing one.
+        if (
+            self.harness is None
+            or self.native_store is None
+            or self.session_id is None
+            or is_unlaunched_harness(self.harness)
+        ):
             return None
         return NativeKey(self.harness, self.native_store, self.session_id)
 

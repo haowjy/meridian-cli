@@ -67,7 +67,7 @@ Under the hood this is a convenience wrapper:
 - if `mars.toml` is missing, it runs `meridian mars init --link .claude`
 - if `mars.toml` already exists, it runs `meridian mars link .claude`
 
-For other tools (Cursor, etc.), use `--link .cursor` instead or in addition.
+For other tools, use `--link <target>` (for example `--link .pi`) instead or in addition.
 
 If the user doesn't use Claude Code or any tool that reads from a dot-directory, omit `--link`:
 

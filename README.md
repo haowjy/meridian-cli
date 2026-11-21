@@ -101,7 +101,7 @@ graph TB
 
     subgraph Packages
         Sources["git sources"] -->|"mars add/sync"| Store[".mars/"]
-        Store -->|"materialize targets"| Tool[".claude/ · .cursor/ · .codex/ · .opencode/ · .pi/"]
+        Store -->|"materialize targets"| Tool[".claude/ · .codex/ · .opencode/ · .pi/"]
     end
 
     subgraph Runtime
@@ -137,6 +137,7 @@ graph TB
 - [History](docs/history.md) — indexed discovery, ZIP retention, transfer and restore
 - [MCP Tools](docs/mcp-tools.md) — tool surface and payload examples
 - [Troubleshooting](docs/troubleshooting.md) — common issues and diagnostics
+- [Antigravity](docs/antigravity.md) — using Meridian from a plain `agy` session
 - [INSTALL.md](INSTALL.md) — agent-friendly install guide
 
 ## Development

@@ -92,14 +92,13 @@ Meridian instead gives one line per loaded skill naming `/NAME` and the path to 
 - Only Claude and Codex enforce `sandbox` and `network`, each with gaps: on Linux,
   Claude's deny leaves the sandbox's own loopback reachable, Codex always leaves local
   services reachable, and Codex cannot put a `read-only` sandbox online. OpenCode and
-  Pi enforce neither. Cursor's sandbox runs `read-only` as `workspace-write` and
-  `workspace-write` unsandboxed, with network open.
+  Pi enforce neither.
 - A sandboxed agent cannot spawn a child with a weaker sandbox or wider network, and a
   child counts by what its harness enforces, so one on OpenCode or Pi counts as
   unsandboxed. Give a sandboxed lead's children a boundary at least as tight as its
   own, on Claude or Codex.
-- Nobody can answer an `ask` rule in a spawn, so it is refused at once (Codex and
-  Cursor ignore `ask` altogether).
+- Nobody can answer an `ask` rule in a spawn, so it is refused at once (Codex
+  ignores `ask` altogether).
 - `approval` is the fallback for calls `tools` doesn't decide; it never widens `tools`,
   and the same value means different things per harness.
 - Meridian grants its own read and completion commands on every launch, and

@@ -1125,12 +1125,6 @@ def _prepare_primary_surface(
     tuple[str, ...],
     ResolvedContinuation,
 ]:
-    # Validate harness supports primary (interactive) launch before any
-    # harness-specific side effects (session seeding, etc.).
-    if not policy.adapter.capabilities.supports_primary_launch:
-        raise ValueError(
-            f"Harness '{policy.harness}' does not support primary (interactive) launch."
-        )
     if (
         is_exact_continue_session(request.session)
         and policy.model

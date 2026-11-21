@@ -85,7 +85,7 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(
         extractor=CODEX_EXTRACTOR,
         facts=AttemptFacts(),
         launch=launch_paths(tmp_path, spawn_id),
-        failure_reason="Cursor subprocess exited with code 130.",
+        failure_reason="Codex subprocess exited with code 130.",
     )
 
     report = launch_paths(tmp_path, spawn_id).report.read_text(encoding="utf-8")

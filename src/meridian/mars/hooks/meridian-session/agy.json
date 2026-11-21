@@ -1,0 +1,14 @@
+{
+  "SessionStart": [
+    {
+      "command": "sh \"${MARS_HOOK_DIR}/guard.sh\" SessionStart \"$PPID\"",
+      "timeout": 10
+    }
+  ],
+  "PreInvocation": [
+    {
+      "command": "sh \"${MARS_HOOK_DIR}/guard.sh\" PreInvocation \"$PPID\"",
+      "timeout": 10
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+"""Pins what ``agy`` reads from the hook and how queued messages are confirmed."""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from meridian.lib.core.delivery import MessageSender
+from meridian.lib.harness.agy import inbox
+from meridian.lib.harness.agy.holds import HeldRow
+from meridian.lib.harness.agy.hook import SESSION_CONTEXT, run_hook
+from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_conversation
+from meridian.lib.harness.agy.notices import send_owed_notices
+from meridian.lib.harness.agy.state import (
+    agy_root,
+    process_dir,
+    read_json,
+    request_path,
+    scrubbed_env,
+    write_private_json,
+)
+
+
+@pytest.fixture(autouse=True)
+def agy_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    return tmp_path
+
+
+def _sender(spawn_id: str) -> MessageSender:
+    return MessageSender(spawn_id, "/other/project")
+
+
+def _payload(conversation: str, store: Path, **extra: object) -> str:
+    transcript = store / "brain" / conversation / ".system_generated" / "logs" / "t.jsonl"
+    return json.dumps(
+        {
+            "conversationId": conversation,
+            "artifactDirectoryPath": str(store / "brain" / conversation),
+            "transcriptPath": str(transcript),
+            **extra,
+        }
+    )
+
+
+def test_session_start_injects_one_system_message(agy_home: Path) -> None:
+    reply = run_hook("SessionStart", os.getpid(), _payload("c1", agy_home))
+
+    assert reply is not None
+    assert json.loads(reply) == {
+        "injectSteps": [{"systemMessage": {"systemMessage": SESSION_CONTEXT}}]
+    }
+
+
+def test_no_opinion_prints_nothing_and_bad_input_never_raises(agy_home: Path) -> None:
+    assert run_hook("PreInvocation", os.getpid(), _payload("c1", agy_home)) is None
+    assert run_hook("PreInvocation", os.getpid(), "not json") is None
+    assert run_hook("Stop", os.getpid(), _payload("c1", agy_home)) is None
+
+
+def test_subagent_is_marked_and_ignored(agy_home: Path) -> None:
+    parent_subagents = agy_home / "brain" / "par" / ".system_generated" / "subagents"
+    parent_subagents.mkdir(parents=True)
+    (parent_subagents / "kid.json").write_text("{}")
+    pid = os.getpid()
+    run_hook("SessionStart", pid, _payload("par", agy_home))
+    inbox.enqueue("kid", "hello", None)
+
+    assert run_hook("SessionStart", pid, _payload("kid", agy_home)) is None
+    assert run_hook("PreInvocation", pid, _payload("kid", agy_home)) is None
+    proc = process_dir(pid)
+    assert proc is not None
+    kid = read_json(request_path(proc, "kid"))
+    par = read_json(request_path(proc, "par"))
+    assert kid is not None and kid["role"] == "subagent"
+    assert par is not None and par["role"] == "primary"
+
+
+def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
+    agy_home: Path,
+) -> None:
+    pid = os.getpid()
+    payload = _payload("c1", agy_home)
+    transcript = Path(json.loads(payload)["transcriptPath"])
+    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping", _sender("p7"))
+
+    first = run_hook("PreInvocation", pid, payload)
+    assert first is not None
+    steps = json.loads(first)["injectSteps"]
+    assert [s["systemMessage"]["systemMessage"] for s in steps] == [entry.render()]
+    assert entry.sender == _sender("p7")
+
+    # Not in the transcript yet: the next call hands it back.
+    assert run_hook("PreInvocation", pid, payload) is not None
+
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(f"injected by a PreInvocation hook: [meridian:{entry.id}] ping\n")
+    assert run_hook("PreInvocation", pid, payload) is None
+    assert not inbox.inflight_path("c1").exists()
+
+
+def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
+    pid = os.getpid()
+    payload = _payload("c1", agy_home)
+    inbox.enqueue("c1", "ping", None)
+
+    replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
+
+    assert [reply is not None for reply in replies] == [True] * inbox.MAX_ATTEMPTS + [False]
+    assert inbox.inflight_path("c1").exists()  # kept for the notice sweep
+
+
+def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
+    from meridian.lib.platform import fcntl
+
+    inbox.enqueue("c1", "ping", None)
+    lock_path = inbox._lock_path("c1")  # pyright: ignore[reportPrivateUsage]
+    fd = os.open(lock_path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        assert inbox.claim_batch("c1", None) == []
+    finally:
+        os.close(fd)
+    assert len(inbox.claim_batch("c1", None)) == 1
+
+
+def test_mcp_child_env_drops_identity_but_keeps_home() -> None:
+    env = scrubbed_env(
+        {
+            "MERIDIAN_SPAWN_ID": "p9",
+            "_MERIDIAN_DEPTH": "2",
+            "MERIDIAN_HOME": "/x",
+            "PATH": "/bin",
+        }
+    )
+
+    assert env == {"MERIDIAN_HOME": "/x", "PATH": "/bin"}
+
+
+def test_tool_result_shows_stdout_stderr_and_exit_code() -> None:
+    assert format_result("out\n", "", 0) == "out\n[exit code 0]"
+    assert format_result("", "bad\n", 2) == "[stderr]\nbad\n[exit code 2]"
+
+
+def test_tool_call_runs_as_its_root_conversations_row() -> None:
+    meta = {
+        "antigravity.google/conversation_id": "kid",
+        "antigravity.google/root_conversation_id": "root",
+    }
+    assert root_conversation(meta) == "root"
+    assert root_conversation({"antigravity.google/conversation_id": "solo"}) == "solo"
+    assert root_conversation({"antigravity.google/root_conversation_id": "../x"}) is None
+
+    row = HeldRow("p4", "c4", Path("/proj"), Path("/runtime"), Path("/proj"))
+    env = call_env(row)
+    assert (env["MERIDIAN_SPAWN_ID"], env["MERIDIAN_CHAT_ID"]) == ("p4", "c4")
+    assert env["MERIDIAN_PROJECT_DIR"] == "/proj"
+    assert env["_MERIDIAN_DEPTH"] == "0"
+
+
+def test_closed_conversation_notifies_only_for_undelivered_messages(
+    agy_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "meridian.lib.harness.agy.notices._send",
+        lambda sender, text: sent.append(sender.spawn_id),
+    )
+    transcript = agy_home / "t.jsonl"
+    write_private_json(
+        agy_root() / "999999-1" / "requests" / "c1.json",
+        {"role": "primary", "transcript_path": str(transcript)},
+    )
+    seen = inbox.enqueue("c1", "first", _sender("p8"))
+    inbox.enqueue("c1", "second", _sender("p9"))
+    inbox.enqueue("c1", "third", None)
+    inbox.claim_batch("c1", None)  # all go out; the transcript will show only the first
+    transcript.write_text(f"[meridian:{seen.id}] first\n")
+
+    send_owed_notices()
+
+    assert sent == ["p9"]
+    assert not inbox.inflight_path("c1").exists()
+    assert not inbox.inbox_path("c1").exists()
+    send_owed_notices()
+    assert sent == ["p9"]

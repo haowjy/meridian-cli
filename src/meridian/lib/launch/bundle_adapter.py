@@ -66,7 +66,7 @@ if TYPE_CHECKING:
 # First Mars release that resolves effort to a level the model and harness take
 # (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
 # project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.36.0"
+_MARS_BUNDLE_MIN_VERSION = "0.38.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"

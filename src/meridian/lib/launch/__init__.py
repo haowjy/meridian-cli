@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
         load_agent_profile_with_fallback,
-        resolve_harness,
     )
     from meridian.lib.launch.types import (
         LaunchRequest,
@@ -289,7 +288,6 @@ def __getattr__(name: str) -> Any:
             "normalize_system_prompt_passthrough_args",
         ),
         "prepare_launch_surface": (".context", "prepare_launch_surface"),
-        "resolve_harness": (".resolve", "resolve_harness"),
         "resolve_launch_policy": (".policies", "resolve_launch_policy"),
         "run_harness_process": (".process", "run_harness_process"),
     }
@@ -327,7 +325,6 @@ __all__ = [
     "load_agent_profile_with_fallback",
     "normalize_system_prompt_passthrough_args",
     "prepare_launch_surface",
-    "resolve_harness",
     "resolve_launch_policy",
     "run_harness_process",
 ]
