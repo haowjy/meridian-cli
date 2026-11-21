@@ -362,15 +362,13 @@ def _parse_harness_id(
             f"'{harness_token}'. Available harnesses: {supported}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         ) from exc
-    try:
-        harness_registry.get_subprocess_harness(harness_id)
-    except (KeyError, TypeError) as exc:
+    if not harness_id.launched_by_meridian:
         supported = ", ".join(str(harness) for harness in harness_registry.ids())
         raise ValueError(
             "Mars launch-bundle returned unavailable routing.harness "
             f"'{harness_token}'. Available harnesses: {supported}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
-        ) from exc
+        )
     return harness_id
 
 

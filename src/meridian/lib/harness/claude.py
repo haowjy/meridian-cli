@@ -41,9 +41,10 @@ from meridian.lib.harness.adapter import (
     WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
-    HarnessBundle,
     HarnessProjectionPorts,
-    register_harness_bundle,
+    LaunchPorts,
+    ProcessPorts,
+    register_harness,
 )
 from meridian.lib.harness.capture_qualify import CaptureObserver, ClaudeObserver
 from meridian.lib.harness.claude_boundary import (
@@ -830,13 +831,11 @@ CLAUDE_SEMANTICS = _ClaudeSemantics(
     },
 )
 
-register_harness_bundle(
-    HarnessBundle(
+register_harness(
+    LaunchPorts(
         harness_id=HarnessId.CLAUDE,
         adapter=ClaudeAdapter(),
         spec_cls=ResolvedLaunchSpec,
-        extractor=CLAUDE_EXTRACTOR,
-        connections={TransportId.STREAMING: ClaudeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
             permission_report=lambda spec: compile_claude_permissions(spec)[1],
@@ -844,7 +843,11 @@ register_harness_bundle(
             bind_spec=bind_claude_spec,
         ),
         semantics=CLAUDE_SEMANTICS,
+    ),
+    ProcessPorts(
+        extractor=CLAUDE_EXTRACTOR,
+        connections={TransportId.STREAMING: ClaudeConnection},
         primary_message_route=claude_primary_message_route,
         detect_ttl=detect_ttl,
-    )
+    ),
 )

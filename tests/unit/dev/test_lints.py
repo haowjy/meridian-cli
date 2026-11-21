@@ -65,9 +65,9 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         "meridian/lib/harness/adapter.py",
         "def ok():\n    ensure_bootstrap()\n"
         "ensure_bootstrap()\n"
-        "REG = bundle.get_bundle_registry()\n"
-        "@deco(get_harness_bundle(1))\ndef f(x=get_harness_bundle(2)):\n    pass\n"
-        "class C:\n    b = get_harness_bundle(3)\n",
+        "REG = bundle.get_launch_registry()\n"
+        "@deco(get_launch_ports(1))\ndef f(x=get_launch_ports(2)):\n    pass\n"
+        "class C:\n    b = get_launch_ports(3)\n",
     )
     plant(
         "meridian/core/chat_lock.py",

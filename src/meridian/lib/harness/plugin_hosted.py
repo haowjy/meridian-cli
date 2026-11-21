@@ -6,21 +6,17 @@ Meridian may exec the harness is a different question: ``HarnessId.launched_by_m
 
 Their package holds what runs inside the person's session: ``commands.run_command(argv)``
 for ``meridian harness-hook|harness-mcp <harness> ...``, and ``notices.send_owed_notices()``
-for work a closed session left. It also says how Meridian reads the sessions:
-``state.native_store()`` (where they live) and ``transcript.READER`` (a ``NativeStoreReader``).
-Callers use this module and never name a harness. A new one is a package with those and a line
-in ``_PACKAGES``. Imports nothing
-heavy: the hook runs before every model call and dispatches from ``cli/entrypoint.py``.
+for work a closed session left. It also says where the sessions live:
+``state.native_store()``; the package's ``adapter.py`` reads them. Callers use this module
+and never name a harness. A new one is a package with those and a line in ``_PACKAGES``.
+Imports nothing heavy: the hook runs before every model call and dispatches from
+``cli/entrypoint.py``.
 """
 
 from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from meridian.lib.harness.adapter import NativeStoreReader
 
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
@@ -57,15 +53,6 @@ def native_store(name: str) -> str | None:
     return str(importlib.import_module(f"{_PACKAGES[name]}.state").native_store())
 
 
-def readers() -> dict[str, NativeStoreReader]:
-    """Each plugin-hosted harness's reader of its native sessions, by harness name."""
-
-    return {
-        name: importlib.import_module(f"{package}.transcript").READER
-        for name, package in _PACKAGES.items()
-    }
-
-
 def send_owed_notices() -> None:
     """Tell the senders of messages that closed sessions never showed their model."""
 
@@ -77,7 +64,6 @@ __all__ = [
     "PLUGIN_HOSTED",
     "is_plugin_hosted",
     "native_store",
-    "readers",
     "run_command",
     "send_owed_notices",
 ]

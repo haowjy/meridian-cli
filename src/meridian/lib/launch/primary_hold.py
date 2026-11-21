@@ -25,7 +25,7 @@ from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import get_process_ports
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.extract import FinalizeExtraction, enrich_finalize
@@ -211,7 +211,7 @@ class PrimaryHold:
         """Read the harness's report and usage for the outcome; needs a launched harness."""
         assert self.launch is not None
         return enrich_finalize(
-            extractor=get_harness_bundle(harness_id).extractor,
+            extractor=get_process_ports(harness_id).extractor,
             facts=facts,
             native_key=self.native_run.entry.complete() if self.native_run else None,
             launch=self.launch,

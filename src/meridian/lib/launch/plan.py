@@ -34,6 +34,10 @@ def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
         except ValueError:
             # Harness validation happens downstream; be conservative here.
             return False
+        if not harness_id.launched_by_meridian:
+            # The first place a primary launch names its harness, before Mars syncs or any
+            # state is written: Meridian execs no other harness.
+            raise KeyError(f"Unknown harness '{harness_id}'")
         harness = get_default_harness_registry().get_subprocess_harness(harness_id)
         return harness.capabilities.requires_initial_prompt
 

@@ -1,8 +1,9 @@
 """Cross-harness contracts for raw event semantic normalization."""
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.bundle import get_bundle_registry
+from meridian.lib.harness.bundle import get_launch_registry
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     normalize_event,
@@ -39,7 +40,9 @@ def test_unknown_upstream_event_remains_a_valid_open_transport_envelope() -> Non
 
 
 def test_every_bundle_reserves_meridian_connection_close_semantics() -> None:
-    for bundle in get_bundle_registry().values():
+    for bundle in get_launch_registry().values():
+        if is_plugin_hosted(bundle.harness_id.value):
+            continue  # its plugin writes the row: no event reaches Meridian
         assert MERIDIAN_CONNECTION_CLOSED_EVENT in bundle.semantics.events
         normalized = normalize_event(_event(bundle.harness_id, MERIDIAN_CONNECTION_CLOSED_EVENT))
         assert normalized.semantics.terminal is not None

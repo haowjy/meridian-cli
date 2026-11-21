@@ -42,7 +42,7 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import (
     bind_launch_spec,
-    get_harness_bundle,
+    get_launch_ports,
     materialize_launch_spec,
     project_effective_policy,
 )
@@ -271,7 +271,7 @@ class LaunchContext:
 
     def enforcement_report(self) -> EnforcementReport:
 
-        return get_harness_bundle(self.harness.id).projections.permission_report(self.binding.spec)
+        return get_launch_ports(self.harness.id).projections.permission_report(self.binding.spec)
 
 
 @dataclass(frozen=True)

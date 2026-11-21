@@ -47,27 +47,33 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 - **`model_observation.observe_session_model` is the one writer of model observations.**
 - Native idle parsing stays in `*_idle.py`; `lib/idle/` owns policy.
 
-## `agy/` is not a launched harness
+## `agy/` is hosted by its plugin
 
-Meridian never starts Antigravity, so `HarnessId.AGY` has no adapter, bundle or shortcut:
-`launched_by_meridian` is false, and the registry's adapters are only harnesses Meridian launches.
-Readers of stored rows ask `is_unlaunched_harness(name)`, never `== "agy"`: it makes
-`spawn cancel` refuse (a server holds every conversation of one `agy` process, and nothing
-Meridian may signal stops `agy`), `--continue`/`--fork` refuse, blocks resume in
-`decide_reentry`, and skips legacy import. Reading is not launching: the registry's
-`NativeStoreReader` (`registry.get_reader`/`find_reader`, the read half of an adapter, which
-`SubprocessHarness` extends) serves `session log`, search, capture and `--from` for every
-harness, and `agy/transcript.py` registers one for `agy`. Readers of a stored key go
-through it, never `get_subprocess_harness`. An `agy` chat records no native store: its
-layout names it (`unlaunched.native_store`, used by `NativeKeyFields.complete()`), so the
-chat record is unchanged and older builds read it as before. Caveat: that store is
+Meridian never runs Antigravity, and two different facts say so; ask the one you mean.
+`HarnessId.launched_by_meridian` is false for `agy`: Meridian may not exec it (shortcut
+names, `--harness` help and streaming serve ask this). `plugin_hosted.is_plugin_hosted(name)`
+is true: the harness's plugin writes the session's row and no Meridian runner exists, so
+readers of stored rows ask it, never `== "agy"`. It makes `spawn cancel` refuse (a server
+holds every conversation of one `agy` process, and nothing Meridian may signal stops
+`agy`), `--continue`/`--fork` refuse, blocks resume in `decide_reentry`, `session repair`
+and the diag orphan capture skip it, and skips legacy import.
+
+`agy` registers launch ports only (`register_harness(LaunchPorts(...))` in `agy/adapter.py`);
+`register_harness` requires process ports exactly when the harness is not plugin-hosted.
+Process code (runners, `primary_attach`, `primary_hold`, streaming serve and dispatch,
+connections) asks `get_process_ports`, which raises `KeyError` for `agy`; code that builds a
+launch asks `get_launch_ports`. `AgyAdapter` extends `AgyReader` (`agy/transcript.py`), so the
+registry's adapter serves `session log`, search, capture and `--from` like any other harness;
+`registry.ids()` and `contracts()` list only harnesses Meridian may exec. Readers of a stored
+key go through `get_reader`, never `get_subprocess_harness`. An `agy` chat records no native
+store: its layout names it (`plugin_hosted.native_store`, used by `NativeKeyFields.complete()`),
+so the chat record is unchanged and older builds read it as before. Caveat: that store is
 computed from the reading process's `HOME` (one field, two sources: recorded for launched
-harnesses, computed for unlaunched ones), so a move of Google's store changes every `agy` key. `agy` has no capture dialect,
-so capture reports it unsupported.
-Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
-the owed-notice sweep, store, reader); a second one is a package with `commands.run_command`,
-`notices.send_owed_notices`, `state.native_store` and `transcript.READER` plus a line in
-`_PACKAGES`, which `HarnessId.launched_by_meridian` also reads.
+harnesses, computed for plugin-hosted ones), so a move of Google's store changes every `agy`
+key. `agy` has no capture dialect, so capture reports it unsupported.
+Outside `lib/harness/`, reach these harnesses only through `plugin_hosted.py` (argv dispatch,
+the owed-notice sweep, store); a second one is a package with `commands.run_command`,
+`notices.send_owed_notices` and `state.native_store`, an adapter, and a line in `_PACKAGES`.
 
 `agy/transcript.py`: `transcript_full.jsonl` is the file (`transcript.jsonl` truncates
   fields). The parser skips and flags what it doesn't recognise; Google documents no format

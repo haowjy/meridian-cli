@@ -32,7 +32,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import get_process_ports
 from meridian.lib.harness.common import parse_json_stream_event
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractors.base import AttemptFold
@@ -848,7 +848,7 @@ async def execute_with_streaming(
         spec = launch_context.binding.spec
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
-        harness_bundle = get_harness_bundle(resolved_harness_id)
+        process_ports = get_process_ports(resolved_harness_id)
         pi_session_role = (
             resolve_pi_session_role(interactive=launch_context.binding.run_params.interactive)
             if resolved_harness_id is HarnessId.PI
@@ -966,9 +966,7 @@ async def execute_with_streaming(
             ):
                 # The row's launch is the one this runner owns; a resumed launch's usage
                 # is counted from where the previous launch ended.
-                fold = harness_bundle.extractor.create_fold(
-                    spawn_row.prior_usage.harness_cumulative
-                )
+                fold = process_ports.extractor.create_fold(spawn_row.prior_usage.harness_cumulative)
                 fold.bind_launch(spec)
                 facts = fold.facts
                 runner_phase[0] = "starting_attempt"
@@ -1076,7 +1074,7 @@ async def execute_with_streaming(
                         lifecycle=lifecycle,
                     )
                     extraction = enrich_finalize(
-                        extractor=harness_bundle.extractor,
+                        extractor=process_ports.extractor,
                         facts=facts,
                         native_key=native_run.entry.complete(),
                         launch=launch,
