@@ -29,7 +29,7 @@ if [ -e "$p/requests/$c.json" ] \
   if [ -z "$file" ]; then
     exit 0
   fi
-  size=$(wc -c < "$file" 2>/dev/null)
+  size=$({ wc -c < "$file"; } 2>/dev/null)
   if ! { [ -n "$size" ] && [ "$size" -lt "$off" ]; } \
     && ! tail -c "+$((off + 1))" "$file" 2>/dev/null | grep -qF '"type":"CHECKPOINT"'; then
     exit 0

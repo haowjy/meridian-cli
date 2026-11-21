@@ -85,10 +85,13 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
             registered=registered,
         )
     except Exception:
-        # Guidance is best effort: a failure here must not delay the inbox below.
+        # Guidance and the inbox are independent: a failure in either loses only its own.
         _log_error("guidance")
         texts = []
-    texts.extend(entry.render() for entry in inbox.claim_batch(conversation, transcript))
+    try:
+        texts.extend(entry.render() for entry in inbox.claim_batch(conversation, transcript))
+    except Exception:
+        _log_error("inbox")
     return inject_reply(texts) if texts else None
 
 
@@ -125,10 +128,11 @@ def _guidance(
         return []
 
     segment = read_segment(transcript)
-    write_seen(proc_dir, conversation, segment.end, transcript)
+    # ``briefed`` before ``seen``: a failure between them leaves the recheck pending.
     if facts_due:
         briefed.parent.mkdir(parents=True, exist_ok=True)
         briefed.touch()
+    write_seen(proc_dir, conversation, segment.end, transcript)
 
     texts: list[str] = []
     # Capabilities differ across a project's first calls (its state ID appears with its
