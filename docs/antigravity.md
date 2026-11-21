@@ -31,20 +31,26 @@ instead of running it, so you run it yourself:
 
 ```bash
 meridian agy -m gemini-3.8-flash --effort high -a coder -p "fix the failing test"
-# (cd /path/to/project && MERIDIAN_AGY_AGENT=coder agy --model gemini-3.8-flash-high --agent coder ...)
+# sh /home/you/.meridian/agy/launch/3f9c1a7b2d40.sh
 eval "$(meridian agy -m gemini-3.8-flash)"    # run it in your shell
 meridian agy --continue c12                   # resume a chat; keeps its model, agent and approval
 ```
 
 - **It writes nothing** except a script for a long command. A command over about 240 characters
   or with a newline (a multi-line `-p`) is written to `~/.meridian/agy/launch/<id>.sh` and
-  stdout is `sh <path>`; scripts older than 7 days are removed on the next run. Stdout is only
+  stdout is `sh <path>`. Expect that for nearly every real command: the work directory, the
+  archive and the knowledge base are workspace roots, and each adds a `--add-dir <path>` that
+  pushes the line past the limit. A short one looks like `(cd /path/to/project && agy --model
+  gemini-3.8-flash-high --agent coder)`. Scripts older than 7 days are removed on the next run. Stdout is only
   the command; the hint that `eval` runs it, and any warnings, go to stderr. `--json` prints
   `{command, argv, cwd, env, script, warnings}`, where `env` is only what the command sets.
-  `meridian agy --dry-run` prints the usual dry-run report.
+  `meridian agy --dry-run` prints the usual dry-run report, plus the directory and environment the command sets.
 - **The session registers when you run the command.** The plugin's hook and server create the
-  row, as for any `agy` you start. The command carries `MERIDIAN_AGY_AGENT` (and
-  `MERIDIAN_AGY_APPROVAL`) so the row knows the profile and approval; a continue replays them.
+  row, as for any `agy` you start. The command sets `_MERIDIAN_AGY_AGENT` (and
+  `_MERIDIAN_AGY_APPROVAL`; internal, don't export them) so the row knows the profile and
+  approval; a continue replays them. An `agy --conversation <id>` you run yourself, without
+  them, records no agent or approval, and the next `meridian --continue` replays that: it is
+  what the resumed session ran.
 - **Model and effort are one choice.** Mars folds `--effort` into the model slug (`-m
   gemini-3.8-flash --effort high` is `--model gemini-3.8-flash-high`), because `agy` fails when
   given a tiered slug and `--effort`. An effort the model's tiers lack moves to the nearest one
