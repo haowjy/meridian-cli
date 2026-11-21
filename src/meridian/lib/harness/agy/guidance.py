@@ -1,9 +1,9 @@
 """The Meridian guidance an ``agy`` session gets from its hook, built by the launch builders.
 
 Other harnesses receive this text in their launch prompt; ``agy`` has no launch, so the hook
-delivers it: the static part at ``SessionStart``, and the session's own facts (chat ID,
-links) once the server holds its row. Imports are local: only a hook that has something to
-say pays for the launch stack.
+delivers it: the static part on the call that registers the conversation, and the session's
+own facts (chat ID, links) once the server holds its row. Imports are local: only a hook
+that has something to say pays for the launch stack.
 
 The hook payload names no agent, so there is no profile to read. The session is treated as
 able to spawn: it was given the tool for that, and ``meridian spawn subagents`` lists what
@@ -12,7 +12,6 @@ it may start.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 _WAIT_RULES = """\
@@ -28,8 +27,8 @@ def static_guidance(cwd: Path) -> str:
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.harness.adapter import SpawnUsageContractVariants
     from meridian.lib.launch.composition import (
-        CAPABILITIES_BLOCK_NAME,
         render_guidance_blocks,
+        replace_capabilities_block,
     )
     from meridian.lib.launch.spawn_guidance import (
         build_capabilities_prompt,
@@ -59,14 +58,14 @@ def static_guidance(cwd: Path) -> str:
         task_dir=project_root,
         via_tool=True,
     )
-    blocks = tuple(
-        replace(block, content=capabilities) if block.name == CAPABILITIES_BLOCK_NAME else block
-        for block in build_guidance_blocks(
+    blocks = replace_capabilities_block(
+        build_guidance_blocks(
             spawn_capable=True,
             lead=True,
             loaded_skills=frozenset(),
             spawn_usage_contract=contract,
-        )
+        ),
+        new_content=capabilities,
     )
     return render_guidance_blocks(blocks)
 

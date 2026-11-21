@@ -54,8 +54,36 @@ def test_session_start_injects_one_system_message(agy_home: Path) -> None:
     assert "# Meridian spawn rules" in text
 
 
+def _messages(reply: str | None) -> list[str]:
+    assert reply is not None
+    return [step["systemMessage"]["systemMessage"] for step in json.loads(reply)["injectSteps"]]
+
+
+def test_static_guidance_and_session_facts_are_each_injected_once(agy_home: Path) -> None:
+    pid = os.getpid()
+    payload = _payload("c1", agy_home, cwd=str(agy_home))
+
+    # The first call registers the conversation, whatever its event, and carries the guidance.
+    (static,) = _messages(run_hook("PreInvocation", pid, payload))
+    assert "# Meridian capabilities" in static
+    assert run_hook("PreInvocation", pid, payload) is None
+
+    proc = process_dir(pid)
+    assert proc is not None
+    row = {
+        "spawn_id": "p1",
+        "chat_id": "c1",
+        "project_root": str(agy_home),
+        "runtime_root": str(agy_home / "runtime"),
+    }
+    write_private_json(proc / "rows" / "c1.json", row)
+    (facts,) = _messages(run_hook("PreInvocation", pid, payload))
+    assert facts.startswith("# Meridian session")
+    assert "MERIDIAN_" not in facts
+    assert run_hook("PreInvocation", pid, payload) is None
+
+
 def test_no_opinion_prints_nothing_and_bad_input_never_raises(agy_home: Path) -> None:
-    assert run_hook("PreInvocation", os.getpid(), _payload("c1", agy_home)) is None
     assert run_hook("PreInvocation", os.getpid(), "not json") is None
     assert run_hook("Stop", os.getpid(), _payload("c1", agy_home)) is None
 
@@ -85,6 +113,8 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     payload = _payload("c1", agy_home)
     transcript = Path(json.loads(payload)["transcriptPath"])
     entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping", _sender("p7"))
+
+    run_hook("SessionStart", pid, payload)  # registers; this test is about the inbox
 
     first = run_hook("PreInvocation", pid, payload)
     assert first is not None

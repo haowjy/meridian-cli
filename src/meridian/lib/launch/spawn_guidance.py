@@ -93,19 +93,26 @@ def _build_meridian_skills_prompt(
     return "\n".join(lines)
 
 
-def _work_link_line(work_link: Path) -> str:
+def _env_ref(name: str, *, shown: bool = True) -> str:
+    """`` (`$NAME`)`` for a session whose shell has the variable; empty for one that has none."""
+
+    return f" (`${name}`)" if shown else ""
+
+
+def _work_link_line(work_link: Path, *, env: bool = True) -> str:
 
     return (
-        f"- `{work_link.as_posix()}` — work directory "
-        "(`$MERIDIAN_ACTIVE_WORK_DIR`); write this literal path, never the "
+        f"- `{work_link.as_posix()}` — work directory"
+        f"{_env_ref('MERIDIAN_ACTIVE_WORK_DIR', shown=env)}; write this literal path, never the "
         "directory it resolves to: the link follows `work start`, `work switch`, "
         "`work done` and `work rename`."
     )
 
 
-def _task_link_line(task_link: Path, *, detail: str = "", note: str = "") -> str:
+def _task_link_line(task_link: Path, *, detail: str = "", note: str = "", env: bool = True) -> str:
     return (
-        f"- `{task_link.as_posix()}` — source checkout (`$MERIDIAN_TASK_DIR`){detail}; "
+        f"- `{task_link.as_posix()}` — source checkout"
+        f"{_env_ref('MERIDIAN_TASK_DIR', shown=env)}{detail}; "
         "write this literal path, never the directory it resolves to: the link "
         f"follows `meridian task-dir` and a work switch{note}."
     )
@@ -121,7 +128,7 @@ _TOOL_INTRO = (
 )
 
 
-def _chat_lines(chat_id: str | None, project_root: Path) -> list[str]:
+def _chat_lines(chat_id: str | None, project_root: Path, *, env: bool = True) -> list[str]:
     resolved_chat_id = (chat_id or "").strip()
     if not resolved_chat_id:
         return []
@@ -130,8 +137,8 @@ def _chat_lines(chat_id: str | None, project_root: Path) -> list[str]:
     # block. Chat IDs count per project, so the bare ID is ambiguous to a peer in
     # another repo; the command carries the project it belongs to.
     return [
-        f"- `{resolved_chat_id}` — this conversation's chat "
-        "(`$MERIDIAN_CHAT_ID`); use it in names and as a handoff's `--from`.",
+        f"- `{resolved_chat_id}` — this conversation's chat"
+        f"{_env_ref('MERIDIAN_CHAT_ID', shown=env)}; use it in names and as a handoff's `--from`.",
         "- To message this session from another session or repo: "
         f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
         f'{resolved_chat_id} --message "..."`.',
@@ -186,7 +193,7 @@ def build_capabilities_prompt(
         # A per-chat link outlives the launch and follows `work start`,
         # `work switch`, `work done` and `work rename`, so it replaces both the
         # work-item ID and its scratch directory: either would go stale mid-run.
-        lines.append(_work_link_line(work_link))
+        lines.append(_work_link_line(work_link, env=not via_tool))
 
     # The goal text never enters a prompt: it is per-conversation state that can be
     # edited mid-conversation, and a primary with no task must start no turn. The
@@ -194,7 +201,7 @@ def build_capabilities_prompt(
     # stale after `work switch`.
     lines.append("- Your work item's goal and status: run `meridian work show`.")
 
-    lines.extend(_chat_lines(chat_id, project_root))
+    lines.extend(_chat_lines(chat_id, project_root, env=not via_tool))
 
     task_path = task_dir.as_posix()
     control_path = control_root.as_posix()
@@ -250,24 +257,27 @@ def build_capabilities_prompt(
 
     if resolved_context.kb_root is None:
         lines.append(
-            "- No resolved knowledge base (`$MERIDIAN_CONTEXT_KB_DIR`); inspect: "
-            "`meridian context kb`."
+            f"- No resolved knowledge base{_env_ref('MERIDIAN_CONTEXT_KB_DIR', shown=not via_tool)}"
+            "; inspect: `meridian context kb`."
         )
     else:
         lines.append(
-            f"- `{resolved_context.kb_root.as_posix()}` — durable knowledge base "
-            "(`$MERIDIAN_CONTEXT_KB_DIR`); inspect: `meridian context kb`."
+            f"- `{resolved_context.kb_root.as_posix()}` — durable knowledge base"
+            f"{_env_ref('MERIDIAN_CONTEXT_KB_DIR', shown=not via_tool)}; "
+            "inspect: `meridian context kb`."
         )
 
     other_context: list[str] = []
     if resolved_context.work_archive is not None:
         other_context.append(
-            f"`{resolved_context.work_archive.as_posix()}` — work archive "
-            f"(`${context_env_key('work_archive')}`)"
+            f"`{resolved_context.work_archive.as_posix()}` — work archive"
+            f"{_env_ref(context_env_key('work_archive'), shown=not via_tool)}"
         )
     for name in sorted(resolved_context.extra):
         path, _ = resolved_context.extra[name]
-        other_context.append(f"`{path.as_posix()}` — {name} (`${context_env_key(name)}`)")
+        other_context.append(
+            f"`{path.as_posix()}` — {name}{_env_ref(context_env_key(name), shown=not via_tool)}"
+        )
     if other_context:
         lines.append("- " + "; ".join(other_context) + "; inspect: `meridian context`.")
 
@@ -311,16 +321,20 @@ def build_session_facts_prompt(
     work_link: Path,
     task_link: Path,
 ) -> str:
-    """The facts of a primary whose row came after its guidance was written."""
+    """The facts of a primary whose row came after its guidance was written.
+
+    Its only caller is ``agy``, whose tool passes ``args`` unexpanded and whose shell has no
+    ``MERIDIAN_*`` variables, so the text gives literal values only.
+    """
 
     return "\n".join(
         (
             "# Meridian session",
             "",
-            f"- `{spawn_id}` — this session's spawn ID (`$MERIDIAN_SPAWN_ID`); use it in names.",
-            *_chat_lines(chat_id, project_root),
-            _work_link_line(work_link),
-            _task_link_line(task_link),
+            f"- `{spawn_id}` — this session's spawn ID; use it in names.",
+            *_chat_lines(chat_id, project_root, env=False),
+            _work_link_line(work_link, env=False),
+            _task_link_line(task_link, env=False),
         )
     )
 

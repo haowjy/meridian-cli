@@ -31,7 +31,8 @@ agy --agent <profile>      # as usual
   start as they would from your own terminal. `agy` asks you before the first call in a
   conversation (once, for the conversation, or always); allowing it allows every Meridian
   command for that conversation.
-- **Meridian's guidance, as other harnesses get at launch.** `SessionStart` injects the
+- **Meridian's guidance, as other harnesses get at launch.** the first hook call of a
+  conversation (`SessionStart` unless it was missed) injects the
   skills index, the capabilities, the spawn rules and prompting guidance, worded for the
   `meridian` tool (one command per call, no shell, `spawn wait` blocks the turn). The
   session's own chat ID, spawn ID and work and task links follow in one more message at the

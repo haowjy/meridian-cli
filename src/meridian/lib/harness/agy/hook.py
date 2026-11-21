@@ -59,6 +59,7 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         return None
 
     request = read_json(request_path(proc_dir, conversation))
+    texts: list[str] = []
     if request is None:
         # Under the conversation's lock, so a notice sweep that is settling this
         # conversation finishes first. A held lock means a sweep is mid-notice (seconds):
@@ -67,12 +68,19 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
             if not acquired:
                 return None
             request = _register(proc_dir, conversation, payload)
+        if request.get("role") == "primary":
+            # Registration happens once per conversation and process, so the static text
+            # rides on it whatever the event. If the text can't be built, the request is
+            # withdrawn so the next call registers, and tries the text, again.
+            try:
+                texts.append(guidance.static_guidance(Path(str(payload.get("cwd") or Path.cwd()))))
+            except Exception:
+                request_path(proc_dir, conversation).unlink(missing_ok=True)
+                raise
     if request.get("role") == "subagent":
         return None
 
-    if event == "SessionStart":
-        return inject_reply([guidance.static_guidance(Path(str(payload.get("cwd") or Path.cwd())))])
-    texts = _session_facts_once(proc_dir, conversation)
+    texts.extend(_session_facts_once(proc_dir, conversation))
     batch = inbox.claim_batch(conversation, payload.get("transcriptPath"))
     texts.extend(entry.render() for entry in batch)
     return inject_reply(texts) if texts else None
@@ -91,7 +99,8 @@ def _session_facts_once(proc_dir: Path, conversation: str) -> list[str]:
     briefed = briefed_path(proc_dir, conversation)
     if row is None or briefed.exists():
         return []
-    write_private_json(briefed, {})
+    briefed.parent.mkdir(parents=True, exist_ok=True)
+    briefed.touch()
     try:
         return [guidance.session_facts(row)]
     except Exception:
