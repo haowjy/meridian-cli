@@ -9,6 +9,8 @@ State lives under ``<meridian home>/agy/``:
 - ``<pid>-<birth>/requests/<conversation>.json``: one request per conversation, written
   by the hook. It is also the shell guard's "already seen" marker.
 - ``<pid>-<birth>/rows/<conversation>.json``: the spawn and chat the server holds for it.
+- ``<pid>-<birth>/briefed/<conversation>``: an empty file, written once the hook has
+  told the conversation its row's facts. The shell guard reads it, so it stays a bare file.
 - ``inbox/<conversation>.jsonl``, ``inflight/<conversation>.jsonl``: queued and
   delivered-but-unconfirmed messages (see ``inbox.py``).
 

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -147,10 +148,9 @@ class ConversationHolds:
         try:
             _hold_row(hold, request, self._proc_dir)
         except Exception as exc:
-            if hold.row is None:
-                self._drop(hold, str(exc) or type(exc).__name__)
-            else:
-                logger.warning("agy conversation %s ended", hold.conversation, exc_info=True)
+            # Whenever it failed: a hold that stays registered keeps handing out a row
+            # nobody serves. Dropped, the next call or poll adopts the conversation again.
+            self._drop(hold, str(exc) or type(exc).__name__)
         finally:
             hold.ready.set()
 
@@ -172,6 +172,7 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
     from meridian.lib.core.types import SpawnId
     from meridian.lib.launch.primary_hold import PrimaryRow, primary_hold
     from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.launch.session_links import republish_chat_links
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.ops.runtime import resolve_runtime_root
     from meridian.lib.state import spawn_store
@@ -204,17 +205,31 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         harness_session_id=conversation,
     )
     started = time.monotonic()
-    with primary_hold(
-        row, spawn_service=service, continue_hold=resumed.hold if resumed else None
-    ) as primary:
+    # The reopened hold's launch slot is released here, whatever raises before or inside
+    # primary_hold.
+    with (
+        resumed.hold.slot if resumed else nullcontext(),
+        primary_hold(
+            row, spawn_service=service, continue_hold=resumed.hold if resumed else None
+        ) as primary,
+    ):
         launch = primary.start(work_id=None)
         primary.bind_observed_identity(conversation, harness="agy", policy=None)
         service.lifecycle.bootstrap_from_disk(str(launch.spawn_id))
-        hold.row = HeldRow(str(launch.spawn_id), primary.chat_id, project_root, runtime_root, cwd)
+        held = HeldRow(str(launch.spawn_id), primary.chat_id, project_root, runtime_root, cwd)
+        # A launched primary gets its links from launch preparation; this one has none, and
+        # its hook names them to the model.
+        republish_chat_links(project_root, runtime_root, held.chat_id, spawn_id=held.spawn_id)
         write_private_json(
             row_path(proc_dir, conversation),
-            {"spawn_id": hold.row.spawn_id, "chat_id": hold.row.chat_id},
+            {
+                "spawn_id": held.spawn_id,
+                "chat_id": held.chat_id,
+                "project_root": project_root.as_posix(),
+                "runtime_root": runtime_root.as_posix(),
+            },
         )
+        hold.row = held
         hold.ready.set()
         try:
             asyncio.run(_serve(launch, conversation, hold.stop))
