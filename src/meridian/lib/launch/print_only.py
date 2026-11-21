@@ -46,7 +46,10 @@ def launch_prints(*, harness: str | None, continue_ref: str | None, project_root
 
 
 def refuse_unreachable_options(
-    given: Mapping[str, bool], passthrough: tuple[str, ...], ports: PrintedLaunchPorts
+    harness: str,
+    given: Mapping[str, bool],
+    passthrough: tuple[str, ...],
+    ports: PrintedLaunchPorts,
 ) -> None:
     """Refuse the options the harness's printed command cannot honour, each with its reason."""
 
@@ -62,7 +65,7 @@ def refuse_unreachable_options(
     )
     if problems:
         raise ValueError(
-            "a printed launch prints a command and cannot honour:\n  " + "\n  ".join(problems)
+            f"`meridian {harness}` prints a command and cannot honour:\n  " + "\n  ".join(problems)
         )
 
 

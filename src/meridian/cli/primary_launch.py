@@ -551,6 +551,7 @@ def run_primary_launch(
                 f"{launch_harness} chat it resumes or forks."
             )
         refuse_unreachable_options(
+            launch_harness,
             {
                 "--fork": fork_ref is not None,
                 "--fork-fresh": fork_fresh_ref is not None,

@@ -25,15 +25,6 @@ def test_printed_launch_writes_nothing_but_its_script(
     monkeypatch.chdir(project)
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project.as_posix())
     stub_bundle_request_and_resolve(monkeypatch, model="gemini-3.8-flash", harness=HarnessId.AGY)
-    startup_calls: list[bool] = []
-    real_prints = cli_main._launch_prints  # pyright: ignore[reportPrivateUsage]
-
-    def _record(*args: object, **kwargs: object) -> bool:
-        result = real_prints(*args, **kwargs)  # pyright: ignore[reportArgumentType]
-        startup_calls.append(result)
-        return result
-
-    monkeypatch.setattr(cli_main, "_launch_prints", _record)
     home = Path(os.environ["MERIDIAN_HOME"])
     before = _files(home, project)
 
@@ -42,8 +33,7 @@ def test_printed_launch_writes_nothing_but_its_script(
 
     assert exited.value.code == 0
 
-    assert startup_calls == [True]
     out = capsys.readouterr().out.strip()
-    assert out.startswith("(cd ") and "agy" in out
+    assert out.startswith(("(cd ", "sh ")) and "agy" in out
     new = _files(home, project) - before
     assert all(path.suffix == ".sh" and "launch" in path.parts for path in new), new

@@ -491,11 +491,13 @@ def _assessment_reason(assessment: AssessmentReport) -> str:
 def _selection_details(report: RouteDecisionReport) -> list[str]:
     details: list[str] = []
     for attempt in report.model_attempts:
-        reasons = ", ".join(
+        parts = [
             f"{assessment.harness}: {_assessment_reason(assessment)}"
             for assessment in attempt.assessments
-        )
-        details.append(f"{attempt.model_token}: {reasons}")
+        ]
+        parts.extend(attempt.diagnostics)
+        if parts:
+            details.append(f"{attempt.model_token}: {', '.join(parts)}")
     return details
 
 
@@ -507,11 +509,13 @@ def _resolved_label(token: str, canonical: str) -> str:
 
 def _exhausted_message(report: RouteDecisionReport) -> str | None:
     rows: list[tuple[str, str, str]] = []
+    notes: list[str] = []
     for attempt in report.model_attempts:
         label = _resolved_label(attempt.model_token, attempt.canonical_model)
         for assessment in attempt.assessments:
             rows.append((label, assessment.harness, _assessment_reason(assessment)))
-    if not rows:
+        notes.extend(f"{label}: {diagnostic}" for diagnostic in attempt.diagnostics)
+    if not rows and not notes:
         return None
     unique = list(dict.fromkeys(harness for _, harness, _ in rows))
     one_harness = len(unique) == 1
@@ -526,6 +530,7 @@ def _exhausted_message(report: RouteDecisionReport) -> str | None:
         if reason != "no_model_match":
             extra.append(reason)
         lines.append(f"{label}: {': '.join(extra)}" if extra else label)
+    lines.extend(notes)
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 

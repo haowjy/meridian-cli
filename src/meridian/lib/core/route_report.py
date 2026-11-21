@@ -35,6 +35,7 @@ class ModelAttemptReport(_ReportObject):
     canonical_model: str
     model_source: str
     assessments: list[AssessmentReport]
+    diagnostics: list[str] = Field(default_factory=list)
 
 
 class SelectedAssessment(_ReportObject):
