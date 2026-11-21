@@ -16,8 +16,11 @@ from meridian.lib.state.user_paths import get_user_home
 # What the command Meridian prints sets for the session: the hook reads them from its own
 # environment when it registers the conversation and the server writes them onto the row
 # (``agy`` has no flag that names either).
-AGENT_ENV = "MERIDIAN_AGY_AGENT"
-APPROVAL_ENV = "MERIDIAN_AGY_APPROVAL"
+AGENT_ENV = "_MERIDIAN_AGY_AGENT"
+APPROVAL_ENV = "_MERIDIAN_AGY_APPROVAL"
+# The approvals the printed command can set (the non-default ``ApprovalMode`` values); the
+# hook runs before every model call and imports no policy module to name them.
+PRINTED_APPROVALS = frozenset({"auto", "never", "yolo", "confirm"})
 CONVERSATION_ID_KEY = "antigravity.google/conversation_id"
 ROOT_CONVERSATION_ID_KEY = "antigravity.google/root_conversation_id"
 
@@ -175,6 +178,7 @@ __all__ = [
     "AGENT_ENV",
     "APPROVAL_ENV",
     "CONVERSATION_ID_KEY",
+    "PRINTED_APPROVALS",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
     "briefed_path",

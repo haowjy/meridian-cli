@@ -10,7 +10,7 @@ State lives under ``<meridian home>/agy/``:
 
 - ``<pid>-<birth>/requests/<conversation>.json``: one request per conversation, written
   by the hook. It is also the shell guard's "already seen" marker. It carries the agent and
-  approval the printed command set (``MERIDIAN_AGY_AGENT``, ``MERIDIAN_AGY_APPROVAL``), which
+  approval the printed command set (``_MERIDIAN_AGY_AGENT``, ``_MERIDIAN_AGY_APPROVAL``), which
   ``holds.py`` writes into the row's launch snapshot so a continue replays them.
 - ``launch/<id>.sh``: a printed command too long for a shell line.
 - ``<pid>-<birth>/rows/<conversation>.json``: the spawn and chat the server holds for it.

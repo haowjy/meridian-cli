@@ -21,6 +21,7 @@ from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,
     APPROVAL_ENV,
+    PRINTED_APPROVALS,
     agy_root,
     briefed_path,
     is_safe_id,
@@ -158,6 +159,10 @@ def _guidance(
 def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Write this conversation's request file: its marker, and what the server will adopt."""
 
+    approval = os.environ.get(APPROVAL_ENV) or None
+    if approval is not None and approval not in PRINTED_APPROVALS:
+        _log_error(f"ignored {APPROVAL_ENV}={approval!r}: not an approval Meridian prints")
+        approval = None
     request: dict[str, Any] = {
         "conversation_id": conversation,
         "role": "subagent" if _is_subagent(proc_dir, conversation, payload) else "primary",
@@ -167,7 +172,7 @@ def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dic
         "model": payload.get("modelName"),
         # What ``meridian agy`` printed into the command's environment, if the person ran it.
         "agent": os.environ.get(AGENT_ENV) or None,
-        "approval": os.environ.get(APPROVAL_ENV) or None,
+        "approval": approval,
         "registered_at": time.time(),
     }
     write_private_json(request_path(proc_dir, conversation), request)

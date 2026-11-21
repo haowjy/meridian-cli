@@ -121,14 +121,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
     ),
     # Public configuration inputs.
     _public_config("MERIDIAN_AGENT", "Default agent selection."),
-    _public_config(
-        "MERIDIAN_AGY_AGENT",
-        "Agent a printed `meridian agy` command names; the agy hook records it on the row.",
-    ),
-    _public_config(
-        "MERIDIAN_AGY_APPROVAL",
-        "Approval a printed `meridian agy` command names; the agy hook records it on the row.",
-    ),
     _public_config("MERIDIAN_APPROVAL", "Harness approval policy override."),
     _public_config("MERIDIAN_AUTOCOMPACT", "Token count that triggers automatic compaction."),
     _public_config("MERIDIAN_AUTOCOMPACT_PCT", "Context fill percent that triggers compaction."),
@@ -239,6 +231,16 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "MERIDIAN_PROJECT_DIR",
         "Current Meridian project directory.",
         hook_field="project_root",
+    ),
+    _internal_handle(
+        "_MERIDIAN_AGY_AGENT",
+        "Agent a printed `meridian agy` command names; the agy hook records it on the row.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_AGY_APPROVAL",
+        "Approval a printed `meridian agy` command names; the agy hook records it on the row.",
+        child=False,
     ),
     _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
     _public_handle("MERIDIAN_SESSION_AGENT", "Resolved agent profile for this launch."),
