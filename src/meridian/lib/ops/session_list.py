@@ -309,6 +309,7 @@ def session_list_sync(
                 else decide_reentry(
                     chat_id=record.chat_id,
                     live=live,
+                    harness=record.harness,
                     has_harness_session=(
                         record.chat_id in recorded_harness_sessions
                         and record.native_key() is not None

@@ -90,7 +90,7 @@ def read_last_executed_model(
         if context.native_store is not None:
             from meridian.lib.harness.registry import get_default_harness_registry
 
-            adapter = get_default_harness_registry().find(harness)
+            adapter = get_default_harness_registry().find_reader(harness)
             if adapter is None:
                 return None
             native = adapter.resolve_native_session_file(

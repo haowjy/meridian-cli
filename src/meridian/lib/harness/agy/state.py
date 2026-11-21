@@ -9,11 +9,18 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from meridian.lib.platform import get_home_path
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
 
 CONVERSATION_ID_KEY = "antigravity.google/conversation_id"
 ROOT_CONVERSATION_ID_KEY = "antigravity.google/root_conversation_id"
+
+
+def native_store() -> Path:
+    """Where ``agy`` keeps its conversations: ``<store>/<conversation>/.system_generated/``."""
+
+    return get_home_path() / ".gemini" / "antigravity-cli" / "brain"
 
 
 def agy_root() -> Path:
@@ -129,6 +136,7 @@ __all__ = [
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
     "is_safe_id",
+    "native_store",
     "open_conversations",
     "process_birth",
     "process_dir",

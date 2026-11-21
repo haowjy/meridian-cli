@@ -3,7 +3,8 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.adapter import HarnessContract, SubprocessHarness
+from meridian.lib.harness import unlaunched
+from meridian.lib.harness.adapter import HarnessContract, NativeStoreReader, SubprocessHarness
 from meridian.lib.harness.bundle import get_connection_cls, get_harness_bundle
 
 type HarnessEntry = SubprocessHarness
@@ -13,12 +14,17 @@ def _empty_adapters() -> dict[HarnessId, HarnessEntry]:
     return {}
 
 
+def _empty_readers() -> dict[HarnessId, NativeStoreReader]:
+    return {}
+
+
 class HarnessRegistry(BaseModel):
     """Registry keyed by HarnessId."""
 
     model_config = ConfigDict()
 
     _adapters: dict[HarnessId, HarnessEntry] = PrivateAttr(default_factory=_empty_adapters)
+    _readers: dict[HarnessId, NativeStoreReader] = PrivateAttr(default_factory=_empty_readers)
 
     @classmethod
     def with_defaults(cls) -> Self:
@@ -39,6 +45,8 @@ class HarnessRegistry(BaseModel):
         registry.register(CodexAdapter())
         registry.register(OpenCodeAdapter())
         registry.register(PiAdapter())
+        for name, reader in unlaunched.readers().items():
+            registry._readers[HarnessId(name)] = reader
         return registry
 
     def register(self, adapter: HarnessEntry) -> None:
@@ -54,6 +62,20 @@ class HarnessRegistry(BaseModel):
         try:
             return self._adapters.get(HarnessId(name or ""))
         except ValueError:
+            return None
+
+    def get_reader(self, harness_id: HarnessId) -> NativeStoreReader:
+        """What reads a harness's native sessions, launched by Meridian or not."""
+        reader = self._adapters.get(harness_id) or self._readers.get(harness_id)
+        if reader is None:
+            raise KeyError(f"Unknown harness '{harness_id}'")
+        return reader
+
+    def find_reader(self, name: str | None) -> NativeStoreReader | None:
+        """``get_reader`` for a name read from stored data; None when unknown."""
+        try:
+            return self.get_reader(HarnessId(name or ""))
+        except (ValueError, KeyError):
             return None
 
     def get_subprocess_harness(self, harness_id: HarnessId) -> SubprocessHarness:

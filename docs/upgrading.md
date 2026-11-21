@@ -13,7 +13,8 @@ and does. Meridian does not launch `agy`.
   inbox per conversation. Older builds ignore it.
 - **`agy` sessions are rows with harness `agy`.** Older builds list and show them, answer
   `session log` and `--continue` with `unbound`, and treat `--from` as a chat with no
-  transcript. Rolling back works; a running `agy` session's row reads as crashed once its server is
+  transcript. Newer builds read the transcript (`session log`, `session search`, `--from`)
+  without writing anything new to the chat. Rolling back works; a running `agy` session's row reads as crashed once its server is
   gone, and `spawn cancel --force` from an older build signals nothing.
 - **`spawn cancel` refuses an `agy` session** ("this session runs in agy; end it there").
 - **`mcp` is pinned below 2.** `meridian serve` and the `agy` server use `mcp.server.fastmcp`,
