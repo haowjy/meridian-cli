@@ -237,8 +237,8 @@ _PRINTED = PrintedLaunchPorts(
         "--append-system-prompt": "agy has no system-prompt flag to carry it",
     },
     workspace_note=(
-        "--work and --task-dir only add their directories to agy's workspace: the "
-        "session starts in the project directory and is not attached to the work item."
+        "--work and --task-dir do not move the session: it starts in the project directory "
+        "and is not attached to the work item."
     ),
     script_dir=launch_script_dir,
 )

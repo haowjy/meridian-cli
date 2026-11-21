@@ -59,8 +59,8 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
 - **Directories.** The command starts in the project directory. Workspace and context roots,
   `--task-dir` and `--work`'s directory become `--add-dir`, except a directory with its own
   `.agy/` or `.agents/`: its hooks and MCP servers would run beside the project's, so it is
-  skipped with a warning. `--work` and `--task-dir` add directories only; they do not attach
-  the session to a work item, and `--work` must name an existing item.
+  skipped with a warning. `--work` and `--task-dir` only add directories; they do not move the
+  session or attach it to a work item, and `--work` must name an existing item.
 - **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
   `--sandbox`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
   `--`. Arguments after `--` go to `agy`.
