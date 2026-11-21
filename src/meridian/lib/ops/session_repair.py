@@ -208,8 +208,9 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
         raise ValueError(f"Chat {chat_id} not found.")
     if is_unlaunched_harness(record.harness):
         raise ValueError(
-            f"Chat {chat_id} runs in {record.harness}: Meridian never binds a native "
-            "session for it, so there is nothing to repair."
+            f"Chat {chat_id} runs in {record.harness}, which Meridian doesn't launch: "
+            "its transcript is readable with session log, and there is nothing to repair. "
+            "Resume it there."
         )
     key = record.native_key()
     if key is not None:

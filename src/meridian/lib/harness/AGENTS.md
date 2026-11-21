@@ -60,7 +60,9 @@ Meridian may signal stops `agy`), `--continue`/`--fork` refuse, blocks resume in
 harness, and `agy/transcript.py` registers one for `agy`. Readers of a stored key go
 through it, never `get_subprocess_harness`. An `agy` chat records no native store: its
 layout names it (`unlaunched.native_store`, used by `NativeKeyFields.complete()`), so the
-chat record is unchanged and older builds read it as before. `agy` has no capture dialect,
+chat record is unchanged and older builds read it as before. Caveat: that store is
+computed from the reading process's `HOME` (one field, two sources: recorded for launched
+harnesses, computed for unlaunched ones), so a move of Google's store changes every `agy` key. `agy` has no capture dialect,
 so capture reports it unsupported.
 Outside `lib/harness/`, reach these harnesses only through `unlaunched.py` (argv dispatch,
 the owed-notice sweep, store, reader); a second one is a package with `commands.run_command`,

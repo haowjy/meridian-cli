@@ -121,7 +121,10 @@ def _build_tracked_reference(
         raise NativeSessionUnavailable(
             source_chat_id or source_spawn_id or "this session",
             "unbound",
-            hint=f"It ran in {stored_harness}, which Meridian doesn't launch: resume it there.",
+            hint=(
+                f"Its transcript is readable (session log), but it runs in {stored_harness}, "
+                "which Meridian doesn't launch: resume it there."
+            ),
         )
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
