@@ -36,7 +36,10 @@ agy --agent <profile>      # as usual
   skills index, the capabilities, the spawn rules and prompting guidance, worded for the
   `meridian` tool (one command per call, no shell, `spawn wait` blocks the turn). The
   session's own chat ID, spawn ID and work and task links follow in one more message at the
-  first model call after its row exists, so they are missing from the first prompt. Both are
+  first model call after its row exists, so they are missing from the first prompt. Each is
+  injected only when the model's current context lacks it: a conversation resumed in a new
+  `agy` process keeps the copies it has, and one `agy` compacted gets both again at its next
+  model call (the hook reads the transcript for the last compaction). Both are
   built at run time by the same builders a launch uses, so they never go stale. The hook
   payload names no agent, so the session is treated as able to spawn and `meridian spawn
   subagents` lists what it may start. Native subagents get nothing.

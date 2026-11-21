@@ -93,9 +93,32 @@ def row_path(proc_dir: Path, conversation_id: str) -> Path:
 
 
 def briefed_path(proc_dir: Path, conversation_id: str) -> Path:
-    """Marks that the hook told this conversation its row's facts; ``guard.sh`` reads it."""
+    """Marks that the hook has dealt with its row's facts; ``guard.sh`` reads it."""
 
     return proc_dir / "briefed" / conversation_id
+
+
+def seen_path(proc_dir: Path, conversation_id: str) -> Path:
+    """``<offset> <transcript path>``: how far the hook has read this conversation's
+    transcript, which ``guard.sh`` scans from for a compaction."""
+
+    return proc_dir / "seen" / conversation_id
+
+
+def read_seen_offset(proc_dir: Path, conversation_id: str) -> int | None:
+    try:
+        return int(seen_path(proc_dir, conversation_id).read_text().split(" ", 1)[0])
+    except (OSError, ValueError):
+        return None
+
+
+def write_seen(proc_dir: Path, conversation_id: str, offset: int, transcript: str | None) -> None:
+    atomic_write_text(
+        seen_path(proc_dir, conversation_id),
+        f"{offset} {transcript or ''}",
+        durable=False,
+        permissions=PRIVATE_FILE_MODE,
+    )
 
 
 # MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
@@ -149,8 +172,11 @@ __all__ = [
     "process_dir",
     "process_dirs",
     "read_json",
+    "read_seen_offset",
     "request_path",
     "row_path",
     "scrubbed_env",
+    "seen_path",
     "write_private_json",
+    "write_seen",
 ]

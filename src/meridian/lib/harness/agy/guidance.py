@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Heading the static guidance always carries, from ``build_capabilities_prompt``.
+STATIC_HEADING = "# Meridian capabilities"
+
 _WAIT_RULES = """\
 - Launch spawns with --bg and collect their results with `meridian spawn wait`; with no
   arg it finds your running and owed spawns. A tool call blocks your turn until it
