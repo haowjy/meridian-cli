@@ -20,7 +20,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
-from meridian.lib.harness.registry import get_harness_bundle
+from meridian.lib.harness.registry import get_process_ports
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import (
@@ -82,7 +82,7 @@ def _install_idle_sensor_bundle(
 ) -> tuple[list[IdleSensorContext], list[bool]]:
     contexts: list[IdleSensorContext] = []
     alive_at_creation: list[bool] = []
-    original_bundle = get_harness_bundle(harness_id)
+    original_bundle = get_process_ports(harness_id)
 
     def _create_sensor(ctx: IdleSensorContext) -> RecordingIdleSensor:
         contexts.append(ctx)
@@ -90,7 +90,7 @@ def _install_idle_sensor_bundle(
         return sensor
 
     idle_bundle = replace(original_bundle, primary_idle_sensor=_create_sensor)
-    monkeypatch.setattr(primary_attach_module, "get_harness_bundle", lambda _h: idle_bundle)
+    monkeypatch.setattr(primary_attach_module, "get_process_ports", lambda _h: idle_bundle)
     connection.idle_sensor = sensor
     return contexts, alive_at_creation
 
@@ -160,7 +160,6 @@ class FakeManagedConnection:
             supports_steer=True,
             supports_cancel=True,
             runtime_model_switch=False,
-            structured_reasoning=True,
             supports_primary_observer=True,
         )
 

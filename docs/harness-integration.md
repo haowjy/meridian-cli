@@ -34,8 +34,9 @@ Read these contracts before implementing:
 
 `HARNESS_EXTENSION_TOUCHPOINTS` in
 [`harness/__init__.py`](../src/meridian/lib/harness/__init__.py) lists the registration
-seams. Add the `HarnessId` member, then register a `HarnessBundle` with its adapter,
-spec class, extractor, transport map, projection ports, and semantics; import the
+seams. Add the `HarnessId` member, then call `register_harness` with `LaunchPorts` (adapter,
+spec class, projection ports, semantics) and `ProcessPorts` (extractor, transport map, idle,
+route and event ports); import the
 modules in `_run_bootstrap()` and register the adapter in
 `HarnessRegistry.with_defaults()`. Beyond those, a harness declares what it can do
 and the rest of the code asks the adapter or the registry:
@@ -52,6 +53,13 @@ Pi's session role and drain coordinator or OpenCode's version env, are behaviour
 that harness has. `legacy_native_stores.SUPPORTED` is a closed list of the harnesses
 older builds wrote chats for; a new harness never joins it. Do not add another harness-name list or
 `== "claude"` branch outside `lib/harness/`; give the adapter a capability instead.
+
+A harness the person starts themselves, like Antigravity, is the exception: Meridian never
+runs it, so it gets a `HarnessId` member with `launched_by_meridian` false, an adapter with
+launch ports only (including registered `PrintedLaunchPorts`), no process ports, and a line in
+`_PACKAGES` (`lib/harness/plugin_hosted.py`). Its plugin calls `meridian` commands, and rows it
+holds are told apart by `is_plugin_hosted`; see [`lib/harness/AGENTS.md`](../src/meridian/lib/harness/AGENTS.md)
+and [Using Meridian from Antigravity](antigravity.md).
 
 The adapter declares capabilities and a `HarnessContract`, resolves `SpawnParams`
 into a launch spec, and projects composed content onto the harness's actual

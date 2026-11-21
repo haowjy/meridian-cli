@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import TransportId
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import get_launch_ports
 from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     reap_on_ownership_transfer_failure,
@@ -24,15 +24,15 @@ async def dispatch_start(
 
     from meridian.lib.harness.connections import get_connection_class
 
-    bundle = get_harness_bundle(config.harness_id)
-    if not isinstance(spec, bundle.spec_cls):
+    launch_ports = get_launch_ports(config.harness_id)
+    if not isinstance(spec, launch_ports.spec_cls):
         raise TypeError(
-            f"HarnessBundle invariant violated: adapter for "
-            f"{bundle.harness_id} returned {type(spec).__name__}, "
-            f"expected {bundle.spec_cls.__name__}"
+            f"LaunchPorts invariant violated: adapter for "
+            f"{launch_ports.harness_id} returned {type(spec).__name__}, "
+            f"expected {launch_ports.spec_cls.__name__}"
         )
 
-    declared_transports = bundle.adapter.contract.transport_ids
+    declared_transports = launch_ports.adapter.contract.transport_ids
     transport_id = select_dispatch_transport(declared_transports)
     connection_class = get_connection_class(config.harness_id, transport_id)
     request_handler: PermissionBroker | None = None
@@ -41,7 +41,7 @@ async def dispatch_start(
     async def _runtime_event_sink(event: RawHarnessEvent) -> None:
         await connection_ref["connection"].inject_runtime_event(event)
 
-    if bundle.adapter.contract.sends_server_requests:
+    if launch_ports.adapter.contract.sends_server_requests:
         request_handler = PermissionBroker(
             launch=config.launch,
             event_sink=_runtime_event_sink,

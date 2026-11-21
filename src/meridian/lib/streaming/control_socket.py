@@ -14,7 +14,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.core.delivery import MessageRoute
+from meridian.lib.core.delivery import MessageRoute, MessageSender
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
@@ -231,7 +231,10 @@ class ControlSocketServer:
         text = payload.get("text")
         if not isinstance(text, str):
             return {"ok": False, "error": "user_message requires text"}
-        delivery = await self._route.deliver(text)
+        sender = _parse_sender(payload.get("sender"))
+        if sender is False:
+            return {"ok": False, "error": "user_message sender needs spawn_id and project_root"}
+        delivery = await self._route.deliver(text, sender)
         response: dict[str, object] = {"ok": True, "delivery": delivery.value}
         if self._route.note is not None:
             response["note"] = self._route.note
@@ -251,6 +254,19 @@ class ControlSocketServer:
         if server is not None:
             with suppress(TimeoutError):
                 await asyncio.wait_for(server.wait_closed(), _STOP_WAIT_SECONDS)
+
+
+def _parse_sender(value: object) -> MessageSender | None | Literal[False]:
+    """The request's sender, ``None`` when absent, ``False`` when malformed."""
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        fields = cast("dict[str, object]", value)
+        spawn_id, project_root = fields.get("spawn_id"), fields.get("project_root")
+        if isinstance(spawn_id, str) and isinstance(project_root, str):
+            return MessageSender(spawn_id, project_root)
+    return False
 
 
 __all__ = [

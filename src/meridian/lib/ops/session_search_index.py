@@ -193,10 +193,8 @@ class SearchProjection:
                 try:
                     source = self.sources.get(key)
                     if source is None:
-                        adapter = get_default_harness_registry().get_subprocess_harness(
-                            HarnessId(key.harness)
-                        )
-                        locator = adapter.resolve_native_session_file(
+                        reader = get_default_harness_registry().get_reader(HarnessId(key.harness))
+                        locator = reader.resolve_native_session_file(
                             session_id=key.session_id, native_store=Path(key.native_store)
                         )
                         if locator is None:

@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, Literal
 
+from meridian.lib.harness.plugin_hosted import native_store as native_store_of_hosted
+
 Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
 UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file", "store_moved"]
@@ -55,9 +57,11 @@ class NativeKeyFields:
         object.__setattr__(self, "session_id", self.session_id or None)
 
     def complete(self) -> NativeKey | None:
-        if self.harness is None or self.native_store is None or self.session_id is None:
+        # A harness Meridian never launches records no store: its own layout names it.
+        store = self.native_store or (self.harness and native_store_of_hosted(self.harness))
+        if self.harness is None or store is None or self.session_id is None:
             return None
-        return NativeKey(self.harness, self.native_store, self.session_id)
+        return NativeKey(self.harness, store, self.session_id)
 
     def with_session(self, session_id: str) -> "NativeKeyFields":
         return replace(self, session_id=session_id)

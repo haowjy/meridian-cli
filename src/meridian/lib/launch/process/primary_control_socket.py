@@ -26,7 +26,9 @@ async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncGenera
     server = ControlSocketServer(
         control_socket_path(launch.runtime_root, launch.spawn_id),
         MessageRoute(
-            lambda text: coordinator.deliver(route.deliver, text, source="control_socket"),
+            lambda text, sender: coordinator.deliver(
+                lambda sent: route.deliver(sent, sender), text, source="control_socket"
+            ),
             route.note,
         ),
     )

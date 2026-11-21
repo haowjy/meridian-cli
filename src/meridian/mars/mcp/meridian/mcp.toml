@@ -1,0 +1,2 @@
+command = "meridian"
+args = ["harness-mcp", "agy"]

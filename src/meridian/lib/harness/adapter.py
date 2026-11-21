@@ -93,7 +93,6 @@ class HarnessCapabilities(BaseModel):
     # The harness's native agent definition carries the profile body; otherwise the body
     # goes in the system prompt.
     native_agent_carries_body: bool = False
-    supports_primary_launch: bool = False
     supports_named_primary_resume: bool = False
     # Whether primary launch needs a synthetic first user prompt to bootstrap
     # one session. Harnesses that can attach without a first-turn prompt keep
@@ -105,9 +104,6 @@ class HarnessCapabilities(BaseModel):
     # non-interactive print mode (Claude `--print`).
     captures_blackbox_output: bool = False
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
-    # Whether a running spawn takes a message sent to it. A sender on a harness
-    # that refuses messages is not offered a reply route.
-    accepts_messages: bool = True
 
 
 class WorkspaceRoots(StrEnum):
@@ -225,6 +221,8 @@ class SpawnParams(BaseModel):
     control_root: str | None = None
     task_cwd: str | None = None
     projected_roots: tuple[Path, ...] = ()
+    # ``projected_roots`` without Meridian's own runtime, temp and socket roots.
+    workspace_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
     continue_fork: bool = False
@@ -422,7 +420,47 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
 
 @runtime_checkable
-class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
+class NativeStoreReader(Protocol):
+    """Reading a harness's native sessions: the part of an adapter that needs no launch.
+
+    Harnesses Meridian launches get it from their adapter; ones it never launches (``agy``)
+    register just this, so ``session log``, search and ``--from`` need no special case.
+    """
+
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
+
+    def transcript_parser(self) -> TranscriptEventParser:
+        """Turn this harness's native transcript events into messages for ``session log``."""
+        ...
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        """Name of the native format a capture of this source seals; None when the harness
+        has no native capture."""
+        ...
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        """Decide from the records of a ``capture_dialect`` capture whether its tail is
+        complete."""
+        ...
+
+    def resolve_native_session_file(
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
+    ) -> Path | None: ...
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        """The last model the native session file ``native`` ran, verbatim; None if unread.
+
+        ``tail_bytes`` limits a JSONL history to its last N bytes."""
+        ...
+
+
+@runtime_checkable
+class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], NativeStoreReader, Protocol):
     """Protocol for subprocess-launching harness behavior."""
 
     @property
@@ -507,37 +545,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
     ) -> ServerRequestHandler | None: ...
 
-    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
-
-    def transcript_parser(self) -> TranscriptEventParser:
-        """Turn this harness's native transcript events into messages for ``session log``."""
-        ...
-
-    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
-        """Name of the native format a capture of this source seals; None when the harness
-        has no native capture."""
-        ...
-
-    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
-        """Decide from the records of a ``capture_dialect`` capture whether its tail is
-        complete."""
-        ...
-
-    def resolve_native_session_file(
-        self,
-        *,
-        session_id: str,
-        native_store: Path,
-    ) -> Path | None: ...
-
-    def read_last_model(
-        self, *, session_id: str, native: Path, tail_bytes: int | None
-    ) -> str | None:
-        """The last model the native session file ``native`` ran, verbatim; None if unread.
-
-        ``tail_bytes`` limits a JSONL history to its last N bytes."""
-        ...
-
     def native_session_evidence(
         self, path: Path, *, recorded_session_id: str | None
     ) -> NativeSessionEvidence:
@@ -600,7 +607,42 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool: ...
 
 
-class BaseHarnessAdapter(Generic[SpecT], ABC):
+class BaseNativeStoreReader:
+    """Defaults for a ``NativeStoreReader``: a JSONL file, shape-based parsing, no capture."""
+
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
+        return "native_file"
+
+    def transcript_parser(self) -> TranscriptEventParser:
+        from meridian.lib.harness.transcript import DefaultTranscriptEventParser
+
+        return DefaultTranscriptEventParser()
+
+    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
+        _ = kind, path
+        return None
+
+    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
+        raise NotImplementedError(
+            f"{type(self).__name__} declares capture dialect {dialect!r} but no observer"
+        )
+
+    def resolve_native_session_file(
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
+    ) -> Path | None:
+        return None
+
+    def read_last_model(
+        self, *, session_id: str, native: Path, tail_bytes: int | None
+    ) -> str | None:
+        _ = session_id, native, tail_bytes
+        return None
+
+
+class BaseHarnessAdapter(BaseNativeStoreReader, Generic[SpecT], ABC):
     """Base adapter with contract enforcement and optional helper defaults."""
 
     @property
@@ -980,35 +1022,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         return project_inline_content(content)
-
-    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
-        return "native_file"
-
-    def transcript_parser(self) -> TranscriptEventParser:
-        from meridian.lib.harness.transcript import DefaultTranscriptEventParser
-
-        return DefaultTranscriptEventParser()
-
-    def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
-        _ = kind, path
-        return None
-
-    def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
-        raise NotImplementedError(f"{self.id} declares capture dialect {dialect!r} but no observer")
-
-    def resolve_native_session_file(
-        self,
-        *,
-        session_id: str,
-        native_store: Path,
-    ) -> Path | None:
-        return None
-
-    def read_last_model(
-        self, *, session_id: str, native: Path, tail_bytes: int | None
-    ) -> str | None:
-        _ = session_id, native, tail_bytes
-        return None
 
     def native_session_evidence(
         self, path: Path, *, recorded_session_id: str | None

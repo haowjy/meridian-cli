@@ -6,6 +6,7 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.harness.plugin_hosted import native_store
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
@@ -128,7 +129,9 @@ def _build_tracked_reference(
         source_spawn_id=source_spawn_id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_native_store=source_native_store,
+        # A plugin-hosted harness records no store: its own layout names it.
+        source_native_store=source_native_store
+        or (native_store(stored_harness) if stored_harness else None),
         source_launch_policy_snapshot=source_launch_policy_snapshot,
         source_goal=source_goal,
         tracked=True,

@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 # First Mars release that resolves effort to a level the model and harness take
 # (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
 # project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.36.0"
+_MARS_BUNDLE_MIN_VERSION = "0.39.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -348,6 +348,7 @@ def _parse_platform_tool_rules(tools: dict[str, object]) -> tuple[ToolRule, ...]
 def _parse_harness_id(
     raw_harness: object,
     *,
+    pinned: str | None,
     harness_registry: HarnessRegistry,
 ) -> HarnessId:
     harness_token = _normalize_str(raw_harness)
@@ -362,15 +363,15 @@ def _parse_harness_id(
             f"'{harness_token}'. Available harnesses: {supported}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         ) from exc
-    try:
-        harness_registry.get_subprocess_harness(harness_id)
-    except (KeyError, TypeError) as exc:
+    # Only a pin routes to a harness Meridian may not exec, and only a printed launch pins
+    # one (startup decides that; ``run_primary_launch`` refuses any other).
+    if not harness_id.launched_by_meridian and pinned != harness_token:
         supported = ", ".join(str(harness) for harness in harness_registry.ids())
         raise ValueError(
             "Mars launch-bundle returned unavailable routing.harness "
             f"'{harness_token}'. Available harnesses: {supported}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
-        ) from exc
+        )
     return harness_id
 
 
@@ -490,11 +491,13 @@ def _assessment_reason(assessment: AssessmentReport) -> str:
 def _selection_details(report: RouteDecisionReport) -> list[str]:
     details: list[str] = []
     for attempt in report.model_attempts:
-        reasons = ", ".join(
+        parts = [
             f"{assessment.harness}: {_assessment_reason(assessment)}"
             for assessment in attempt.assessments
-        )
-        details.append(f"{attempt.model_token}: {reasons}")
+        ]
+        parts.extend(attempt.diagnostics)
+        if parts:
+            details.append(f"{attempt.model_token}: {', '.join(parts)}")
     return details
 
 
@@ -506,11 +509,13 @@ def _resolved_label(token: str, canonical: str) -> str:
 
 def _exhausted_message(report: RouteDecisionReport) -> str | None:
     rows: list[tuple[str, str, str]] = []
+    notes: list[str] = []
     for attempt in report.model_attempts:
         label = _resolved_label(attempt.model_token, attempt.canonical_model)
         for assessment in attempt.assessments:
             rows.append((label, assessment.harness, _assessment_reason(assessment)))
-    if not rows:
+        notes.extend(f"{label}: {diagnostic}" for diagnostic in attempt.diagnostics)
+    if not rows and not notes:
         return None
     unique = list(dict.fromkeys(harness for _, harness, _ in rows))
     one_harness = len(unique) == 1
@@ -525,6 +530,7 @@ def _exhausted_message(report: RouteDecisionReport) -> str | None:
         if reason != "no_model_match":
             extra.append(reason)
         lines.append(f"{label}: {': '.join(extra)}" if extra else label)
+    lines.extend(notes)
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 
@@ -656,6 +662,7 @@ def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str 
 def _parse_bundle_payload(
     payload: dict[str, object],
     *,
+    pinned_harness: str | None,
     harness_registry: HarnessRegistry,
     mars_executable: str,
 ) -> BundleResult:
@@ -672,7 +679,9 @@ def _parse_bundle_payload(
     routing = _required_object_field(payload, "routing")
     model = _normalize_str(routing.get("model"))
     model_token = _normalize_str(routing.get("model_token")) or model
-    harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
+    harness = _parse_harness_id(
+        routing.get("harness"), pinned=pinned_harness, harness_registry=harness_registry
+    )
     harness_model = _normalize_str(routing.get("harness_model")) or None
 
     report = RouteDecisionReport.model_validate(_required_object_field(routing, "route_trace"))
@@ -797,6 +806,7 @@ def request_and_resolve(
     payload = cast("dict[str, object]", payload_obj)
     bundle = _parse_bundle_payload(
         payload,
+        pinned_harness=request.harness_override,
         harness_registry=harness_registry,
         mars_executable=command[0],
     )

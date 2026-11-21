@@ -28,7 +28,7 @@ DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_PREFIX = "meridian/"
 _HARNESS_PREFIX = "meridian/lib/harness/"
 _BOOTSTRAP_TRIGGER_CALLS = frozenset(
-    {"ensure_bootstrap", "get_harness_bundle", "get_bundle_registry"}
+    {"ensure_bootstrap", "get_launch_ports", "get_process_ports", "get_launch_registry"}
 )
 
 # Vendored dependency trees are not ours.

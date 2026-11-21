@@ -30,6 +30,7 @@ from meridian.lib.harness.legacy_native_stores import (
     pi_shared_session_root,
     pi_spawn_session_dir,
 )
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.legacy_native_import import (
     RetainedChatFacts,
@@ -205,6 +206,12 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
     record = records.get(chat_id)
     if record is None:
         raise ValueError(f"Chat {chat_id} not found.")
+    if is_plugin_hosted(record.harness):
+        raise ValueError(
+            f"Chat {chat_id} runs in {record.harness}, which Meridian doesn't launch: "
+            "its transcript is readable with session log, and there is nothing to repair. "
+            "Resume it there."
+        )
     key = record.native_key()
     if key is not None:
         if payload.native:

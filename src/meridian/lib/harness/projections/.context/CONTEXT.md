@@ -82,7 +82,7 @@ network policy remains authoritative.
 
 Codex network restrictions apply only under `workspace-write`; proxy-based restrictions
 are partial because local services remain reachable. `read-only` stays offline. Unset
-network denies access in constrained Claude and Codex sandboxes. Cursor, Pi and OpenCode
+network denies access in constrained Claude and Codex sandboxes. Pi and OpenCode
 report restrictions unenforced. Under Codex's constrained sandboxes, a Meridian-owned
 user rules file grants the `meridian spawn` prefix outside the sandbox for every session
 using that Codex home; a write failure is reported without blocking launch.
@@ -96,11 +96,8 @@ because V1 renders a map. With headless `approval: default` and no wildcard rule
 emits `*: allow` only when the profile names no OpenCode tool; otherwise native defaults
 and user config remain in charge.
 
-## Effort and cursor
+## Effort
 
 Claude cannot turn thinking off on current models: even `MAX_THINKING_TOKENS=0` was
 observed to think. Pi maps `none` to `off` and clamps effort to the model. OpenCode V1
-uses variants; V2 has no working effort channel. Cursor receives a model already resolved
-with effort by Mars. Cursor is unmaintained; keep it building without adding parity work.
-Additional workspace roots are best-effort: Cursor receives only `task_cwd` as its
-workspace.
+uses variants; V2 has no working effort channel.

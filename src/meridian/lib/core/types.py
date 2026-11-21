@@ -1,24 +1,57 @@
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Annotated, NewType
 
 from pydantic import BeforeValidator, StringConstraints
 
+from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
+
 
 class HarnessId(StrEnum):
     """Known harness identifiers."""
 
+    AGY = "agy"
     CLAUDE = "claude"
     CODEX = "codex"
-    CURSOR = "cursor"
     OPENCODE = "opencode"
     PI = "pi"
 
+    @property
+    def launched_by_meridian(self) -> bool:
+        """Whether Meridian may exec this harness. False for a plugin-hosted one (``agy``):
+        Meridian reads its sessions and builds its command, and never runs it."""
+
+        return self.value not in PLUGIN_HOSTED
+
+    @classmethod
+    def _missing_(cls, value: object) -> HarnessId | None:
+        # Old chats and spawn rows still name cursor; a bare "not a valid HarnessId"
+        # would hide why they no longer open.
+        if value == "cursor":
+            raise ValueError(
+                "Cursor support was removed in 0.26.0; its sessions can no longer be "
+                "launched, resumed or read."
+            )
+        return None
+
+
+def launched_harnesses() -> tuple[HarnessId, ...]:
+    return tuple(harness for harness in HarnessId if harness.launched_by_meridian)
+
 
 def harness_names_text() -> str:
-    """Every harness id as ``a, b, or c``, for help text."""
+    """Every harness id Meridian may exec as ``a, b, or c``, for help text."""
 
-    names = [harness.value for harness in HarnessId]
+    names = [harness.value for harness in launched_harnesses()]
     return f"{', '.join(names[:-1])}, or {names[-1]}"
+
+
+def harness_choices_text() -> str:
+    """``harness_names_text`` plus the harnesses whose launch is printed, for ``--harness`` help."""
+
+    printed = [harness.value for harness in HarnessId if not harness.launched_by_meridian]
+    return f"{harness_names_text()}; {', '.join(printed)} prints its command"
 
 
 class TransportId(StrEnum):
@@ -29,7 +62,7 @@ class TransportId(StrEnum):
 
 
 def normalize_mars_target_name(name: str) -> str:
-    """Normalize a mars target or ``managed_root`` name to its bare harness id.
+    """Normalize a mars target or target name to its bare harness id.
 
     Mars target names may be written dotted (``".claude"``) or bare (``"claude"``),
     with surrounding whitespace or mixed case. Producers (init scaffolding) and

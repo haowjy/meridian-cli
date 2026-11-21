@@ -42,7 +42,7 @@ A Mars package can install agents, skills, hooks, and MCP servers. `meridian mar
 
 ```toml
 [settings]
-targets = [".claude", ".codex", ".opencode", ".pi", ".cursor"]
+targets = [".claude", ".codex", ".opencode", ".pi"]
 default_model = "gptmini"
 default_harness = "codex"
 models_cache_ttl_hours = 24
@@ -76,8 +76,7 @@ include_fanout = false          # default false: skip fan-out (sub-delegate) age
 ```
 
 Each listed harness must also have an effective managed target (for Claude,
-`.claude`, from `settings.targets` or legacy `managed_root` when `targets` is
-unset). Mars then materializes only qualifying agents for that harness;
+`.claude`, from `settings.targets`). Mars then materializes only qualifying agents for that harness;
 `.mars/agents/` remains the canonical Meridian spawn source.
 `agent_emission = "always"` is broader and emits all native agent copies.
 
@@ -150,11 +149,11 @@ harnesses = []
 Project-local aliases live under `[models.<alias>]`:
 
 ```toml
-[models.composer]
-harness = "cursor"
-model = "composer-2.5"
-provider = "cursor"
-description = "Cursor's native coding model. Fast, strong tool use."
+[models.fast]
+harness = "claude"
+model = "claude-haiku-5-5"
+provider = "anthropic"
+description = "Small, fast model for quick edits."
 ```
 
 Prefer model aliases as the user-facing interface. When invoking Meridian, pass

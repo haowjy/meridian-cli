@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
         load_agent_profile_with_fallback,
-        resolve_harness,
     )
     from meridian.lib.launch.types import (
         LaunchRequest,
@@ -230,6 +229,9 @@ def launch_primary(
         )
         if launch_plan is not None:
             launch_plan = launch_plan.model_copy(update={"requested_model": request.model})
+        # A harness Meridian does not exec has no terminal surface and prints its command:
+        # the preview carries the directory and environment that command sets.
+        prints = not preview_context.harness.id.launched_by_meridian
         return LaunchResult(
             launch_plan=launch_plan,
             command=() if launch_plan is not None else preview_context.binding.argv,
@@ -239,7 +241,22 @@ def launch_primary(
             continue_chat_id=None,
             warning=warning,
             terminal_surface_mode=(
-                preview_context.harness.contract.capabilities.terminal_surface_mode.value
+                None
+                if prints
+                else preview_context.harness.contract.capabilities.terminal_surface_mode.value
+            ),
+            command_cwd=preview_context.binding.child_cwd if prints else None,
+            command_env=(
+                preview_context.harness.project_launch_env(
+                    spec=preview_context.binding.spec,
+                    system_prompt_path=LaunchPaths.preview(
+                        Path(runtime.runtime_root)
+                    ).system_prompt,
+                    env={"MERIDIAN_PROJECT_DIR": preview_context.control_root.as_posix()},
+                    primary_mode=prepared.primary_mode,
+                )
+                if prints
+                else {}
             ),
         )
 
@@ -289,7 +306,6 @@ def __getattr__(name: str) -> Any:
             "normalize_system_prompt_passthrough_args",
         ),
         "prepare_launch_surface": (".context", "prepare_launch_surface"),
-        "resolve_harness": (".resolve", "resolve_harness"),
         "resolve_launch_policy": (".policies", "resolve_launch_policy"),
         "run_harness_process": (".process", "run_harness_process"),
     }
@@ -327,7 +343,6 @@ __all__ = [
     "load_agent_profile_with_fallback",
     "normalize_system_prompt_passthrough_args",
     "prepare_launch_surface",
-    "resolve_harness",
     "resolve_launch_policy",
     "run_harness_process",
 ]

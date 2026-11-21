@@ -177,9 +177,9 @@ def normalize_event(
     except ValueError:
         return NormalizedHarnessEvent(event, EventSemantics())
 
-    from meridian.lib.harness.bundle import get_harness_bundle
+    from meridian.lib.harness.bundle import get_launch_ports
 
-    semantics = get_harness_bundle(harness_id).semantics.normalize(
+    semantics = get_launch_ports(harness_id).semantics.normalize(
         event,
         primary_event_scope=primary_event_scope,
     )

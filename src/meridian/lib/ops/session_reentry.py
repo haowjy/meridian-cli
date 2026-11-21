@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.state.session_store import (
@@ -56,11 +57,17 @@ type Launch = Resume | Fork | StartFromLaunch
 
 
 def decide_reentry(
-    *, chat_id: str, live: bool, has_harness_session: bool
+    *, chat_id: str, live: bool, has_harness_session: bool, harness: str | None
 ) -> SessionReentryDecision:
 
     if not has_harness_session:
         return Blocked("no harness session recorded; cannot resume or fork")
+    if is_plugin_hosted(harness):
+        # Resuming prints the command; a chat whose plugin still holds it is open in a
+        # terminal, and a fork of it would be a conversation Meridian cannot create.
+        if live:
+            return Blocked(f"open in {harness} already; close it there, then resume")
+        return Resume(chat_id)
     if live:
         return Fork(chat_id)
     return Resume(chat_id)
@@ -89,6 +96,7 @@ def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDe
     return decide_reentry(
         chat_id=chat_id,
         live=is_session_lease_owner_alive(roots.runtime_root, chat_id),
+        harness=record.harness,
         has_harness_session=recover_recorded_chat_harness_session_id(
             roots.runtime_root,
             chat_id,

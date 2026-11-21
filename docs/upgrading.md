@@ -1,5 +1,66 @@
 # Upgrade notes
 
+## `meridian agy` prints an Antigravity launch
+
+New in this release; needs the Mars release that routes a `--harness agy` pin to `agy` (Mars
+0.39.0). `meridian agy` (or `--harness agy`) builds the launch and prints the `agy` command
+for you to run; Meridian still never runs `agy`. See [Using Meridian from
+Antigravity](antigravity.md#start-agy-the-meridian-way).
+
+- **`meridian --continue <agy chat>` works**: it prints the resume command. It used to refuse.
+  `--fork` of an `agy` chat still refuses.
+- **`meridian agy` writes only a script** under `~/.meridian/agy/launch/` for a long command;
+  it creates no row, chat, work item or lock.
+- **Shortcut names now include `agy`**, so `meridian agy` is a command rather than an error.
+- **New `agy` row fields**: a session run from a printed command records its agent and
+  approval, and the model it runs on. Older builds ignore them, and rows without them keep
+  working (a continue then needs `-m`).
+- **`spawn` never uses `agy`**: `spawn --harness agy` and a model that only `agy` serves are
+  refused.
+
+## Meridian from a plain Antigravity (`agy`) session
+
+New in this release. Nothing changes until you link Antigravity: `meridian mars link agy`, then
+`meridian mars sync`. [Using Meridian from Antigravity](antigravity.md) covers what it installs
+and does. Meridian does not launch `agy`.
+
+- **Needs Mars 0.38.0 or newer**; this release pins 0.39.0. `meridian mars sync` installs Meridian's hooks
+  and one MCP server into `.agy/`, and moves where Meridian's own skills are provided from
+  (`src/meridian/mars/skills/`); no action on your side.
+- **New state under `~/.meridian/agy/`**: a directory per running `agy` process and a message
+  inbox per conversation. Older builds ignore it.
+- **`agy` sessions are rows with harness `agy`.** Older builds list and show them, answer
+  `session log` and `--continue` with `unbound`, and treat `--from` as a chat with no
+  transcript. Newer builds read the transcript (`session log`, `session search`, `--from`)
+  without writing anything new to the chat. Rolling back works; a running `agy` session's row reads as crashed once its server is
+  gone, and `spawn cancel --force` from an older build signals nothing.
+- **`spawn cancel` refuses an `agy` session** ("this session runs in agy; end it there").
+- **`mcp` is pinned below 2.** `meridian serve` and the `agy` server use `mcp.server.fastmcp`,
+  which `mcp` 2.0 renamed.
+
+## Mars 0.39.0
+
+This release ships with Mars 0.39.0 (0.26.0's earlier parts pinned 0.38.0). Besides the
+`agy` launch above, it changes how `targets` and `mars link` work; read [Mars's upgrade
+notes](https://github.com/haowjy/mars-agents/releases/tag/v0.39.0) before the first sync:
+
+- Taking a target out of `targets` removes what Mars installed there on the next sync.
+- A `targets` list in `mars.local.toml` adds to the project's list instead of replacing it.
+- Local-only lock records move to `.mars/machine.lock`; `mars.lock` shows a diff that removes
+  them, which you commit.
+- `mars link` keeps a file of yours that is in the way, with a warning, instead of failing.
+
+## Cursor is removed
+
+Needs Mars 0.38.0 or newer, which dropped Cursor; this release pins 0.39.0.
+
+- **`--harness cursor` and `harness: cursor` now fail**: Mars no longer knows the harness (`unknown harness 'cursor'`). Use `--harness claude|codex|opencode|pi`, change the profile's `harness`, or route the model to another harness in `mars.toml`. A model alias that names `cursor` is dropped from `mars.lock` on the first sync, and Mars warns `field.retired` while it is still in `mars.toml`.
+- **Old Cursor spawns and chats stay listed.** `meridian spawn list` and `spawn show` read the stored records. Resuming, forking or reading the transcript of a Cursor session fails with the same removal error. Cursor's own session data in its app is untouched.
+- **Clean up `.cursor` by hand.** A project whose `targets` still names `.cursor` keeps syncing its other targets, and each sync warns `retired-target`. Run `meridian mars unlink .cursor` to remove what earlier syncs installed there (your own files stay).
+- **`managed_root` in `mars.toml` is no longer read.** A project that still relies on it has no targets, so a sync writes nothing to `.claude/`. Mars warns `field.retired` with the line to write instead, for example `targets = [".claude"]`.
+- **A target dropped from `targets` loses what Mars installed there** on the next `meridian mars sync` (Mars 0.39.0), as `meridian mars unlink <target>` does; files you edited stay.
+- Nothing Meridian wrote to disk changes.
+
 ## Git contexts sync through a daemon, not the `git-autosync` hook
 
 Needs `meridian-sync`, which every install now carries.

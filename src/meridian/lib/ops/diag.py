@@ -13,6 +13,7 @@ from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chats
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.ops.pruning import (
@@ -316,6 +317,8 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
 
     import threading
 
+    from meridian.lib.harness.plugin_hosted import send_owed_notices
+
     # These imports run on the calling thread. Modules the repair thread imports first
     # itself can race other threads' imports through package-init cycles
     # ("partially initialized module").
@@ -357,8 +360,13 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
                 _capture_orphan_primaries(
                     project_root,
                     runtime_root,
-                    [row.id for row in recovered if row.kind == "primary"],
+                    [
+                        row.id
+                        for row in recovered
+                        if row.kind == "primary" and not is_plugin_hosted(row.harness)
+                    ],
                 )
+                send_owed_notices()
 
     threading.Thread(
         target=_run_repairs,

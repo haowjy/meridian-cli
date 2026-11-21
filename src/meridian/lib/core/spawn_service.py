@@ -34,6 +34,7 @@ from meridian.lib.core.telemetry import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
@@ -580,6 +581,10 @@ class SpawnApplicationService:
         if self.is_terminal(row.status):
             self._cleanup_orphan_managed_primary(spawn_id, row)
             return _cancel_outcome_from_record(str(spawn_id), row, already_terminal=True)
+        if is_plugin_hosted(row.harness):
+            # Its server holds every conversation of one agy process, and no signal
+            # Meridian may send stops agy itself, so force does not lift this.
+            raise RuntimeError(f"this session runs in {row.harness}; end it there")
         launch = LaunchPaths.for_row(self._runtime_root, row)
         primary_metadata = read_primary_metadata(launch)
         if not force and _is_live_managed_primary(self._runtime_root, row, primary_metadata):

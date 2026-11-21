@@ -22,10 +22,11 @@ from meridian.lib.harness.adapter import (
     WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
-    HarnessBundle,
     HarnessProjectionPorts,
+    LaunchPorts,
     ManagedPrimaryProjectionPorts,
-    register_harness_bundle,
+    ProcessPorts,
+    register_harness,
 )
 from meridian.lib.harness.capture_qualify import CaptureObserver, CodexObserver
 from meridian.lib.harness.codex_idle import (
@@ -287,6 +288,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
+            "workspace_roots",
             "skills",
             "model_override_explicit",
             "reference_items",
@@ -329,7 +331,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_resume=True,
             supports_session_fork=True,
             native_agent_carries_body=True,
-            supports_primary_launch=True,
             supports_named_primary_resume=True,
             requires_initial_prompt=True,
             supports_native_file_injection=False,
@@ -690,13 +691,11 @@ CODEX_SEMANTICS = _CodexSemantics(
     scope_id_resolver=extract_codex_thread_id,
 )
 
-register_harness_bundle(
-    HarnessBundle(
+register_harness(
+    LaunchPorts(
         harness_id=HarnessId.CODEX,
         adapter=CodexAdapter(),
         spec_cls=ResolvedLaunchSpec,
-        extractor=CODEX_EXTRACTOR,
-        connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_codex_spec_to_cli_args,
             permission_report=lambda spec: compile_codex_permissions(spec)[1],
@@ -709,7 +708,11 @@ register_harness_bundle(
             ),
         ),
         semantics=CODEX_SEMANTICS,
+    ),
+    ProcessPorts(
+        extractor=CODEX_EXTRACTOR,
+        connections={TransportId.STREAMING: CodexConnection},
         primary_idle_sensor=primary_idle_sensor,
         native_idle_hook=CODEX_NATIVE_IDLE_HOOK,
-    )
+    ),
 )

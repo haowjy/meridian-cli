@@ -12,7 +12,7 @@ class _ReportObject(BaseModel):
 
 
 class TargetSourceReport(_ReportObject):
-    field: Literal["targets", "managed_root", "none"]
+    field: Literal["targets", "none"]
     origin: Literal["project", "local", "unset"]
     path: str | None
 
@@ -35,6 +35,7 @@ class ModelAttemptReport(_ReportObject):
     canonical_model: str
     model_source: str
     assessments: list[AssessmentReport]
+    diagnostics: list[str] = Field(default_factory=list)
 
 
 class SelectedAssessment(_ReportObject):

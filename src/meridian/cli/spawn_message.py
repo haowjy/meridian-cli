@@ -13,9 +13,7 @@ from typing import Never, cast
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS, DeliveryKind
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.injected_marker import MARKER
-from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
@@ -99,17 +97,8 @@ def _can_receive_reply(sender: SpawnRecord, sender_root: Path) -> bool:
 
     return (
         is_active_spawn_status(sender.status)
-        and _harness_accepts_messages(sender.harness)
         and control_socket_path(sender_root, sender.id).exists()
     )
-
-
-def _harness_accepts_messages(harness: str | None) -> bool:
-    try:
-        harness_id = HarnessId(harness)
-    except ValueError:
-        return True
-    return get_default_harness_registry().get_contract(harness_id).capabilities.accepts_messages
 
 
 def _message_target(project_root: Path, runtime_root: Path, ref: str) -> str:
@@ -211,9 +200,13 @@ async def send_message(
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
-    line = (
-        json.dumps({"type": "user_message", "text": framed}, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    request: dict[str, object] = {"type": "user_message", "text": framed}
+    if sender_spawn_id is not None:
+        request["sender"] = {
+            "spawn_id": sender_spawn_id,
+            "project_root": (sender_project_root or project_root).as_posix(),
+        }
+    line = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
     if len(line) > MAX_REQUEST_BYTES:
         _fail(f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit")
 
@@ -252,8 +245,11 @@ async def send_message(
     if ok is True:
         # A server without ``delivery`` (an older build) does not say how far the message
         # got, so claim only that it was posted.
-        if parsed.get("delivery") == DeliveryKind.ACKNOWLEDGED:
+        delivery = parsed.get("delivery")
+        if delivery == DeliveryKind.ACKNOWLEDGED:
             print(f"Message delivered to spawn {normalized_spawn_id}")
+        elif delivery == DeliveryKind.QUEUED:
+            print(f"Message queued for spawn {normalized_spawn_id}")
         else:
             print(f"Message posted to spawn {normalized_spawn_id} (no receipt)")
         note = parsed.get("note")

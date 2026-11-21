@@ -31,10 +31,11 @@ from meridian.lib.harness.adapter import (
     WorkspaceRoots,
 )
 from meridian.lib.harness.bundle import (
-    HarnessBundle,
     HarnessProjectionPorts,
+    LaunchPorts,
     ManagedPrimaryProjectionPorts,
-    register_harness_bundle,
+    ProcessPorts,
+    register_harness,
 )
 from meridian.lib.harness.capture_qualify import (
     CaptureObserver,
@@ -341,6 +342,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
+            "workspace_roots",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
@@ -386,7 +388,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             # only to fail at the connection. The policy layer downgrades an
             # unsupported fork to in-place resume with a warning.
             supports_session_fork=False,
-            supports_primary_launch=True,
             # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
             # V1 cannot switch the model on resume: the streaming transport fails
             # loudly in ``OpenCodeV1Connection._create_session``, and the
@@ -749,13 +750,11 @@ OPENCODE_SEMANTICS = HarnessSemantics(
     scope_id_resolver=extract_opencode_session_id,
 )
 
-register_harness_bundle(
-    HarnessBundle(
+register_harness(
+    LaunchPorts(
         harness_id=HarnessId.OPENCODE,
         adapter=OpenCodeAdapter(),
         spec_cls=ResolvedLaunchSpec,
-        extractor=OPENCODE_EXTRACTOR,
-        connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
             permission_report=lambda spec: compile_opencode_permissions(spec)[1],
@@ -767,7 +766,11 @@ register_harness_bundle(
             ),
         ),
         semantics=OPENCODE_SEMANTICS,
+    ),
+    ProcessPorts(
+        extractor=OPENCODE_EXTRACTOR,
+        connections={TransportId.STREAMING: OpenCodeConnection},
         primary_idle_sensor=primary_idle_sensor,
         detect_ttl=detect_ttl,
-    )
+    ),
 )

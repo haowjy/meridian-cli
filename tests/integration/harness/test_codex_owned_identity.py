@@ -3,7 +3,7 @@
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.bundle import get_process_ports
 from meridian.lib.harness.connections.base import RawHarnessEvent
 
 SID = "12345678-1234-4234-8234-123456789abc"
@@ -25,22 +25,21 @@ SID = "12345678-1234-4234-8234-123456789abc"
     ],
 )
 def test_owned_envelope_only(payload: dict[str, object], expected: str | None) -> None:
-    from meridian.lib.harness.bundle import get_harness_bundle
+    from meridian.lib.harness.bundle import get_process_ports
 
-    extractor = get_harness_bundle(HarnessId.CODEX).extractor
+    extractor = get_process_ports(HarnessId.CODEX).extractor
     fold = extractor.create_fold()
     facts = fold.facts
     _fold(fold, payload)
     assert facts.first_session_id == expected
     event = RawHarnessEvent(event_type=str(payload["type"]), harness_id="codex", payload=payload)
     assert (
-        get_harness_bundle(HarnessId.CODEX).extractor.detect_session_id_from_event(event)
-        == expected
+        get_process_ports(HarnessId.CODEX).extractor.detect_session_id_from_event(event) == expected
     )
 
 
 def test_claude_ignores_identity_keys_inside_message_content() -> None:
-    extractor = get_harness_bundle(HarnessId.CLAUDE).extractor
+    extractor = get_process_ports(HarnessId.CLAUDE).extractor
     fold = extractor.create_fold()
     facts = fold.facts
     _fold(fold, {"type": "assistant", "message": {"session_id": SID}})

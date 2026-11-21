@@ -5,16 +5,16 @@ from typing import Any
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
-from meridian.lib.harness.bundle import HarnessBundle, get_bundle_registry
+from meridian.lib.harness.bundle import LaunchPorts, get_launch_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec as ResolvedLaunchSpec
 
 
 def _enforce_spawn_params_accounting(
-    registry: Mapping[HarnessId, HarnessBundle[Any]] | None = None,
+    registry: Mapping[HarnessId, LaunchPorts[Any]] | None = None,
 ) -> None:
     """Fail fast when any adapter does not account for every SpawnParams field."""
 
-    reg = registry if registry is not None else get_bundle_registry()
+    reg = registry if registry is not None else get_launch_registry()
     expected = set(SpawnParams.model_fields)
     per_adapter: dict[HarnessId, frozenset[str]] = {}
     for harness_id, bundle in reg.items():

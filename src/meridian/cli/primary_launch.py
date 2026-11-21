@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.relocate_prompt import RelocateStop
@@ -20,8 +20,11 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import HarnessId
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.bundle import get_launch_ports
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.printed import PrintedLaunch, print_launch
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
@@ -37,6 +40,7 @@ from meridian.lib.launch.continue_replay import (
     reject_continue_policy_overrides,
 )
 from meridian.lib.launch.fork import require_replayed_agent
+from meridian.lib.launch.print_only import may_not_exec, refuse_unreachable_options
 from meridian.lib.launch.process.terminal_ownership import (
     format_launcher_diagnostics_pointer,
 )
@@ -55,8 +59,10 @@ from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.work_state import slugify
+from meridian.lib.state.work_store import work_item_exists
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -76,7 +82,13 @@ class PrimaryLaunchOutput(BaseModel):
     resume_command: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
+    # A dry run of a harness Meridian prints the command for: where the command runs and
+    # what it sets.
+    command_cwd: str | None = None
+    command_env: dict[str, str] = Field(default_factory=dict)
     launcher_diagnostics_path: Path | None = None
+    # Set instead of the fields above when the harness's command is printed, not run.
+    printed: PrintedLaunch | None = None
 
     @property
     def shell_status(self) -> int:
@@ -113,6 +125,9 @@ class PrimaryLaunchOutput(BaseModel):
             if self.terminal_surface_mode:
                 lines.append(f"Terminal surface mode: {self.terminal_surface_mode}")
             lines.append(shlex.join(self.command))
+            if self.command_cwd:
+                lines.append(f"cwd: {self.command_cwd}")
+                lines.extend(f"env: {key}={value}" for key, value in self.command_env.items())
         elif self.resume_command:
             if self.forked_from:
                 lines.append(f"Session forked from {self.forked_from}.")
@@ -227,9 +242,17 @@ def run_primary_launch(
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
     launch_anyway: bool = False,
+    print_only: bool = False,
 ) -> PrimaryLaunchOutput:
     """``launch_anyway`` skips the moved-directory gate: the user chose to let the
-    harness's own TUI recover a directory relocate could not repair."""
+    harness's own TUI recover a directory relocate could not repair.
+
+    ``print_only``: startup's decision (``launch_prints``) that this launch builds the
+    command of a harness Meridian may not exec and prints it. The launch runs as a dry run,
+    which writes nothing, and the output carries ``printed`` instead of a report.
+    """
+    report_only = dry_run
+    dry_run = dry_run or print_only
     if continue_ref is not None and model is not None:
         print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
         if not model.strip():
@@ -264,6 +287,17 @@ def run_primary_launch(
         return "; ".join(parts)
 
     project_root = project_root.resolve() if project_root is not None else Path.cwd().resolve()
+    if (
+        print_only
+        and work.strip()
+        and not work_item_exists(
+            resolve_project_paths(project_root).root_dir, slugify(work.strip())
+        )
+    ):
+        raise ValueError(
+            f"Work item '{work.strip()}' does not exist, and a printed launch creates "
+            "nothing: run `meridian work start` first."
+        )
     harness_registry = get_default_harness_registry()
     normalized_continue_ref = continue_ref.strip() if continue_ref is not None else ""
     resume_target = normalized_continue_ref if normalized_continue_ref else None
@@ -491,6 +525,53 @@ def run_primary_launch(
     context_source = context_sources[0] if context_sources else None
     resolved_goal = normalize_goal(goal) or normalize_goal(source_goal)
 
+    launch_harness = (
+        continue_harness
+        if (resume_target is not None or selected_fork_target is not None)
+        else harness
+    )
+    if may_not_exec(launch_harness) and not print_only:
+        raise ValueError(
+            f"Meridian does not run {launch_harness}"
+            + (
+                f", so it cannot fork its chat {selected_fork_target}: "
+                f"`meridian --continue {selected_fork_target}` prints the command that resumes it."
+                if selected_fork_target is not None
+                else f": `meridian {launch_harness} ...` prints the command to run."
+            )
+        )
+
+    printed_ports = None
+    if print_only:
+        assert launch_harness is not None
+        printed_ports = get_launch_ports(HarnessId(launch_harness)).printed
+        if printed_ports is None:
+            raise ValueError(
+                f"`meridian {harness}` prints a command and cannot launch the "
+                f"{launch_harness} chat it resumes or forks."
+            )
+        refuse_unreachable_options(
+            launch_harness,
+            {
+                "--fork": fork_ref is not None,
+                "--fork-fresh": fork_fresh_ref is not None,
+                "--from": from_ref is not None,
+                "-f": bool(reference_files),
+                "--skills": bool(skills),
+                "--goal": goal is not None,
+                "--sandbox": sandbox is not None,
+                "--network": network is not None,
+                "--network-allow": bool(network_allow),
+                "--network-deny": bool(network_deny),
+                "--autocompact": autocompact is not None,
+                "--autocompact-pct": autocompact_pct is not None,
+                "--timeout": timeout is not None,
+                "--approval confirm": resolved_approval == "confirm",
+            },
+            passthrough,
+            printed_ports,
+        )
+
     hold: ContinueHold | None = None
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
@@ -573,6 +654,24 @@ def run_primary_launch(
             harness_registry=harness_registry,
         )
 
+    if print_only and not report_only:
+        assert launch_result.command_cwd is not None
+        assert printed_ports is not None
+        note = printed_ports.workspace_note if work.strip() or normalized_task_dir else None
+        return PrimaryLaunchOutput(
+            message="Launch printed.",
+            exit_code=0,
+            printed=print_launch(
+                argv=launch_result.command,
+                cwd=launch_result.command_cwd,
+                env=launch_result.command_env,
+                warnings=tuple(
+                    item for item in (continue_warning, launch_result.warning, note) if item
+                ),
+                script_dir=printed_ports.script_dir(),
+            ),
+        )
+
     continue_chat_id = launch_result.continue_chat_id
     row = None
     if not dry_run and launch_result.primary_spawn_id:
@@ -619,5 +718,7 @@ def run_primary_launch(
             launch_result.warning,
         ),
         terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
+        command_cwd=launch_result.command_cwd.as_posix() if launch_result.command_cwd else None,
+        command_env=launch_result.command_env,
         launcher_diagnostics_path=launch_result.launcher_diagnostics_path,
     )

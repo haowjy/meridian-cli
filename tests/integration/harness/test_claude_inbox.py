@@ -53,4 +53,4 @@ async def test_route_reports_gone_socket_as_transport_dead(tmp_path: Path) -> No
     assert route is not None
 
     with pytest.raises(TransportDead, match="inbox is gone"):
-        await route.deliver("unreachable")
+        await route.deliver("unreachable", None)

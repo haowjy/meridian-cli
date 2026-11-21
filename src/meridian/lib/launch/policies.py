@@ -19,6 +19,7 @@ from meridian.lib.core.overrides import (
 )
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
@@ -51,7 +52,6 @@ from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
     load_agent_profile_with_fallback,
-    validate_harness_compatibility,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -746,7 +746,9 @@ def _model_selection_from_replayed_snapshot(
 def _excluded_harnesses_for_surface(surface: SurfacePolicyInput) -> tuple[HarnessId, ...]:
     if surface.surface != LaunchCompositionSurface.SPAWN_PREPARE:
         return ()
-    return tuple(HarnessId(name) for name in dict.fromkeys(surface.config.deny_headless_harnesses))
+    # A plugin-hosted harness (``agy``) has no runner, so no spawn runs it.
+    denied = (*surface.config.deny_headless_harnesses, *sorted(PLUGIN_HOSTED))
+    return tuple(HarnessId(name) for name in dict.fromkeys(denied))
 
 
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
@@ -875,5 +877,4 @@ __all__ = [
     "SurfacePolicyInput",
     "resolve_launch_policy",
     "resolve_policy_fields",
-    "validate_harness_compatibility",
 ]

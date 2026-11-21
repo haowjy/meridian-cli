@@ -19,9 +19,9 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import launched_harnesses
 from meridian.lib.harness.connections.base import HarnessConnection
-from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
+from meridian.lib.harness.registry import get_default_harness_registry, get_process_ports
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.native_run import bind_entry, conclude_native_run
@@ -31,7 +31,7 @@ from meridian.lib.launch.resolve import (
     resolve_agent_launch_input,
     resolve_startup_timeout_seconds,
 )
-from meridian.lib.launch.session_scope import session_scope
+from meridian.lib.launch.session_scope import session_scope, warm_close_imports
 from meridian.lib.launch.streaming_runner import run_streaming_spawn
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -59,11 +59,12 @@ async def streaming_serve(
         raise ValueError("model cannot be empty")
     agent_launch = resolve_agent_launch_input(agent)
 
-    try:
-        harness_id = HarnessId(normalized_harness)
-    except ValueError as exc:
-        supported = ", ".join(item.value for item in HarnessId)
-        raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}") from exc
+    harness_id = next(
+        (item for item in launched_harnesses() if item.value == normalized_harness), None
+    )
+    if harness_id is None:
+        supported = ", ".join(item.value for item in launched_harnesses())
+        raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}")
 
     prepared = prepare_for_runtime_write(resolve_cli_project_root())
     project_root = prepared.project_root
@@ -119,7 +120,7 @@ async def streaming_serve(
             connection_config = replace(connection_config, debug_tracer=tracer)
 
         native_key = None
-        extractor = get_harness_bundle(harness_id).extractor
+        extractor = get_process_ports(harness_id).extractor
         fold = extractor.create_fold()
         fold.bind_launch(launch_ctx.binding.spec)
         facts = fold.facts
@@ -135,6 +136,7 @@ async def streaming_serve(
         failure_message: str | None = None
         lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
         try:
+            warm_close_imports()
             with session_scope(
                 runtime_root=runtime_root,
                 metadata=build_session_metadata(launch_ctx.resolved_request),

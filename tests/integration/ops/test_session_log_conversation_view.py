@@ -203,3 +203,28 @@ def test_claude_user_events_split_into_the_user_and_everything_else(tmp_path: Pa
         ("system", "This session is being continue"),
         ("user", "after the compaction"),
     ]
+
+
+def test_tail_reaching_the_top_of_a_later_segment_offers_the_previous_segment(
+    tmp_path: Path,
+) -> None:
+    events: list[dict[str, Any]] = [
+        {"type": "summary", "sessionId": "s1"},
+        _text("user", "before compaction"),
+        _text("assistant", "noted"),
+        {"type": "system", "subtype": "compact_boundary"},
+        {**_text("user", "This session is being continued"), "isCompactSummary": True},
+        _text("user", "after compaction"),
+        _text("assistant", "ok"),
+    ]
+    path = tmp_path / "compacted.jsonl"
+    path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+    output = session_log_sync(
+        SessionLogInput(file_path=path.as_posix(), project_root=tmp_path.as_posix(), tail=20)
+    )
+
+    assert output.segment_index == 1
+    assert output.entries[0].index > 0  # the segment's entry 0 is not in this view
+    assert output.previous_segment_command is not None
+    assert "--segment 0" in output.previous_segment_command
