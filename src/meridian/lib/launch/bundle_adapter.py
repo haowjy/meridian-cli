@@ -4,7 +4,9 @@ Meridian deliberately recomposes the launch prompt from the selected local profi
 ``skills.loaded``, and launch-owned context/report blocks. The bundle's precomposed
 ``agent_body``, ``prompt_surface`` (system instruction and agent inventory),
 ``supplemental_documents``, and ``scaffold_slots`` are therefore unread rather than
-competing instruction surfaces. The top-level ``agent`` duplicates the request's
+competing instruction surfaces. ``skills.available[].description`` is unread too: the
+harness lists skills with descriptions itself, so the ``# Available Skills`` block
+carries names only. The top-level ``agent`` duplicates the request's
 selected local profile. Top-level routing diagnostics duplicate ``route_trace`` and
 stay there; provenance keys without launch semantics remain diagnostic.
 ``tools.rules`` is the permission contract; the legacy ``tools.allowed``,
@@ -197,7 +199,6 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
                     AvailableSkillEntry(
                         name=name,
                         skill_type=skill_type,
-                        description=" ".join(_normalize_str(item_dict.get("description")).split()),
                         source_path=_normalize_str(item_dict.get("source_path")) or None,
                     )
                 )
