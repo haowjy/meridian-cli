@@ -205,7 +205,6 @@ def project_agy_spec_to_cli_args(
 _APPROVAL_LINES: dict[str, tuple[ReportStatus, str]] = {
     "never": ("native", "--dangerously-skip-permissions"),
     "auto": ("native", "--mode auto"),
-    "confirm": ("native", "agy asks as it does by default"),
 }
 
 
@@ -241,6 +240,7 @@ _PRINTED = PrintedLaunchPorts(
         "--autocompact": _NO_COMPACTION_REASON,
         "--autocompact-pct": _NO_COMPACTION_REASON,
         "--timeout": "Meridian does not run agy, so it cannot stop it",
+        "--approval confirm": "no agy --mode asks before every edit (accept-edits, auto, plan)",
     },
     refused_passthrough={
         "--append-system-prompt": "agy has no system-prompt flag to carry it",

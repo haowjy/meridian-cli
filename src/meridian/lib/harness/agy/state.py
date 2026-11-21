@@ -21,7 +21,7 @@ APPROVAL_ENV = "_MERIDIAN_AGY_APPROVAL"
 PROJECT_ENV = "_MERIDIAN_AGY_PROJECT"
 # The approvals the printed command can set (the non-default ``ApprovalMode`` values); the
 # hook runs before every model call and imports no policy module to name them.
-PRINTED_APPROVALS = frozenset({"auto", "never", "yolo", "confirm"})
+PRINTED_APPROVALS = frozenset({"auto", "never", "yolo"})
 CONVERSATION_ID_KEY = "antigravity.google/conversation_id"
 ROOT_CONVERSATION_ID_KEY = "antigravity.google/root_conversation_id"
 

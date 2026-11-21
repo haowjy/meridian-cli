@@ -66,8 +66,13 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   skipped with a warning; skipping only keeps its `.agy/` and `.agents/` from loading, and the
   session can still read the directory by absolute path under `agy`'s own permissions. `--work` and `--task-dir` only add directories; they do not move the
   session or attach it to a work item, and `--work` must name an existing item.
+- **Approval.** No `--approval` prints no flag: `agy` uses its own default. `--approval auto`
+  prints `--mode auto`; `--approval never` and `--yolo` print `--dangerously-skip-permissions`
+  (the TUI footer still reads `auto`). `--approval confirm` is refused: `agy --mode` takes
+  `accept-edits`, `auto` or `plan`, none asks before every edit, and `agy` without a flag opens
+  in auto.
 - **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
-  `--sandbox`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
+  `--sandbox`, `--approval confirm`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
   `--`. Arguments after `--` go to `agy`.
 - **`spawn` never routes to `agy`** (`spawn --harness agy`, `spawn --continue <agy chat>`), and
   a profile's `harness: agy` without `meridian agy` falls through to another harness.

@@ -566,6 +566,7 @@ def run_primary_launch(
                 "--autocompact": autocompact is not None,
                 "--autocompact-pct": autocompact_pct is not None,
                 "--timeout": timeout is not None,
+                "--approval confirm": resolved_approval == "confirm",
             },
             passthrough,
             printed_ports,
