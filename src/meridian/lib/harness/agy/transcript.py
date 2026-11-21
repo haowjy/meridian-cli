@@ -1,6 +1,7 @@
 """Reading ``agy``'s native transcript for ``session log``, search and ``--from``.
 
-Google documents none of this format; it is what ``agy`` 1.5.10 to 1.5.13 write to
+Google documents none of this format; it is what ``agy`` 1.5.13 (the only version seen)
+writes to
 ``<store>/<conversation>/.system_generated/logs/transcript_full.jsonl`` while a turn runs and
 keep after exit. ``transcript.jsonl`` beside it has the same steps with long fields cut
 (``truncated_fields``), so only ``transcript_full.jsonl`` is read. One JSON object per step,
@@ -100,11 +101,12 @@ class AgyTranscriptParser(TranscriptEventParser):
             )
         if kind == "CHECKPOINT":
             return NormalizedTranscriptEvent(
-                [TranscriptMessage(INJECTED_ROLE, content)] if content else []
+                [TranscriptMessage(INJECTED_ROLE, content)] if content else [], boundary=True
             )
         if kind == "ERROR_MESSAGE":
+            text = content or _text(event.get("error"))
             return NormalizedTranscriptEvent(
-                [TranscriptMessage("annotation", content, kind="annotation")] if content else []
+                [TranscriptMessage("annotation", text, kind="annotation")] if text else []
             )
         if kind == "GENERIC":
             text = _TOOL_RESULT_HEADER.sub("", content, count=1).strip()

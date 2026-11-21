@@ -866,8 +866,13 @@ class TranscriptNormalizer:
         opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
         claude_boundary = _is_claude_compaction_boundary(normalized_event)
         if parser_boundary or opencode_boundary:
+            # A parser that ends a segment with messages (agy's CHECKPOINT) hands over its summary.
             self.setup = (
-                _extract_claude_boundary_handoff(normalized_event) if claude_boundary else None
+                _extract_claude_boundary_handoff(normalized_event)
+                if claude_boundary
+                else None
+                if opencode_boundary
+                else _join_message_content(messages)
             )
             self.pending_summary = (
                 ("claude" if claude_boundary else "opencode" if opencode_boundary else None)

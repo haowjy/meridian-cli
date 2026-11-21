@@ -33,6 +33,8 @@ def test_parses_steps_skips_unknown_and_survives_torn_last_line(tmp_path: Path) 
         },
         {"type": "GENERIC", "content": "Created At: t\nCompleted At: t\na.txt"},
         {"type": "FUTURE_KIND", "content": "x"},
+        {"type": "ERROR_MESSAGE", "content": "", "error": "RESOURCE_EXHAUSTED (code 429)"},
+        {"type": "CHECKPOINT", "content": "summary"},
         {"type": "PLANNER_RESPONSE", "content": "done", "tool_calls": None},
     ]
     path = tmp_path / "transcript_full.jsonl"
@@ -44,8 +46,12 @@ def test_parses_steps_skips_unknown_and_survives_torn_last_line(tmp_path: Path) 
         iter_transcript_events(path), parser=READER.transcript_parser()
     )
 
+    assert len(parsed.segments) == 2
+    assert parsed.segment_setups[1] == "summary"
     got = [
-        (m.role, m.content, m.tool_call.name if m.tool_call else None) for m in parsed.segments[0]
+        (m.role, m.content, m.tool_call.name if m.tool_call else None)
+        for segment in parsed.segments
+        for m in segment
     ]
     assert got == [
         (
@@ -56,6 +62,7 @@ def test_parses_steps_skips_unknown_and_survives_torn_last_line(tmp_path: Path) 
         ("user", "ls", None),
         ("assistant", "[tool: run_command ls]", "bash"),
         ("user", "[tool_result] a.txt", None),
+        ("annotation", "RESOURCE_EXHAUSTED (code 429)", None),
         ("assistant", "done", None),
     ]
     assert parsed.rendering_reason is not None
