@@ -116,16 +116,6 @@ class WorkspaceRoots(StrEnum):
     ENV = "env"
 
 
-class WorkspaceRoots(StrEnum):
-    """How a harness takes extra workspace roots."""
-
-    NONE = "none"
-    # `--add-dir <root>` arguments on the launch command.
-    ADD_DIR_ARGS = "add_dir_args"
-    # The adapter's `project_launch_env` carries the roots.
-    ENV = "env"
-
-
 class HarnessContract(BaseModel):
     """Inspectable contract surface for one harness adapter."""
 
