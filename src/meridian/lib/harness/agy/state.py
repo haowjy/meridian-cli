@@ -18,6 +18,7 @@ from meridian.lib.state.user_paths import get_user_home
 # (``agy`` has no flag that names either).
 AGENT_ENV = "_MERIDIAN_AGY_AGENT"
 APPROVAL_ENV = "_MERIDIAN_AGY_APPROVAL"
+PROJECT_ENV = "_MERIDIAN_AGY_PROJECT"
 # The approvals the printed command can set (the non-default ``ApprovalMode`` values); the
 # hook runs before every model call and imports no policy module to name them.
 PRINTED_APPROVALS = frozenset({"auto", "never", "yolo", "confirm"})
@@ -179,6 +180,7 @@ __all__ = [
     "APPROVAL_ENV",
     "CONVERSATION_ID_KEY",
     "PRINTED_APPROVALS",
+    "PROJECT_ENV",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
     "briefed_path",

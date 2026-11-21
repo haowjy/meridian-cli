@@ -22,6 +22,7 @@ from meridian.lib.harness.agy.state import (
     AGENT_ENV,
     APPROVAL_ENV,
     PRINTED_APPROVALS,
+    PROJECT_ENV,
     agy_root,
     briefed_path,
     is_safe_id,
@@ -84,7 +85,7 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         texts = _guidance(
             proc_dir,
             conversation,
-            Path(str(payload.get("cwd") or Path.cwd())),
+            Path(str(request.get("cwd") or Path.cwd())),
             transcript,
             registered=registered,
         )
@@ -166,7 +167,9 @@ def _register(proc_dir: Path, conversation: str, payload: dict[str, Any]) -> dic
     request: dict[str, Any] = {
         "conversation_id": conversation,
         "role": "subagent" if _is_subagent(proc_dir, conversation, payload) else "primary",
-        "cwd": payload.get("cwd"),
+        # agy's ``cwd`` is the first of its sorted workspace paths, not the launch
+        # directory; the printed command's handle is, and a plain ``agy`` run has none.
+        "cwd": os.environ.get(PROJECT_ENV) or payload.get("cwd"),
         "workspace_paths": payload.get("workspacePaths"),
         "transcript_path": payload.get("transcriptPath"),
         "model": payload.get("modelName"),

@@ -252,7 +252,7 @@ def launch_primary(
                     system_prompt_path=LaunchPaths.preview(
                         Path(runtime.runtime_root)
                     ).system_prompt,
-                    env={},
+                    env={"MERIDIAN_PROJECT_DIR": preview_context.control_root.as_posix()},
                     primary_mode=prepared.primary_mode,
                 )
                 if prints

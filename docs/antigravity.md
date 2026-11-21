@@ -46,9 +46,13 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   `{command, argv, cwd, env, script, warnings}`, where `env` is only what the command sets.
   `meridian agy --dry-run` prints the usual dry-run report, plus the directory and environment the command sets.
 - **The session registers when you run the command.** The plugin's hook and server create the
-  row, as for any `agy` you start. The command sets `_MERIDIAN_AGY_AGENT` (and
-  `_MERIDIAN_AGY_APPROVAL`; internal, don't export them) so the row knows the profile and
-  approval; a continue replays them. An `agy --conversation <id>` you run yourself, without
+  row, as for any `agy` you start. The command sets `_MERIDIAN_AGY_AGENT`,
+  `_MERIDIAN_AGY_PROJECT` (the directory it launches from) and, when it isn't the default,
+  `_MERIDIAN_AGY_APPROVAL` (internal, don't export them) so the row knows the profile,
+  project and approval; a continue replays the agent and approval and omits `--agent`, as `agy`
+  keeps the conversation's own. `agy`'s hook payload names no launch directory: its `cwd` is the
+  first of its sorted workspace paths. A plain `agy` run with several workspaces can therefore land
+  in the wrong project; the printed command avoids it. An `agy --conversation <id>` you run yourself, without
   them, records no agent or approval, and the next `meridian --continue` replays that: it is
   what the resumed session ran.
 - **Model and effort are one choice.** Mars folds `--effort` into the model slug (`-m
@@ -59,7 +63,8 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
 - **Directories.** The command starts in the project directory. Workspace and context roots,
   `--task-dir` and `--work`'s directory become `--add-dir`, except a directory with its own
   `.agy/` or `.agents/`: its hooks and MCP servers would run beside the project's, so it is
-  skipped with a warning. `--work` and `--task-dir` only add directories; they do not move the
+  skipped with a warning; skipping only keeps its `.agy/` and `.agents/` from loading, and the
+  session can still read the directory by absolute path under `agy`'s own permissions. `--work` and `--task-dir` only add directories; they do not move the
   session or attach it to a work item, and `--work` must name an existing item.
 - **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
   `--sandbox`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after

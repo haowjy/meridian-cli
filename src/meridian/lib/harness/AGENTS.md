@@ -67,7 +67,7 @@ bootstrap, no background repairs, autosync or telemetry maintenance), and `run_p
 runs it as a dry run and returns `PrimaryLaunchOutput.printed` (`printed.py`). Mars may name a
 harness Meridian may not exec only for a pin (`bundle_adapter._parse_harness_id`); any other
 launch naming one is an error. Everything the command needs reaches it through the adapter:
-`project_launch_env` is the printed environment overlay (`_MERIDIAN_AGY_AGENT`, approval),
+`project_launch_env` is the printed environment overlay (`_MERIDIAN_AGY_AGENT`, `_MERIDIAN_AGY_PROJECT`, approval),
 `project_content` drops Meridian's guidance (the hook delivers it), and workspace roots come
 from `SpawnParams.workspace_roots` (the spec's `AgyLaunchSpec.workspace_roots`: projected roots
 minus Meridian's runtime, temp and socket roots and the control root). What printing needs of a

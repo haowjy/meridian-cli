@@ -26,7 +26,12 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
-from meridian.lib.harness.agy.state import AGENT_ENV, APPROVAL_ENV, launch_script_dir
+from meridian.lib.harness.agy.state import (
+    AGENT_ENV,
+    APPROVAL_ENV,
+    PROJECT_ENV,
+    launch_script_dir,
+)
 from meridian.lib.harness.agy.transcript import AgyReader
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
@@ -161,8 +166,10 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
         env: Mapping[str, str],
         primary_mode: bool,
     ) -> dict[str, str]:
-        _ = system_prompt_path, env, primary_mode
+        _ = system_prompt_path, primary_mode
         overlay: dict[str, str] = {}
+        if project := env.get("MERIDIAN_PROJECT_DIR"):
+            overlay[PROJECT_ENV] = project
         if spec.agent_name:
             overlay[AGENT_ENV] = spec.agent_name
         if spec.permission_policy.approval != "default":
@@ -176,7 +183,9 @@ def project_agy_spec_to_cli_args(
     command = list(base_command)
     if spec.model:
         command += ["--model", spec.model]
-    if spec.agent_name:
+    # agy ignores --agent on a resumed conversation (and warns); the conversation keeps its
+    # agent, and the row keeps it through the env.
+    if spec.agent_name and not spec.continue_session_id:
         command += ["--agent", spec.agent_name]
     if spec.continue_session_id:
         command += ["--conversation", spec.continue_session_id]

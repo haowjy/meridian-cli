@@ -238,6 +238,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
         child=False,
     ),
     _internal_handle(
+        "_MERIDIAN_AGY_PROJECT",
+        "Directory a printed `meridian agy` command launches from (the control root); the agy "
+        "hook records it because agy's payload names only its sorted workspace paths.",
+        child=False,
+    ),
+    _internal_handle(
         "_MERIDIAN_AGY_APPROVAL",
         "Approval a printed `meridian agy` command names; the agy hook records it on the row.",
         child=False,
