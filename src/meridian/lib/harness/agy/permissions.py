@@ -3,9 +3,11 @@
 Mars decides what ``agy`` can carry: a rule it spells as ``agy`` permission strings
 (``command(git reset --hard)``) arrives with them in ``native_permission`` and a ``note`` on
 what ``agy`` does not catch. This module groups those strings by
-action and unions each list with the person's own (``settings.json`` and a ``--settings``
-they passed), because ``--settings`` replaces a list instead of merging it and ``agy`` uses
-the last ``--settings`` only. It never writes ``allow``, which would replace the person's allows.
+action and adds each list to the one ``agy`` would have used without Meridian: the list in a
+``--settings`` the person passed, else the one in their ``settings.json``. Both are needed
+because ``--settings`` replaces a list key by key and ``agy`` uses the last ``--settings`` only.
+Every list Meridian doesn't add to (``allow``, ``deny`` when no rule is carried) is left as
+``agy`` would read it, so the person's own settings behave as they would without Meridian.
 """
 
 from __future__ import annotations
@@ -69,6 +71,10 @@ def _read_settings(source: str, *, inline: bool, cwd: Path) -> dict[str, object]
     if not isinstance(permissions, dict):
         raise ValueError("permissions is not an object")
     return cast("dict[str, object]", doc)
+
+
+def _permissions_of(doc: dict[str, object]) -> dict[str, object]:
+    return cast("dict[str, object]", doc.get("permissions", {}))
 
 
 def _strings(permissions: dict[str, object], action: str) -> list[str]:
@@ -144,12 +150,12 @@ def compile_agy_permissions(spec: ResolvedLaunchSpec, cwd: Path) -> AgyPermissio
         )
     permissions = dict(cast("dict[str, object]", doc.get("permissions", {})))
     for action, ours in carried.items():
-        theirs = [
-            e
-            for source in sources
-            for e in _strings(cast("dict[str, object]", source.get("permissions", {})), action)
-        ]
-        if combined := list(dict.fromkeys([*theirs, *ours])):
-            permissions[action] = combined
+        if not ours:
+            continue
+        # The source agy reads this list from: a later ``--settings`` replaces the key.
+        empty: dict[str, object] = {}
+        source = next((s for s in reversed(sources) if action in _permissions_of(s)), empty)
+        theirs = _strings(_permissions_of(source), action)
+        permissions[action] = list(dict.fromkeys([*theirs, *ours]))
     merged = {**doc, "permissions": permissions}
     return AgyPermissions(json.dumps(merged, separators=(",", ":")), extra_args, tuple(lines))

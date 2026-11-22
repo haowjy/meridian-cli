@@ -77,10 +77,11 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   command prefix (`bash(git reset --hard)` blocks `git reset --hard HEAD`); an edit or read
   rule on a path or directory blocks `agy`'s file tools for it; the skill rules cover both
   skill directories. `meridian agy --dry-run` lists what each rule became and what `agy`
-  does not catch. Meridian adds to your own lists: your `settings.json` `deny` and `ask` and a
-  `--settings` you pass after `--` (inline JSON or a file path) are merged into the one value
-  it prints, because `agy` uses only the last `--settings` and a list in it replaces the
-  same list elsewhere. A file that can't be read is reported: an unreadable `settings.json`
+  does not catch. Meridian adds the agent's rules to the `deny` and `ask` lists `agy` would have used: the
+  one in a `--settings` you pass after `--` (inline JSON or a file path), else the one in your
+  `settings.json`. It prints one `--settings`, because `agy` uses only the last one and a list
+  in it replaces the same list elsewhere; your other keys and lists, `allow` included, reach
+  `agy` as they would without Meridian. A file that can't be read is reported: an unreadable `settings.json`
   leaves your lists out of the value; an unreadable `--settings` is passed as you gave it,
   without the agent's rules. `allow` is never written, and `ask` is left out under
   `--approval never` (`agy` ignores it there). Not caught: a command `agy` runs through a

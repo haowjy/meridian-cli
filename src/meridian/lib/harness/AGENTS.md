@@ -82,8 +82,10 @@ model selection, which is what a continue replays; a row without them still cont
 (Mars's `agy` permission strings; read as given, no shape filter) into one inline
 `--settings '{"permissions":...}'`, compiled once per launch in `bind_agy_spec` (argv and the
 report read the result) on launch and `--continue`. `agy` uses the last `--settings` and
-`--settings` replaces a list, so each list is the union of agy's `settings.json`, a `--settings` the
-person passed (inline JSON or file path; its other keys stay) and ours, and the person's
+`--settings` replaces a list, so ours are added to the list agy would have used: the person's
+`--settings` (inline JSON or file path; its other keys stay) if it has that list, else their
+`settings.json`. Lists we add nothing to (`allow` always) are left as agy reads them; don't union
+them, or a person's own `--settings` stops overriding their `settings.json`. The person's
 `--settings` leaves `extra_args`. An unreadable source adds a report warning and the launch goes on
 (an unreadable `--settings` is passed as given, without ours). It never writes `allow`, and leaves `ask`
 out under `approval: never`. A continue has the rules because the plugin's snapshot has
