@@ -10,7 +10,7 @@ Nothing else of `agy`'s is read.
 
 ## Install
 
-Antigravity needs Meridian's Mars 0.39.0 or newer (0.38.0 for the plugin alone; `meridian agy` needs 0.39.0) (`meridian --version` shows the build;
+Antigravity needs Meridian's Mars 0.39.0 or newer (0.38.0 for the plugin alone; `meridian agy` needs 0.39.1) (`meridian --version` shows the build;
 `meridian mars --version` shows Mars).
 
 ```bash
