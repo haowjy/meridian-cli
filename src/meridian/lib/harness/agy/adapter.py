@@ -26,6 +26,7 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
+from meridian.lib.harness.agy.permissions import compile_agy_permissions
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,
     APPROVAL_ENV,
@@ -194,6 +195,8 @@ def project_agy_spec_to_cli_args(
         command.append("--dangerously-skip-permissions")
     elif approval == "auto":
         command += ["--mode", "auto"]
+    if settings := compile_agy_permissions(spec)[0]:
+        command += ["--settings", settings]
     for root in _split_roots(spec)[0]:
         command += ["--add-dir", root.as_posix()]
     command.extend(spec.extra_args)
@@ -214,6 +217,7 @@ def agy_permission_report(spec: ResolvedLaunchSpec) -> EnforcementReport:
     if policy.approval in _APPROVAL_LINES:
         status, note = _APPROVAL_LINES[policy.approval]
         reported.append(ReportLine(f"approval: {policy.approval}", status, note))
+    reported.extend(compile_agy_permissions(spec)[1])
     return complete_report(policy, reported, harness="agy")
 
 
