@@ -188,6 +188,8 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         model=model,
         harness="agy",
         agent=agent or None,
+        # The plugin records no rules: a continue asks Mars for the agent's current ones.
+        tool_rules_recorded=False,
         execution_policy=ResolvedExecutionPolicy(approval=request.get("approval") or None),
     )
     cwd = Path(str(request.get("cwd") or Path.home()))
