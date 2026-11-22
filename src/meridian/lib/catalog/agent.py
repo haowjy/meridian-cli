@@ -172,9 +172,19 @@ def load_agent_profile(
     root = resolve_project_root_resolution(project_root).project_root
 
     roots = resolve_mars_roots(root)
-    for profile in scan_agent_profiles(project_root=root, search_paths=search_paths):
+    profiles = scan_agent_profiles(project_root=root, search_paths=search_paths)
+    for profile in profiles:
         if profile.path.stem == normalized or profile.name == normalized:
             return profile
+    # Mars renames every side of a name collision to `<name>__<source>`.
+    renamed = sorted(
+        profile.path.stem for profile in profiles if profile.path.stem.startswith(f"{normalized}__")
+    )
+    if renamed:
+        raise FileNotFoundError(
+            f"Agent '{normalized}' not found: more than one package defines it, so Mars "
+            f"renamed each: {', '.join(renamed)}. Use one of those names."
+        )
 
     user_root = user_mars_root()
     if roots.scope == "project":

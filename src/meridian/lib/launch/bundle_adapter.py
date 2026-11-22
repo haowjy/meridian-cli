@@ -482,15 +482,6 @@ def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
     )
 
 
-def _describe_not_installed(diagnostic: str) -> str:
-    """Mars says "not installed" when its PATH lacks the binary; a sandbox hides it too."""
-
-    return diagnostic.replace(
-        " is not installed",
-        " is not on the PATH Meridian sees (it may exist outside this sandbox)",
-    )
-
-
 def _assessment_reason(assessment: AssessmentReport) -> str:
     extra = json_object(assessment.model_extra) or {}
     reason = extra.get("reason", assessment.verdict)
@@ -543,7 +534,7 @@ def _exhausted_message(report: RouteDecisionReport) -> str | None:
             # A one-harness diagnostic restates the label and the reason; print it alone.
             if not (one_harness and diagnostics):
                 lines.append(f"{label}: {': '.join(extra)}" if extra else label)
-        lines.extend(f"{label}: {_describe_not_installed(d)}" for d in diagnostics)
+        lines.extend(f"{label}: {d}" for d in diagnostics)
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 
