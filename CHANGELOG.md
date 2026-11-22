@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-11-22
+
+### Fixed
+- `meridian agy` launches an agent whose tool rules have patterns, such as `bash(killall *): deny`. With Mars 0.39.0 it failed with `Mars launch-bundle returned invalid schema ... native_status ... 'unscopable'`. Meridian now ships with Mars 0.39.1, which reports such a rule as not enforceable on agy instead.
+
 ## [0.26.1] - 2026-11-21
 
 ### Fixed
