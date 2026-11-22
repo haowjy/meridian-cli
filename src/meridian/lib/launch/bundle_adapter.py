@@ -482,6 +482,15 @@ def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
     )
 
 
+def _describe_not_installed(diagnostic: str) -> str:
+    """Mars says "not installed" when its PATH lacks the binary; a sandbox hides it too."""
+
+    return diagnostic.replace(
+        " is not installed",
+        " is not on the PATH Meridian sees (it may exist outside this sandbox)",
+    )
+
+
 def _assessment_reason(assessment: AssessmentReport) -> str:
     extra = json_object(assessment.model_extra) or {}
     reason = extra.get("reason", assessment.verdict)
@@ -508,29 +517,33 @@ def _resolved_label(token: str, canonical: str) -> str:
 
 
 def _exhausted_message(report: RouteDecisionReport) -> str | None:
-    rows: list[tuple[str, str, str]] = []
-    notes: list[str] = []
-    for attempt in report.model_attempts:
-        label = _resolved_label(attempt.model_token, attempt.canonical_model)
-        for assessment in attempt.assessments:
-            rows.append((label, assessment.harness, _assessment_reason(assessment)))
-        notes.extend(f"{label}: {diagnostic}" for diagnostic in attempt.diagnostics)
-    if not rows and not notes:
+    attempts = [
+        (
+            _resolved_label(attempt.model_token, attempt.canonical_model),
+            [(a.harness, _assessment_reason(a)) for a in attempt.assessments],
+            attempt.diagnostics,
+        )
+        for attempt in report.model_attempts
+    ]
+    harnesses = list(dict.fromkeys(h for _, rows, _ in attempts for h, _ in rows))
+    if not harnesses and not any(diagnostics for _, _, diagnostics in attempts):
         return None
-    unique = list(dict.fromkeys(harness for _, harness, _ in rows))
-    one_harness = len(unique) == 1
+    one_harness = len(harnesses) == 1
     header = (
-        f"cannot find a model for harness {unique[0]}" if one_harness else "cannot find a model"
+        f"cannot find a model for harness {harnesses[0]}" if one_harness else "cannot find a model"
     )
     lines: list[str] = []
-    for label, harness, reason in rows:
-        extra: list[str] = []
-        if not one_harness:
-            extra.append(harness)
-        if reason != "no_model_match":
-            extra.append(reason)
-        lines.append(f"{label}: {': '.join(extra)}" if extra else label)
-    lines.extend(notes)
+    for label, rows, diagnostics in attempts:
+        for harness, reason in rows:
+            extra: list[str] = []
+            if not one_harness:
+                extra.append(harness)
+            if reason != "no_model_match":
+                extra.append(reason)
+            # A one-harness diagnostic restates the label and the reason; print it alone.
+            if not (one_harness and diagnostics):
+                lines.append(f"{label}: {': '.join(extra)}" if extra else label)
+        lines.extend(f"{label}: {_describe_not_installed(d)}" for d in diagnostics)
     body = "\n".join(f"  {line}" for line in lines)
     return f"{header}\n{body}"
 
