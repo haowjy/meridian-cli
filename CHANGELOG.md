@@ -6,6 +6,13 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.5] - 2026-11-22
+
+### Fixed
+- Meridian ships with Mars 0.39.4. Through `meridian mars`:
+  - `meridian mars sync` keeps an agent's `model:` that Mars doesn't know, such as `model: sonnet` in a third-party pack whose project defines no `sonnet` alias, instead of deleting it. It writes the name unchanged to each harness that isn't launched through Meridian and has a model field, and warns once per agent. With no model catalog loaded (an offline first sync), it writes no model, and an OpenCode agent never gets a bare name.
+  - The first plugin rebuild after Mars retired a target settles in one build. Before, the second build changed `plugin/.mars-plugin.json` again, so a pre-commit hook that rebuilds and compares refused the `meridian mars version` commit.
+
 ## [0.26.4] - 2026-11-22
 
 ### Fixed
