@@ -32,6 +32,11 @@ class AgyPermissions:
     lines: tuple[ReportLine, ...]
 
 
+# agy parses flags Go-style, so one dash works as well as two.
+_SETTINGS_FLAGS = ("--settings", "-settings")
+_SETTINGS_PREFIXES = ("--settings=", "-settings=")
+
+
 def _split_settings_arg(args: tuple[str, ...]) -> tuple[str | None, tuple[str, ...]]:
     """The last ``--settings`` value in ``args`` (``agy`` uses the last) and the rest."""
 
@@ -40,11 +45,11 @@ def _split_settings_arg(args: tuple[str, ...]) -> tuple[str | None, tuple[str, .
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--settings" and i + 1 < len(args):
+        if arg in _SETTINGS_FLAGS and i + 1 < len(args):
             value = args[i + 1]
             i += 2
             continue
-        if arg.startswith("--settings="):
+        if arg.startswith(_SETTINGS_PREFIXES):
             value = arg.partition("=")[2]
             i += 1
             continue

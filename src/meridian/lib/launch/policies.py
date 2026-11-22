@@ -700,9 +700,14 @@ def _with_current_bundle_rules(
             except bundle_adapter.MarsAgentToolRulesUnsupportedError:
                 raise
             except RuntimeError as exc:
+                lost = (
+                    "without the agent's own rules, which were not recorded"
+                    if agent_rules is None
+                    else "without its per-agent exemptions"
+                )
                 warning = (
                     f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
-                    "project-wide tool rules without its per-agent exemptions."
+                    f"project-wide tool rules {lost}."
                 )
         bundle = bundle or _ask_mars(
             surface,

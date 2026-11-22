@@ -85,7 +85,9 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   without the agent's rules. `allow` is never written, and `ask` is left out under
   `--approval never` (`agy` ignores it there). Not caught: a command `agy` runs through a
   wrapper (`env`, a shell), rules with `$`, `..`, a glob or a wildcard inside the command,
-  and tools other than `agy`'s file and command tools. These rules only apply to the command
+  and tools other than `agy`'s file, command and MCP tools. An MCP deny is written under both
+  names `agy` gives a server (`_agy_<server>` for one Mars installs, the bare name for one added
+  with `agy mcp add`), so it also stops a same-named server of yours. These rules only apply to the command
   Meridian prints: `agy` run by hand does not apply them.
 - **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
   `--sandbox`, `--approval confirm`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
