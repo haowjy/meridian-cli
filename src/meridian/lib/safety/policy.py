@@ -278,11 +278,7 @@ def _rule_default_line(rule: ToolRule, harness: str) -> ReportLine:
         return ReportLine(
             element,
             "unsupported",
-            (
-                rule.note
-                if rule.origin == PLATFORM_ORIGIN and rule.note
-                else f"Mars has no {harness} name for this tool, so it is not enforced"
-            ),
+            rule.note or f"Mars has no {harness} name for this tool, so it is not enforced",
         )
     if rule.native_status == "absent":
         if rule.action == "deny":

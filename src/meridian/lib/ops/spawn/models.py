@@ -246,6 +246,10 @@ class SpawnCreateInput(SpawnLaunchOptions):
         return normalize_goal(value)
 
 
+# A continue runs a launch like a create, so its output reads the same.
+_LAUNCH_COMMANDS = ("spawn.create", "spawn.continue")
+
+
 class SpawnActionOutput(BaseModel):
     """Spawn action result with distinct CLI and implicit agent projections.
 
@@ -312,7 +316,7 @@ class SpawnActionOutput(BaseModel):
         return self.task_cwd != self.authority_root
 
     def _transcript_command(self) -> str | None:
-        if self.command != "spawn.create" or self.spawn_id is None or self.background:
+        if self.command not in _LAUNCH_COMMANDS or self.spawn_id is None or self.background:
             return None
         if self.session_log_available is False:
             return None
@@ -468,7 +472,7 @@ class SpawnActionOutput(BaseModel):
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
         if (
-            self.command == "spawn.create"
+            self.command in _LAUNCH_COMMANDS
             and is_terminal_spawn_status(self.status)
             and not self.background
             and effective_ctx.verbosity == 0
