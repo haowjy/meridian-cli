@@ -1,8 +1,8 @@
 """The agent's scoped tool rules as ``agy`` permissions, passed inline with ``--settings``.
 
-Mars decides what ``agy`` can carry: a rule it spells as an ``agy`` permission string
-(``command(git reset --hard)``, ``write_file(src)``) arrives ``known`` with that string in
-``native`` and a ``note`` on what ``agy`` does not catch. This module groups those strings by
+Mars decides what ``agy`` can carry: a rule it spells as ``agy`` permission strings
+(``command(git reset --hard)``) arrives with them in ``native_permission`` and a ``note`` on
+what ``agy`` does not catch. This module groups those strings by
 action and unions each list with the person's own, because ``--settings`` replaces a list
 instead of merging it. It never writes ``allow``, which would replace the person's allows.
 """
@@ -16,7 +16,6 @@ from typing import cast
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.policy import ReportLine, rule_element
-from meridian.lib.tools import split_native
 
 # ``agy`` ignores ``ask`` under ``--dangerously-skip-permissions`` (approval ``never``).
 _ASK_IGNORED = "agy ignores ask rules under --dangerously-skip-permissions"
@@ -58,17 +57,8 @@ def compile_agy_permissions(
     carried: dict[str, list[str]] = {"deny": [], "ask": []}
     lines: list[ReportLine] = []
     for rule in policy.rules:
-        permissions = [
-            native
-            for native in rule.native
-            if split_native(native)[1] is not None  # an unscoped native is a tool name
-        ]
-        if (
-            rule.native_status != "known"
-            or rule.covered_by is not None
-            or rule.action == "allow"
-            or not permissions
-        ):
+        permissions = list(rule.native_permission)
+        if rule.covered_by is not None or rule.action == "allow" or not permissions:
             continue
         if rule.action == "ask" and never:
             lines.append(ReportLine(rule_element(rule), "unsupported", _ASK_IGNORED))

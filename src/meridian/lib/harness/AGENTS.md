@@ -78,8 +78,8 @@ or `.agents/` is not added (a warning says so). The hook copies the overlay into
 file and `holds.py` writes it, with the model, into the row's `LaunchPolicySnapshot` and
 model selection, which is what a continue replays; a row without them still continues with `-m`.
 
-`agy/permissions.py` turns the bundle's known, uncovered `deny`/`ask` rules (Mars spells them as `agy`
-permission strings in `native`; unscoped natives are tool names and are skipped) into an inline
+`agy/permissions.py` turns the bundle's uncovered `deny`/`ask` rules that carry `native_permission`
+(Mars's `agy` permission strings; read as given, no shape filter) into an inline
 `--settings '{"permissions":...}'` on launch and `--continue`. `--settings` replaces a list instead of merging,
 so each list is unioned with the same list in agy's own `settings.json`; an unreadable file adds a report
 warning and the launch goes on. It never writes `allow`, and leaves `ask` out under `approval: never`
