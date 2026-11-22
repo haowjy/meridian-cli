@@ -32,6 +32,12 @@ def native_store() -> Path:
     return get_home_path() / ".gemini" / "antigravity-cli" / "brain"
 
 
+def user_settings_path() -> Path:
+    """``agy``'s own settings file, beside its conversation store."""
+
+    return get_home_path() / ".gemini" / "antigravity-cli" / "settings.json"
+
+
 def agy_root() -> Path:
     return get_user_home() / "agy"
 

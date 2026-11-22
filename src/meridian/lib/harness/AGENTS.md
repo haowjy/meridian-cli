@@ -79,11 +79,16 @@ file and `holds.py` writes it, with the model, into the row's `LaunchPolicySnaps
 model selection, which is what a continue replays; a row without them still continues with `-m`.
 
 `agy/permissions.py` turns the bundle's uncovered `deny`/`ask` rules that carry `native_permission`
-(Mars's `agy` permission strings; read as given, no shape filter) into an inline
-`--settings '{"permissions":...}'` on launch and `--continue`. `--settings` replaces a list instead of merging,
-so each list is unioned with the same list in agy's own `settings.json`; an unreadable file adds a report
-warning and the launch goes on. It never writes `allow`, and leaves `ask` out under `approval: never`
-(agy ignores it with `--dangerously-skip-permissions`).
+(Mars's `agy` permission strings; read as given, no shape filter) into one inline
+`--settings '{"permissions":...}'`, compiled once per launch in `bind_agy_spec` (argv and the
+report read the result) on launch and `--continue`. `agy` uses the last `--settings` and
+`--settings` replaces a list, so each list is the union of agy's `settings.json`, a `--settings` the
+person passed (inline JSON or file path; its other keys stay) and ours, and the person's
+`--settings` leaves `extra_args`. An unreadable source adds a report warning and the launch goes on
+(an unreadable `--settings` is passed as given, without ours). It never writes `allow`, and leaves `ask`
+out under `approval: never`. A continue has the rules because the plugin's snapshot has
+`tool_rules_recorded=False` (nothing recorded, as against recorded-none): replay asks Mars with `--agent` and no
+`--agent-tool-rules`, so the agent's current profile rules apply.
 
 `agy` registers launch ports only (`register_harness(LaunchPorts(...))` in `agy/adapter.py`);
 `register_harness` requires process ports exactly when the harness is not plugin-hosted.

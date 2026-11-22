@@ -26,7 +26,7 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
-from meridian.lib.harness.agy.permissions import compile_agy_permissions
+from meridian.lib.harness.agy.permissions import AgyPermissions, compile_agy_permissions
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,
     APPROVAL_ENV,
@@ -63,6 +63,19 @@ class AgyLaunchSpec(ResolvedLaunchSpec):
     # The roots beyond the working directory the session may use (``SpawnParams``): the
     # command adds them with ``--add-dir``.
     workspace_roots: tuple[Path, ...] = ()
+    # Resolved once at bind (``bind_agy_spec``): the one ``--settings`` value and the report
+    # lines for it. ``None`` on a spec that did not pass through bind.
+    permissions: AgyPermissions | None = None
+
+
+def bind_agy_spec(
+    spec: ResolvedLaunchSpec, env: Mapping[str, str], child_cwd: Path
+) -> AgyLaunchSpec:
+    """Compile the agent's rules and the person's own settings once for argv and the report."""
+
+    assert isinstance(spec, AgyLaunchSpec)
+    compiled = compile_agy_permissions(spec, child_cwd)
+    return spec.model_copy(update={"permissions": compiled, "extra_args": compiled.extra_args})
 
 
 def _split_roots(spec: ResolvedLaunchSpec) -> tuple[list[Path], list[Path]]:
@@ -195,8 +208,9 @@ def project_agy_spec_to_cli_args(
         command.append("--dangerously-skip-permissions")
     elif approval == "auto":
         command += ["--mode", "auto"]
-    if settings := compile_agy_permissions(spec)[0]:
-        command += ["--settings", settings]
+    assert isinstance(spec, AgyLaunchSpec)
+    if spec.permissions is not None and spec.permissions.settings:
+        command += ["--settings", spec.permissions.settings]
     for root in _split_roots(spec)[0]:
         command += ["--add-dir", root.as_posix()]
     command.extend(spec.extra_args)
@@ -217,7 +231,9 @@ def agy_permission_report(spec: ResolvedLaunchSpec) -> EnforcementReport:
     if policy.approval in _APPROVAL_LINES:
         status, note = _APPROVAL_LINES[policy.approval]
         reported.append(ReportLine(f"approval: {policy.approval}", status, note))
-    reported.extend(compile_agy_permissions(spec)[1])
+    assert isinstance(spec, AgyLaunchSpec)
+    if spec.permissions is not None:
+        reported.extend(spec.permissions.lines)
     return complete_report(policy, reported, harness="agy")
 
 
@@ -264,6 +280,7 @@ register_harness(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_agy_spec_to_cli_args,
             permission_report=agy_permission_report,
+            bind_spec=bind_agy_spec,
         ),
         # No events reach Meridian from ``agy``: the plugin writes the row.
         semantics=HarnessSemantics(events={}),

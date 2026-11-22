@@ -3,53 +3,85 @@
 Mars decides what ``agy`` can carry: a rule it spells as ``agy`` permission strings
 (``command(git reset --hard)``) arrives with them in ``native_permission`` and a ``note`` on
 what ``agy`` does not catch. This module groups those strings by
-action and unions each list with the person's own, because ``--settings`` replaces a list
-instead of merging it. It never writes ``allow``, which would replace the person's allows.
+action and unions each list with the person's own (``settings.json`` and a ``--settings``
+they passed), because ``--settings`` replaces a list instead of merging it and ``agy`` uses
+the last ``--settings`` only. It never writes ``allow``, which would replace the person's allows.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.harness.agy.state import user_settings_path
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform import get_home_path
 from meridian.lib.safety.policy import ReportLine, rule_element
 
 # ``agy`` ignores ``ask`` under ``--dangerously-skip-permissions`` (approval ``never``).
 _ASK_IGNORED = "agy ignores ask rules under --dangerously-skip-permissions"
 
 
-def user_settings_path() -> Path:
-    """``agy``'s own settings file, beside its conversation store (``state.native_store``)."""
+@dataclass(frozen=True)
+class AgyPermissions:
+    """What a launch passes to ``agy``: one ``--settings`` value and the arguments around it."""
 
-    return get_home_path() / ".gemini" / "antigravity-cli" / "settings.json"
-
-
-def _user_permissions() -> tuple[dict[str, object], str | None]:
-    """The person's ``permissions`` table and, if the file exists but can't be read, why."""
-
-    path = user_settings_path()
-    try:
-        doc: object = json.loads(path.read_text())
-        permissions = cast("dict[str, object]", doc).get("permissions", {})
-        if not isinstance(permissions, dict):
-            raise ValueError("permissions is not an object")
-    except FileNotFoundError:
-        return {}, None
-    except (OSError, ValueError, AttributeError) as exc:
-        return {}, f"cannot read {path}: {exc}"
-    return cast("dict[str, object]", permissions), None
+    settings: str | None
+    extra_args: tuple[str, ...]
+    lines: tuple[ReportLine, ...]
 
 
-def compile_agy_permissions(
-    spec: ResolvedLaunchSpec,
-) -> tuple[str | None, list[ReportLine]]:
-    """The inline ``--settings`` value (``None`` when no list has an entry) and report lines.
+def _split_settings_arg(args: tuple[str, ...]) -> tuple[str | None, tuple[str, ...]]:
+    """The last ``--settings`` value in ``args`` (``agy`` uses the last) and the rest."""
+
+    value: str | None = None
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--settings" and i + 1 < len(args):
+            value = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--settings="):
+            value = arg.partition("=")[2]
+            i += 1
+            continue
+        rest.append(arg)
+        i += 1
+    return value, tuple(rest)
+
+
+def _read_settings(source: str, *, inline: bool, cwd: Path) -> dict[str, object]:
+    """A settings document: inline JSON (``--settings`` value) or the file at ``source``."""
+
+    text = source if inline else (cwd / Path(source).expanduser()).read_text()
+    doc: object = json.loads(text)
+    if not isinstance(doc, dict):
+        raise ValueError("not a JSON object")
+    permissions = cast("dict[str, object]", doc).get("permissions", {})
+    if not isinstance(permissions, dict):
+        raise ValueError("permissions is not an object")
+    return cast("dict[str, object]", doc)
+
+
+def _strings(permissions: dict[str, object], action: str) -> list[str]:
+    entries = permissions.get(action, [])
+    return (
+        [e for e in cast("list[object]", entries) if isinstance(e, str)]
+        if isinstance(entries, list)
+        else []
+    )
+
+
+def compile_agy_permissions(spec: ResolvedLaunchSpec, cwd: Path) -> AgyPermissions:
+    """The one ``--settings`` value (``None`` when nothing needs one), the other extra args and
+    report lines.
 
     The lines name each carried rule, a rule ``approval: never`` leaves out, and a settings
-    file of the person's that could not be merged.
+    source of the person's that could not be merged (their ``--settings`` stays as they gave
+    it, and ``settings.json`` is left out of ours).
     """
 
     policy = spec.permission_policy
@@ -71,10 +103,33 @@ def compile_agy_permissions(
                 f"--settings permissions.{rule.action}: {', '.join(permissions)}",
             )
         )
+    given, extra_args = _split_settings_arg(spec.extra_args)
     if not any(carried.values()):
-        return None, lines
-    theirs, problem = _user_permissions()
-    if problem:
+        return AgyPermissions(given, extra_args, tuple(lines))
+    doc: dict[str, object] = {}
+    sources: list[dict[str, object]] = []
+    problems: list[str] = []
+    stored = user_settings_path()
+    try:
+        sources.append(_read_settings(str(stored), inline=False, cwd=cwd))
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        problems.append(f"cannot read {stored}: {exc}")
+    if given is not None:
+        try:
+            doc = _read_settings(given, inline=given.lstrip().startswith("{"), cwd=cwd)
+            sources.append(doc)
+        except (OSError, ValueError) as exc:
+            lines.append(
+                ReportLine(
+                    "agy --settings",
+                    "partial",
+                    f"cannot read {given}: {exc}; passed as given, without the agent's rules",
+                )
+            )
+            return AgyPermissions(given, extra_args, tuple(lines))
+    for problem in problems:
         lines.append(
             ReportLine(
                 "agy settings.json",
@@ -82,11 +137,14 @@ def compile_agy_permissions(
                 f"{problem}; your own deny and ask rules are not in --settings",
             )
         )
-    merged: dict[str, list[str]] = {}
+    permissions = dict(cast("dict[str, object]", doc.get("permissions", {})))
     for action, ours in carried.items():
-        existing = theirs.get(action, [])
-        entries = cast("list[object]", existing) if isinstance(existing, list) else []
-        kept = [e for e in entries if isinstance(e, str)]
-        if combined := list(dict.fromkeys([*kept, *ours])):
-            merged[action] = combined
-    return json.dumps({"permissions": merged}, separators=(",", ":")), lines
+        theirs = [
+            e
+            for source in sources
+            for e in _strings(cast("dict[str, object]", source.get("permissions", {})), action)
+        ]
+        if combined := list(dict.fromkeys([*theirs, *ours])):
+            permissions[action] = combined
+    merged = {**doc, "permissions": permissions}
+    return AgyPermissions(json.dumps(merged, separators=(",", ":")), extra_args, tuple(lines))
