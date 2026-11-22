@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.3] - 2026-11-22
+
+### Fixed
+- `meridian agy --dry-run` shows Mars's own reason for a rule it cannot enforce, such as "this host's tool takes no pattern, so the rule cannot be scoped", instead of claiming Mars has no name for the tool.
+- A routing refusal prints each candidate model once instead of twice.
+- `meridian spawn --continue` prints the spawn's report and transcript line, as a plain `spawn` does.
+- When two packages define an agent with the same name, Mars renames both; `-a <name>` now says so and lists the renamed agents instead of only "not found".
+
 ## [0.26.2] - 2026-11-22
 
 ### Fixed
