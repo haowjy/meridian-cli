@@ -6,6 +6,15 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.26.4] - 2026-11-22
+
+### Fixed
+- Meridian ships with Mars 0.39.3. Through `meridian mars`:
+  - `meridian mars sync` warns about what a package declares but Mars doesn't install: a skill's own `hooks` or `disallowed-tools` on a target without them, skill text past agy's 24,000-byte limit, a dependency that installs nothing, and an agy allow a deny on the same tool overrides. Each warning appears once, with the sync that installs the item; `meridian mars validate` lists them every run.
+  - agy gets the agents that deny a whole tool, such as `explorer` and `session-miner` (`edit: deny`): Mars 0.39.1 wrote no `.agy/agents/` file for them, and 0.39.3 writes one that leaves the denied tools out of `tools:`.
+  - A skill renamed because two dependencies provide the same name installs one directory deep, where harnesses find it. Upgrading removes the old nested copy.
+  - `meridian mars build plugin` and `meridian mars version` rebuild a plugin an older Mars built with Cursor files, and remove those files.
+
 ## [0.26.3] - 2026-11-22
 
 ### Fixed

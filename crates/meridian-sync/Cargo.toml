@@ -1,6 +1,6 @@
 [package]
 name = "meridian-sync"
-version = "0.26.3"
+version = "0.26.4"
 edition = "2021"
 description = "Keeps Meridian's git contexts in sync with their remotes"
 license = "MIT"
