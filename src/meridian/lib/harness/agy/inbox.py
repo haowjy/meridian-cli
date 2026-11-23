@@ -237,6 +237,5 @@ __all__ = [
     "enqueue",
     "hold",
     "inbox_path",
-    "inflight_path",
     "settle_undelivered",
 ]

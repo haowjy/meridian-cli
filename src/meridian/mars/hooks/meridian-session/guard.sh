@@ -9,7 +9,7 @@
 # shorter than that offset, so a session with nothing to do pays for a shell, not for
 # Python. Meridian's exit status is dropped: a plugin newer than the meridian on PATH
 # must not make agy see a failed hook.
-# Paths mirror lib/harness/agy/state.py and inbox.py.
+# Paths mirror lib/harness/agy/state.py.
 command -v meridian >/dev/null 2>&1 || exit 0
 event=$1
 pid=$2

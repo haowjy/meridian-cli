@@ -18,6 +18,7 @@ from meridian.lib.harness.agy.state import (
     agy_root,
     asked_path,
     busy_path,
+    inflight_path,
     process_dir,
     read_json,
     request_path,
@@ -286,7 +287,7 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     transcript.parent.mkdir(parents=True)
     transcript.write_text(f"injected by a PreInvocation hook: [meridian:{entry.id}] ping\n")
     assert run_hook("PreInvocation", pid, payload) is None
-    assert not inbox.inflight_path("c1").exists()
+    assert not inflight_path("c1").exists()
 
 
 def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
@@ -297,7 +298,7 @@ def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None
     replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
 
     assert [reply is not None for reply in replies] == [True] * inbox.MAX_ATTEMPTS + [False]
-    assert inbox.inflight_path("c1").exists()  # kept for the notice sweep
+    assert inflight_path("c1").exists()  # kept for the notice sweep
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
@@ -370,7 +371,7 @@ def test_closed_conversation_notifies_only_for_undelivered_messages(
     send_owed_notices()
 
     assert sent == ["p9"]
-    assert not inbox.inflight_path("c1").exists()
+    assert not inflight_path("c1").exists()
     assert not inbox.inbox_path("c1").exists()
     send_owed_notices()
     assert sent == ["p9"]

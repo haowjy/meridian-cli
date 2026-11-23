@@ -128,8 +128,9 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   prints `queued`. `agy` has no way to push a message in, so it reaches the model at the
   session's next model call: in the middle of a turn, or when the session wakes. An idle session
   wakes by itself while its Meridian watcher runs (the plugin's `Stop` hook has the model start
-  it, as a background command `meridian harness-watch agy ...`, once per turn when none runs;
-  the TUI shows it as `1 task(s)`). Without a watcher, the message waits until you type; after
+  it, as a background command `meridian harness-watch agy ...`, when none runs; after two
+  misses in a row it backs off, skipping 2 turn ends before it asks again, then 4, up to 32;
+  the TUI shows the watcher as `1 task(s)`). Without a watcher, the message waits until you type; after
   Esc, a message waits until you type too, because `agy` fires no `Stop` for a cancelled turn.
   In Auto mode `agy` runs commands in a terminal sandbox that hides `~/.meridian`, so the
   `Stop` hook has the model start the watcher outside it (`BypassSandbox`). A watcher that
@@ -138,7 +139,8 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   the prompt, allow the command in `~/.gemini/antigravity-cli/settings.json`:
   `"permissions": {"allow": ["command(meridian)"]}` (the rule `agy`'s own "always allow for
   commands that start with 'meridian'" writes). It did not ask in Auto mode with that rule.
-  The narrower `command(meridian harness-watch)` is untested.
+  The narrower `command(meridian harness-watch)` is untested, and so is Auto mode without
+  `command(meridian)`: it most likely prompts at each watcher start.
 
 - **Reading.** `meridian session log <chat or spawn>`, `session search` and `spawn --from <chat>`
   work on an `agy` chat as on any other: the whole conversation, including turns after you
