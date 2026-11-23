@@ -45,6 +45,7 @@ from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
     ProjectionChannels,
+    join_content_blocks,
 )
 from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
@@ -145,31 +146,43 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
-        """Only the person's own prompt: the plugin's hook delivers Meridian's guidance, and
-        the options that would add context documents are refused for a printed launch."""
+        """The --from handoff and the person's prompt, in one ``--prompt-interactive`` value.
 
+        The plugin's hook delivers Meridian's guidance. The options that add reference
+        documents are refused for a printed launch, so nothing else joins the prompt.
+        """
+
+        prior_output = content.prior_output.strip()
+        user_task_prompt = content.user_task_prompt.strip()
+        message = (
+            f"## User message\n{user_task_prompt}"
+            if prior_output and user_task_prompt
+            else user_task_prompt
+        )
+        user_turn = join_content_blocks(prior_output, message)
         return ProjectedContent(
             system_prompt="",
-            user_turn_content=content.user_task_prompt,
+            user_turn_content=user_turn,
             reference_routing=(),
             channels=ProjectionChannels(
-                system_instruction="none", user_task_prompt="user-turn", task_context="inline"
+                system_instruction="none", user_task_prompt="user-turn", task_context="user-turn"
             ),
         )
 
     def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
-        return tuple(
+        skipped = _split_roots(spec)[1]
+        if not skipped:
+            return ()
+        roots = [root.as_posix() for root in skipped]
+        return (
             CompositionWarning(
                 code="agy_workspace_root_skipped",
                 message=(
-                    f"{root} has its own .agy/ or .agents/, so it is not added to the agy "
-                    "workspace: its hooks and MCP servers would run beside the project's, "
-                    "and Meridian's hooks would run twice. The session can still reach it "
-                    "outside its workspace where your agy settings allow."
+                    f"Skipped from the agy workspace (own .agy/ or .agents/): {', '.join(roots)}. "
+                    "Their hooks and MCP servers do not load; the directories stay reachable "
+                    "by absolute path."
                 ),
-                detail={"root": root.as_posix()},
-            )
-            for root in _split_roots(spec)[1]
+            ),
         )
 
     def project_launch_env(
@@ -241,7 +254,7 @@ def agy_permission_report(spec: ResolvedLaunchSpec) -> EnforcementReport:
 # start: the plugin's hook and server see the conversation only after the person runs the
 # command, and a command line has no place for these.
 _FORK_REASON = "a fork starts a conversation Meridian would have to create"
-_PROMPT_REASON = "the printed command carries only your own prompt"
+_REFERENCE_REASON = "reference files are not passed to the printed command"
 _NO_NETWORK_REASON = "agy has no network flag Meridian can set"
 _NO_COMPACTION_REASON = "agy has no compaction flag"
 
@@ -249,8 +262,7 @@ _PRINTED = PrintedLaunchPorts(
     refused_options={
         "--fork": _FORK_REASON,
         "--fork-fresh": _FORK_REASON,
-        "--from": _PROMPT_REASON,
-        "-f": _PROMPT_REASON,
+        "-f": _REFERENCE_REASON,
         "--skills": "agy loads skills from the project's synced plugin, not from the command",
         "--goal": "a goal is a completion contract Meridian's runner enforces",
         "--sandbox": "agy has no sandbox flag Meridian can set",

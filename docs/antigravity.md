@@ -36,6 +36,10 @@ eval "$(meridian agy -m gemini-3.8-flash)"    # run it in your shell
 meridian agy --continue c12                   # resume a chat; keeps its model, agent and approval
 ```
 
+- **`--from` rides in the prompt.** `meridian agy --from c12` puts the standard prior-session
+  block into `--prompt-interactive`. With `-p` as well, the prompt is that block, a blank line,
+  then `## User message` and your text. The block carries the source's report and pointers, not
+  its conversation; `meridian session log c12` reads the conversation.
 - **It writes nothing** except a script for a long command. A command over about 240 characters
   or with a newline (a multi-line `-p`) is written to `~/.meridian/agy/launch/<id>.sh` and
   stdout is `sh <path>`. Expect that for nearly every real command: the work directory, the
@@ -90,7 +94,7 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   names `agy` gives a server (`_agy_<server>` for one Mars installs, the bare name for one added
   with `agy mcp add`), so it also stops a same-named server of yours. These rules only apply to the command
   Meridian prints: `agy` run by hand does not apply them.
-- **Refused, with the reason:** `--fork`, `--fork-fresh`, `--from`, `-f`, `--skills`, `--goal`,
+- **Refused, with the reason:** `--fork`, `--fork-fresh`, `-f` (reference files), `--skills`, `--goal`,
   `--sandbox`, `--approval confirm`, `--network*`, `--autocompact*`, `--timeout`, and `--append-system-prompt` after
   `--`. Arguments after `--` go to `agy`.
 - **`spawn` never routes to `agy`** (`spawn --harness agy`, `spawn --continue <agy chat>`), and
