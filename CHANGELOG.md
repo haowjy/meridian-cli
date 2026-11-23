@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-23
+
+### Added
+- `meridian agy` enforces an agent's scoped deny and ask rules, such as `bash(git reset --hard *): deny` or a denied skill, by passing them to `agy` in one `--settings`, on a start and on `--continue`. The agent's entries are added to the `deny` and `ask` lists `agy` would have used: the one in a `--settings` you pass after `--` (inline JSON or a file path, `--settings` or `-settings`), else the one in your agy `settings.json`. Your other keys and lists, `allow` included, reach `agy` as they would without Meridian. `--dry-run` shows each rule and what `agy` still doesn't catch (`bash -c`, `$(...)`, absolute paths, shell access to files). `ask` is left out under `--approval never`, where `agy` ignores it. `agy` run by hand doesn't apply these rules. (#1045)
+
+### Fixed
+- `meridian agy --continue` applies the agent's rules. The agy plugin records a conversation without its tool rules, and a continue used to tell Mars the agent had none. (#1045)
+
 ## [0.26.5] - 2026-11-22
 
 ### Fixed
