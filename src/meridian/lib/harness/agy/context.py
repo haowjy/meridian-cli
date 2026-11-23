@@ -1,11 +1,10 @@
 """What ``agy``'s model context holds, read from the conversation's transcript.
 
-``agy`` has no compaction hook (its plugin events are ``SessionStart``, ``SessionEnd``,
-``PreInvocation``, ``PostInvocation``, ``PreToolUse``, ``PostToolUse``, ``UserPromptSubmit``
-and ``Stop``), and a compaction keeps neither of Meridian's injected blocks. The model's
-context is the transcript's steps after its last ``CHECKPOINT`` (``agy`` 1.5.14 appends;
-nothing earlier is rewritten), so a block is held when an injected message after that step
-carries it.
+``agy`` has no compaction hook (its plugin events in 1.5.15 are ``SessionStart``,
+``PreInvocation``, ``PostInvocation``, ``PreToolUse``, ``PostToolUse`` and ``Stop``), and a
+compaction keeps neither of Meridian's injected blocks. The model's context is the
+transcript's steps after its last ``CHECKPOINT`` (``agy`` 1.5.14 appends; nothing earlier is
+rewritten), so a block is held when an injected message after that step carries it.
 
 ``guard.sh`` greps the bytes after a recorded offset for ``CHECKPOINT``, and ``transcript.py``
 documents the format for the session log reader. A format change for a newer ``agy`` updates
