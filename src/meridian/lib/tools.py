@@ -46,6 +46,10 @@ class ToolRule(BaseModel):
     ``note`` can explain that gap. The ``*`` rule names no tool: capability ``*`` and no
     ``native``.
 
+    ``native_permission``: the harness's own permission strings for a rule Mars carries
+    natively where ``native`` names no tool (agy's ``command(git reset --hard)``); empty
+    otherwise. Only that harness's compile reads it.
+
     ``covered_by``: Mars sets it when a stricter rule decides every call this rule names,
     and then sends the rule with no ``native`` names. A snapshot an older build wrote lacks
     it, so such a rule reads as uncovered. Coverage is this field, never an inference from
@@ -69,6 +73,7 @@ class ToolRule(BaseModel):
     native: tuple[str, ...] = ()
     native_tools: tuple[str, ...] | None = None
     native_status: NativeStatus = "known"
+    native_permission: tuple[str, ...] = ()
     origin: str | None = None
     note: str | None = None
     covered_by: CoveredBy | None = None

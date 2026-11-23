@@ -27,6 +27,11 @@ class LaunchPolicySnapshot(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     tool_rules: tuple[ToolRule, ...] = ()
+    # False when the row's writer did not record rules (the ``agy`` plugin's rows): a continue
+    # then asks Mars for the agent's current rules instead of sending ``tool_rules``. A flag,
+    # not ``tool_rules=None``, because session updates drop ``None`` fields when written.
+    # A row from before the flag has no key and reads True: its rules are what it recorded.
+    tool_rules_recorded: bool = True
     # Candidate platform denies named by Mars for this harness. A snapshot written before
     # this field replays with the names a fresh Mars bundle gives for the same harness.
     platform_tool_rules: tuple[ToolRule, ...] = ()

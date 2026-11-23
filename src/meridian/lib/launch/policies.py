@@ -659,12 +659,16 @@ def _with_current_bundle_rules(
 
     harness = str(policy.harness)
     effort = policy.execution_policy.effort
-    agent_rules = tuple(
+    agent_rules: tuple[ToolRule, ...] | None = tuple(
         rule
         for rule in policy.resolved_tool_rules
         if rule.origin not in (PROJECT_ORIGIN, PLATFORM_ORIGIN)
     )
-    sendable = all(
+    if not snapshot.tool_rules_recorded:
+        # Nothing was recorded: Mars applies the agent's current profile rules. Sending
+        # ``[]`` would tell it the agent has none.
+        agent_rules = None
+    sendable = agent_rules is None or all(
         rule.capability is not None and rule.origin in _AGENT_ORIGINS for rule in agent_rules
     )
     warning: str | None = None
@@ -696,12 +700,21 @@ def _with_current_bundle_rules(
             except bundle_adapter.MarsAgentToolRulesUnsupportedError:
                 raise
             except RuntimeError as exc:
+                lost = (
+                    "without the agent's own rules, which were not recorded"
+                    if agent_rules is None
+                    else "without its per-agent exemptions"
+                )
                 warning = (
                     f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
-                    "project-wide tool rules without its per-agent exemptions."
+                    f"project-wide tool rules {lost}."
                 )
         bundle = bundle or _ask_mars(
-            surface, harness=harness, model=policy.model, agent_rules=agent_rules, effort=effort
+            surface,
+            harness=harness,
+            model=policy.model,
+            agent_rules=agent_rules,
+            effort=effort,
         )
         rules = bundle.tool_rules
     warnings = policy.warnings
