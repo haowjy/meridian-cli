@@ -126,21 +126,24 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   and a no-argument `spawn wait` works.
 - **Messages.** `meridian spawn message <spawn or chat> --message "..."` to the session
   prints `queued`. `agy` has no way to push a message in, so it reaches the model at the
-  session's next model call: in the middle of a turn, or when the session wakes. An idle session
-  wakes by itself while its Meridian watcher runs (the plugin's `Stop` hook has the model start
-  it, as a background command `meridian harness-watch agy ...`, when none runs; after two
-  misses in a row it backs off, skipping 2 turn ends before it asks again, then 4, up to 32;
-  the TUI shows the watcher as `1 task(s)`). Without a watcher, the message waits until you type; after
-  Esc, a message waits until you type too, because `agy` fires no `Stop` for a cancelled turn.
-  In Auto mode `agy` runs commands in a terminal sandbox that hides `~/.meridian`, so the
-  `Stop` hook has the model start the watcher outside it (`BypassSandbox`). A watcher that
-  starts inside the sandbox prints a notice that says so and exits, and the model starts it
-  again. In a mode that asks before commands, `agy` asks before each watcher start. To skip
-  the prompt, allow the command in `~/.gemini/antigravity-cli/settings.json`:
-  `"permissions": {"allow": ["command(meridian)"]}` (the rule `agy`'s own "always allow for
-  commands that start with 'meridian'" writes). It did not ask in Auto mode with that rule.
-  The narrower `command(meridian harness-watch)` is untested, and so is Auto mode without
-  `command(meridian)`: it most likely prompts at each watcher start.
+  session's next model call: later in the current turn, or when the session wakes.
+- **Waking for messages.** An idle session wakes by itself, about a second after a message
+  arrives, while its Meridian watcher runs. The watcher is a background command,
+  `meridian harness-watch agy ...`, that the model starts when the plugin's `Stop` hook asks
+  it to at the end of a turn; the TUI shows it as `1 task(s)` and your prompt stays usable.
+  The hook asks when no watcher runs. If the model or you decline twice in a row, it asks
+  less often (after 2 more turns, then 4, up to every 32), and asks every turn again once a
+  watcher has run. A session that is in the middle of a turn is never woken.
+
+  The watcher runs outside `agy`'s terminal sandbox (`BypassSandbox`), because the sandbox
+  hides `~/.meridian`. If it starts inside the sandbox anyway, it says so and exits, and the
+  model starts it again. Starting it is a shell command, which the `meridian` tool approval
+  above does not cover, so `agy` may ask before each start. With
+  `"permissions": {"allow": ["command(meridian)"]}` in
+  `~/.gemini/antigravity-cli/settings.json` (the rule `agy`'s own "always allow for commands
+  that start with 'meridian'" writes), Auto mode did not ask. Accept-edits mode asks at each
+  start. Auto mode without that rule, and the narrower `command(meridian harness-watch)`,
+  are untested.
 
 - **Reading.** `meridian session log <chat or spawn>`, `session search` and `spawn --from <chat>`
   work on an `agy` chat as on any other: the whole conversation, including turns after you
@@ -154,8 +157,9 @@ conversation IDs can't be read as sessions.
 
 ## What it can't do
 
-- **Wake an idle session.** A queued message waits until the model next runs, which
-  means until you type or the current turn makes another model call.
+- **Wake after Esc, or without a watcher.** `agy` fires no hook when you cancel a turn with
+  Esc, so Meridian still counts the session as busy: a message sent after a cancel waits
+  until you type. So does a message to a session whose watcher is not running.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
   conversation's second prompt, and the session's chat ID arrives with it. Until then the
   model has the guidance but may find no tool.
@@ -184,8 +188,10 @@ messages.
 ## Reference
 
 State is under `~/.meridian/agy/`: one directory per running `agy` process
-(`<pid>-<birth>`) with a request file per conversation (written by the hook) and the row
-the server holds, and a message inbox per conversation. A server that is killed leaves its
+(`<pid>-<birth>`) with a request file per conversation (written by the hook), the row
+the server holds, and the watcher's per-conversation files (`busy/`, `asked/`, `watch/`,
+`wake/`, `backoff/`), all removed with the directory once that `agy` process is gone; and a
+message inbox per conversation. A server that is killed leaves its
 rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
 for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars
 installs.
