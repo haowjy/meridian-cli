@@ -151,30 +151,29 @@ def busy_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "busy" / conversation_id
 
 
+def _varint(blob: bytes, pos: int) -> tuple[int, int]:
+    """The varint at ``pos`` and the position after it; ``IndexError`` when it is cut off."""
+
+    value = shift = 0
+    while True:
+        byte = blob[pos]
+        pos += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, pos
+
+
 def _termination_reason(blob: bytes) -> int | None:
     """Field 1 of an ``executor_metadata`` row: ``agy``'s ExecutorTerminationReason."""
 
     pos = 0
     try:
         while pos < len(blob):
-            key = shift = 0
-            while True:
-                byte = blob[pos]
-                pos += 1
-                key |= (byte & 0x7F) << shift
-                shift += 7
-                if byte < 0x80:
-                    break
+            key, pos = _varint(blob, pos)
             field, wire = key >> 3, key & 7
             if wire == 0:
-                value = shift = 0
-                while True:
-                    byte = blob[pos]
-                    pos += 1
-                    value |= (byte & 0x7F) << shift
-                    shift += 7
-                    if byte < 0x80:
-                        break
+                value, pos = _varint(blob, pos)
                 if field == 1:
                     return value
             elif wire == 1:
@@ -182,14 +181,7 @@ def _termination_reason(blob: bytes) -> int | None:
             elif wire == 5:
                 pos += 4
             elif wire == 2:
-                length = shift = 0
-                while True:
-                    byte = blob[pos]
-                    pos += 1
-                    length |= (byte & 0x7F) << shift
-                    shift += 7
-                    if byte < 0x80:
-                        break
+                length, pos = _varint(blob, pos)
                 pos += length
             else:
                 return None
@@ -210,20 +202,23 @@ class TurnState:
     the mark would stay; but it appends a row to the conversation database's
     ``executor_metadata`` when an execution ends, and field 1 of that row is the
     termination reason (2 is ``USER_CANCELED``, 4 a normal end). Each time the mark is
-    touched this reader counts the rows; a later row with reason 2 means the turn ended.
-    Normal ends are not read: ``Stop`` removes the mark for them, and a ``Stop``
-    continuation's first execution also ends with a row.
+    touched this reader notes the highest row index; a later row with reason 2 means the
+    turn ended. Normal ends are not read: ``Stop`` removes the mark for them, and a
+    ``Stop`` continuation's first execution also ends with a row.
 
     Google documents none of this (the table, the protobuf, the enum): seen on ``agy``
-    1.5.15, a different build may renumber it. Anything unreadable falls back to the mark
-    alone. An Esc in the first moments after the mark is touched can land in the count and
-    be missed, which behaves as before this read existed.
+    1.5.15. Every failure to read it, and a missing baseline, leave the turn running, so a
+    working session is never taken for an idle one; the baseline is retried on each poll.
+    That also means an Esc within about a second of any model invocation (the mark is
+    touched on each, and a reader notes its baseline at its next poll) can be missed, and
+    the session then counts as busy until the next turn ends. The one way this fails
+    open: a later build that renumbers the enum so that 2 marks an execution ending
+    mid-turn would read as an Esc.
     """
 
     def __init__(self, proc_dir: Path, conversation: str) -> None:
         self._proc_dir = proc_dir
         self._conversation = conversation
-        self._db: Path | None = None
         self._touched: int | None = None
         self._baseline: int | None = None
 
@@ -235,37 +230,31 @@ class TurnState:
             return False
         if touched != self._touched:
             self._touched = touched
-            self._baseline = len(self._reasons(0))
+            self._baseline = self._last_index()
             return True
-        return _USER_CANCELED not in self._reasons(self._baseline or 0)
+        if self._baseline is None:
+            self._baseline = self._last_index()
+            return True
+        rows = self._query("SELECT data FROM executor_metadata WHERE idx > ?", self._baseline)
+        return rows is None or _USER_CANCELED not in (
+            _termination_reason(data) for (data,) in rows if isinstance(data, bytes)
+        )
 
-    def _database(self) -> Path | None:
-        if self._db is None:
-            request = read_json(request_path(self._proc_dir, self._conversation))
-            transcript = request.get("transcript_path") if request else None
-            if isinstance(transcript, str):
-                # <app data>/brain/<conversation>/.system_generated/logs/<transcript>
-                parents = Path(transcript).parents
-                if len(parents) > 4:
-                    self._db = parents[4] / "conversations" / f"{self._conversation}.db"
-        return self._db
+    def _last_index(self) -> int | None:
+        rows = self._query("SELECT COALESCE(MAX(idx), -1) FROM executor_metadata")
+        return rows[0][0] if rows else None
 
-    def _reasons(self, skip: int) -> list[int | None]:
-        """Termination reasons of the ``executor_metadata`` rows after the first ``skip``."""
+    def _query(self, sql: str, *params: int) -> list[tuple[Any, ...]] | None:
+        """The rows of a read-only query on the conversation's database, None when it fails."""
 
-        database = self._database()
-        if database is None:
-            return []
+        database = native_store().parent / "conversations" / f"{self._conversation}.db"
         try:
             with closing(
                 sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=0.2)
             ) as db:
-                rows = db.execute(
-                    "SELECT data FROM executor_metadata ORDER BY idx LIMIT -1 OFFSET ?", (skip,)
-                ).fetchall()
+                return db.execute(sql, params).fetchall()
         except (sqlite3.Error, ValueError):
-            return []
-        return [_termination_reason(row[0]) for row in rows if isinstance(row[0], bytes)]
+            return None
 
 
 def asked_path(proc_dir: Path, conversation_id: str) -> Path:
