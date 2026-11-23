@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.agy import inbox, watch
-from meridian.lib.harness.agy.state import busy_path, process_dir, wake_path
+from meridian.lib.harness.agy.state import busy_path, process_dir, wake_path, watch_lock_path
 
 CONVERSATION = "c1"
 
@@ -19,6 +19,7 @@ def proc_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     proc = process_dir(os.getpid())
     assert proc is not None
     proc.mkdir(parents=True)
+    watch.watcher_running(proc, CONVERSATION)  # the Stop hook's test creates the lock file
     return proc
 
 
@@ -95,3 +96,13 @@ def test_second_watcher_says_one_runs_and_exits(
     wake.parent.mkdir(parents=True)
     wake.write_text("done")
     assert first.wait(3)
+
+
+def test_watcher_without_its_lock_file_prints_the_notice(
+    proc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    watch_lock_path(proc_dir, CONVERSATION).unlink()
+
+    assert watch.run(os.getpid(), CONVERSATION) == 0
+
+    assert "BypassSandbox true" in capsys.readouterr().out

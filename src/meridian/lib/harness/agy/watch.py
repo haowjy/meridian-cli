@@ -53,10 +53,11 @@ def start_instructions(agy_pid: int, conversation: str) -> str:
     )
 
 
-def _lock_descriptor(proc_dir: Path, conversation: str) -> int:
-    path = watch_lock_path(proc_dir, conversation)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return os.open(path, os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
+_CANNOT_WATCH = (
+    "This watcher cannot see the agy process or Meridian's state, so it cannot watch: it "
+    "most likely ran inside agy's terminal sandbox, which has its own process list and hides "
+    "~/.meridian. Start it again with run_command and BypassSandbox true."
+)
 
 
 def _try_lock(fd: int) -> bool:
@@ -70,7 +71,9 @@ def _try_lock(fd: int) -> bool:
 def watcher_running(proc_dir: Path, conversation: str) -> bool:
     """Whether a process holds the conversation's watch lock (for the ``Stop`` hook)."""
 
-    fd = _lock_descriptor(proc_dir, conversation)
+    path = watch_lock_path(proc_dir, conversation)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
         return not _try_lock(fd)
     finally:
@@ -102,16 +105,16 @@ def run(agy_pid: int, conversation: str) -> int:
     parent = os.getppid()
     birth = process_birth(agy_pid)
     proc_dir = process_dir(agy_pid)
-    if birth is None or proc_dir is None or not proc_dir.is_dir():
-        # ``agy``'s terminal sandbox has its own process list and hides ``~/.meridian``. A
-        # dead ``agy`` has no reader for this, so the text goes to a live one.
-        print(
-            "This watcher cannot see the agy process or Meridian's state, so it cannot "
-            "watch: it ran inside agy's terminal sandbox. Start it again with run_command and "
-            "BypassSandbox true."
-        )
+    # Opened without creating it: the ``Stop`` hook does, and a sandbox that mounts the
+    # state read-only must end in the notice, not a traceback. A dead ``agy`` has no reader
+    # for the notice, so it goes to a live one.
+    try:
+        if birth is None or proc_dir is None:
+            raise OSError
+        fd = os.open(watch_lock_path(proc_dir, conversation), os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        print(_CANNOT_WATCH)
         return 0
-    fd = _lock_descriptor(proc_dir, conversation)
     deadline = time.monotonic() + _LOCK_WAIT_SECONDS
     while not _try_lock(fd):
         if time.monotonic() >= deadline:
