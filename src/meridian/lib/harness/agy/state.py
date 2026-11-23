@@ -172,6 +172,10 @@ def inbox_path(conversation_id: str) -> Path:
     return agy_root() / "inbox" / f"{conversation_id}.jsonl"
 
 
+def inflight_path(conversation_id: str) -> Path:
+    return agy_root() / "inflight" / f"{conversation_id}.jsonl"
+
+
 # MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
 # launch state that belongs to whichever session started the server.
 _KEPT_ENV = frozenset({"MERIDIAN_HOME"})
@@ -223,6 +227,7 @@ __all__ = [
     "briefed_path",
     "busy_path",
     "inbox_path",
+    "inflight_path",
     "is_safe_id",
     "launch_script_dir",
     "native_store",

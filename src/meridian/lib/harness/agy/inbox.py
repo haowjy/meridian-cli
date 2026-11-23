@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from meridian.lib.core.delivery import MessageSender
-from meridian.lib.harness.agy.state import agy_root, inbox_path
+from meridian.lib.harness.agy.state import agy_root, inbox_path, inflight_path
 from meridian.lib.platform import fcntl
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
@@ -64,10 +64,6 @@ class InboxEntry:
             },
             separators=(",", ":"),
         )
-
-
-def inflight_path(conversation_id: str) -> Path:
-    return agy_root() / "inflight" / f"{conversation_id}.jsonl"
 
 
 def _lock_path(conversation_id: str) -> Path:
