@@ -141,9 +141,12 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   above does not cover, so `agy` may ask before each start. With
   `"permissions": {"allow": ["command(meridian)"]}` in
   `~/.gemini/antigravity-cli/settings.json` (the rule `agy`'s own "always allow for commands
-  that start with 'meridian'" writes), Auto mode did not ask. Accept-edits mode asks at each
-  start. Auto mode without that rule, and the narrower `command(meridian harness-watch)`,
-  are untested.
+  that start with 'meridian'" writes), neither Auto nor accept-edits mode asked. Without it,
+  expect a prompt at each start (seen once in accept-edits mode; Auto mode without the rule,
+  and the narrower `command(meridian harness-watch)`, are untested).
+
+  A conversation you leave with `/new` keeps its watcher until `agy` exits. A message to it
+  is acted on there, out of sight; resume it with `agy --conversation <id>` to see the reply.
 
 - **Reading.** `meridian session log <chat or spawn>`, `session search` and `spawn --from <chat>`
   work on an `agy` chat as on any other: the whole conversation, including turns after you
