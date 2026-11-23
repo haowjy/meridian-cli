@@ -1,9 +1,10 @@
 """Per-conversation message inbox for ``agy``, drained by the ``PreInvocation`` hook.
 
 ``agy`` has no push channel, so a message waits in ``inbox/<conversation>.jsonl`` until
-the next model call. A drained batch moves to ``inflight/<conversation>.jsonl`` and stays
-there until a later ``PreInvocation`` finds every entry's marker in ``agy``'s transcript;
-entries the transcript lacks go out again. Delivery is at least once.
+the next model call (an idle session's watcher, ``watch.py``, exits to make one). A drained
+batch moves to ``inflight/<conversation>.jsonl`` and stays there until a later
+``PreInvocation`` finds every entry's marker in ``agy``'s transcript; entries the transcript
+lacks go out again. Delivery is at least once.
 
 Writers take the conversation's lock blocking. The hook never waits long: ``claim_batch``
 takes it without blocking and gives up for this model call when someone holds it, and the
@@ -22,7 +23,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from meridian.lib.core.delivery import MessageSender
-from meridian.lib.harness.agy.state import agy_root
+from meridian.lib.harness.agy.state import agy_root, inbox_path
 from meridian.lib.platform import fcntl
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
@@ -47,10 +48,10 @@ class InboxEntry:
         # A hook's system message is easy for a model to read past (a GPT-OSS run ignored
         # one), so the opening says it is addressed to the model and what to do.
         return (
-            f"[meridian:{self.id}] A message arrived for you through Meridian while you were "
-            "working. It is an instruction addressed to this session from the session named "
-            "below, not from the user and not tool output: do what it asks before you "
-            f"finish this turn, and say in your reply that you received it.\n\n{self.text}"
+            f"[meridian:{self.id}] A message arrived for you through Meridian. It is an "
+            "instruction addressed to this session from the session named below, not from "
+            "the user and not tool output: do what it asks before you finish this turn, and "
+            f"say in your reply that you received it.\n\n{self.text}"
         )
 
     def to_line(self) -> str:
@@ -63,10 +64,6 @@ class InboxEntry:
             },
             separators=(",", ":"),
         )
-
-
-def inbox_path(conversation_id: str) -> Path:
-    return agy_root() / "inbox" / f"{conversation_id}.jsonl"
 
 
 def inflight_path(conversation_id: str) -> Path:

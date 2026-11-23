@@ -6,12 +6,13 @@ Meridian may exec the harness is the same fact: ``HarnessId.launched_by_meridian
 exactly for these, and their launch is printed (``PrintedLaunchPorts``).
 
 Their package holds what runs inside the person's session: ``commands.run_command(argv)``
-for ``meridian harness-hook|harness-mcp <harness> ...``, and ``notices.send_owed_notices()``
-for work a closed session left. It also says where the sessions live:
-``state.native_store()``; the package's ``adapter.py`` reads them. Callers use this module
-and never name a harness. A new one is a package with those and a line in ``_PACKAGES``.
-Imports nothing heavy: the hook runs before every model call and dispatches from
-``cli/entrypoint.py``.
+for ``meridian harness-hook|harness-mcp|harness-watch <harness> ...``, and
+``notices.send_owed_notices()`` for work a closed session left. It also says where the
+sessions live: ``state.native_store()``; the package's ``adapter.py`` reads them. Callers use
+this module and never name a harness. A new one is a package with those and a line in ``_PACKAGES``.
+``harness-watch`` is the background command that wakes an idle session; ``harness-hook`` also
+runs at the end of every turn. Imports nothing heavy: both dispatch from ``cli/entrypoint.py``
+and the hook runs before every model call.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Sequence
 
+_COMMANDS = ("harness-hook", "harness-mcp", "harness-watch")
 _PACKAGES = {"agy": "meridian.lib.harness.agy"}
 
 PLUGIN_HOSTED = frozenset(_PACKAGES)
@@ -36,7 +38,7 @@ def is_plugin_hosted(name: str | None) -> bool:
 def run_command(argv: Sequence[str]) -> int | None:
     """Run a plugin-hosted harness's argv command, or return None when ``argv`` is not one."""
 
-    if len(argv) < 2 or argv[0] not in ("harness-hook", "harness-mcp") or argv[1] not in _PACKAGES:
+    if len(argv) < 2 or argv[0] not in _COMMANDS or argv[1] not in _PACKAGES:
         return None
     commands = importlib.import_module(f"{_PACKAGES[argv[1]]}.commands")
     return commands.run_command(argv)

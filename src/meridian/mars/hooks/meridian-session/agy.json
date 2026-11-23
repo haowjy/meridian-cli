@@ -10,5 +10,11 @@
       "command": "sh \"${MARS_HOOK_DIR}/guard.sh\" PreInvocation \"$PPID\"",
       "timeout": 10
     }
+  ],
+  "Stop": [
+    {
+      "command": "sh \"${MARS_HOOK_DIR}/guard.sh\" Stop \"$PPID\"",
+      "timeout": 10
+    }
   ]
 }

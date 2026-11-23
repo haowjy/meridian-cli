@@ -125,8 +125,13 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   the row stays running until `agy` exits. Children the session spawns are its children,
   and a no-argument `spawn wait` works.
 - **Messages.** `meridian spawn message <spawn or chat> --message "..."` to the session
-  prints `queued`: `agy` has no way to push a message in, so it reaches the model at the
-  session's next model call, in the middle of a turn or at the start of the next one.
+  prints `queued`. `agy` has no way to push a message in, so it reaches the model at the
+  session's next model call: in the middle of a turn, or when the session wakes. An idle session
+  wakes by itself while its Meridian watcher runs (the plugin's `Stop` hook has the model start
+  it, as a background command `meridian harness-watch agy ...`, once per turn when none runs;
+  the TUI shows it as `1 task(s)`). Without a watcher, the message waits until you type. In the
+  default permission mode `agy` asks before starting the watcher; allow `meridian harness-watch`
+  to skip the prompt.
 
 - **Reading.** `meridian session log <chat or spawn>`, `session search` and `spawn --from <chat>`
   work on an `agy` chat as on any other: the whole conversation, including turns after you

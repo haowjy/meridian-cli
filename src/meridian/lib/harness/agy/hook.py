@@ -1,10 +1,14 @@
-"""``meridian harness-hook agy <event>``: the ``SessionStart`` and ``PreInvocation`` hooks.
+"""``meridian harness-hook agy <event>``: the ``SessionStart``, ``PreInvocation``, ``Stop`` hooks.
 
-``agy`` runs this before model calls and waits for it, so it takes no blocking locks (at most
-a 0.5 s wait to register a conversation),
-starts no process, and prints nothing when it has no opinion (never ``{}``: ``agy`` reads
-some empty replies as a decision). Every failure is swallowed: a broken hook must not
-break the person's session.
+``agy`` runs this before model calls and at the end of each turn, and waits for it, so it
+takes no blocking locks (at most a 0.5 s wait to register a conversation), starts no
+process, imports nothing from the idle stack, and prints nothing when it has no opinion
+(never ``{}``: ``agy`` reads some empty replies as a decision). Every failure is swallowed:
+a broken hook must not break the person's session.
+
+``Stop`` marks where a turn ends. It asks the model once per turn to start the watcher
+(``watch.py``) when none runs, and otherwise removes the turn's ``busy`` and ``asked`` marks.
+``guard.sh`` creates ``busy`` on every ``PreInvocation``.
 """
 
 from __future__ import annotations
@@ -24,7 +28,9 @@ from meridian.lib.harness.agy.state import (
     PRINTED_APPROVALS,
     PROJECT_ENV,
     agy_root,
+    asked_path,
     briefed_path,
+    busy_path,
     is_safe_id,
     process_dir,
     read_json,
@@ -34,6 +40,7 @@ from meridian.lib.harness.agy.state import (
     write_private_json,
     write_seen,
 )
+from meridian.lib.harness.agy.watch import start_instructions, watcher_running
 
 _ERROR_LOG_LIMIT = 256 * 1024
 
@@ -58,13 +65,15 @@ def run_hook(event: str, agy_pid: int, payload_text: str) -> str | None:
 
 def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     conversation = payload.get("conversationId")
-    if event not in ("SessionStart", "PreInvocation") or not isinstance(conversation, str):
+    if event not in ("SessionStart", "PreInvocation", "Stop") or not isinstance(conversation, str):
         return None
     if not is_safe_id(conversation):
         return None
     proc_dir = process_dir(agy_pid)
     if proc_dir is None:
         return None
+    if event == "Stop":
+        return _stop(agy_pid, proc_dir, conversation, payload)
 
     request = read_json(request_path(proc_dir, conversation))
     registered = request is None
@@ -98,6 +107,44 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     except Exception:
         _log_error("inbox")
     return inject_reply(texts) if texts else None
+
+
+def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, Any]) -> str | None:
+    """Ask the model, once a turn, to start the watcher; otherwise end the turn's marks.
+
+    The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
+    ask on the continuation's own ``Stop``. A subagent is never asked (its model would
+    start a watcher the person's session does not own), a cancelled turn is not nagged,
+    and a model or person that declines is asked again next turn.
+    """
+
+    asked = asked_path(proc_dir, conversation)
+    try:
+        request = read_json(request_path(proc_dir, conversation))
+        if (
+            request is not None
+            and request.get("role") != "subagent"
+            and payload.get("terminationReason") != "USER_CANCELED"
+            and not asked.exists()
+            and not watcher_running(proc_dir, conversation)
+        ):
+            asked.parent.mkdir(parents=True, exist_ok=True)
+            asked.touch()
+            return json.dumps(
+                {
+                    "decision": "continue",
+                    "reason": (
+                        "Meridian: before you end this turn, start this session's message "
+                        "watcher, so Meridian messages can wake you while you are idle. "
+                        f"{start_instructions(agy_pid, conversation)}"
+                    ),
+                }
+            )
+    except Exception:
+        _log_error("Stop")
+    asked.unlink(missing_ok=True)
+    busy_path(proc_dir, conversation).unlink(missing_ok=True)
+    return None
 
 
 def _guidance(
