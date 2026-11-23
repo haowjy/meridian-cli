@@ -1,10 +1,14 @@
-"""``meridian harness-hook agy <event>``: the ``SessionStart`` and ``PreInvocation`` hooks.
+"""``meridian harness-hook agy <event>``: the ``SessionStart``, ``PreInvocation``, ``Stop`` hooks.
 
-``agy`` runs this before model calls and waits for it, so it takes no blocking locks (at most
-a 0.5 s wait to register a conversation),
-starts no process, and prints nothing when it has no opinion (never ``{}``: ``agy`` reads
-some empty replies as a decision). Every failure is swallowed: a broken hook must not
-break the person's session.
+``agy`` runs this before model calls and at the end of each turn, and waits for it, so it
+takes no blocking locks (at most a 0.5 s wait to register a conversation), starts no
+process, imports nothing from the idle stack, and prints nothing when it has no opinion
+(never ``{}``: ``agy`` reads some empty replies as a decision). Every failure is swallowed:
+a broken hook must not break the person's session.
+
+``Stop`` marks where a turn ends. It asks the model once per turn to start the watcher
+(``watch.py``) when none runs, and otherwise removes the turn's ``busy`` and ``asked`` marks.
+``guard.sh`` creates ``busy`` on every ``PreInvocation``.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.harness.agy import guidance, inbox
+from meridian.lib.harness.agy.commands import HOOK_EVENTS
 from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,
@@ -24,7 +29,10 @@ from meridian.lib.harness.agy.state import (
     PRINTED_APPROVALS,
     PROJECT_ENV,
     agy_root,
+    ask_backoff_path,
+    asked_path,
     briefed_path,
+    busy_path,
     is_safe_id,
     process_dir,
     read_json,
@@ -34,6 +42,8 @@ from meridian.lib.harness.agy.state import (
     write_private_json,
     write_seen,
 )
+from meridian.lib.harness.agy.watch import start_instructions, watcher_running
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
 _ERROR_LOG_LIMIT = 256 * 1024
 
@@ -58,13 +68,15 @@ def run_hook(event: str, agy_pid: int, payload_text: str) -> str | None:
 
 def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     conversation = payload.get("conversationId")
-    if event not in ("SessionStart", "PreInvocation") or not isinstance(conversation, str):
+    if event not in HOOK_EVENTS or not isinstance(conversation, str):
         return None
     if not is_safe_id(conversation):
         return None
     proc_dir = process_dir(agy_pid)
     if proc_dir is None:
         return None
+    if event == "Stop":
+        return _stop(agy_pid, proc_dir, conversation, payload)
 
     request = read_json(request_path(proc_dir, conversation))
     registered = request is None
@@ -98,6 +110,75 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     except Exception:
         _log_error("inbox")
     return inject_reply(texts) if texts else None
+
+
+# Asks that ended with no watcher, in a row, before the hook backs off; each further miss
+# doubles the turn ends skipped before the next ask, up to the cap.
+_MISSES_BEFORE_BACKOFF = 2
+_MAX_SKIPPED_TURN_ENDS = 32
+
+
+def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, Any]) -> str | None:
+    """Ask the model, once a turn, to start the watcher; otherwise end the turn's marks.
+
+    The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
+    ask on the continuation's own ``Stop``. A subagent is never asked (its model would
+    start a watcher the person's session does not own) and a cancelled turn is not nagged.
+    A model or person that declines is asked again next turn. After two asks in a row ended
+    with no watcher, the hook skips 2 turn ends, then asks again, then skips 4, 8 and so on
+    up to 32, so a person who always declines pays little and a model that only forgot is
+    asked again. A ``Stop`` that sees a watcher running clears it. Per conversation.
+    """
+
+    asked = asked_path(proc_dir, conversation)
+    try:
+        request = read_json(request_path(proc_dir, conversation))
+        if request is not None and request.get("role") != "subagent":
+            backoff = ask_backoff_path(proc_dir, conversation)
+            misses, skips = _read_backoff(backoff)
+            if watcher_running(proc_dir, conversation):
+                backoff.unlink(missing_ok=True)
+            elif asked.exists():
+                misses += 1
+                skips = (
+                    min(2 ** (misses - 1), _MAX_SKIPPED_TURN_ENDS)
+                    if misses >= _MISSES_BEFORE_BACKOFF
+                    else 0
+                )
+                _write_backoff(backoff, misses, skips)
+            elif payload.get("terminationReason") != "USER_CANCELED":
+                if skips > 0:
+                    _write_backoff(backoff, misses, skips - 1)
+                else:
+                    asked.parent.mkdir(parents=True, exist_ok=True)
+                    asked.touch()
+                    return json.dumps(
+                        {
+                            "decision": "continue",
+                            "reason": (
+                                "Meridian: before you end this turn, start this session's "
+                                "message watcher, so Meridian messages can wake you while you "
+                                f"are idle. {start_instructions(agy_pid, conversation)}"
+                            ),
+                        }
+                    )
+    except Exception:
+        _log_error("Stop")
+    asked.unlink(missing_ok=True)
+    busy_path(proc_dir, conversation).unlink(missing_ok=True)
+    return None
+
+
+def _read_backoff(path: Path) -> tuple[int, int]:
+    try:
+        misses, skips = (int(word) for word in path.read_text().split())
+    except (OSError, ValueError):
+        return 0, 0
+    return max(misses, 0), max(skips, 0)
+
+
+def _write_backoff(path: Path, misses: int, skips: int) -> None:
+    atomic_write_text(path, f"{misses} {skips}", durable=False, permissions=PRIVATE_FILE_MODE)
 
 
 def _guidance(

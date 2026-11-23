@@ -9,6 +9,8 @@ three subdirectories: `skills/` (Meridian's own skills, for every harness), `hoo
   change with the repoint in `lib/bundled_skills.py`.
 - Every `hook.toml` says `visibility = "exported"`, or the dependency reader skips it.
 - `hooks/meridian-session/guard.sh` hard-codes the state paths in `lib/harness/agy/state.py`
-  and `inbox.py` (requests, rows, `briefed` and `seen` markers, inboxes); change them together. The entry names `meridian-session` and `meridian`
+  (requests, rows, `briefed` and `seen` markers, the inbox and in-flight files, and the
+  `busy` file it creates and the `wake` file it removes on `PreInvocation`); change them together. `agy.json` names the events
+  it runs for, and `lib/harness/agy/commands.py` (`HOOK_EVENTS`, which `hook.py` reuses) lists the same events. The entry names `meridian-session` and `meridian`
   key the entries in a project's `.agy/`, so they must not collide with a user's.
 - Skills follow [skills/AGENTS.md](skills/AGENTS.md).

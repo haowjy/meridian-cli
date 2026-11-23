@@ -41,7 +41,10 @@ _CLOSE_WAIT_SECONDS = 0.3
 # A conversation whose hold failed is retried by the poll no sooner than this; a tool call
 # for it retries at once.
 _RETRY_SECONDS = 10.0
-_ROUTE_NOTE = "agy has no push channel: the message is read at the session's next model call."
+_ROUTE_NOTE = (
+    "agy has no push channel: the session reads the message in its next turn. An idle session "
+    "wakes for it when its Meridian watcher runs; otherwise it waits until the person types."
+)
 
 
 class HoldError(RuntimeError):

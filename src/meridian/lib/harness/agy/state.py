@@ -142,6 +142,47 @@ def write_seen(proc_dir: Path, conversation_id: str, offset: int, transcript: st
     )
 
 
+def busy_path(proc_dir: Path, conversation_id: str) -> Path:
+    """Empty file: a turn of this conversation is running. ``guard.sh`` creates it on every
+    ``PreInvocation``; the ``Stop`` hook removes it when the turn ends."""
+
+    return proc_dir / "busy" / conversation_id
+
+
+def asked_path(proc_dir: Path, conversation_id: str) -> Path:
+    """Empty file: this turn's ``Stop`` already asked the model to start the watcher."""
+
+    return proc_dir / "asked" / conversation_id
+
+
+def ask_backoff_path(proc_dir: Path, conversation_id: str) -> Path:
+    """``<missed asks> <turn ends left to skip>``: how far the ``Stop`` hook has backed off
+    asking this conversation for a watcher. Absent or unreadable means not backed off."""
+
+    return proc_dir / "backoff" / conversation_id
+
+
+def watch_lock_path(proc_dir: Path, conversation_id: str) -> Path:
+    """Empty file a running watcher holds an ``flock`` on; the lock is the fact, not the file."""
+
+    return proc_dir / "watch" / f"{conversation_id}.lock"
+
+
+def wake_path(proc_dir: Path, conversation_id: str) -> Path:
+    """Text the watcher prints to wake the session when it is next idle. ``guard.sh`` removes
+    it on every ``PreInvocation``: any model call satisfies it."""
+
+    return proc_dir / "wake" / conversation_id
+
+
+def inbox_path(conversation_id: str) -> Path:
+    return agy_root() / "inbox" / f"{conversation_id}.jsonl"
+
+
+def inflight_path(conversation_id: str) -> Path:
+    return agy_root() / "inflight" / f"{conversation_id}.jsonl"
+
+
 # MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
 # launch state that belongs to whichever session started the server.
 _KEPT_ENV = frozenset({"MERIDIAN_HOME"})
@@ -189,7 +230,12 @@ __all__ = [
     "PROJECT_ENV",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
+    "ask_backoff_path",
+    "asked_path",
     "briefed_path",
+    "busy_path",
+    "inbox_path",
+    "inflight_path",
     "is_safe_id",
     "launch_script_dir",
     "native_store",
@@ -203,6 +249,8 @@ __all__ = [
     "row_path",
     "scrubbed_env",
     "seen_path",
+    "wake_path",
+    "watch_lock_path",
     "write_private_json",
     "write_seen",
 ]

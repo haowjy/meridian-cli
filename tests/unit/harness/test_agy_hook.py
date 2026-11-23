@@ -2,6 +2,8 @@
 
 import json
 import os
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -14,12 +16,17 @@ from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_co
 from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
     agy_root,
+    asked_path,
+    busy_path,
+    inflight_path,
     process_dir,
     read_json,
     request_path,
     scrubbed_env,
+    watch_lock_path,
     write_private_json,
 )
+from meridian.lib.platform import fcntl
 
 
 @pytest.fixture(autouse=True)
@@ -167,6 +174,97 @@ def test_subagent_is_marked_and_ignored(agy_home: Path) -> None:
     assert par is not None and par["role"] == "primary"
 
 
+def _stop_after_turn(agy_home: Path, conversation: str, **payload: object) -> str | None:
+    proc = process_dir(os.getpid())
+    assert proc is not None
+    busy = busy_path(proc, conversation)
+    busy.parent.mkdir(parents=True, exist_ok=True)
+    busy.touch()  # what guard.sh does on every PreInvocation
+    return run_hook("Stop", os.getpid(), _payload(conversation, agy_home, **payload))
+
+
+def test_stop_asks_for_the_watcher_once_a_turn_then_ends_the_turn(agy_home: Path) -> None:
+    pid = os.getpid()
+    run_hook("SessionStart", pid, _payload("c1", agy_home))
+    proc = process_dir(pid)
+    assert proc is not None
+
+    reply = json.loads(_stop_after_turn(agy_home, "c1") or "")
+
+    assert reply["decision"] == "continue"
+    assert f"meridian harness-watch agy --agy-pid {pid} --conversation c1" in reply["reason"]
+    assert busy_path(proc, "c1").exists()  # the turn goes on
+    assert asked_path(proc, "c1").exists()
+
+    # The continuation's own Stop: declined or not, the turn ends and nothing asks again.
+    assert _stop_after_turn(agy_home, "c1") is None
+    assert not busy_path(proc, "c1").exists()
+    assert not asked_path(proc, "c1").exists()
+
+
+def test_stop_does_not_ask_for_a_running_watcher_a_cancelled_turn_or_a_subagent(
+    agy_home: Path,
+) -> None:
+    pid = os.getpid()
+    parent_subagents = agy_home / "brain" / "par" / ".system_generated" / "subagents"
+    parent_subagents.mkdir(parents=True)
+    (parent_subagents / "kid.json").write_text("{}")
+    for conversation in ("par", "kid"):
+        run_hook("SessionStart", pid, _payload(conversation, agy_home))
+    proc = process_dir(pid)
+    assert proc is not None
+
+    assert _stop_after_turn(agy_home, "kid") is None
+    assert _stop_after_turn(agy_home, "par", terminationReason="USER_CANCELED") is None
+    assert not busy_path(proc, "kid").exists()
+    assert not busy_path(proc, "par").exists()
+
+    with _held_watch_lock(proc, "par"):
+        assert _stop_after_turn(agy_home, "par") is None
+        assert not busy_path(proc, "par").exists()
+    assert _stop_after_turn(agy_home, "par") is not None
+
+
+def test_stop_backs_off_after_two_declined_asks_then_asks_again_on_schedule(
+    agy_home: Path,
+) -> None:
+    pid = os.getpid()
+    for conversation in ("c1", "c2"):
+        run_hook("SessionStart", pid, _payload(conversation, agy_home))
+    proc = process_dir(pid)
+    assert proc is not None
+
+    def declined_ask() -> None:
+        assert _stop_after_turn(agy_home, "c1") is not None  # asked
+        assert _stop_after_turn(agy_home, "c1") is None  # the continuation ended, no watcher
+
+    declined_ask()
+    declined_ask()
+    for _ in range(2):  # skips 2 turn ends, then asks once more
+        assert _stop_after_turn(agy_home, "c1") is None
+    declined_ask()
+    for _ in range(4):  # a further miss doubles the skip
+        assert _stop_after_turn(agy_home, "c1") is None
+    assert _stop_after_turn(agy_home, "c1") is not None
+    assert _stop_after_turn(agy_home, "c2") is not None  # a new conversation starts fresh
+
+    with _held_watch_lock(proc, "c1"):
+        assert _stop_after_turn(agy_home, "c1") is None  # a running watcher resets it all
+    assert _stop_after_turn(agy_home, "c1") is not None
+
+
+@contextmanager
+def _held_watch_lock(proc: Path, conversation: str) -> Generator[None]:
+    path = watch_lock_path(proc, conversation)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
 def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     agy_home: Path,
 ) -> None:
@@ -189,7 +287,7 @@ def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
     transcript.parent.mkdir(parents=True)
     transcript.write_text(f"injected by a PreInvocation hook: [meridian:{entry.id}] ping\n")
     assert run_hook("PreInvocation", pid, payload) is None
-    assert not inbox.inflight_path("c1").exists()
+    assert not inflight_path("c1").exists()
 
 
 def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
@@ -200,7 +298,7 @@ def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None
     replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
 
     assert [reply is not None for reply in replies] == [True] * inbox.MAX_ATTEMPTS + [False]
-    assert inbox.inflight_path("c1").exists()  # kept for the notice sweep
+    assert inflight_path("c1").exists()  # kept for the notice sweep
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
@@ -273,7 +371,7 @@ def test_closed_conversation_notifies_only_for_undelivered_messages(
     send_owed_notices()
 
     assert sent == ["p9"]
-    assert not inbox.inflight_path("c1").exists()
+    assert not inflight_path("c1").exists()
     assert not inbox.inbox_path("c1").exists()
     send_owed_notices()
     assert sent == ["p9"]

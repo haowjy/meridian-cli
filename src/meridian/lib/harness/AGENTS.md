@@ -115,11 +115,12 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
 
 `agy/` also holds what the plugin runs:
 
-- `harness-hook agy` (`hook.py`): dispatched from `cli/entrypoint.py`, so import nothing
+- `harness-hook agy` (`hook.py`; events `SessionStart`, `PreInvocation`, `Stop`): dispatched from `cli/entrypoint.py`, so import nothing
   heavy at module level. No blocking locks (registering a request file waits at most 0.5 s for the
   conversation's lock, the one the notice sweep decides closed-ness under), no output for
-  no opinion, catch everything. It writes only request files, `briefed` and `seen` markers, and
-  claims inbox entries. Its guidance comes from the launch builders in `guidance.py` (local
+  no opinion, catch everything. It writes request files, `briefed` and `seen` markers and, at
+  `Stop`, the idle-wake marks below (`asked`, `backoff`, removing `busy`); it claims inbox
+  entries. Its guidance comes from the launch builders in `guidance.py` (local
   imports, about 0.4 s, so only the call that registers a conversation, the one `PreInvocation`
   after the row appears and the first one after a compaction pay it); never fork that text. The row file the server writes is the signal that
   the session's facts can be injected, and `guard.sh` lets the hook run for it until the
@@ -129,6 +130,26 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   and a compaction empties the context of a process that injected them. `agy` has no
   compaction hook; `guard.sh` greps the transcript bytes after the `seen` offset for
   `CHECKPOINT`.
+- Idle wake (`watch.py`; the `Stop` hook and `guard.sh` are its other halves). `agy` wakes the
+  agent when a background command it started exits, so the agent keeps `harness-watch agy`
+  running. The watcher imports only `state.py`, reads state and writes none: it opens
+  `watch/<conversation>.lock` (which `Stop` creates) and holds its `flock` while it lives. It
+  exits, waking the agent, when the session is not busy and either the inbox changed since it
+  started or a `wake/<conversation>` file exists (written by the server for wakes that are not
+  messages, such as keepwarm; nothing writes one yet). It exits silently when its parent
+  shell or the `agy` process is gone.
+  `guard.sh` creates `busy/<conversation>` and removes `wake/<conversation>` on every
+  `PreInvocation`. At `Stop`, when no watcher holds the lock, the hook asks the model once
+  per turn (`asked`) to start one; it never asks for a subagent or a cancelled turn. When it
+  doesn't ask, it removes `busy` and `asked`. After two asks in a row end with no watcher, it
+  skips 2 turn ends before asking again, then 4, 8, up to 32 (`backoff/<conversation>`); a
+  `Stop` that sees a watcher running deletes that back-off file.
+  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy` until the next turn's
+  `Stop`. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
+  so the start command says `BypassSandbox true`, and a watcher that cannot see its state
+  prints a notice that it is sandboxed and exits. These files live in the `agy` process
+  directory, so the notice sweep's removal of it is their only cleanup. The message itself
+  still arrives through `PreInvocation`.
 - `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
   `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
@@ -144,7 +165,7 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   with no held row returns an error and never runs anonymously.
 
 The shell guard and Mars declarations are in `src/meridian/mars/`; the guard hard-codes the
-paths in `agy/state.py` and `agy/inbox.py`.
+paths in `agy/state.py`.
 
 ## Adding a Harness
 
