@@ -483,12 +483,12 @@ push. Codex and OpenCode 1.x primaries push as if nothing were running.
 
 ### `[harness.<harness>.idle]`
 
-Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
+Use `claude`, `codex`, `opencode`, `pi`, or `agy` for `<harness>`.
 
 | Key | Default | Environment variable |
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
-| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800`; agy: none | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 | `keepwarm` | Overrides `[idle] keepwarm` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
 | `keepwarm_pings` | Overrides `[idle] keepwarm_pings` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_<H>` |
 | `state_reminder` | Overrides `[idle] state_reminder` | `MERIDIAN_HARNESS_IDLE_STATE_REMINDER_<H>` |
@@ -529,6 +529,7 @@ keepwarm = true
 | Pi | Push and warning for `anthropic`, `openai-codex`, and `openai` (long retention only). Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it. Other providers are push-only. |
 | Codex | Push and warning with a fixed 1800-second TTL |
 | OpenCode | 2.x `openai`: push and warning against an estimated 30-minute TTL. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
+| agy | Push only. Google publishes no cache window, so none is built in: set `[harness.agy.idle] ttl_seconds` to get a warning, which needs a TTL above `idle.warn_minutes` (10 minutes by default). `keepwarm` and `state_reminder` do nothing on agy, and `meridian agy` warns when `keepwarm` is on. |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
 per model, and assume GPT-5.6 or later. For an older model on those routes, set

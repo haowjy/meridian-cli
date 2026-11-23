@@ -44,6 +44,8 @@ class IdleEvent:
     harness_session_id: str
     turn_id: str | None
     implies_return: bool = False
+    # When the user returned, for a report that learns of it only at the turn's end.
+    returned_at_ms: int | None = None
     input_count: int | None = None
     ttl_seconds: int | None = None
     last_user_text: str | None = None
@@ -71,16 +73,22 @@ class NativeIdleHook:
 
 
 @dataclass(frozen=True)
-class IdleSensorContext:
-    """Managed-primary resources available for one sensor's lifetime."""
+class SidecarContext:
+    """What the idle sidecar reads about the session it serves."""
 
-    connection: HarnessConnection[Any]
     harness_id: HarnessId
     harness_session_id: str
     env: Mapping[str, str]
-    tmux_pane: str | None
     tui_alive: Callable[[], bool]
     launch: LaunchPaths
+
+
+@dataclass(frozen=True)
+class IdleSensorContext(SidecarContext):
+    """Managed-primary resources available for one sensor's lifetime."""
+
+    connection: HarnessConnection[Any]
+    tmux_pane: str | None
 
 
 class IdleSensor(Protocol):
@@ -123,4 +131,5 @@ __all__ = [
     "IdleSensorContext",
     "NativeIdleHook",
     "PinnedIdleSession",
+    "SidecarContext",
 ]

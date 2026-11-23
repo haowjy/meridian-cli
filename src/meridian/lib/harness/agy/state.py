@@ -149,6 +149,13 @@ def busy_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "busy" / conversation_id
 
 
+def turn_running(proc_dir: Path, conversation_id: str) -> bool:
+    """Whether a turn of this conversation is running: the one answer for the watcher
+    (which waits out a turn) and the idle sensor (which reports its end)."""
+
+    return busy_path(proc_dir, conversation_id).exists()
+
+
 def asked_path(proc_dir: Path, conversation_id: str) -> Path:
     """Empty file: this turn's ``Stop`` already asked the model to start the watcher."""
 
@@ -249,6 +256,7 @@ __all__ = [
     "row_path",
     "scrubbed_env",
     "seen_path",
+    "turn_running",
     "wake_path",
     "watch_lock_path",
     "write_private_json",

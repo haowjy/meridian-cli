@@ -21,14 +21,13 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from meridian.lib.core.logging import configure_logging
-from meridian.lib.harness.agy.holds import ConversationHolds, HeldRow, HoldError
+from meridian.lib.harness.agy.holds import ConversationHolds, HoldError, call_env
 from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
     CONVERSATION_ID_KEY,
     ROOT_CONVERSATION_ID_KEY,
     is_safe_id,
     process_dir,
-    scrubbed_env,
 )
 from meridian.lib.platform.python_module import module_argv
 
@@ -65,28 +64,6 @@ def root_conversation(meta: Mapping[str, Any]) -> str | None:
 
     root = meta.get(ROOT_CONVERSATION_ID_KEY) or meta.get(CONVERSATION_ID_KEY)
     return root if is_safe_id(root) else None
-
-
-def call_env(row: HeldRow) -> dict[str, str]:
-    """The environment of one command: the session's identity, call by call.
-
-    The server's own environment belongs to whoever started ``agy``, so identity comes
-    only from the conversation's row.
-    """
-
-    from meridian.lib.core.resolved_context import ResolvedContext
-    from meridian.lib.core.types import SpawnId
-
-    env = scrubbed_env(os.environ)
-    env.update(
-        ResolvedContext(
-            spawn_id=SpawnId(row.spawn_id),
-            project_root=row.project_root,
-            runtime_root=row.runtime_root,
-            chat_id=row.chat_id,
-        ).child_env_overrides(increment_depth=False)
-    )
-    return env
 
 
 async def run_meridian(
@@ -171,4 +148,4 @@ def run_server() -> None:
             holds.close()
 
 
-__all__ = ["TOOL_DESCRIPTION", "build_server", "call_env", "format_result", "run_server"]
+__all__ = ["TOOL_DESCRIPTION", "build_server", "format_result", "run_server"]

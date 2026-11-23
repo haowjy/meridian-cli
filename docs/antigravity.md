@@ -198,3 +198,11 @@ message inbox per conversation. A server that is killed leaves its
 rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
 for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars
 installs.
+
+## Idle notices
+
+An agy session gets the idle push (and, with `[harness.agy.idle] ttl_seconds`, the cache
+warning) as other harnesses do: the plugin's server sees each turn end and arms the stretch.
+Typing starts a new stretch; a turn that a background command's exit woke continues the
+current one. Only the push and warning exist for agy: `keepwarm` and `state_reminder` do
+nothing. See `docs/configuration.md`, `[harness.<harness>.idle]`.

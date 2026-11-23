@@ -181,12 +181,15 @@ def harness_profile_model(
     base: type[HarnessProfileConfig] = HarnessProfileConfig,
     model_default: str = "",
     idle_defaults: Mapping[str, object] | None = None,
+    idle_only: bool = False,
 ) -> type[HarnessProfileConfig]:
+    """A profile model. ``idle_only`` registers just ``[harness.<id>.idle]``, for a harness
+    Meridian does not launch, whose default model and wait yield nothing would read."""
 
     idle_model = harness_idle_model(harness_id, defaults=idle_defaults)
-    fields: dict[str, Any] = {
-        "idle": (idle_model, Field(default_factory=idle_model)),
-        "wait_yield_seconds": (
+    fields: dict[str, Any] = {"idle": (idle_model, Field(default_factory=idle_model))}
+    if not idle_only:
+        fields["wait_yield_seconds"] = (
             Annotated[
                 float | None,
                 config_field(
@@ -197,9 +200,8 @@ def harness_profile_model(
                 ),
             ],
             None,
-        ),
-    }
-    if harness_id != "pi":
+        )
+    if not idle_only and harness_id != "pi":
         fields["model"] = (
             Annotated[
                 str,
@@ -230,6 +232,7 @@ if TYPE_CHECKING:
     CodexHarnessProfileConfig = HarnessProfileConfig
     OpenCodeHarnessProfileConfig = OpenCodeHarnessProfileBase
     PiHarnessProfileConfig = PiHarnessProfileBase
+    AgyHarnessProfileConfig = HarnessProfileConfig
 else:
     ClaudeHarnessProfileConfig = harness_profile_model("claude", base=ClaudeHarnessProfileBase)
     CodexHarnessProfileConfig = harness_profile_model(
@@ -242,6 +245,7 @@ else:
         model_default="opencode-go/kimi-k2.6",
     )
     PiHarnessProfileConfig = harness_profile_model("pi", base=PiHarnessProfileBase)
+    AgyHarnessProfileConfig = harness_profile_model("agy", idle_only=True)
 
 
 class HarnessConfig(ConfigModel):
@@ -257,3 +261,4 @@ class HarnessConfig(ConfigModel):
     )
     opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
     pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
+    agy: AgyHarnessProfileConfig = Field(default_factory=AgyHarnessProfileConfig)

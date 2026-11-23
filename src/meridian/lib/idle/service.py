@@ -323,6 +323,7 @@ class IdleService:
         session: str,
         ttl_seconds: int | None = None,
         implies_return: bool = False,
+        returned_at_ms: int | None = None,
         turn_id: str | None = None,
         input_count: int | None = None,
         last_user_text: str | None = None,
@@ -387,11 +388,10 @@ class IdleService:
                 stretch = current.stretch + int(opens_new)
                 anchor = 1 if opens_new else current.anchor + 1
             done = {} if opens_new or current is None else dict(current.done)
-            owed_since_ms = (
-                now_ms
-                if implies_return
-                else (current.push_owed_since_ms if current is not None else None)
-            )
+            if implies_return:
+                owed_since_ms = now_ms if returned_at_ms is None else min(returned_at_ms, now_ms)
+            else:
+                owed_since_ms = current.push_owed_since_ms if current is not None else None
             placed = schedule(
                 now_ms,
                 resolved_ttl,
@@ -638,6 +638,7 @@ class IdleService:
                 session=event.harness_session_id,
                 ttl_seconds=resolved_ttl,
                 implies_return=event.implies_return,
+                returned_at_ms=event.returned_at_ms,
                 turn_id=event.turn_id,
                 input_count=event.input_count,
                 last_user_text=event.last_user_text,

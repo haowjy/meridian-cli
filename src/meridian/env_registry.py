@@ -141,6 +141,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_PI", "Pi idle cache TTL."),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_AGY", "Antigravity idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_AGY", "Antigravity idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),

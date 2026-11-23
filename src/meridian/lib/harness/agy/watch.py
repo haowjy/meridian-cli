@@ -19,11 +19,11 @@ import time
 from pathlib import Path
 
 from meridian.lib.harness.agy.state import (
-    busy_path,
     inbox_path,
     is_safe_id,
     process_birth,
     process_dir,
+    turn_running,
     wake_path,
     watch_lock_path,
 )
@@ -138,7 +138,7 @@ def run(agy_pid: int, conversation: str) -> int:
             return 0
         if polls % _ALIVE_EVERY_POLLS == 0 and process_birth(agy_pid) != birth:
             return 0
-        if busy_path(proc_dir, conversation).exists():
+        if turn_running(proc_dir, conversation):
             continue
         text = _wake_text(proc_dir, conversation)
         if text is None:

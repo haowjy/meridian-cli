@@ -155,6 +155,15 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
   logging goes to stderr, and each command runs with piped stdio and the identity of
   the calling conversation's row, never the server's inherited `MERIDIAN_*`.
+  Each hold also runs the idle sidecar (`launch/hold_idle.py`: closes the conversation's old
+  stretch, then `sidecar.run`) with `AgyIdleSensor` (`idle.py`): `busy` is `state.TurnState`,
+  and each turn end reads the transcript past a kept offset (a typed `USER_INPUT` step is a
+  return, with its `created_at` as `returned_at_ms`; a wake's `SYSTEM_MESSAGE` is not). A sensor
+  restarted mid-session compares the last typed step with `IdleState.last_turn_id`. Idle
+  config (and the person's `MERIDIAN_*` config env vars) reach it through `holds._idle_env`.
+  agy has no keepwarm and no default TTL; `meridian agy` warns when
+  `[harness.agy.idle] keepwarm` is on. The loop is not `asyncio.run`: a notice mid-send must
+  not hold up `primary.complete`, and a serving failure completes the row as failed.
 - `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
   `PreInvocation` and confirmed against `agy`'s transcript; a message injected three times
   without showing there stays in flight, uninjected, and is owed a notice. The sender

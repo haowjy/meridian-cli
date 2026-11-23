@@ -10,7 +10,7 @@ from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
     IdleEvent,
     IdleSensor,
-    IdleSensorContext,
+    SidecarContext,
 )
 from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability.debug_tracer import DebugTracer
@@ -37,7 +37,7 @@ class _RealClock:
 class SensorErrorReporter:
     """Task-scoped, repeat-limited sensor diagnostics."""
 
-    def __init__(self, ctx: IdleSensorContext) -> None:
+    def __init__(self, ctx: SidecarContext) -> None:
         self._tracer = DebugTracer(
             spawn_id=str(ctx.launch.spawn_id),
             debug_path=ctx.launch.debug,
@@ -105,7 +105,7 @@ class SensorErrorReporter:
 @dataclass
 class _Coordinator:
     sensor: IdleSensor
-    ctx: IdleSensorContext
+    ctx: SidecarContext
     service: IdleService
     clock: SidecarClock
     harness: str
@@ -238,7 +238,7 @@ async def _poll_store(coordinator: _Coordinator, poll_seconds: float) -> None:
 
 async def run(
     sensor: IdleSensor,
-    ctx: IdleSensorContext,
+    ctx: SidecarContext,
     *,
     service: IdleService | None = None,
     clock: SidecarClock | None = None,
