@@ -224,19 +224,31 @@ def test_stop_does_not_ask_for_a_running_watcher_a_cancelled_turn_or_a_subagent(
     assert _stop_after_turn(agy_home, "par") is not None
 
 
-def test_stop_stops_asking_after_two_declined_asks_until_a_watcher_runs(agy_home: Path) -> None:
+def test_stop_backs_off_after_two_declined_asks_then_asks_again_on_schedule(
+    agy_home: Path,
+) -> None:
     pid = os.getpid()
-    run_hook("SessionStart", pid, _payload("c1", agy_home))
+    for conversation in ("c1", "c2"):
+        run_hook("SessionStart", pid, _payload(conversation, agy_home))
     proc = process_dir(pid)
     assert proc is not None
 
-    for _ in range(2):
+    def declined_ask() -> None:
         assert _stop_after_turn(agy_home, "c1") is not None  # asked
-        assert _stop_after_turn(agy_home, "c1") is None  # declined: the continuation ended
-    assert _stop_after_turn(agy_home, "c1") is None  # not asked a third time
+        assert _stop_after_turn(agy_home, "c1") is None  # the continuation ended, no watcher
+
+    declined_ask()
+    declined_ask()
+    for _ in range(2):  # skips 2 turn ends, then asks once more
+        assert _stop_after_turn(agy_home, "c1") is None
+    declined_ask()
+    for _ in range(4):  # a further miss doubles the skip
+        assert _stop_after_turn(agy_home, "c1") is None
+    assert _stop_after_turn(agy_home, "c1") is not None
+    assert _stop_after_turn(agy_home, "c2") is not None  # a new conversation starts fresh
 
     with _held_watch_lock(proc, "c1"):
-        assert _stop_after_turn(agy_home, "c1") is None
+        assert _stop_after_turn(agy_home, "c1") is None  # a running watcher resets it all
     assert _stop_after_turn(agy_home, "c1") is not None
 
 

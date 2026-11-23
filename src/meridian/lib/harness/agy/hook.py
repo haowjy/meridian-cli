@@ -29,11 +29,11 @@ from meridian.lib.harness.agy.state import (
     PRINTED_APPROVALS,
     PROJECT_ENV,
     agy_root,
+    ask_backoff_path,
     asked_path,
     briefed_path,
     busy_path,
     is_safe_id,
-    missed_asks_path,
     process_dir,
     read_json,
     read_seen_offset,
@@ -112,9 +112,10 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     return inject_reply(texts) if texts else None
 
 
-# After this many asks in a row that ended with no watcher, the model or person is
-# declining it: stop paying a continuation per turn until a watcher runs.
-_MAX_MISSED_ASKS = 2
+# Asks that ended with no watcher, in a row, before the hook backs off; each further miss
+# doubles the turn ends skipped before the next ask, up to the cap.
+_MISSES_BEFORE_BACKOFF = 2
+_MAX_SKIPPED_TURN_ENDS = 32
 
 
 def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, Any]) -> str | None:
@@ -123,35 +124,44 @@ def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, An
     The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
     ask on the continuation's own ``Stop``. A subagent is never asked (its model would
     start a watcher the person's session does not own) and a cancelled turn is not nagged.
-    A model or person that declines is asked again next turn, until two asks in a row
-    ended with no watcher; a running watcher resets that.
+    A model or person that declines is asked again next turn. After two asks in a row ended
+    with no watcher, the hook skips 2 turn ends, then asks again, then skips 4, 8 and so on
+    up to 32, so a person who always declines pays little and a model that only forgot is
+    asked again. A ``Stop`` that sees a watcher running clears it. Per conversation.
     """
 
     asked = asked_path(proc_dir, conversation)
     try:
         request = read_json(request_path(proc_dir, conversation))
         if request is not None and request.get("role") != "subagent":
-            missed = missed_asks_path(proc_dir)
+            backoff = ask_backoff_path(proc_dir, conversation)
+            misses, skips = _read_backoff(backoff)
             if watcher_running(proc_dir, conversation):
-                missed.unlink(missing_ok=True)
+                backoff.unlink(missing_ok=True)
             elif asked.exists():
-                _write_missed(missed, _read_missed(missed) + 1)
-            elif (
-                payload.get("terminationReason") != "USER_CANCELED"
-                and _read_missed(missed) < _MAX_MISSED_ASKS
-            ):
-                asked.parent.mkdir(parents=True, exist_ok=True)
-                asked.touch()
-                return json.dumps(
-                    {
-                        "decision": "continue",
-                        "reason": (
-                            "Meridian: before you end this turn, start this session's message "
-                            "watcher, so Meridian messages can wake you while you are idle. "
-                            f"{start_instructions(agy_pid, conversation)}"
-                        ),
-                    }
+                misses += 1
+                skips = (
+                    min(2 ** (misses - 1), _MAX_SKIPPED_TURN_ENDS)
+                    if misses >= _MISSES_BEFORE_BACKOFF
+                    else 0
                 )
+                _write_backoff(backoff, misses, skips)
+            elif payload.get("terminationReason") != "USER_CANCELED":
+                if skips > 0:
+                    _write_backoff(backoff, misses, skips - 1)
+                else:
+                    asked.parent.mkdir(parents=True, exist_ok=True)
+                    asked.touch()
+                    return json.dumps(
+                        {
+                            "decision": "continue",
+                            "reason": (
+                                "Meridian: before you end this turn, start this session's "
+                                "message watcher, so Meridian messages can wake you while you "
+                                f"are idle. {start_instructions(agy_pid, conversation)}"
+                            ),
+                        }
+                    )
     except Exception:
         _log_error("Stop")
     asked.unlink(missing_ok=True)
@@ -159,15 +169,16 @@ def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, An
     return None
 
 
-def _read_missed(path: Path) -> int:
+def _read_backoff(path: Path) -> tuple[int, int]:
     try:
-        return int(path.read_text())
+        misses, skips = (int(word) for word in path.read_text().split())
     except (OSError, ValueError):
-        return 0
+        return 0, 0
+    return max(misses, 0), max(skips, 0)
 
 
-def _write_missed(path: Path, count: int) -> None:
-    atomic_write_text(path, str(count), durable=False, permissions=PRIVATE_FILE_MODE)
+def _write_backoff(path: Path, misses: int, skips: int) -> None:
+    atomic_write_text(path, f"{misses} {skips}", durable=False, permissions=PRIVATE_FILE_MODE)
 
 
 def _guidance(

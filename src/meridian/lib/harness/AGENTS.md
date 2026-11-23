@@ -136,8 +136,9 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   `wake` file exists), or silently when its parent shell or the `agy` process is gone.
   `guard.sh` creates `busy/<conversation>` on every `PreInvocation`; `Stop` asks the model once
   per turn (`asked`) to start a watcher when none holds the lock, never for a subagent or a
-  cancelled turn, and otherwise removes `busy` and `asked`. Two asks in a row that end with
-  no watcher (`missed-asks` in the process directory) stop the asks until a watcher runs.
+  cancelled turn, and otherwise removes `busy` and `asked`. After two asks in a row that
+  end with no watcher, `Stop` skips 2 turn ends before asking again, then 4, 8, up to 32 (one
+  `backoff/<conversation>` file in the process directory); a `Stop` that sees a watcher resets it.
   agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy` until the next turn's
   `Stop`. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`, so
   the start command says `BypassSandbox true` and the watcher says so when it cannot see its

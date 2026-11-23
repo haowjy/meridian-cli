@@ -155,11 +155,11 @@ def asked_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "asked" / conversation_id
 
 
-def missed_asks_path(proc_dir: Path) -> Path:
-    """The count of consecutive asks whose turn ended with no watcher running. One for the
-    whole ``agy`` process: a person who declines the watcher declines it everywhere."""
+def ask_backoff_path(proc_dir: Path, conversation_id: str) -> Path:
+    """``<missed asks> <turn ends left to skip>``: how far the ``Stop`` hook has backed off
+    asking this conversation for a watcher. Absent or unreadable means not backed off."""
 
-    return proc_dir / "missed-asks"
+    return proc_dir / "backoff" / conversation_id
 
 
 def watch_lock_path(proc_dir: Path, conversation_id: str) -> Path:
@@ -230,6 +230,7 @@ __all__ = [
     "PROJECT_ENV",
     "ROOT_CONVERSATION_ID_KEY",
     "agy_root",
+    "ask_backoff_path",
     "asked_path",
     "briefed_path",
     "busy_path",
@@ -237,7 +238,6 @@ __all__ = [
     "inflight_path",
     "is_safe_id",
     "launch_script_dir",
-    "missed_asks_path",
     "native_store",
     "open_conversations",
     "process_birth",
