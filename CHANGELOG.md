@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-11-23
+
+### Added
+- `meridian agy --from <chat>` now puts the standard prior-session block into the printed `--prompt-interactive` command. With `-p` too, the block is followed by `## User message` and your prompt text.
+
+### Fixed
+- `meridian agy` states the workspace-skip reason once and lists the skipped directories, instead of repeating the same paragraph for each one.
+
 ## [0.27.0] - 2026-11-23
 
 ### Added
