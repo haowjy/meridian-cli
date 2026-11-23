@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,41 +75,43 @@ class AgyIdleSensor:
         proc_dir: Path,
         conversation: str,
         *,
-        stored_turn_id: Callable[[], str | None],
+        stored_turn_id: str | None,
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
         self._conversation = conversation
         self._turn = TurnState(proc_dir, conversation)
-        self._stored_turn_id = stored_turn_id
         self._poll_seconds = poll_seconds
         self._transcript = transcript_path(native_store(), conversation)
         # None until the first read, which takes the whole transcript.
         self._offset: int | None = None
-        self._last_typed: str | None = None
+        # A sensor that restarts mid-session must not take a wake for a return: only a typed
+        # step the stored stretch has not seen is one.
+        self._last_typed = stored_turn_id
         self._user_text: str | None = None
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         _ = event
 
     async def busy(self) -> bool:
-        return self._turn.running()
+        return await asyncio.to_thread(self._turn.running)
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        was_running = self._turn.running()
+        was_running = await asyncio.to_thread(self._turn.running)
         while True:
             await asyncio.sleep(self._poll_seconds)
-            running = self._turn.running()
+            running = await asyncio.to_thread(self._turn.running)
             if was_running and not running:
-                yield await asyncio.to_thread(self._turn_end)
+                event = await asyncio.to_thread(self._turn_end)
+                if event is None:
+                    continue  # the transcript was unreadable: report this end at the next poll
+                yield event
             was_running = running
 
-    def _turn_end(self) -> IdleEvent:
-        first = self._offset is None
-        turn = _read_turn(self._read_steps())
-        if first:
-            # A sensor that restarts mid-session must not take a wake for a return: only a
-            # typed step the stored stretch has not seen is one.
-            self._last_typed = self._stored_turn_id()
+    def _turn_end(self) -> IdleEvent | None:
+        steps = self._read_steps()
+        if steps is None:
+            return None
+        turn = _read_turn(steps)
         returned = turn.typed_step is not None and turn.typed_step != self._last_typed
         if turn.typed_step is not None:
             self._last_typed = turn.typed_step
@@ -124,9 +126,9 @@ class AgyIdleSensor:
             last_assistant_text=turn.assistant_text,
         )
 
-    def _read_steps(self) -> list[dict[str, object]]:
+    def _read_steps(self) -> list[dict[str, object]] | None:
         """The complete steps appended since the last read; all of them on the first read or
-        after the file shrank."""
+        after the file shrank; None when it cannot be read, with the offset kept."""
 
         offset = self._offset or 0
         try:
@@ -136,7 +138,7 @@ class AgyIdleSensor:
                 handle.seek(offset)
                 data = handle.read()
         except OSError:
-            return []
+            return None
         complete = data[: data.rfind(b"\n") + 1]
         self._offset = offset + len(complete)
         steps: list[dict[str, object]] = []

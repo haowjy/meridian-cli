@@ -185,6 +185,16 @@ def test_return_then_long_turn_uses_the_short_push_delay() -> None:
     assert store.read("example", "s1").push_owed_since_ms is None  # type: ignore[union-attr]
 
 
+def test_a_return_reported_at_the_turn_end_still_gets_the_long_turn_delay() -> None:
+    idle, clock, store, _ = service()
+    clock.value = 600_000  # the turn ends ten minutes after the user typed
+
+    armed = idle.arm(harness="example", session="s1", implies_return=True, returned_at_ms=0)
+
+    assert armed.push_at == clock.value + 60_000
+    assert store.read("example", "s1").push_owed_since_ms == 0  # type: ignore[union-attr]
+
+
 def test_replacing_a_scheduled_push_keeps_the_original_owed_time() -> None:
     idle, clock, store, _ = service()
     idle.return_(harness="example", session="s1")

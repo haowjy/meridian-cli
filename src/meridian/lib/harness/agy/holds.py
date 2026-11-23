@@ -119,6 +119,8 @@ class _Hold:
     ready: threading.Event = field(default_factory=threading.Event)
     stop: threading.Event = field(default_factory=threading.Event)
     row: HeldRow | None = None
+    # This server process already held the conversation: the person never left it.
+    readopted: bool = False
     error: str | None = None
     thread: threading.Thread | None = None
 
@@ -128,6 +130,7 @@ class ConversationHolds:
         self._proc_dir = proc_dir
         self._holds: dict[str, _Hold] = {}
         self._failures: dict[str, tuple[str, float]] = {}  # conversation -> (error, when)
+        self._adopted: set[str] = set()
         self._lock = threading.Lock()
 
     def sync(self) -> None:
@@ -182,7 +185,8 @@ class ConversationHolds:
             request = read_json(request_path(self._proc_dir, conversation))
             if request is None or request.get("role") != "primary":
                 return None
-            hold = _Hold(conversation)
+            hold = _Hold(conversation, readopted=conversation in self._adopted)
+            self._adopted.add(conversation)
             self._holds[conversation] = hold
         hold.thread = threading.Thread(
             target=self._run,
@@ -298,7 +302,7 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         hold.ready.set()
         failure: str | None = None
         try:
-            _run_loop(_serve(launch, held, conversation, proc_dir, hold.stop))
+            _run_loop(_serve(launch, held, conversation, proc_dir, hold.stop, hold.readopted))
         except Exception as exc:
             failure = str(exc) or type(exc).__name__
             raise
@@ -371,6 +375,7 @@ async def _serve(
     conversation: str,
     proc_dir: Path,
     stop: threading.Event,
+    readopted: bool,
 ) -> None:
     from meridian.lib.launch.process.primary_control_socket import serving_route
 
@@ -379,7 +384,7 @@ async def _serve(
         return DeliveryKind.QUEUED
 
     async with serving_route(launch, MessageRoute(deliver, _ROUTE_NOTE)):
-        idle = asyncio.create_task(_run_idle(launch, held, conversation, proc_dir, stop))
+        idle = asyncio.create_task(_run_idle(launch, held, conversation, proc_dir, stop, readopted))
         try:
             await asyncio.to_thread(stop.wait)
         finally:
@@ -394,6 +399,7 @@ async def _run_idle(
     conversation: str,
     proc_dir: Path,
     stop: threading.Event,
+    readopted: bool,
 ) -> None:
     """Idle notices for the conversation; a failure here never ends the row."""
 
@@ -414,6 +420,7 @@ async def _run_idle(
                 proc_dir, conversation, stored_turn_id=stored_turn_id
             ),
             ctx,
+            readopted=readopted,
         )
     except Exception:
         logger.warning("agy conversation %s has no idle notices", conversation, exc_info=True)

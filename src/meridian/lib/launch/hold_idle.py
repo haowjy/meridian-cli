@@ -13,30 +13,30 @@ from meridian.lib.harness.idle_types import IdleSensor, SidecarContext
 from meridian.lib.idle import sidecar
 from meridian.lib.idle.service import IdleService, close_on_launch
 
-StoredTurnId = Callable[[], str | None]
-
 
 async def run_hold_idle(
-    make_sensor: Callable[[StoredTurnId], IdleSensor],
+    make_sensor: Callable[[str | None], IdleSensor],
     ctx: SidecarContext,
+    *,
+    readopted: bool = False,
 ) -> None:
     """Close the session's previous stretch, then drive idle policy until cancelled.
 
-    Adopting a session is reopening it, which ends the stretch its previous process left
-    open. The sensor reads the turn the stored stretch last saw through ``StoredTurnId``.
+    Adopting a session in a new process is reopening it, which ends the stretch the
+    previous process left open; a hold this process already had (``readopted``) is not.
+    The sensor gets the turn the stored stretch last saw, read before the sidecar's first
+    arm replaces it.
     """
 
     harness = str(ctx.harness_id)
-    await asyncio.to_thread(
-        close_on_launch, harness=harness, session=ctx.harness_session_id, env=ctx.env
-    )
     service = await asyncio.to_thread(IdleService, env=ctx.env, interactive=True)
-
-    def stored_turn_id() -> str | None:
-        state = service.store.read(harness, ctx.harness_session_id)
-        return state.last_turn_id if state is not None else None
-
-    await sidecar.run(make_sensor(stored_turn_id), ctx, service=service)
+    state = await asyncio.to_thread(service.store.read, harness, ctx.harness_session_id)
+    if not readopted:
+        await asyncio.to_thread(
+            close_on_launch, harness=harness, session=ctx.harness_session_id, env=ctx.env
+        )
+    sensor = make_sensor(state.last_turn_id if state is not None else None)
+    await sidecar.run(sensor, ctx, service=service)
 
 
 __all__ = ["run_hold_idle"]
