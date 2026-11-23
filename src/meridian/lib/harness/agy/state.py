@@ -155,6 +155,13 @@ def asked_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "asked" / conversation_id
 
 
+def missed_asks_path(proc_dir: Path) -> Path:
+    """The count of consecutive asks whose turn ended with no watcher running. One for the
+    whole ``agy`` process: a person who declines the watcher declines it everywhere."""
+
+    return proc_dir / "missed-asks"
+
+
 def watch_lock_path(proc_dir: Path, conversation_id: str) -> Path:
     """Empty file a running watcher holds an ``flock`` on; the lock is the fact, not the file."""
 
@@ -230,6 +237,7 @@ __all__ = [
     "inflight_path",
     "is_safe_id",
     "launch_script_dir",
+    "missed_asks_path",
     "native_store",
     "open_conversations",
     "process_birth",

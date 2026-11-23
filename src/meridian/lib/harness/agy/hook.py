@@ -33,6 +33,7 @@ from meridian.lib.harness.agy.state import (
     briefed_path,
     busy_path,
     is_safe_id,
+    missed_asks_path,
     process_dir,
     read_json,
     read_seen_offset,
@@ -42,6 +43,7 @@ from meridian.lib.harness.agy.state import (
     write_seen,
 )
 from meridian.lib.harness.agy.watch import start_instructions, watcher_running
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 
 _ERROR_LOG_LIMIT = 256 * 1024
 
@@ -110,42 +112,62 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     return inject_reply(texts) if texts else None
 
 
+# After this many asks in a row that ended with no watcher, the model or person is
+# declining it: stop paying a continuation per turn until a watcher runs.
+_MAX_MISSED_ASKS = 2
+
+
 def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, Any]) -> str | None:
     """Ask the model, once a turn, to start the watcher; otherwise end the turn's marks.
 
     The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
     ask on the continuation's own ``Stop``. A subagent is never asked (its model would
-    start a watcher the person's session does not own), a cancelled turn is not nagged,
-    and a model or person that declines is asked again next turn.
+    start a watcher the person's session does not own) and a cancelled turn is not nagged.
+    A model or person that declines is asked again next turn, until two asks in a row
+    ended with no watcher; a running watcher resets that.
     """
 
     asked = asked_path(proc_dir, conversation)
     try:
         request = read_json(request_path(proc_dir, conversation))
-        if (
-            request is not None
-            and request.get("role") != "subagent"
-            and payload.get("terminationReason") != "USER_CANCELED"
-            and not asked.exists()
-            and not watcher_running(proc_dir, conversation)
-        ):
-            asked.parent.mkdir(parents=True, exist_ok=True)
-            asked.touch()
-            return json.dumps(
-                {
-                    "decision": "continue",
-                    "reason": (
-                        "Meridian: before you end this turn, start this session's message "
-                        "watcher, so Meridian messages can wake you while you are idle. "
-                        f"{start_instructions(agy_pid, conversation)}"
-                    ),
-                }
-            )
+        if request is not None and request.get("role") != "subagent":
+            missed = missed_asks_path(proc_dir)
+            if watcher_running(proc_dir, conversation):
+                missed.unlink(missing_ok=True)
+            elif asked.exists():
+                _write_missed(missed, _read_missed(missed) + 1)
+            elif (
+                payload.get("terminationReason") != "USER_CANCELED"
+                and _read_missed(missed) < _MAX_MISSED_ASKS
+            ):
+                asked.parent.mkdir(parents=True, exist_ok=True)
+                asked.touch()
+                return json.dumps(
+                    {
+                        "decision": "continue",
+                        "reason": (
+                            "Meridian: before you end this turn, start this session's message "
+                            "watcher, so Meridian messages can wake you while you are idle. "
+                            f"{start_instructions(agy_pid, conversation)}"
+                        ),
+                    }
+                )
     except Exception:
         _log_error("Stop")
     asked.unlink(missing_ok=True)
     busy_path(proc_dir, conversation).unlink(missing_ok=True)
     return None
+
+
+def _read_missed(path: Path) -> int:
+    try:
+        return int(path.read_text())
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_missed(path: Path, count: int) -> None:
+    atomic_write_text(path, str(count), durable=False, permissions=PRIVATE_FILE_MODE)
 
 
 def _guidance(

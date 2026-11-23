@@ -224,6 +224,22 @@ def test_stop_does_not_ask_for_a_running_watcher_a_cancelled_turn_or_a_subagent(
     assert _stop_after_turn(agy_home, "par") is not None
 
 
+def test_stop_stops_asking_after_two_declined_asks_until_a_watcher_runs(agy_home: Path) -> None:
+    pid = os.getpid()
+    run_hook("SessionStart", pid, _payload("c1", agy_home))
+    proc = process_dir(pid)
+    assert proc is not None
+
+    for _ in range(2):
+        assert _stop_after_turn(agy_home, "c1") is not None  # asked
+        assert _stop_after_turn(agy_home, "c1") is None  # declined: the continuation ended
+    assert _stop_after_turn(agy_home, "c1") is None  # not asked a third time
+
+    with _held_watch_lock(proc, "c1"):
+        assert _stop_after_turn(agy_home, "c1") is None
+    assert _stop_after_turn(agy_home, "c1") is not None
+
+
 @contextmanager
 def _held_watch_lock(proc: Path, conversation: str) -> Generator[None]:
     path = watch_lock_path(proc, conversation)

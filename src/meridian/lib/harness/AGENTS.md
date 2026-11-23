@@ -136,12 +136,13 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   `wake` file exists), or silently when its parent shell or the `agy` process is gone.
   `guard.sh` creates `busy/<conversation>` on every `PreInvocation`; `Stop` asks the model once
   per turn (`asked`) to start a watcher when none holds the lock, never for a subagent or a
-  cancelled turn, and otherwise removes `busy` and `asked`. agy 1.5.15 fires no `Stop` on Esc, so
-  a cancelled turn leaves `busy` until the next turn's `Stop`. Its terminal sandbox (Auto mode)
-  has its own process list and hides `~/.meridian`, so the start command says
-  `BypassSandbox true` and the watcher says so when it cannot see its state. These files live in
-  the `agy` process directory, so the notice sweep's removal of it is their only cleanup. The
-  message itself still arrives through `PreInvocation`.
+  cancelled turn, and otherwise removes `busy` and `asked`. Two asks in a row that end with
+  no watcher (`missed-asks` in the process directory) stop the asks until a watcher runs.
+  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy` until the next turn's
+  `Stop`. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`, so
+  the start command says `BypassSandbox true` and the watcher says so when it cannot see its
+  state. These files live in the `agy` process directory, so the notice sweep's removal of it
+  is their only cleanup. The message itself still arrives through `PreInvocation`.
 - `harness-mcp agy` (`mcp_server.py`, `holds.py`): the only writer of Meridian state for
   `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
