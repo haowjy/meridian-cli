@@ -148,8 +148,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   (the one "is a turn running" read, for the watcher and the idle sensor, each with its own
   baseline) ends the turn when a new `executor_metadata` row with termination reason 2
   (`USER_CANCELED`) appears in the conversation's SQLite database after `busy` was last
-  touched. That schema is undocumented (seen on 1.5.15); anything unreadable falls back to
-  `busy` alone. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
+  touched. That schema is undocumented (seen on 1.5.15); anything unreadable, and a baseline
+  not yet read, leave the turn running. An Esc within about a second of any model invocation can
+  be missed (it counts as busy until the next turn ends); a build that renumbers the enum could
+  read a mid-turn execution end as an Esc. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
   so the start command says `BypassSandbox true`, and a watcher that cannot see its state
   prints a notice that it is sandboxed and exits. These files live in the `agy` process
   directory, so the notice sweep's removal of it is their only cleanup. The message itself
@@ -163,7 +165,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   stretch, then `sidecar.run`) with `AgyIdleSensor` (`idle.py`): `busy` is `state.TurnState`,
   and each turn end reads the transcript past a kept offset (a typed `USER_INPUT` step is a
   return, with its `created_at` as `returned_at_ms`; a wake's `SYSTEM_MESSAGE` is not). A sensor
-  restarted mid-session compares the last typed step with `IdleState.last_turn_id`. Idle
+  restarted mid-session compares the last typed step with `IdleState.last_turn_id`, which
+  `launch/hold_idle.py` reads once before closing the old stretch and the sidecar's first
+  arm (that arm replaces it with none); a hold the same server process already had does not
+  close the stretch. A transcript that cannot be read reports no turn end until it can. Idle
   config (and the person's `MERIDIAN_*` config env vars) reach it through `holds._idle_env`.
   agy has no keepwarm and no default TTL; `meridian agy` warns when
   `[harness.agy.idle] keepwarm` is on. The loop is not `asyncio.run`: a notice mid-send must

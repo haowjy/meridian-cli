@@ -9,8 +9,9 @@ terminal is killed, and adapters cannot distinguish reload from resume. TTL
 lookup uses the launch-recorded native store, not the current directory, which
 may have changed.
 
-The sidecar runs inside the TUI: contain sensor failures and keep diagnostics
-away from its terminal. [.context/CONTEXT.md](.context/CONTEXT.md) describes
+The sidecar runs inside the TUI (or, for agy, in the plugin's MCP server, which is not
+the terminal's process): contain sensor failures and keep diagnostics away from the
+terminal. [.context/CONTEXT.md](.context/CONTEXT.md) describes
 wake and reopen behavior.
 
 To test an idle stretch live, launch the TUI with `MERIDIAN_NOTIFY_PUSH_BACKEND=none`
