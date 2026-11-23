@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.harness.agy import guidance, inbox
+from meridian.lib.harness.agy.commands import HOOK_EVENTS
 from meridian.lib.harness.agy.context import read_segment, scan_since
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,
@@ -65,7 +66,7 @@ def run_hook(event: str, agy_pid: int, payload_text: str) -> str | None:
 
 def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
     conversation = payload.get("conversationId")
-    if event not in ("SessionStart", "PreInvocation", "Stop") or not isinstance(conversation, str):
+    if event not in HOOK_EVENTS or not isinstance(conversation, str):
         return None
     if not is_safe_id(conversation):
         return None

@@ -11,8 +11,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 
-_HOOK_EVENTS = ("SessionStart", "PreInvocation", "Stop")
-_HOOK_USAGE = f"usage: meridian harness-hook agy <{'|'.join(_HOOK_EVENTS)}> --agy-pid PID\n"
+HOOK_EVENTS = ("SessionStart", "PreInvocation", "Stop")
+_HOOK_USAGE = f"usage: meridian harness-hook agy <{'|'.join(HOOK_EVENTS)}> --agy-pid PID\n"
 _WATCH_USAGE = "usage: meridian harness-watch agy --agy-pid PID --conversation ID\n"
 
 
@@ -30,7 +30,7 @@ def run_command(argv: Sequence[str]) -> int:
 def _run_hook(args: list[str]) -> int:
     event = args[0] if args else ""
     agy_pid = _flag(args, "--agy-pid")
-    if event not in _HOOK_EVENTS or agy_pid is None or not agy_pid.isdigit():
+    if event not in HOOK_EVENTS or agy_pid is None or not agy_pid.isdigit():
         sys.stderr.write(_HOOK_USAGE)
         return 2
     from meridian.lib.harness.agy.hook import run_hook
@@ -56,4 +56,4 @@ def _flag(args: list[str], name: str) -> str | None:
     return args[args.index(name) + 1] if name in args[:-1] else None
 
 
-__all__ = ["run_command"]
+__all__ = ["HOOK_EVENTS", "run_command"]

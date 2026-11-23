@@ -11,6 +11,6 @@ three subdirectories: `skills/` (Meridian's own skills, for every harness), `hoo
 - `hooks/meridian-session/guard.sh` hard-codes the state paths in `lib/harness/agy/state.py`
   (requests, rows, `briefed` and `seen` markers, the inbox and in-flight files, and the
   `busy` and `wake` files it creates and removes); change them together. `agy.json` names the events
-  it runs for, and `lib/harness/agy/commands.py` lists the same events. The entry names `meridian-session` and `meridian`
+  it runs for, and `lib/harness/agy/commands.py` (`HOOK_EVENTS`, which `hook.py` reuses) lists the same events. The entry names `meridian-session` and `meridian`
   key the entries in a project's `.agy/`, so they must not collide with a user's.
 - Skills follow [skills/AGENTS.md](skills/AGENTS.md).
