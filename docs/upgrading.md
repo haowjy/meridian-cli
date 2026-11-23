@@ -24,7 +24,7 @@ New in this release. Nothing changes until you link Antigravity: `meridian mars 
 `meridian mars sync`. [Using Meridian from Antigravity](antigravity.md) covers what it installs
 and does. Meridian does not launch `agy`.
 
-- **Needs Mars 0.38.0 or newer**; this release pins 0.39.1. `meridian mars sync` installs Meridian's hooks
+- **Needs Mars 0.38.0 or newer**; this release pins 0.40.0. `meridian mars sync` installs Meridian's hooks
   and one MCP server into `.agy/`, and moves where Meridian's own skills are provided from
   (`src/meridian/mars/skills/`); no action on your side.
 - **New state under `~/.meridian/agy/`**: a directory per running `agy` process and a message
@@ -52,7 +52,7 @@ notes](https://github.com/haowjy/mars-agents/releases/tag/v0.39.0) before the fi
 
 ## Cursor is removed
 
-Needs Mars 0.38.0 or newer, which dropped Cursor; this release pins 0.39.1.
+Needs Mars 0.38.0 or newer, which dropped Cursor; this release pins 0.40.0.
 
 - **`--harness cursor` and `harness: cursor` now fail**: Mars no longer knows the harness (`unknown harness 'cursor'`). Use `--harness claude|codex|opencode|pi`, change the profile's `harness`, or route the model to another harness in `mars.toml`. A model alias that names `cursor` is dropped from `mars.lock` on the first sync, and Mars warns `field.retired` while it is still in `mars.toml`.
 - **Old Cursor spawns and chats stay listed.** `meridian spawn list` and `spawn show` read the stored records. Resuming, forking or reading the transcript of a Cursor session fails with the same removal error. Cursor's own session data in its app is untouched.
