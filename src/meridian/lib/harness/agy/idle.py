@@ -2,7 +2,7 @@
 
 ``agy`` fires no event Meridian can subscribe to, so the sensor reads the files the plugin
 keeps. The ``PreInvocation`` guard creates ``busy/<conversation>`` and the ``Stop`` hook
-removes it (``state.turn_running`` is the one reading of it). When the mark goes, the sensor
+removes it (``state.TurnState`` is the one reading of it). When the mark goes, the sensor
 reads the transcript past the offset it has already read and reports the turn: a typed
 ``USER_INPUT`` step means the person came back, while a wake appends only a
 ``SYSTEM_MESSAGE`` and continues the stretch the last typed turn opened.
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from meridian.lib.harness.agy.state import native_store, turn_running
+from meridian.lib.harness.agy.state import TurnState, native_store
 from meridian.lib.harness.agy.transcript import AgyTranscriptParser, transcript_path
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import IdleEvent
@@ -79,7 +79,7 @@ class AgyIdleSensor:
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
         self._conversation = conversation
-        self._proc_dir = proc_dir
+        self._turn = TurnState(proc_dir, conversation)
         self._stored_turn_id = stored_turn_id
         self._poll_seconds = poll_seconds
         self._transcript = transcript_path(native_store(), conversation)
@@ -92,13 +92,13 @@ class AgyIdleSensor:
         _ = event
 
     async def busy(self) -> bool:
-        return turn_running(self._proc_dir, self._conversation)
+        return self._turn.running()
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        was_running = turn_running(self._proc_dir, self._conversation)
+        was_running = self._turn.running()
         while True:
             await asyncio.sleep(self._poll_seconds)
-            running = turn_running(self._proc_dir, self._conversation)
+            running = self._turn.running()
             if was_running and not running:
                 yield await asyncio.to_thread(self._turn_end)
             was_running = running

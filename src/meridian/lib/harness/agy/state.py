@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import subprocess
 from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -149,11 +151,121 @@ def busy_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "busy" / conversation_id
 
 
-def turn_running(proc_dir: Path, conversation_id: str) -> bool:
-    """Whether a turn of this conversation is running: the one answer for the watcher
-    (which waits out a turn) and the idle sensor (which reports its end)."""
+def _termination_reason(blob: bytes) -> int | None:
+    """Field 1 of an ``executor_metadata`` row: ``agy``'s ExecutorTerminationReason."""
 
-    return busy_path(proc_dir, conversation_id).exists()
+    pos = 0
+    try:
+        while pos < len(blob):
+            key = shift = 0
+            while True:
+                byte = blob[pos]
+                pos += 1
+                key |= (byte & 0x7F) << shift
+                shift += 7
+                if byte < 0x80:
+                    break
+            field, wire = key >> 3, key & 7
+            if wire == 0:
+                value = shift = 0
+                while True:
+                    byte = blob[pos]
+                    pos += 1
+                    value |= (byte & 0x7F) << shift
+                    shift += 7
+                    if byte < 0x80:
+                        break
+                if field == 1:
+                    return value
+            elif wire == 1:
+                pos += 8
+            elif wire == 5:
+                pos += 4
+            elif wire == 2:
+                length = shift = 0
+                while True:
+                    byte = blob[pos]
+                    pos += 1
+                    length |= (byte & 0x7F) << shift
+                    shift += 7
+                    if byte < 0x80:
+                        break
+                pos += length
+            else:
+                return None
+    except IndexError:
+        return None
+    return None
+
+
+_USER_CANCELED = 2
+
+
+class TurnState:
+    """Whether a turn of one conversation is running: the one answer for the watcher (which
+    waits out a turn) and the idle sensor (which reports its end). Each keeps its own.
+
+    A turn runs while ``busy/<conversation>`` exists, which ``guard.sh`` touches on every
+    ``PreInvocation`` and the ``Stop`` hook removes. ``agy`` fires no ``Stop`` on Esc, so
+    the mark would stay; but it appends a row to the conversation database's
+    ``executor_metadata`` when an execution ends, and field 1 of that row is the
+    termination reason (2 is ``USER_CANCELED``, 4 a normal end). Each time the mark is
+    touched this reader counts the rows; a later row with reason 2 means the turn ended.
+    Normal ends are not read: ``Stop`` removes the mark for them, and a ``Stop``
+    continuation's first execution also ends with a row.
+
+    Google documents none of this (the table, the protobuf, the enum): seen on ``agy``
+    1.5.15, a different build may renumber it. Anything unreadable falls back to the mark
+    alone. An Esc in the first moments after the mark is touched can land in the count and
+    be missed, which behaves as before this read existed.
+    """
+
+    def __init__(self, proc_dir: Path, conversation: str) -> None:
+        self._proc_dir = proc_dir
+        self._conversation = conversation
+        self._db: Path | None = None
+        self._touched: int | None = None
+        self._baseline: int | None = None
+
+    def running(self) -> bool:
+        try:
+            touched = busy_path(self._proc_dir, self._conversation).stat().st_mtime_ns
+        except OSError:
+            self._touched = None
+            return False
+        if touched != self._touched:
+            self._touched = touched
+            self._baseline = len(self._reasons(0))
+            return True
+        return _USER_CANCELED not in self._reasons(self._baseline or 0)
+
+    def _database(self) -> Path | None:
+        if self._db is None:
+            request = read_json(request_path(self._proc_dir, self._conversation))
+            transcript = request.get("transcript_path") if request else None
+            if isinstance(transcript, str):
+                # <app data>/brain/<conversation>/.system_generated/logs/<transcript>
+                parents = Path(transcript).parents
+                if len(parents) > 4:
+                    self._db = parents[4] / "conversations" / f"{self._conversation}.db"
+        return self._db
+
+    def _reasons(self, skip: int) -> list[int | None]:
+        """Termination reasons of the ``executor_metadata`` rows after the first ``skip``."""
+
+        database = self._database()
+        if database is None:
+            return []
+        try:
+            with closing(
+                sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=0.2)
+            ) as db:
+                rows = db.execute(
+                    "SELECT data FROM executor_metadata ORDER BY idx LIMIT -1 OFFSET ?", (skip,)
+                ).fetchall()
+        except (sqlite3.Error, ValueError):
+            return []
+        return [_termination_reason(row[0]) for row in rows if isinstance(row[0], bytes)]
 
 
 def asked_path(proc_dir: Path, conversation_id: str) -> Path:
@@ -236,6 +348,7 @@ __all__ = [
     "PRINTED_APPROVALS",
     "PROJECT_ENV",
     "ROOT_CONVERSATION_ID_KEY",
+    "TurnState",
     "agy_root",
     "ask_backoff_path",
     "asked_path",
@@ -256,7 +369,6 @@ __all__ = [
     "row_path",
     "scrubbed_env",
     "seen_path",
-    "turn_running",
     "wake_path",
     "watch_lock_path",
     "write_private_json",

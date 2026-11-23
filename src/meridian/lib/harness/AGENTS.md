@@ -144,8 +144,12 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   doesn't ask, it removes `busy` and `asked`. After two asks in a row end with no watcher, it
   skips 2 turn ends before asking again, then 4, 8, up to 32 (`backoff/<conversation>`); a
   `Stop` that sees a watcher running deletes that back-off file.
-  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy` until the next turn's
-  `Stop`. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
+  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy`; `state.TurnState`
+  (the one "is a turn running" read, for the watcher and the idle sensor, each with its own
+  baseline) ends the turn when a new `executor_metadata` row with termination reason 2
+  (`USER_CANCELED`) appears in the conversation's SQLite database after `busy` was last
+  touched. That schema is undocumented (seen on 1.5.15); anything unreadable falls back to
+  `busy` alone. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
   so the start command says `BypassSandbox true`, and a watcher that cannot see its state
   prints a notice that it is sandboxed and exits. These files live in the `agy` process
   directory, so the notice sweep's removal of it is their only cleanup. The message itself

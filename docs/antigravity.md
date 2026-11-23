@@ -160,9 +160,11 @@ conversation IDs can't be read as sessions.
 
 ## What it can't do
 
-- **Wake after Esc, or without a watcher.** `agy` fires no hook when you cancel a turn with
-  Esc, so Meridian still counts the session as busy: a message sent after a cancel waits
-  until you type. So does a message to a session whose watcher is not running.
+- **Wake without a watcher.** A message to a session whose watcher is not running waits
+  until you type. After Esc, `agy` fires no hook, but Meridian reads the cancel from the
+  conversation's database (`executor_metadata`), so a message wakes the session about a second
+  later. An Esc in the first moments of a turn can be missed; the session then counts as busy
+  until the next turn ends.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
   conversation's second prompt, and the session's chat ID arrives with it. Until then the
   model has the guidance but may find no tool.
