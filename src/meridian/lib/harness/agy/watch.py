@@ -141,8 +141,8 @@ def run(agy_pid: int, conversation: str) -> int:
             if signature is None or signature == noted:
                 continue
             text = (
-                "A Meridian message arrived for this session. It is delivered with this "
-                "turn: act on it."
+                "A Meridian message arrived for this session. "
+                "It will arrive in this turn: act on it."
             )
         print(
             f"{text}\n\nThen start the watcher again. {start_instructions(agy_pid, conversation)}"
