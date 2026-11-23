@@ -81,7 +81,9 @@ def test_wake_file_wakes_an_idle_session_with_its_text(
     assert "Keep the cache warm." in capsys.readouterr().out
 
 
-def test_second_watcher_says_one_runs_and_exits(capsys: pytest.CaptureFixture[str]) -> None:
+def test_second_watcher_says_one_runs_and_exits(
+    proc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     first = _Watcher(capsys)
     assert not first.wait(0.2)
 
@@ -89,3 +91,7 @@ def test_second_watcher_says_one_runs_and_exits(capsys: pytest.CaptureFixture[st
 
     assert "already runs" in capsys.readouterr().out
     assert not first.wait(0.1)
+    wake = wake_path(proc_dir, CONVERSATION)  # ends the first watcher with the test
+    wake.parent.mkdir(parents=True)
+    wake.write_text("done")
+    assert first.wait(3)
