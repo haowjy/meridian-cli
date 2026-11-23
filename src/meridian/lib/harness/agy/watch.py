@@ -32,8 +32,10 @@ from meridian.lib.platform import fcntl
 POLL_SECONDS = 1.0
 # The ``agy`` process check costs a ``ps`` on macOS, so it runs every few polls.
 _ALIVE_EVERY_POLLS = 10
-# The ``Stop`` hook holds the lock for an instant when it tests it.
-_LOCK_WAIT_SECONDS = 1.0
+# The ``Stop`` hook holds the lock for an instant when it tests it. Short enough that a
+# duplicate start finishes inside the 500 ms ``WaitMsBeforeAsync`` the ask names: a
+# command that goes to the background wakes the agent when it exits.
+_LOCK_WAIT_SECONDS = 0.25
 
 
 def watch_command(agy_pid: int, conversation: str) -> str:
