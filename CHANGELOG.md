@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-23
+
+### Added
+- An idle Antigravity (`agy`) session now wakes on its own when a Meridian message arrives for it, instead of waiting until you type. At the end of a turn the plugin asks the model to start `meridian harness-watch agy` as a background command; it shows as `1 task(s)` in the TUI and exits to wake the session when a message is waiting. In Auto mode the command runs outside agy's terminal sandbox, so without a `command(meridian)` allow rule agy likely asks to approve each start. A message sent right after you cancel a turn with Esc still waits until you type: agy fires no hook on Esc.
+
 ## [0.27.1] - 2026-11-23
 
 ### Added
