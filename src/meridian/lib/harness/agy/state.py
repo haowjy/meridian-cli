@@ -6,6 +6,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import threading
 from collections.abc import Mapping
 from contextlib import closing
 from pathlib import Path
@@ -221,8 +222,14 @@ class TurnState:
         self._conversation = conversation
         self._touched: int | None = None
         self._baseline: int | None = None
+        # ``busy()`` and ``events()`` run on separate worker threads and share one reader.
+        self._lock = threading.Lock()
 
     def running(self) -> bool:
+        with self._lock:
+            return self._running()
+
+    def _running(self) -> bool:
         try:
             touched = busy_path(self._proc_dir, self._conversation).stat().st_mtime_ns
         except OSError:

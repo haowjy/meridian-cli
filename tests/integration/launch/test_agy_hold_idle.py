@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from types import MappingProxyType
@@ -83,7 +84,7 @@ class Session:
             await task
 
 
-async def _until(check: "callable[[], bool]") -> None:  # type: ignore[valid-type]
+async def _until(check: Callable[[], bool]) -> None:
     for _ in range(300):
         if check():
             return
@@ -98,12 +99,12 @@ def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Session:
     return Session(tmp_path)
 
 
-def _drive(session: Session, *, readopted: bool, script: "callable[[], object]") -> None:  # type: ignore[valid-type]
+def _drive(session: Session, *, readopted: bool, script: Callable[[], Awaitable[None]]) -> None:
     async def main() -> None:
         done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
         async def play() -> None:
-            await script()  # type: ignore[misc]
+            await script()
             done.set_result(None)
 
         player = asyncio.create_task(play())
@@ -154,3 +155,26 @@ def test_a_restarted_sensor_does_not_take_a_wake_for_a_return(session: Session) 
     after = session.state()
     assert after is not None
     assert after.stretch == typed.stretch + 1
+
+
+def test_a_wake_after_a_same_process_readoption_continues_the_stretch(session: Session) -> None:
+    async def first() -> None:
+        await asyncio.sleep(0.1)
+        await session.turn(typed=True)
+        await _until(lambda: (s := session.state()) is not None and s.last_turn_id == "0")
+
+    busy_path(session.proc, CONVERSATION).touch()
+    _drive(session, readopted=False, script=first)
+    typed = session.state()
+    assert typed is not None
+
+    async def second() -> None:
+        await asyncio.sleep(0.1)
+        await session.turn(typed=False)
+        await _until(lambda: (s := session.state()) is not None and s.anchor > typed.anchor)
+
+    _drive(session, readopted=True, script=second)
+    after = session.state()
+    assert after is not None
+    assert after.stretch == typed.stretch
+    assert after.last_turn_id == "0"
