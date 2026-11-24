@@ -146,9 +146,9 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   `Stop` that sees a watcher running deletes that back-off file.
   agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves the `busy` file. `TurnState`
   ends the turn when a new `executor_metadata` row with termination reason 2 (`USER_CANCELED`)
-  appears in the conversation's SQLite database; each reader's baseline is the highest row index
-  it read when it first saw `busy` touched, and until that read succeeds the turn counts as
-  running. That schema is undocumented (seen on 1.5.15); anything unreadable leaves the turn
+  appears in the conversation's SQLite database; the baseline is the highest row index, recorded by
+  the first reader to see a `busy` touch in `baseline/<conversation>` (with the touch's time)
+  and shared by the watcher and the sensor; until one is recorded the turn counts as running. That schema is undocumented (seen on 1.5.15); anything unreadable leaves the turn
   running. An Esc within about a second of any model invocation can be missed; a build that
   renumbers the enum could read a mid-turn execution end as an Esc. agy's terminal sandbox
   (Auto mode) has its own process list and hides `~/.meridian`,

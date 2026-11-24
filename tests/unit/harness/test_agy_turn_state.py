@@ -71,5 +71,20 @@ def test_an_unreadable_baseline_never_ends_a_running_turn(proc_dir: Path) -> Non
     assert not turn.running()
 
 
+def test_readers_agree_when_a_cancel_lands_between_their_polls(proc_dir: Path) -> None:
+    database = _database()
+    _append(database, NORMAL_END)
+    sensor, watcher = TurnState(proc_dir, CONVERSATION), TurnState(proc_dir, CONVERSATION)
+    _touch(proc_dir)
+    assert sensor.running()  # the first reader records the baseline
+    _append(database, CANCEL)  # the Esc
+    assert not sensor.running()
+    assert not watcher.running()  # its first poll comes after the cancel, with the same baseline
+
+    _touch(proc_dir)  # the next turn: the stale baseline is replaced
+    assert watcher.running()
+    assert sensor.running()
+
+
 def test_no_mark_is_no_turn(proc_dir: Path) -> None:
     assert not TurnState(proc_dir, CONVERSATION).running()
