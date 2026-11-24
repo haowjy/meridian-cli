@@ -402,14 +402,14 @@ silence only the permission notice.
 | `warn_minutes` | `10` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Let the warning reach email channels |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
-| `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude today) |
+| `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude and agy today) |
 | `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch; `0` or less turns keepwarm off |
-| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there, then end its reply with `compact-now` (compact while the cache is warm), `stop-waiting` (keepwarm on only) or anything else to keep waiting (Claude today); on agy, a queued message with no choices |
+| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there, then end its reply with `compact-now` (compact while the cache is warm), `stop-waiting` (keepwarm on only) or anything else to keep waiting (Claude today); on agy, a queued message with no `compact-now`, and with keepwarm on `stop-waiting` |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
 harness acts on `keepwarm` only when its adapter can keep that cache warm; today
-only the Claude mod does, in an interactive primary session, and the other
+the Claude mod and agy do, in an interactive primary session, and the other
 harnesses accept the keys and ignore them.
 `keepwarm = true` starts every such session with keepwarm on: after the cache
 warning, the Claude idle mod sends up to `keepwarm_pings` short prompts so the
@@ -437,11 +437,29 @@ no running turn, cache not yet cold). Unlike a ping its turn may write files.
 With keepwarm on it takes ping 1's place; with keepwarm off it is one extra turn
 on the cache you were about to lose, so set `state_reminder = false` to avoid it.
 
-On agy the reminder is a queued message from Meridian, with no choices (agy cannot
-compact on demand) and no keepwarm slot. It is queued only while the session's
-watcher runs, since that is what wakes an idle session; with no watcher it is
-dropped rather than shown in your next prompt. It does not wait for a quiet prompt
-box: a running turn shows it at its next model call.
+On agy the reminder is a queued message from Meridian, with no `compact-now`
+(agy cannot compact on demand); with keepwarm on it takes ping 1's slot and offers
+`stop-waiting`. It is queued only when something can wake the session for it: the
+session's watcher runs and no turn is running or left behind by an Esc (the watcher
+never exits for those). Otherwise it is dropped rather than shown in your next
+prompt, and a reminder dropped this way is sent again at the stretch's next turn end,
+before any ping. A `warn_minutes` of 1 or less sends no prompt at all, the reminder
+included (the last minute before the cache expires is kept free), as on Claude. It
+does not wait for a quiet prompt box.
+
+agy keepwarm (`[harness.agy.idle] keepwarm = true`, off by default; `keepwarm_pings`
+bounds it) works the same way: ping 1 at the cache warning, then one more a lead
+(`ttl_seconds - warn_minutes`) after each later turn that ends in the stretch, up to
+`keepwarm_pings`. A ping is a queued message from Meridian, sent only when the session can be woken
+for it (a watcher runs, no turn is running, no Esc left the turn open); typing cancels the rest; a reply whose last line is `stop-waiting` ends
+them; none sends a notification. Each ping costs two model calls (the ping, then
+restarting the watcher), against your Antigravity quota. A global `[idle] keepwarm = true` applies to agy as well. Known gaps:
+agy shows Meridian no prompt-box state, so a ping can arrive while you are typing (as a message
+does); a compaction does not end the pings as it does on Claude; and Claude denies
+tool calls that change anything during a ping's turn and agy does not (its hook
+payload says nothing of a tool being read-only), so a ping the model chooses to act
+on runs as an ordinary turn. The record of a stretch's pings is in memory: a restart
+of the plugin's server sends no more pings that stretch, never an extra one.
 
 When you have waited at least two minutes since your last prompt, the waiting
 push follows 60 seconds after the turn ends; after a quick or unknown-length
@@ -536,7 +554,7 @@ keepwarm = true
 | Pi | Push and warning for `anthropic`, `openai-codex`, and `openai` (long retention only). Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it. Other providers are push-only. |
 | Codex | Push and warning with a fixed 1800-second TTL |
 | OpenCode | 2.x `openai`: push and warning against an estimated 30-minute TTL. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
-| agy | Push and warning, with a built-in 30-minute cache window (`ttl_seconds = 1800`), so the warning goes out `idle.warn_minutes` (10 by default) before it ends, about 20 minutes after the turn. Google publishes no window; the cache was observed to hold across 25-minute idle gaps (seen 23 Nov 2026). Set `[harness.agy.idle] ttl_seconds` to change it and `[harness.agy.idle] warn_minutes` to change the lead (a lead at or above the TTL gives no warning). The state reminder works as described under `state_reminder`. `keepwarm` does nothing on agy, and `meridian agy` warns when it is on. |
+| agy | Push and warning, with a built-in 30-minute cache window (`ttl_seconds = 1800`), so the warning goes out `idle.warn_minutes` (10 by default) before it ends, about 20 minutes after the turn. Google publishes no window; the cache was observed to hold across 25-minute idle gaps (seen 23 Nov 2026). Set `[harness.agy.idle] ttl_seconds` to change it and `[harness.agy.idle] warn_minutes` to change the lead (a lead at or above the TTL gives no warning). The state reminder works as described under `state_reminder`. Keepwarm is opt-in (`[harness.agy.idle] keepwarm`, see above). |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
 per model, and assume GPT-5.6 or later. For an older model on those routes, set

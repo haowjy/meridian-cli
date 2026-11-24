@@ -178,16 +178,24 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   identity pin that opens a stretch with no return) overwrites it with none; the sensor
   treats a typed step equal to it as already reported. A re-adoption in the same server
   process (a failed hold retried by the poll) is not a reopen and does not close the stretch.
-  The sensor also takes the state reminder: when the sidecar's `fire warn` answers `remind`,
-  `AgyIdleSensor.remind` queues `STATE_REMINDER` through `inbox.enqueue` with no sender (so no
-  notice is owed if it is never shown), but only while the conversation's watcher runs: without
-  one the entry would wait for the person's next prompt and tell them they are away. Its wording
-  mirrors the Claude mod's without `compact-now` (`agy` cannot compact on demand).
+  The sensor is also the sidecar's `PromptSink`: when `fire warn` acts, the sidecar calls
+  `AgyIdleSensor.send("reminder" | "ping", stop_offered=...)`, which queues `prompt_text(...)`
+  through `inbox.enqueue` with no sender (so no notice is owed if it is never shown), but only
+  when a wake is possible (`_can_wake`: the watcher runs, no `busy` mark exists, and no turn end
+  is unreported; the watcher never exits for a running turn or an Esc's leftover mark): otherwise
+  the entry would wait for the person's next prompt and tell them they are away, so `send`
+  returns False, the sidecar returns the slot, and a dropped reminder stays owed
+  (`Stretch.reminder_owed`) for the next turn end. The sidecar spends a slot before `send` and
+  leaves it spent if the send is cancelled. The wording mirrors the Claude mod's without `compact-now` (`agy` cannot compact on
+  demand) and ends by restarting the watcher. Keepwarm's later pings are timed by the sidecar
+  (`idle/sidecar.py`, `idle/keepwarm.py`; in-memory record, none after a restart), one lead after
+  each non-return turn end. The sensor remembers the ids it sent; a turn whose steps carry one
+  is reported with `IdleEvent.prompt_replies`, from which core reads `stop-waiting`. The ping turn
+  is not kept read-only: `PreToolUse` carries no read-only flag, a known gap.
   Config reaches the sidecar through `holds._idle_env`: `call_env(row)` (identity only, the
   `MERIDIAN_*` strip above) plus the env vars of every option in `config.loader.OPTION_CATALOG`
   that the server's own environment sets, and `_MERIDIAN_HARNESS=agy`; the result is
-  `SidecarContext.env`, which `IdleService` and notice delivery read. agy has no keepwarm and
-  a built-in TTL of 1800 s (`harness_models.py` `idle_defaults`, `idle/deadline.py`; Google publishes no window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026), so the warning lands 20 min after a turn at the global lead; `meridian agy` warns when `[harness.agy.idle] keepwarm` is on. `holds._run_loop`
+  `SidecarContext.env`, which `IdleService` and notice delivery read. agy has a built-in TTL of 1800 s (`harness_models.py` `idle_defaults`, `idle/deadline.py`; Google publishes no window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026), so the warning lands 20 min after a turn at the global lead. `holds._run_loop`
   runs each hold's coroutine on its own `new_event_loop()` and closes it without joining the
   default executor (`asyncio.run` would): a notice mid-send in a `to_thread` worker lasts up to
   10 s, and `primary.complete` must run within the ~400 ms agy gives the server. A serving

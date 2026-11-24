@@ -19,7 +19,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import busy_path, native_store
@@ -30,18 +30,33 @@ from meridian.lib.harness.idle_types import IdleEvent
 
 POLL_SECONDS = 1.0
 
-# The Claude mod's reminder (``claude_runtime/meridian-idle/hooks/keepwarm.ts``
-# ``reminderText``) without its closing choices: ``agy`` cannot compact on demand (#1049)
-# and has no pings to stop. It ends by restarting the watcher, which the wake already asks
-# for, so a model that follows both makes one model call, not two. The mod is TypeScript,
-# so the two wordings are kept in step by hand.
-STATE_REMINDER = (
+# The Claude mod's prompts (``claude_runtime/meridian-idle/hooks/keepwarm.ts``, ``pingText`` and
+# ``reminderText``) without ``compact-now`` (``agy`` cannot compact on demand, #1049). Each ends by
+# restarting the watcher, which the wake already asks for, so a model that follows both makes
+# one model call, not two; so ``stop-waiting`` is a last line, not the whole reply. The ping
+# also says to do no other work: the turn is not kept read-only as Claude's is, so the text is
+# all that holds it to a reply. The mod is TypeScript, so the wordings are kept in step by hand.
+_STOP_LINE = (
+    " To end this stretch's pings, end your reply with a last line that is exactly "
+    "stop-waiting: you then accept the cache going cold before the user returns. Anything "
+    "else keeps waiting."
+)
+_RESTART = " Start the watcher again, as the wake notice asks, before you end your reply."
+_STATE_REMINDER = (
     "[Meridian] State reminder. This turn keeps your prompt cache warm while the user is "
     "away; it is about to expire. Run `meridian work show` and update the work item's "
     "recorded state in place: status, decisions with their reasons, open questions, promises "
-    "to other sessions, where you stopped. If nothing changed, write nothing. Then start the "
-    "watcher again, as the wake notice asks, and end your reply."
+    "to other sessions, where you stopped. If nothing changed, write nothing."
 )
+_KEEPWARM_PING = (
+    "[Meridian] Keepwarm ping. Waiting for the user, keeping warm. Do no other work this turn: "
+    "only restart the watcher and reply briefly."
+)
+
+
+def prompt_text(kind: Literal["reminder", "ping"], *, stop_offered: bool) -> str:
+    base = _STATE_REMINDER if kind == "reminder" else _KEEPWARM_PING
+    return base + _RESTART + (_STOP_LINE if stop_offered else "")
 
 
 def _varint(blob: bytes, pos: int) -> tuple[int, int]:
@@ -166,6 +181,15 @@ class _Turn:
     typed_at_ms: int | None = None
     user_text: str | None = None
     assistant_text: str | None = None
+    # Every reply without a tool call, in order: the continuation the ``Stop`` hook asks for
+    # (to restart the watcher) answers last and may not repeat the choice.
+    replies: tuple[str, ...] = ()
+
+
+def _carries(step: dict[str, object], message_id: str) -> bool:
+    """Whether the step is the one ``agy`` wrote when it injected the message."""
+
+    return f"[meridian:{message_id}]" in str(step.get("content", ""))
 
 
 def _created_at_ms(step: dict[str, object]) -> int | None:
@@ -194,7 +218,13 @@ def _read_turn(steps: list[dict[str, object]]) -> _Turn:
         elif kind == "PLANNER_RESPONSE":
             messages = parser.parse(step).messages
             if messages and messages[0].tool_call is None:
-                turn = _Turn(turn.typed_step, turn.typed_at_ms, turn.user_text, messages[0].content)
+                turn = _Turn(
+                    turn.typed_step,
+                    turn.typed_at_ms,
+                    turn.user_text,
+                    messages[0].content,
+                    (*turn.replies, messages[0].content),
+                )
     return turn
 
 
@@ -222,32 +252,73 @@ class AgyIdleSensor:
         # step the stored stretch has not seen is one.
         self._last_typed = stored_turn_id
         self._user_text: str | None = None
+        # Ids of prompts sent and not yet seen in the transcript; lost with the sensor, which
+        # costs only the read of one reply.
+        self._prompts: set[str] = set()
+        # The ``busy`` mark was seen and has since gone, and that turn's end is not yet yielded.
+        self._seen_running = False
+        self._unreported = False
+        self._observe_lock = threading.Lock()
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         _ = event
 
     async def busy(self) -> bool:
-        return await asyncio.to_thread(self._turn.running)
+        """A turn runs, or ended and its end is not yet reported: the poll sees the mark go up
+        to a second late, and a prompt sent in that window would follow a turn that just warmed
+        the cache (or a return the sidecar has not yet seen)."""
 
-    async def remind(self) -> None:
-        """Queue the state reminder as a message from Meridian when the watcher can wake the
-        session for it (a running turn shows it at its next model call). With no watcher it
-        would wait for the person's next prompt and say they are away, so it is dropped."""
+        return await asyncio.to_thread(self._busy)
 
-        if await asyncio.to_thread(watcher_running, self._proc_dir, self._conversation):
-            await asyncio.to_thread(inbox.enqueue, self._conversation, STATE_REMINDER, None)
+    def _observe(self) -> bool:
+        """Whether the turn runs; notes the moment the mark goes, from whichever caller sees it."""
+
+        with self._observe_lock:
+            running = self._turn.running()
+            if self._seen_running and not running:
+                self._unreported = True
+            self._seen_running = running
+            return running
+
+    def _busy(self) -> bool:
+        return self._observe() or self._unreported
+
+    async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+        """Queue the prompt as a message from Meridian when the session can be woken for it.
+        Otherwise it would wait for the person's next prompt and say they are away, so it is
+        dropped and returns False."""
+
+        if not await asyncio.to_thread(self._can_wake):
+            return False
+        # Remembered from inside the worker: a cancelled await still leaves the entry queued.
+        await asyncio.to_thread(self._queue, prompt_text(kind, stop_offered=stop_offered))
+        return True
+
+    def _queue(self, text: str) -> None:
+        self._prompts.add(inbox.enqueue(self._conversation, text, None).id)
+
+    def _can_wake(self) -> bool:
+        """A watcher runs and no ``busy`` mark exists. The mark means a turn is running or an
+        Esc left it behind; the watcher never exits for either, so nothing would wake the
+        session (#1051)."""
+
+        return (
+            watcher_running(self._proc_dir, self._conversation)
+            and not busy_path(self._proc_dir, self._conversation).exists()
+            and not self._unreported
+        )
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        was_running = await asyncio.to_thread(self._turn.running)
+        await asyncio.to_thread(self._observe)
         while True:
             await asyncio.sleep(self._poll_seconds)
-            running = await asyncio.to_thread(self._turn.running)
-            if was_running and not running:
+            await asyncio.to_thread(self._observe)
+            if self._unreported:
                 event = await asyncio.to_thread(self._turn_end)
                 if event is None:
                     continue  # the transcript was unreadable: report this end at the next poll
                 yield event
-            was_running = running
+                self._unreported = False
 
     def _turn_end(self) -> IdleEvent | None:
         steps = self._read_steps()
@@ -258,6 +329,8 @@ class AgyIdleSensor:
         if turn.typed_step is not None:
             self._last_typed = turn.typed_step
             self._user_text = turn.user_text
+        shown = {id_ for id_ in self._prompts if any(_carries(step, id_) for step in steps)}
+        self._prompts -= shown
         return IdleEvent(
             kind="turn_end",
             harness_session_id=self._conversation,
@@ -266,6 +339,7 @@ class AgyIdleSensor:
             returned_at_ms=turn.typed_at_ms if returned else None,
             last_user_text=self._user_text,
             last_assistant_text=turn.assistant_text,
+            prompt_replies=turn.replies if shown and not returned else (),
         )
 
     def _read_steps(self) -> list[dict[str, object]] | None:

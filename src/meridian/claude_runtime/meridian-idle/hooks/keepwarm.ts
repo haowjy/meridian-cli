@@ -12,6 +12,7 @@ export const FRESH: Stretch = { on: false, session: '', stretch: 0, sent: 0, lim
 const STOP = 'stop-waiting'
 const COMPACT = 'compact-now'
 
+/** agy's copy is `prompt_text` in `lib/harness/agy/idle.py` (it adds a "do no other work" line, since agy's ping turn is not read-only): change them together. */
 export function pingText(nonce: string): string {
   return (
     `[meridian-idle keepwarm ${nonce}]\n\n` +
@@ -22,7 +23,7 @@ export function pingText(nonce: string): string {
 
 /**
  * The state reminder: the model writes what only the conversation knows into the work item, then ends its reply with its choice.
- * agy's copy (`STATE_REMINDER` in `lib/harness/agy/idle.py`) mirrors this wording without the choices: change them together.
+ * agy's copy (`prompt_text` in `lib/harness/agy/idle.py`) mirrors this wording without the choices: change them together.
  * `stop-waiting` is offered only with keepwarm on: with it off there are no pings to stop.
  */
 export function reminderText(nonce: string, keepwarmOn: boolean): string {

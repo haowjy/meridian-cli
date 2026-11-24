@@ -367,23 +367,31 @@ def test_exhausted_entry_stays_in_flight_and_confirm_stops_reading_for_it(
     assert inflight_path("c1").read_text() == before
 
 
-def test_state_reminder_is_queued_with_no_sender_only_while_a_watcher_runs(
-    agy_home: Path,
-) -> None:
+def test_prompts_are_queued_with_no_sender_only_while_a_watcher_runs(agy_home: Path) -> None:
     import asyncio
 
-    from meridian.lib.harness.agy.idle import STATE_REMINDER, AgyIdleSensor
+    from meridian.lib.harness.agy.idle import AgyIdleSensor
 
     proc = agy_home / "proc"
     sensor = AgyIdleSensor(proc, "c1", stored_turn_id=None)
 
-    asyncio.run(sensor.remind())  # no watcher: it could not wake the session
+    # No watcher: it could not wake the session, so nothing is queued and nothing delivered.
+    assert asyncio.run(sensor.send("reminder", stop_offered=False)) is False
     assert inbox.claim("c1", None) == []
 
+    # A busy mark (a running turn, or an Esc that left it) means no wake is possible.
+    busy = busy_path(proc, "c1")
+    busy.parent.mkdir(parents=True, exist_ok=True)
+    busy.touch()
     with _held_watch_lock(proc, "c1"):
-        asyncio.run(sensor.remind())
+        assert asyncio.run(sensor.send("ping", stop_offered=True)) is False
+    busy.unlink()
+
+    with _held_watch_lock(proc, "c1"):
+        assert asyncio.run(sensor.send("ping", stop_offered=True)) is True
     (entry,) = inbox.claim("c1", None)
-    assert (entry.text, entry.sender) == (STATE_REMINDER, None)
+    assert entry.sender is None
+    assert "stop-waiting" in entry.text
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
