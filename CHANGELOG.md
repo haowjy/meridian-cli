@@ -6,6 +6,10 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.7] - 2026-11-24
+
+None. Removes an internal `agy` watcher file that nothing ever wrote; no user-visible behavior changes.
+
 ## [0.27.6] - 2026-11-24
 
 ### Added

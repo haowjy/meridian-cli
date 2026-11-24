@@ -26,7 +26,7 @@ dependencies = [
   "markdown-it-py>=4.0",
   "mars-agents==0.40.0",
   "mcp>=1.0,<2",
-  "meridian-sync==0.27.6; sys_platform != 'win32'",
+  "meridian-sync==0.27.7; sys_platform != 'win32'",
   "pathspec>=1.1.0",
   "prompt-toolkit>=3.0,<4",
   "psutil>=7.2.2",
