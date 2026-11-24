@@ -24,6 +24,7 @@ from typing import Any
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import busy_path, native_store
 from meridian.lib.harness.agy.transcript import AgyTranscriptParser, transcript_path
+from meridian.lib.harness.agy.watch import watcher_running
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import IdleEvent
 
@@ -208,6 +209,7 @@ class AgyIdleSensor:
         stored_turn_id: str | None,
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
+        self._proc_dir = proc_dir
         self._conversation = conversation
         self._turn = TurnState(proc_dir, conversation)
         self._poll_seconds = poll_seconds
@@ -226,10 +228,12 @@ class AgyIdleSensor:
         return await asyncio.to_thread(self._turn.running)
 
     async def remind(self) -> None:
-        """Queue the state reminder as a message from Meridian: the watcher wakes an idle
-        session for it, and a running turn shows it at its next model call."""
+        """Queue the state reminder as a message from Meridian when the watcher can wake the
+        session for it (a running turn shows it at its next model call). With no watcher it
+        would wait for the person's next prompt and say they are away, so it is dropped."""
 
-        await asyncio.to_thread(inbox.enqueue, self._conversation, STATE_REMINDER, None)
+        if await asyncio.to_thread(watcher_running, self._proc_dir, self._conversation):
+            await asyncio.to_thread(inbox.enqueue, self._conversation, STATE_REMINDER, None)
 
     async def events(self) -> AsyncIterator[IdleEvent]:
         was_running = await asyncio.to_thread(self._turn.running)

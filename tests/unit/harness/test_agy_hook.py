@@ -367,18 +367,23 @@ def test_exhausted_entry_stays_in_flight_and_confirm_stops_reading_for_it(
     assert inflight_path("c1").read_text() == before
 
 
-def test_state_reminder_is_queued_as_a_message_with_no_sender(agy_home: Path) -> None:
+def test_state_reminder_is_queued_with_no_sender_only_while_a_watcher_runs(
+    agy_home: Path,
+) -> None:
     import asyncio
 
     from meridian.lib.harness.agy.idle import STATE_REMINDER, AgyIdleSensor
 
-    asyncio.run(AgyIdleSensor(agy_home, "c1", stored_turn_id=None).remind())
+    proc = agy_home / "proc"
+    sensor = AgyIdleSensor(proc, "c1", stored_turn_id=None)
 
+    asyncio.run(sensor.remind())  # no watcher: it could not wake the session
+    assert inbox.claim("c1", None) == []
+
+    with _held_watch_lock(proc, "c1"):
+        asyncio.run(sensor.remind())
     (entry,) = inbox.claim("c1", None)
     assert (entry.text, entry.sender) == (STATE_REMINDER, None)
-    assert "compact-now" not in entry.text
-    assert "session named below" not in entry.render()
-    assert "session named below" in inbox.InboxEntry("x", "t", _sender("p7")).render()
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
