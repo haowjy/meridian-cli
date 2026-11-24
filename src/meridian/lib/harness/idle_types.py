@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BeforeValidator
 
@@ -101,6 +101,14 @@ class IdleSensor(Protocol):
     async def busy(self) -> bool: ...
 
 
+@runtime_checkable
+class StateReminderSink(Protocol):
+    """A sensor whose harness acts on the state reminder: the sidecar calls it when a fired
+    warning answers ``remind``. Sensors without it get no reminder."""
+
+    async def remind(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class CacheTtl:
     """A cache lifetime and whether it is a heuristic rather than a known TTL."""
@@ -132,4 +140,5 @@ __all__ = [
     "NativeIdleHook",
     "PinnedIdleSession",
     "SidecarContext",
+    "StateReminderSink",
 ]

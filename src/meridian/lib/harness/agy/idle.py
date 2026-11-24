@@ -21,12 +21,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import busy_path, native_store
 from meridian.lib.harness.agy.transcript import AgyTranscriptParser, transcript_path
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import IdleEvent
 
 POLL_SECONDS = 1.0
+
+# The Claude mod's reminder (``claude_runtime/meridian-idle/hooks/keepwarm.ts``
+# ``reminderText``) without its closing choices: ``agy`` cannot compact on demand (#1049)
+# and has no pings to stop. The mod is TypeScript, so the wording is kept in step by hand.
+STATE_REMINDER = (
+    "[Meridian] State reminder. This turn keeps your prompt cache warm while the user is "
+    "away; it is about to expire. Run `meridian work show` and update the work item's "
+    "recorded state in place: status, decisions with their reasons, open questions, promises "
+    "to other sessions, where you stopped. If nothing changed, write nothing. Then end your "
+    "reply."
+)
 
 
 def _varint(blob: bytes, pos: int) -> tuple[int, int]:
@@ -212,6 +224,12 @@ class AgyIdleSensor:
 
     async def busy(self) -> bool:
         return await asyncio.to_thread(self._turn.running)
+
+    async def remind(self) -> None:
+        """Queue the state reminder as a message from Meridian: the watcher wakes an idle
+        session for it, and a running turn shows it at its next model call."""
+
+        await asyncio.to_thread(inbox.enqueue, self._conversation, STATE_REMINDER, None)
 
     async def events(self) -> AsyncIterator[IdleEvent]:
         was_running = await asyncio.to_thread(self._turn.running)

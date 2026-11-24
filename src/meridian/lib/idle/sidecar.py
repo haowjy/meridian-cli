@@ -11,6 +11,7 @@ from meridian.lib.harness.idle_types import (
     IdleEvent,
     IdleSensor,
     SidecarContext,
+    StateReminderSink,
 )
 from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability.debug_tracer import DebugTracer
@@ -165,7 +166,7 @@ class _Coordinator:
                 return
             if getattr(self.sensor, "external_events", False) and await self.sensor.busy():
                 continue
-            await asyncio.to_thread(
+            fired = await asyncio.to_thread(
                 self.service.fire,
                 stage,
                 harness=self.harness,
@@ -173,6 +174,8 @@ class _Coordinator:
                 stretch=arm.stretch,
                 anchor=arm.anchor,
             )
+            if fired.remind and isinstance(self.sensor, StateReminderSink):
+                await self.sensor.remind()
 
     async def _drive_safely(self, arm: ArmResult) -> None:
         try:

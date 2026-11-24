@@ -217,11 +217,15 @@ how long you waited for that turn), and typing resets that timer. A turn that Me
 watcher or an `agy` background command's exit started on its own does not reset it and sends
 no second notice. With `ttl_seconds` set, you also get the cache warning before the prompt
 cache expires. Meridian reads each turn's end from the plugin's server; nothing is typed into
-your terminal. `keepwarm` and `state_reminder` do nothing for agy. To configure it, see
+your terminal. When the warning goes out and the session has a work item, Meridian also queues
+a message asking the model to bring the work item up to date (`state_reminder`, on by default);
+it wakes an idle session like any message. `keepwarm` does nothing for agy. To configure it, see
 [`[harness.<harness>.idle]`](configuration.md#harnessharnessidle) with `agy` as the harness:
 
 ```toml
 [harness.agy.idle]
 enabled = true        # false turns off the push and the warning
 ttl_seconds = 1200    # your estimate of the model's cache lifetime; none by default
+warn_minutes = 3      # warn this long before it ends; overrides [idle] warn_minutes (10)
+state_reminder = true # ask the model to update the work item at the warning
 ```

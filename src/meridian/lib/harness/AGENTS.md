@@ -174,6 +174,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   with its `created_at` as `returned_at_ms`. A wake's `SYSTEM_MESSAGE` (and hook-injected
   `SYSTEM_SDK` steps) is not. An unreadable transcript reports nothing and is retried next poll.
   `IdleState.last_turn_id` is the step index of the last typed step the stored stretch saw.
+  The sensor also takes the state reminder: when the sidecar's `fire warn` answers `remind`,
+  `AgyIdleSensor.remind` queues `STATE_REMINDER` through `inbox.enqueue` with no sender (so no
+  notice is owed if it is never shown). It reaches the model like any message; its wording
+  mirrors the Claude mod's without `compact-now` (`agy` cannot compact on demand).
   `hold_idle.py` reads it before closing the old stretch because the sidecar's first arm (an
   identity pin that opens a stretch with no return) overwrites it with none; the sensor
   treats a typed step equal to it as already reported. A re-adoption in the same server

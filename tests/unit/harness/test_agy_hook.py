@@ -367,6 +367,18 @@ def test_exhausted_entry_stays_in_flight_and_confirm_stops_reading_for_it(
     assert inflight_path("c1").read_text() == before
 
 
+def test_state_reminder_is_queued_as_a_message_with_no_sender(agy_home: Path) -> None:
+    import asyncio
+
+    from meridian.lib.harness.agy.idle import STATE_REMINDER, AgyIdleSensor
+
+    asyncio.run(AgyIdleSensor(agy_home, "c1", stored_turn_id=None).remind())
+
+    (entry,) = inbox.claim("c1", None)
+    assert (entry.text, entry.sender) == (STATE_REMINDER, None)
+    assert "compact-now" not in entry.text
+
+
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
     from meridian.lib.platform import fcntl
 
