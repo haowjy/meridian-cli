@@ -187,9 +187,9 @@ class _Coordinator:
                 anchor=arm.anchor,
             )
             if stage == "warn" and fired.decision == "act":
-                await self._warned(arm, remind=fired.remind)
+                await self._warned(arm, remind=fired.remind, due_ms=deadline)
 
-    async def _warned(self, arm: ArmResult, *, remind: bool) -> None:
+    async def _warned(self, arm: ArmResult, *, remind: bool, due_ms: int) -> None:
         """The warning acted: send the state reminder, else ping 1 when keepwarm is on. The
         reminder takes ping 1's slot with keepwarm on and none with it off."""
 
@@ -200,6 +200,17 @@ class _Coordinator:
         if kw is not None:
             kw.warned = True
         if not (remind or on):
+            return
+        # The margin applies to every prompt, this one included: with a lead of a minute or
+        # less there is no time left to keep warm, and a timer that ran late ends the stretch.
+        warn_ms = (
+            await asyncio.to_thread(self.service.config_for, self.harness)
+        ).policy.warn_minutes * 60_000
+        if warn_ms <= EXPIRY_MARGIN_MS:
+            return
+        if self.clock.now_ms() >= due_ms + warn_ms - EXPIRY_MARGIN_MS:
+            if kw is not None:
+                kw.ended = True
             return
         # The slot is taken before the send and given back only when the sensor says nothing
         # was queued: a send cancelled mid-way (its inbox write still lands) stays spent, so

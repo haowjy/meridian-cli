@@ -66,10 +66,11 @@ def _run(
     keepwarm_on: bool = True,
     work_item: bool = False,
     pings: int = 3,
+    warn_minutes: int = 3,
 ) -> None:
     idle_config = {
         "ttl_seconds": 600,
-        "warn_minutes": 3,
+        "warn_minutes": warn_minutes,
         "keepwarm": keepwarm_on,
         "keepwarm_pings": pings,
     }
@@ -207,3 +208,10 @@ def test_a_reminder_that_could_not_be_sent_is_the_next_prompt_before_any_ping() 
     _run(sensor, [_turn(typed="1")] + [_turn()] * 4, work_item=True)
 
     assert [kind for kind, _ in sensor.sent] == ["reminder", "reminder", "ping", "ping"]
+
+
+def test_a_warn_lead_of_a_minute_or_less_sends_no_prompt_at_all() -> None:
+    sensor = Sensor()
+    _run(sensor, [_turn(typed="1"), _turn()], work_item=True, warn_minutes=1)
+
+    assert sensor.sent == []
