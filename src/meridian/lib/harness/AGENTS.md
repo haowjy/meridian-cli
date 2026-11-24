@@ -178,6 +178,11 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   identity pin that opens a stretch with no return) overwrites it with none; the sensor
   treats a typed step equal to it as already reported. A re-adoption in the same server
   process (a failed hold retried by the poll) is not a reopen and does not close the stretch.
+  The sensor also takes the state reminder: when the sidecar's `fire warn` answers `remind`,
+  `AgyIdleSensor.remind` queues `STATE_REMINDER` through `inbox.enqueue` with no sender (so no
+  notice is owed if it is never shown), but only while the conversation's watcher runs: without
+  one the entry would wait for the person's next prompt and tell them they are away. Its wording
+  mirrors the Claude mod's without `compact-now` (`agy` cannot compact on demand).
   Config reaches the sidecar through `holds._idle_env`: `call_env(row)` (identity only, the
   `MERIDIAN_*` strip above) plus the env vars of every option in `config.loader.OPTION_CATALOG`
   that the server's own environment sets, and `_MERIDIAN_HARNESS=agy`; the result is

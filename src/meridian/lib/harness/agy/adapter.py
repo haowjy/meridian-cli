@@ -201,7 +201,7 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
                 code="agy_keepwarm_ignored",
                 message=(
                     "[harness.agy.idle] keepwarm does nothing: agy has no keepwarm. Idle push "
-                    "and, with a ttl_seconds, the cache warning still work."
+                    "and, with a ttl_seconds, the cache warning and state reminder still work."
                 ),
             ),
         )

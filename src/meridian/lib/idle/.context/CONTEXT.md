@@ -33,3 +33,7 @@ acts on the reminder's reply: a last line `compact-now` makes it compact the
 session while the cache is warm, once the box is quiet; it measures its own
 cold-cache deadline from the reminder's turn and stops if another compaction
 lands first. Core never compacts and does not see the choice.
+
+The sidecar hands `remind` to a sensor that has `remind()` (`StateReminderSink` in
+`harness/idle_types.py`); core names no harness. agy's sensor queues the reminder in the
+conversation's inbox, so it waits for the session's next model call and offers no choice.

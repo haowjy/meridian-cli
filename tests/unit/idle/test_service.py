@@ -4,6 +4,8 @@ from collections.abc import Callable
 from threading import Lock
 from typing import TypeVar
 
+import pytest
+
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, DetectIdleTtl
 from meridian.lib.idle.service import (
@@ -125,6 +127,50 @@ def test_effective_env_level_beats_more_specific_file_in_both_directions() -> No
     assert effective("enabled", "codex", specific_true, {"MERIDIAN_IDLE_ENABLED": "0"}) is False
     assert effective("enabled", "codex", specific_false, {"MERIDIAN_IDLE_ENABLED": "1"}) is True
     assert effective("enabled", "codex", specific_true, {}) is True
+
+
+def test_a_harness_warn_minutes_overrides_the_global_one_for_that_harness_only() -> None:
+    config = MeridianConfig.model_validate(
+        {"harness": {"agy": {"idle": {"warn_minutes": 1}}}, "idle": {"warn_minutes": 7}}
+    )
+
+    assert effective("warn_minutes", "agy", config, {}) == 1
+    assert effective("warn_minutes", "codex", config, {}) == 7
+    assert effective("warn_minutes", "agy", config, {"MERIDIAN_IDLE_WARN_MINUTES": "3"}) == 3
+    env = {"MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY": "2", "MERIDIAN_IDLE_WARN_MINUTES": "3"}
+    assert effective("warn_minutes", "agy", config, env) == 2
+
+
+def test_env_values_meet_the_constraints_file_values_do() -> None:
+    config = MeridianConfig.model_validate({})
+
+    for name in ("MERIDIAN_IDLE_WARN_MINUTES", "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY"):
+        with pytest.raises(ValueError, match=name):
+            effective("warn_minutes", "agy", config, {name: "-5"})
+    with pytest.raises(ValueError, match="MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS"):
+        effective(
+            "quick_turn_push_seconds", "agy", config, {"MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS": "0"}
+        )
+
+
+def test_a_warning_that_acts_answers_the_push_for_the_rest_of_the_stretch() -> None:
+    config = MeridianConfig.model_validate({"harness": {"agy": {"idle": {"ttl_seconds": 1200}}}})
+    idle, clock, store, sender = service(config=config)
+    idle._has_work_item = lambda: False  # type: ignore[method-assign]
+    clock.value = 1_000_000
+    armed = idle.arm(
+        harness="agy", session="c1", implies_return=True, turn_id="1", returned_at_ms=970_000
+    )
+    assert armed.push_at is None  # the warning is first and replaces it
+    clock.value = armed.warn_at or 0
+    idle.fire("warn", harness="agy", session="c1", stretch=armed.stretch, anchor=armed.anchor)
+
+    clock.value += 30_000
+    later = idle.arm(harness="agy", session="c1")  # a turn the session started itself
+
+    assert later.push_at is None
+    assert store.read("agy", "c1").push_owed_since_ms is None  # type: ignore[union-attr]
+    assert len(sender.notices) == 1
 
 
 def test_config_role_and_enabled_gates_do_not_write() -> None:

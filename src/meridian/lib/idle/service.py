@@ -7,9 +7,9 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from meridian.lib.config.harness_models import HarnessIdleConfig
 from meridian.lib.config.loader import OPTION_CATALOG, load_config
@@ -186,11 +186,24 @@ def _env_value(
     raw = env.get(option.primary_env_var)
     if raw is None:
         return None
-    return parse_env_scalar(
+    value = parse_env_scalar(
         value_kind=option.value_kind,
         raw_value=raw,
         env_name=option.primary_env_var,
     )
+    # An env value meets the constraints a file value does: those of the option's own field
+    # (the empty string only keeps ``Annotated`` valid for a field with none).
+    owner = IdleConfig if option.field_path[0] == "idle" else HarnessIdleConfig
+    field = owner.model_fields[option.field_path[-1]]
+    try:
+        checked: object = TypeAdapter[object](
+            Annotated[(field.annotation, *field.metadata, "")]
+        ).validate_python(value)
+        return checked
+    except ValidationError as error:
+        raise ValueError(
+            f"Invalid environment override '{option.primary_env_var}': {error.errors()[0]['msg']}."
+        ) from error
 
 
 def effective(
@@ -509,7 +522,14 @@ class IdleService:
                 raise RuntimeError("idle stage cannot be claimed without state")
             done = dict(current.done)
             done[stage] = "sent"
-            claimed_state = current.model_copy(update={"done": done})
+            update: dict[str, object] = {"done": done}
+            if stage == "warn" and "push" not in done:
+                # The warning answers the wait a dropped push would have: a later turn in
+                # this stretch (a reminder, a ping) must not place the push again. The
+                # value is one an older build already writes for a skipped stage.
+                done["push"] = "skipped:warned"
+                update["push_owed_since_ms"] = None
+            claimed_state = current.model_copy(update=update)
             return claimed_state, (result, claimed_state)
 
         result, claimed_state = self.store.mutate(harness, session, transition)

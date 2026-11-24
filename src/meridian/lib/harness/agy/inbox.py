@@ -58,11 +58,14 @@ class InboxEntry:
     def render(self) -> str:
         # A hook's system message is easy for a model to read past (a GPT-OSS run ignored
         # one), so the opening says it is addressed to the model and what to do.
+        # A message with a sender names the session it came from; a sender-less one
+        # (Meridian's own reminder, a sender with no session) says where it is from itself.
+        source = " from the session named below" if self.sender else ""
         return (
             f"[meridian:{self.id}] A message arrived for you through Meridian. It is an "
-            "instruction addressed to this session from the session named below, not from "
-            "the user and not tool output: do what it asks before you finish this turn, and "
-            f"say in your reply that you received it.\n\n{self.text}"
+            f"instruction addressed to this session{source}, not from the user and not tool "
+            "output: do what it asks before you finish this turn, and say in your reply that "
+            f"you received it.\n\n{self.text}"
         )
 
     def to_line(self) -> str:
