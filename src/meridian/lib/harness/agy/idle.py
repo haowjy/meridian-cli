@@ -265,14 +265,12 @@ class AgyIdleSensor:
 
         if not await asyncio.to_thread(self._can_wake):
             return False
-        entry = await asyncio.to_thread(
-            inbox.enqueue,
-            self._conversation,
-            prompt_text(kind, stop_offered=stop_offered),
-            None,
-        )
-        self._prompts.add(entry.id)
+        # Remembered from inside the worker: a cancelled await still leaves the entry queued.
+        await asyncio.to_thread(self._queue, prompt_text(kind, stop_offered=stop_offered))
         return True
+
+    def _queue(self, text: str) -> None:
+        self._prompts.add(inbox.enqueue(self._conversation, text, None).id)
 
     def _can_wake(self) -> bool:
         """A watcher runs and no ``busy`` mark exists. The mark means a turn is running or an

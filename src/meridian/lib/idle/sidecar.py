@@ -201,9 +201,14 @@ class _Coordinator:
             kw.warned = True
         if not (remind or on):
             return
-        delivered = await self.sensor.send("reminder" if remind else "ping", stop_offered=on)
-        if kw is not None and on and delivered:
+        # The slot is taken before the send and given back only when the sensor says nothing
+        # was queued: a send cancelled mid-way (its inbox write still lands) stays spent, so
+        # a stretch can lose a ping but never exceed its limit.
+        if kw is not None and on:
             kw.sent += 1
+        delivered = await self.sensor.send("reminder" if remind else "ping", stop_offered=on)
+        if kw is not None and on and not delivered:
+            kw.sent -= 1
 
     async def _track(self, event: IdleEvent, result: ArmResult) -> None:
         """Keep the stretch's keepwarm record from an arm: its start, its lead, its reply."""
@@ -259,8 +264,11 @@ class _Coordinator:
         if not states or not states[0].stretch_open or states[0].stretch != kw.stretch:
             kw.ended = True
             return
-        if kw.sent < kw.limit and await self.sensor.send("ping", stop_offered=True):
-            kw.sent += 1
+        if kw.sent >= kw.limit:
+            return
+        kw.sent += 1  # spent before the send; see ``_warned``
+        if not await self.sensor.send("ping", stop_offered=True):
+            kw.sent -= 1
 
     async def _drive_safely(self, arm: ArmResult) -> None:
         try:

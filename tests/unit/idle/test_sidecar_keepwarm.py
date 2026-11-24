@@ -65,12 +65,13 @@ def _run(
     *,
     keepwarm_on: bool = True,
     work_item: bool = False,
+    pings: int = 3,
 ) -> None:
     idle_config = {
         "ttl_seconds": 600,
         "warn_minutes": 3,
         "keepwarm": keepwarm_on,
-        "keepwarm_pings": 3,
+        "keepwarm_pings": pings,
     }
     config = MeridianConfig.model_validate({"harness": {"agy": {"idle": idle_config}}})
     svc, clock, _, _ = service(config=config)
@@ -179,3 +180,18 @@ def test_stop_reply_parsing_matches_the_claude_mod() -> None:
         "stop-waiting\nok",
     ):
         assert not keepwarm.reply_stops(reply)
+
+
+def test_a_send_cancelled_by_a_turn_end_stays_spent() -> None:
+    class Slow(Sensor):
+        async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+            self.sent.append((kind, stop_offered))
+            if len(self.sent) == 2:  # a turn ends while this ping's inbox write is in flight
+                await self.events_in.put(_turn())
+                await asyncio.sleep(0.2)
+            return True
+
+    sensor = Slow()
+    _run(sensor, [_turn(typed="1"), _turn(), _turn(), _turn()], pings=2)
+
+    assert len(sensor.sent) == 2
