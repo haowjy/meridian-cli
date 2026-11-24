@@ -494,7 +494,7 @@ Use `claude`, `codex`, `opencode`, `pi`, or `agy` for `<harness>`.
 | Key | Default | Environment variable |
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
-| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800`; agy: none by default, set your own | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800`; agy: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 | `warn_minutes` | Overrides `[idle] warn_minutes` | `MERIDIAN_HARNESS_IDLE_WARN_MINUTES_<H>` |
 | `keepwarm` | Overrides `[idle] keepwarm` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_<H>` |
 | `keepwarm_pings` | Overrides `[idle] keepwarm_pings` | `MERIDIAN_HARNESS_IDLE_KEEPWARM_PINGS_<H>` |
@@ -536,7 +536,7 @@ keepwarm = true
 | Pi | Push and warning for `anthropic`, `openai-codex`, and `openai` (long retention only). Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it. Other providers are push-only. |
 | Codex | Push and warning with a fixed 1800-second TTL |
 | OpenCode | 2.x `openai`: push and warning against an estimated 30-minute TTL. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
-| agy | Push only. Google publishes no cache window, so none is built in: set `[harness.agy.idle] ttl_seconds` to your estimate of the model's cache lifetime to get a warning, and `[harness.agy.idle] warn_minutes` for how long before that lifetime ends it goes out (it overrides `idle.warn_minutes`, 10 by default, which is longer than a cache window of a few minutes; with a lead at or above the TTL there is no warning). `ttl_seconds = 1200` with the default lead warns 10 minutes after the turn. The state reminder works as described under `state_reminder`. `keepwarm` does nothing on agy, and `meridian agy` warns when it is on. |
+| agy | Push and warning, with a built-in 30-minute cache window (`ttl_seconds = 1800`), so the warning goes out `idle.warn_minutes` (10 by default) before it ends, about 20 minutes after the turn. Google publishes no window; the cache was observed to hold across 25-minute idle gaps (seen 23 Nov 2026). Set `[harness.agy.idle] ttl_seconds` to change it and `[harness.agy.idle] warn_minutes` to change the lead (a lead at or above the TTL gives no warning). The state reminder works as described under `state_reminder`. `keepwarm` does nothing on agy, and `meridian agy` warns when it is on. |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
 per model, and assume GPT-5.6 or later. For an older model on those routes, set

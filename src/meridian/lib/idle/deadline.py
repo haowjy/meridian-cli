@@ -5,7 +5,7 @@ from __future__ import annotations
 from meridian.lib.state.idle_store import IdleState
 
 # Estimated fallbacks when notification state is absent or has been garbage-collected.
-_DEFAULT_CACHE_TTL_SECONDS = {"claude": 300, "codex": 1800, "opencode": 300, "pi": 300}
+_DEFAULT_CACHE_TTL_SECONDS = {"claude": 300, "codex": 1800, "opencode": 300, "pi": 300, "agy": 1800}
 
 
 def cache_deadline(

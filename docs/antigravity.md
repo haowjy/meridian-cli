@@ -215,8 +215,10 @@ Like other harnesses, an agy session gets a push notice when it has been waiting
 Meridian sends it some time after the agent's turn ends (the usual timing, which depends on
 how long you waited for that turn), and typing resets that timer. A turn that Meridian's
 watcher or an `agy` background command's exit started on its own does not reset it and sends
-no second notice. With `ttl_seconds` set, you also get the cache warning before the prompt
-cache expires. Meridian reads each turn's end from the plugin's server; nothing is typed into
+no second notice. You also get the cache warning before the prompt cache expires: Meridian
+assumes a 30-minute cache (Google publishes no cache window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026) and warns
+`idle.warn_minutes` (10 by default) before it ends, so the warning comes about 20 minutes after
+the turn. Adjust it with `ttl_seconds` and `warn_minutes` below. Meridian reads each turn's end from the plugin's server; nothing is typed into
 your terminal. When the warning goes out and the session has a work item, Meridian also queues
 a message asking the model to bring the work item up to date (`state_reminder`, on by default);
 it wakes an idle session like any message. `keepwarm` does nothing for agy. To configure it, see
@@ -225,7 +227,7 @@ it wakes an idle session like any message. `keepwarm` does nothing for agy. To c
 ```toml
 [harness.agy.idle]
 enabled = true        # false turns off the push and the warning
-ttl_seconds = 1200    # your estimate of the model's cache lifetime; none by default
+ttl_seconds = 1800    # your estimate of the model's cache lifetime (the default)
 warn_minutes = 3      # warn this long before it ends; overrides [idle] warn_minutes (10)
 state_reminder = true # ask the model to update the work item at the warning
 ```

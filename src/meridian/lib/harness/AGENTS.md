@@ -187,7 +187,7 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   `MERIDIAN_*` strip above) plus the env vars of every option in `config.loader.OPTION_CATALOG`
   that the server's own environment sets, and `_MERIDIAN_HARNESS=agy`; the result is
   `SidecarContext.env`, which `IdleService` and notice delivery read. agy has no keepwarm and
-  no default TTL; `meridian agy` warns when `[harness.agy.idle] keepwarm` is on. `holds._run_loop`
+  a built-in TTL of 1800 s (`harness_models.py` `idle_defaults`, `idle/deadline.py`; Google publishes no window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026), so the warning lands 20 min after a turn at the global lead; `meridian agy` warns when `[harness.agy.idle] keepwarm` is on. `holds._run_loop`
   runs each hold's coroutine on its own `new_event_loop()` and closes it without joining the
   default executor (`asyncio.run` would): a notice mid-send in a `to_thread` worker lasts up to
   10 s, and `primary.complete` must run within the ~400 ms agy gives the server. A serving
