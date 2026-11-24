@@ -111,6 +111,26 @@ def _internal_handle(
     )
 
 
+# One per ``[harness.<h>.idle]`` key and harness: the names ``harness_idle_model`` generates.
+_HARNESS_IDLE_VARS = tuple(
+    _public_config(f"MERIDIAN_HARNESS_IDLE_{key}_{harness.upper()}", f"{name} idle {purpose}.")
+    for harness, name in (
+        ("claude", "Claude"),
+        ("codex", "Codex"),
+        ("opencode", "OpenCode"),
+        ("pi", "Pi"),
+        ("agy", "Antigravity"),
+    )
+    for key, purpose in (
+        ("ENABLED", "behavior toggle"),
+        ("TTL_SECONDS", "cache TTL"),
+        ("WARN_MINUTES", "cache warning lead, in minutes"),
+        ("KEEPWARM", "keepwarm toggle"),
+        ("KEEPWARM_PINGS", "keepwarm pings per stretch"),
+        ("STATE_REMINDER", "state reminder toggle"),
+    )
+)
+
 ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar(
         "MERIDIAN_IGNORE_DIRENV",
@@ -133,29 +153,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     ),
     _public_config("MERIDIAN_FORMAT", "CLI output format override."),
     _public_config("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES", "Guardrail execution timeout."),
-    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."),
-    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CLAUDE", "Claude idle cache TTL."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_CLAUDE", "Claude cache warning lead, in minutes."
-    ),
-    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "Codex idle behavior toggle."),
-    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "Codex idle cache TTL."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_CODEX", "Codex cache warning lead, in minutes."
-    ),
-    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."),
-    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_OPENCODE", "OpenCode cache warning lead, in minutes."
-    ),
-    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
-    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_PI", "Pi idle cache TTL."),
-    _public_config("MERIDIAN_HARNESS_IDLE_WARN_MINUTES_PI", "Pi cache warning lead, in minutes."),
-    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_AGY", "Antigravity idle behavior toggle."),
-    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_AGY", "Antigravity idle cache TTL."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY", "Antigravity cache warning lead, in minutes."
-    ),
+    *_HARNESS_IDLE_VARS,
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),
