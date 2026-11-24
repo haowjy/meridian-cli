@@ -226,10 +226,11 @@ a message asking the model to bring the work item up to date (`state_reminder`, 
 it wakes an idle session like any message. With `keepwarm = true` (off by default) the
 warning is followed by up to `keepwarm_pings` Meridian messages that keep the cache warm, one
 lead apart; each costs two model calls on your quota, only goes out when the session can be woken for it
-(the watcher runs and no turn is running or left open by an Esc), and ends when you type or the model's reply ends with `stop-waiting`. Known gaps: unlike Claude's
+(the watcher runs and no turn is running or left open by an Esc), and ends when you type or the model's reply ends with `stop-waiting`. A typed `/compact` counts as
+you typing and starts no new stretch, and `/clear` ends the old conversation's stretch; pings
+and reminders resume after the next model turn you start. Known gaps: unlike Claude's
 ping, agy's ping turn is not kept read-only (the hook cannot tell which tools only read), so a
-model that acts on one runs an ordinary turn; a ping can arrive while you are typing; and a
-compaction does not end the pings. To configure it, see
+model that acts on one runs an ordinary turn, and a ping can arrive while you are typing. To configure it, see
 [`[harness.<harness>.idle]`](configuration.md#harnessharnessidle) with `agy` as the harness:
 
 ```toml
