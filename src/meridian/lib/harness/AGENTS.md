@@ -178,8 +178,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   treats a typed step equal to it as already reported. A re-adoption in the same server
   process (a failed hold retried by the poll) is not a reopen and does not close the stretch.
   The sensor is also the sidecar's `PromptSink`: when `fire warn` acts, the sidecar calls
-  `AgyIdleSensor.send("reminder" | "ping", stop_offered=...)`, which queues `prompt_text(...)`
-  through `inbox.enqueue` with no sender (so no notice is owed if it is never shown), but only
+  `AgyIdleSensor.send("reminder" | "ping", stop_offered=..., expires_at=...)`, which queues
+  `prompt_text(...)` through `inbox.enqueue` with no sender (so no notice is owed if it is never
+  shown) and an `expires_at` (the cache-cold time: `claim` and `confirm` drop an expired entry
+  instead of injecting or re-queueing it, and its render has no peer-message framing), but only
   when a wake is possible (`_can_wake`: the watcher runs, no `busy` mark exists, and no turn end
   is unreported; the watcher never exits for a running turn or an Esc's leftover mark): otherwise
   the entry would wait for the person's next prompt and tell them they are away, so `send`

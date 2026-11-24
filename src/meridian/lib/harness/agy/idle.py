@@ -290,7 +290,9 @@ class AgyIdleSensor:
     def _busy(self) -> bool:
         return self._observe() == "running" or self._unreported
 
-    async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+    async def send(
+        self, kind: Literal["reminder", "ping"], *, stop_offered: bool, expires_at: int
+    ) -> bool:
         """Queue the prompt as a message from Meridian when the session can be woken for it.
         Otherwise it would wait for the person's next prompt and say they are away, so it is
         dropped and returns False."""
@@ -298,11 +300,13 @@ class AgyIdleSensor:
         if not await asyncio.to_thread(self._can_wake):
             return False
         # Remembered from inside the worker: a cancelled await still leaves the entry queued.
-        await asyncio.to_thread(self._queue, prompt_text(kind, stop_offered=stop_offered))
+        await asyncio.to_thread(
+            self._queue, prompt_text(kind, stop_offered=stop_offered), expires_at
+        )
         return True
 
-    def _queue(self, text: str) -> None:
-        self._prompts.add(inbox.enqueue(self._conversation, text, None).id)
+    def _queue(self, text: str, expires_at: int) -> None:
+        self._prompts.add(inbox.enqueue(self._conversation, text, None, expires_at=expires_at).id)
 
     def _can_wake(self) -> bool:
         """A watcher runs and the turn is idle. A running turn or an Esc's leftover mark never

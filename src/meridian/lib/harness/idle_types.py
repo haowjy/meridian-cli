@@ -112,10 +112,13 @@ class PromptSink(Protocol):
 
     ``stop_offered`` says the prompt may end with ``stop-waiting`` (keepwarm is on). Returns
     whether the prompt was delivered: one the harness could not deliver (no way to wake the
-    session) spends no keepwarm slot.
+    session) spends no keepwarm slot. ``expires_at`` is the epoch millisecond the cache goes
+    cold: a prompt still undelivered then is worth nothing and the harness drops it.
     """
 
-    async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool: ...
+    async def send(
+        self, kind: Literal["reminder", "ping"], *, stop_offered: bool, expires_at: int
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)

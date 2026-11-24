@@ -372,11 +372,12 @@ def test_prompts_are_queued_with_no_sender_only_while_a_watcher_runs(agy_home: P
 
     from meridian.lib.harness.agy.idle import AgyIdleSensor
 
+    FAR = 2**62
     proc = agy_home / "proc"
     sensor = AgyIdleSensor(proc, "c1", stored_turn_id=None)
 
     # No watcher: it could not wake the session, so nothing is queued and nothing delivered.
-    assert asyncio.run(sensor.send("reminder", stop_offered=False)) is False
+    assert asyncio.run(sensor.send("reminder", stop_offered=False, expires_at=FAR)) is False
     assert inbox.claim("c1", None) == []
 
     # A busy mark (a running turn, or an Esc that left it) means no wake is possible.
@@ -384,14 +385,41 @@ def test_prompts_are_queued_with_no_sender_only_while_a_watcher_runs(agy_home: P
     busy.parent.mkdir(parents=True, exist_ok=True)
     busy.touch()
     with _held_watch_lock(proc, "c1"):
-        assert asyncio.run(sensor.send("ping", stop_offered=True)) is False
+        assert asyncio.run(sensor.send("ping", stop_offered=True, expires_at=FAR)) is False
     busy.unlink()
 
     with _held_watch_lock(proc, "c1"):
-        assert asyncio.run(sensor.send("ping", stop_offered=True)) is True
+        assert asyncio.run(sensor.send("ping", stop_offered=True, expires_at=FAR)) is True
     (entry,) = inbox.claim("c1", None)
     assert entry.sender is None
     assert "stop-waiting" in entry.text
+
+
+def test_meridian_prompts_expire_when_the_cache_goes_cold(agy_home: Path) -> None:
+    import time
+
+    now = int(time.time() * 1000)
+    inbox.enqueue("c1", "stale", None, expires_at=now - 1)
+    live = inbox.enqueue("c1", "live", None, expires_at=now + 60_000)
+    # An older build's line has no ``expires_at``; so does a peer message.
+    with inbox.inbox_path("c1").open("a") as handle:
+        handle.write('{"id":"old","text":"old","sender":null,"attempts":0}\n')
+    peer = inbox.enqueue("c1", "from a peer", _sender("p1"))
+
+    claimed = inbox.claim("c1", None)
+    assert [e.text for e in claimed] == ["live", "old", "from a peer"]
+    assert "received it" not in live.render()
+    assert "say in your reply that you received it" in peer.render()
+
+    # Shown nowhere, so ``confirm`` would re-queue them; the one past its time is dropped.
+    inbox.enqueue("c1", "stale", None, expires_at=now - 1)
+    inbox.claim("c1", None)
+    inbox.confirm("c1", None)
+    assert sorted(e.text for e in inbox._read_entries(inbox.inbox_path("c1"))) == [
+        "from a peer",
+        "live",
+        "old",
+    ]
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:

@@ -230,7 +230,10 @@ lead apart; each costs two model calls on your quota, only goes out when the ses
 you typing and starts no new stretch, and `/clear` ends the old conversation's stretch; pings
 and reminders resume after the next model turn you start. Known gaps: unlike Claude's
 ping, agy's ping turn is not kept read-only (the hook cannot tell which tools only read), so a
-model that acts on one runs an ordinary turn, and a ping can arrive while you are typing. To configure it, see
+model that acts on one runs an ordinary turn, and a ping can arrive while you are typing, if
+you type in the second or so between Meridian queueing it and the session waking for it. A ping
+or reminder still queued when the cache goes cold is dropped, so one never reaches a turn you
+start after quitting and resuming the conversation. To configure it, see
 [`[harness.<harness>.idle]`](configuration.md#harnessharnessidle) with `agy` as the harness:
 
 ```toml
