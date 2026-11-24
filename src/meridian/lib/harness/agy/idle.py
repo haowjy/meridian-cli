@@ -33,8 +33,9 @@ POLL_SECONDS = 1.0
 # The Claude mod's prompts (``claude_runtime/meridian-idle/hooks/keepwarm.ts``, ``pingText`` and
 # ``reminderText``) without ``compact-now`` (``agy`` cannot compact on demand, #1049). Each ends by
 # restarting the watcher, which the wake already asks for, so a model that follows both makes
-# one model call, not two; so ``stop-waiting`` is a last line, not the whole reply. The mod is
-# TypeScript, so the wordings are kept in step by hand.
+# one model call, not two; so ``stop-waiting`` is a last line, not the whole reply. The ping
+# also says to do no other work: the turn is not kept read-only as Claude's is, so the text is
+# all that holds it to a reply. The mod is TypeScript, so the wordings are kept in step by hand.
 _STOP_LINE = (
     " To end this stretch's pings, end your reply with a last line that is exactly "
     "stop-waiting: you then accept the cache going cold before the user returns. Anything "
@@ -47,7 +48,10 @@ _STATE_REMINDER = (
     "recorded state in place: status, decisions with their reasons, open questions, promises "
     "to other sessions, where you stopped. If nothing changed, write nothing."
 )
-_KEEPWARM_PING = "[Meridian] Keepwarm ping. Waiting for the user, keeping warm."
+_KEEPWARM_PING = (
+    "[Meridian] Keepwarm ping. Waiting for the user, keeping warm. Do no other work this turn: "
+    "only restart the watcher and reply briefly."
+)
 
 
 def prompt_text(kind: Literal["reminder", "ping"], *, stop_offered: bool) -> str:

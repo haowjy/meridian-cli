@@ -12,7 +12,7 @@ export const FRESH: Stretch = { on: false, session: '', stretch: 0, sent: 0, lim
 const STOP = 'stop-waiting'
 const COMPACT = 'compact-now'
 
-/** agy's copy is `prompt_text` in `lib/harness/agy/idle.py`: change them together. */
+/** agy's copy is `prompt_text` in `lib/harness/agy/idle.py` (it adds a "do no other work" line, since agy's ping turn is not read-only): change them together. */
 export function pingText(nonce: string): string {
   return (
     `[meridian-idle keepwarm ${nonce}]\n\n` +
