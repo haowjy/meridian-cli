@@ -120,7 +120,7 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   conversation's lock, the one the notice sweep decides closed-ness under), no output for
   no opinion, catch everything. It writes request files, `briefed` and `seen` markers and, at
   `Stop`, the idle-wake marks below (`asked`, `backoff`, removing `busy`); it claims inbox
-  entries. Its guidance comes from the launch builders in `guidance.py` (local
+  entries at `PreInvocation` and confirms them at `Stop`. It never reads the whole transcript. Its guidance comes from the launch builders in `guidance.py` (local
   imports, about 0.4 s, so only the call that registers a conversation, the one `PreInvocation`
   after the row appears and the first one after a compaction pay it); never fork that text. The row file the server writes is the signal that
   the session's facts can be injected, and `guard.sh` lets the hook run for it until the
@@ -187,8 +187,16 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   10 s, and `primary.complete` must run within the ~400 ms agy gives the server. A serving
   failure completes the row as failed.
 - `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
-  `PreInvocation` and confirmed against `agy`'s transcript; a message injected three times
-  without showing there stays in flight, uninjected, and is owed a notice. The sender
+  `PreInvocation` (`inbox.claim` moves it to in-flight and notes the transcript's size) and
+  confirmed at the turn's `Stop` (`inbox.confirm` looks for its `[meridian:<id>]` marker in the
+  transcript past the earliest noted size, which `agy` writes when it injects, before the model
+  call, so an Esc'd turn's marker is there too). An entry without its marker goes back to the
+  inbox, which wakes an idle session; a turn with no `Stop` leaves its batch in flight for the
+  next one. Confirm runs before the watcher ask, since an ask's `continue` reply must not defer
+  it. A message injected three times without showing stays in flight, uninjected, and is owed
+  a notice; `settle_undelivered` checks both files against the whole transcript. An in-flight
+  entry an older build wrote has no size and is read against the whole file. `guard.sh` starts
+  Python for `PreInvocation` only for queued messages, never for in-flight ones. The sender
   arrives as data (`MessageSender`, from `spawn message` through the route), never parsed
   from the text. Nothing is sent at exit (the server has about 400 ms before SIGKILL);
   `send_owed_notices` runs at the next server start and in primary-launch recovery, from the

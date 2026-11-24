@@ -3,7 +3,7 @@
 # running; the Stop hook removes it) and removes wake/<conversation> (a model call
 # satisfies a pending wake request).
 # Then starts Meridian for Stop always, and for the other events only when this
-# conversation has no request file yet, has queued or unconfirmed messages, has a row the
+# conversation has no request file yet, has queued messages, has a row the
 # hook has not yet briefed it on, or whose transcript shows a compaction since the hook
 # last looked (the seen file: "<offset> <transcript>"; grep stops at the first hit) or is
 # shorter than that offset, so a session with nothing to do pays for a shell, not for
@@ -32,7 +32,7 @@ if [ "$event" = PreInvocation ]; then
   [ ! -e "$p/wake/$c" ] || rm -f "$p/wake/$c"
 fi
 if [ "$event" != Stop ] && [ -e "$p/requests/$c.json" ] \
-  && [ ! -s "$root/inbox/$c.jsonl" ] && [ ! -s "$root/inflight/$c.jsonl" ] \
+  && [ ! -s "$root/inbox/$c.jsonl" ] \
   && { [ ! -e "$p/rows/$c.json" ] || [ -e "$p/briefed/$c" ]; }; then
   off= file=
   [ -r "$p/seen/$c" ] && read -r off file < "$p/seen/$c"

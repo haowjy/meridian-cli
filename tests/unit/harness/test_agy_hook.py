@@ -265,40 +265,69 @@ def _held_watch_lock(proc: Path, conversation: str) -> Generator[None]:
         os.close(fd)
 
 
-def test_delivered_batch_is_confirmed_by_transcript_and_lost_batch_is_resent(
-    agy_home: Path,
-) -> None:
+def test_batch_is_confirmed_at_stop_and_a_lost_one_returns_to_the_inbox(agy_home: Path) -> None:
     pid = os.getpid()
     payload = _payload("c1", agy_home)
     transcript = Path(json.loads(payload)["transcriptPath"])
-    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping", _sender("p7"))
-
     run_hook("SessionStart", pid, payload)  # registers; this test is about the inbox
+    entry = inbox.enqueue("c1", "[Meridian] Message from spawn p7. Reply.\n\nping", _sender("p7"))
 
     first = run_hook("PreInvocation", pid, payload)
     assert first is not None
     steps = json.loads(first)["injectSteps"]
     assert [s["systemMessage"]["systemMessage"] for s in steps] == [entry.render()]
     assert entry.sender == _sender("p7")
+    assert run_hook("PreInvocation", pid, payload) is None  # nothing more is sent mid-turn
 
-    # Not in the transcript yet: the next call hands it back.
+    # The turn ends and the transcript lacks the marker: back to the inbox, sent once more.
+    _stop_after_turn(agy_home, "c1")
+    assert not inflight_path("c1").exists()
     assert run_hook("PreInvocation", pid, payload) is not None
 
     transcript.parent.mkdir(parents=True)
     transcript.write_text(f"injected by a PreInvocation hook: [meridian:{entry.id}] ping\n")
-    assert run_hook("PreInvocation", pid, payload) is None
+    _stop_after_turn(agy_home, "c1")
     assert not inflight_path("c1").exists()
+    assert not inbox.inbox_path("c1").exists()
 
 
-def test_unconfirmed_entry_is_dropped_after_max_attempts(agy_home: Path) -> None:
+def test_unconfirmed_entry_is_not_resent_after_max_attempts(agy_home: Path) -> None:
     pid = os.getpid()
     payload = _payload("c1", agy_home)
     inbox.enqueue("c1", "ping", None)
 
-    replies = [run_hook("PreInvocation", pid, payload) for _ in range(inbox.MAX_ATTEMPTS + 1)]
+    sent: list[bool] = []
+    for _ in range(inbox.MAX_ATTEMPTS + 1):
+        sent.append(run_hook("PreInvocation", pid, payload) is not None)
+        _stop_after_turn(agy_home, "c1")
 
-    assert [reply is not None for reply in replies] == [True] * inbox.MAX_ATTEMPTS + [False]
+    assert sent == [True] * inbox.MAX_ATTEMPTS + [False]
     assert inflight_path("c1").exists()  # kept for the notice sweep
+
+
+def test_confirm_reads_from_the_earliest_batch_left_by_a_turn_without_stop(
+    agy_home: Path,
+) -> None:
+    transcript = agy_home / "t.jsonl"
+    transcript.write_text("[meridian:old1] from an older build\n")
+    flight = inflight_path("c1")
+    flight.parent.mkdir(parents=True)
+    flight.write_text('{"id":"old1","text":"x","sender":null,"attempts":1}\n')  # no offset
+
+    cancelled = inbox.enqueue("c1", "cancelled turn", None)
+    assert inbox.claim("c1", str(transcript)) != []
+    with transcript.open("a") as handle:  # an Esc: the marker landed, no Stop ran
+        handle.write(f"[meridian:{cancelled.id}] cancelled turn\n")
+    shown = inbox.enqueue("c1", "next turn", None)
+    lost = inbox.enqueue("c1", "lost", None)
+    inbox.claim("c1", str(transcript))
+    with transcript.open("a") as handle:
+        handle.write(f"[meridian:{shown.id}] next turn\n")
+
+    inbox.confirm("c1", str(transcript))
+
+    assert [e.id for e in inbox._read_entries(inbox.inbox_path("c1"))] == [lost.id]  # pyright: ignore[reportPrivateUsage]
+    assert not inflight_path("c1").exists()
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
@@ -309,10 +338,10 @@ def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> 
     fd = os.open(lock_path, os.O_RDWR)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        assert inbox.claim_batch("c1", None) == []
+        assert inbox.claim("c1", None) == []
     finally:
         os.close(fd)
-    assert len(inbox.claim_batch("c1", None)) == 1
+    assert len(inbox.claim("c1", None)) == 1
 
 
 def test_mcp_child_env_drops_identity_but_keeps_home() -> None:
@@ -365,7 +394,7 @@ def test_closed_conversation_notifies_only_for_undelivered_messages(
     seen = inbox.enqueue("c1", "first", _sender("p8"))
     inbox.enqueue("c1", "second", _sender("p9"))
     inbox.enqueue("c1", "third", None)
-    inbox.claim_batch("c1", None)  # all go out; the transcript will show only the first
+    inbox.claim("c1", None)  # all go out; the transcript will show only the first
     transcript.write_text(f"[meridian:{seen.id}] first\n")
 
     send_owed_notices()
