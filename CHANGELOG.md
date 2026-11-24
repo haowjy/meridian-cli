@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-11-24
+
+### Fixed
+- A Meridian message delivered to an Antigravity (`agy`) session is now confirmed when the turn ends instead of on every model call. While a message is in flight, the plugin's hook before each model call no longer starts Python and reads the whole transcript (about 98 ms down to 5 ms per call on a 5 MB transcript), and a message whose delivery didn't reach the transcript goes back to the inbox and wakes an idle session instead of waiting until you type (#1034).
+
 ## [0.27.3] - 2026-11-24
 
 ### Added
