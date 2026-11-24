@@ -346,6 +346,26 @@ def test_crash_in_claim_then_stop_shows_the_message_once(agy_home: Path) -> None
     assert [(e["id"], e["attempts"]) for e in flying] == [(entry.id, 2)]
 
 
+def test_exhausted_entry_stays_in_flight_and_confirm_stops_reading_for_it(
+    agy_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = agy_home / "t.jsonl"
+    transcript.write_text("x\n")
+    inbox.enqueue("c1", "never shown", None)
+    for _ in range(inbox.MAX_ATTEMPTS):
+        inbox.claim("c1", str(transcript))
+        inbox.confirm("c1", str(transcript))
+    before = inflight_path("c1").read_text()
+    assert '"exhausted":true' in before
+
+    reads: list[int] = []
+    monkeypatch.setattr(inbox, "_read_transcript", lambda *args: reads.append(args[1]) or b"")
+    inbox.confirm("c1", str(transcript))
+
+    assert reads == []
+    assert inflight_path("c1").read_text() == before
+
+
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
     from meridian.lib.platform import fcntl
 

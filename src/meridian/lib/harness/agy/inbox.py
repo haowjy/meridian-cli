@@ -51,6 +51,9 @@ class InboxEntry:
     # an older build wrote, or one sent with no readable transcript: ``confirm`` then reads
     # the whole file.
     offset: int | None = None
+    # Set by ``confirm`` on an entry sent ``MAX_ATTEMPTS`` times whose marker never showed:
+    # it stays in flight for the notice sweep and ``confirm`` no longer reads for it.
+    exhausted: bool = False
 
     def render(self) -> str:
         # A hook's system message is easy for a model to read past (a GPT-OSS run ignored
@@ -70,6 +73,7 @@ class InboxEntry:
                 "sender": asdict(self.sender) if self.sender else None,
                 "attempts": self.attempts,
                 **({} if self.offset is None else {"offset": self.offset}),
+                **({"exhausted": True} if self.exhausted else {}),
             },
             separators=(",", ":"),
         )
@@ -143,6 +147,7 @@ def _read_entries(path: Path) -> list[InboxEntry]:
                     sender=MessageSender(**doc["sender"]) if doc.get("sender") else None,
                     attempts=int(doc.get("attempts", 0)),
                     offset=None if doc.get("offset") is None else int(doc["offset"]),
+                    exhausted=bool(doc.get("exhausted", False)),
                 )
             )
         except (ValueError, KeyError, TypeError, AttributeError):
@@ -205,9 +210,15 @@ def confirm(conversation_id: str, transcript_path: str | None) -> None:
 
     Run by the ``Stop`` hook, which is after the turn's model calls: the marker is written
     when ``agy`` injects the message, before the call that shows it. Reads the transcript from
-    the earliest offset ``claim`` noted, the whole file when any entry has none or the file
-    is shorter than that (a compaction). An entry sent ``MAX_ATTEMPTS`` times is not sent
-    again but stays in flight, so the notice sweep tells its sender it was never shown.
+    the earliest offset ``claim`` noted among the entries it still checks, the whole file when
+    one has none or the file is shorter than that (a compaction). An entry sent
+    ``MAX_ATTEMPTS`` times whose marker is missing is not sent again: it is marked exhausted
+    and stays in flight, so the notice sweep tells its sender it was never shown, and
+    later ``Stop`` hooks neither read for it nor rewrite the file.
+
+    Assumes agy runs a conversation's ``Stop`` hook after its ``PreInvocation`` hooks have
+    returned: a ``claim`` racing ``confirm`` could have an entry sent back before its marker
+    is written, and shown twice.
     """
 
     flight = inflight_path(conversation_id)
@@ -217,16 +228,29 @@ def confirm(conversation_id: str, transcript_path: str | None) -> None:
         if not acquired:
             return
         flying = _read_entries(flight)
-        offsets = [e.offset for e in flying]
-        start = 0 if None in offsets else min(cast("list[int]", offsets), default=0)
+        checked = [e for e in flying if not e.exhausted]
+        if not checked:
+            return
+        offsets = [e.offset for e in checked]
+        start = 0 if None in offsets else min(cast("list[int]", offsets))
         transcript = _read_transcript(transcript_path, start)
-        missing = [e for e in flying if f"meridian:{e.id}]".encode() not in transcript]
+        missing = [e for e in checked if f"meridian:{e.id}]".encode() not in transcript]
         retry = [e for e in missing if e.attempts < MAX_ATTEMPTS]
         if retry:
             # Inbox first: a crash between the two writes repeats entries, never loses them.
             inbox = inbox_path(conversation_id)
             _write_entries(inbox, _merge(retry, _read_entries(inbox)))
-        _write_entries(flight, [e for e in missing if e.attempts >= MAX_ATTEMPTS])
+        _write_entries(
+            flight,
+            [
+                *(e for e in flying if e.exhausted),
+                *(
+                    InboxEntry(e.id, e.text, e.sender, e.attempts, e.offset, True)
+                    for e in missing
+                    if e.attempts >= MAX_ATTEMPTS
+                ),
+            ],
+        )
 
 
 def settle_undelivered(
@@ -251,6 +275,7 @@ def settle_undelivered(
         if is_open():
             return
         transcript = _read_transcript(transcript_path, 0)
+        # A crash between ``claim``'s two writes leaves an entry in both files.
         owed = [
             e
             for e in _merge(
