@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.9] - 2026-11-24
+
+### Changed
+- agy's keepwarm ping and state reminder no longer ask the model to restart the watcher; the wake notice already does, so the model makes one call, not two.
+
 ## [0.27.8] - 2026-11-24
 
 ### Fixed
