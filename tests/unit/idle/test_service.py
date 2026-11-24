@@ -12,6 +12,7 @@ from meridian.lib.idle.service import (
     ConfigResult,
     IdleService,
     effective,
+    resolve_policy,
 )
 from meridian.lib.notify import RouteReport, RouteResult
 from meridian.lib.state.idle_store import IdleState
@@ -139,6 +140,15 @@ def test_a_harness_warn_minutes_overrides_the_global_one_for_that_harness_only()
     assert effective("warn_minutes", "agy", config, {"MERIDIAN_IDLE_WARN_MINUTES": "3"}) == 3
     env = {"MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY": "2", "MERIDIAN_IDLE_WARN_MINUTES": "3"}
     assert effective("warn_minutes", "agy", config, env) == 2
+
+
+def test_agy_defaults_to_a_thirty_minute_cache_that_the_person_can_override() -> None:
+    def ttl(config: dict[str, object]) -> object:
+        return resolve_policy("agy", MeridianConfig.model_validate(config), {}).ttl_seconds
+
+    assert ttl({}) == 1800
+    assert ttl({"harness": {"agy": {"idle": {"ttl_seconds": 400}}}}) == 400
+    assert resolve_policy("agy", MeridianConfig.model_validate({}), {}).warn_minutes == 10
 
 
 def test_env_values_meet_the_constraints_file_values_do() -> None:

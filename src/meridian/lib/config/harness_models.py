@@ -247,7 +247,11 @@ else:
         model_default="opencode-go/kimi-k2.6",
     )
     PiHarnessProfileConfig = harness_profile_model("pi", base=PiHarnessProfileBase)
-    AgyHarnessProfileConfig = harness_profile_model("agy", idle_only=True)
+    AgyHarnessProfileConfig = harness_profile_model(
+        "agy",
+        idle_only=True,
+        idle_defaults={"ttl_seconds": 1800},
+    )
 
 
 class HarnessConfig(ConfigModel):
