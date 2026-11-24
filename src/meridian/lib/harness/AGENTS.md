@@ -191,6 +191,13 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   each non-return turn end. The sensor remembers the ids it sent; a turn whose steps carry one
   is reported with `IdleEvent.prompt_replies`, from which core reads `stop-waiting`. The ping turn
   is not kept read-only: `PreToolUse` carries no read-only flag, a known gap.
+  A typed `/compact` (its summary is a model call that ends like a turn) is reported as a
+  `user_prompt` event, which closes the stretch and arms none; `/clear` writes nothing to the
+  old conversation and starts another, so the sensor reads the TUI's `flock` on
+  `~/.gemini/antigravity-cli/presence/<conversation>.lock` (dropped on `/clear` and on exit; a
+  missing file or failed probe counts as held), reports `user_prompt` once when it is gone, and reports
+  no turn end until it is held again. Without that, the old conversation's watcher keeps
+  waking it for pings no one sees.
   Config reaches the sidecar through `holds._idle_env`: `call_env(row)` (identity only, the
   `MERIDIAN_*` strip above) plus the env vars of every option in `config.loader.OPTION_CATALOG`
   that the server's own environment sets, and `_MERIDIAN_HARNESS=agy`; the result is

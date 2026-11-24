@@ -5,13 +5,17 @@ keeps. The ``PreInvocation`` guard creates ``busy/<conversation>`` and the ``Sto
 removes it (``TurnState`` below reads it, and an Esc). When the mark goes, the sensor
 reads the transcript past the offset it has already read and reports the turn: a typed
 ``USER_INPUT`` step means the person came back, while a wake appends only a
-``SYSTEM_MESSAGE`` and continues the stretch the last typed turn opened.
+``SYSTEM_MESSAGE`` and continues the stretch the last typed turn opened. A typed ``/compact``
+is a return that opens no stretch (its summary is a model call, but the person is at the
+keyboard), and a conversation the TUI has left (``/clear`` starts another and writes nothing
+to the old one) ends its stretch and reports nothing more until the TUI holds it again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import AsyncIterator
@@ -27,6 +31,7 @@ from meridian.lib.harness.agy.transcript import AgyTranscriptParser, transcript_
 from meridian.lib.harness.agy.watch import watcher_running
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import IdleEvent
+from meridian.lib.platform import fcntl
 
 POLL_SECONDS = 1.0
 
@@ -99,6 +104,7 @@ def _termination_reason(blob: bytes) -> int | None:
 
 
 _USER_CANCELED = 2
+_COMPACT = "/compact"
 
 
 class TurnState:
@@ -259,6 +265,8 @@ class AgyIdleSensor:
         self._seen_running = False
         self._unreported = False
         self._observe_lock = threading.Lock()
+        # The TUI left the conversation and the stretch was closed for it.
+        self._left = False
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         _ = event
@@ -308,11 +316,41 @@ class AgyIdleSensor:
             and not self._unreported
         )
 
+    def _in_tui(self) -> bool:
+        """Whether a TUI still holds the conversation. ``agy`` keeps an exclusive ``flock`` on
+        ``presence/<conversation>.lock`` while it shows the conversation and drops it on
+        ``/clear`` (which starts another conversation) and on exit; seen on ``agy`` 1.5.16.
+        Google documents none of it: a missing file or a failed probe reads as held, so the
+        worst case is the old behavior."""
+
+        path = native_store().parent / "presence" / f"{self._conversation}.lock"
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        except OSError:
+            return True
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:  # BlockingIOError: a TUI holds it
+            return True
+        finally:
+            os.close(fd)  # closing releases a lock the probe took
+        return False
+
     async def events(self) -> AsyncIterator[IdleEvent]:
         await asyncio.to_thread(self._observe)
         while True:
             await asyncio.sleep(self._poll_seconds)
             await asyncio.to_thread(self._observe)
+            if not await asyncio.to_thread(self._in_tui):
+                if not self._left:
+                    self._left = True
+                    yield IdleEvent(
+                        kind="user_prompt",
+                        harness_session_id=self._conversation,
+                        turn_id=None,
+                    )
+                continue
+            self._left = False
             if self._unreported:
                 event = await asyncio.to_thread(self._turn_end)
                 if event is None:
@@ -321,6 +359,8 @@ class AgyIdleSensor:
                 self._unreported = False
 
     def _turn_end(self) -> IdleEvent | None:
+        """The event for the turn that ended: ``None`` when the transcript was unreadable."""
+
         steps = self._read_steps()
         if steps is None:
             return None
@@ -331,6 +371,12 @@ class AgyIdleSensor:
             self._user_text = turn.user_text
         shown = {id_ for id_ in self._prompts if any(_carries(step, id_) for step in steps)}
         self._prompts -= shown
+        if returned and (turn.user_text or "").strip() == _COMPACT:
+            return IdleEvent(
+                kind="user_prompt",
+                harness_session_id=self._conversation,
+                turn_id=turn.typed_step,
+            )
         return IdleEvent(
             kind="turn_end",
             harness_session_id=self._conversation,
