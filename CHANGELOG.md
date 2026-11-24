@@ -6,6 +6,16 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.6] - 2026-11-24
+
+### Added
+- Antigravity (`agy`) sessions can now keep their prompt cache warm, as Claude sessions can. With keepwarm on (off by default), Meridian sends up to `keepwarm_pings` short messages after the cache warning, one warning lead apart, while you are away. They are delivered only while the session's message watcher runs and no turn is running. Typing cancels them, and a reply ending in `stop-waiting` ends them. The state reminder takes the first slot when a work item is active. Each ping costs about two model calls on your Antigravity quota. Unlike on Claude, the ping turn isn't kept read-only: the ping text asks the model to do nothing else.
+
+### Changed
+- Antigravity (`agy`) sessions now assume a 30-minute prompt-cache window by default. The cache warning, and with a work item the state reminder, go out about 20 minutes after a turn with no configuration. Google publishes no window; the cache was observed to hold across 25-minute idle gaps. Set `[harness.agy.idle] ttl_seconds` or `warn_minutes` to change it.
+- A global `[idle] keepwarm = true` now also turns keepwarm on for agy sessions, as it does for every harness with keepwarm. If you set it for Claude only, move it under `[harness.claude.idle]`, or set `[harness.agy.idle] keepwarm = false`.
+- On agy, a state reminder is no longer queued while a turn runs or after Esc, when nothing could deliver it until you type. An undelivered reminder now takes the stretch's next prompt slot instead of being lost.
+
 ## [0.27.5] - 2026-11-24
 
 ### Added
