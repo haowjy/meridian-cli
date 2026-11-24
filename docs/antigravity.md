@@ -203,7 +203,7 @@ messages.
 State is under `~/.meridian/agy/`: one directory per running `agy` process
 (`<pid>-<birth>`) with a request file per conversation (written by the hook), the row
 the server holds, and the watcher's per-conversation files (`busy/`, `asked/`, `watch/`,
-`wake/`, `backoff/`), all removed with the directory once that `agy` process is gone; and a
+`backoff/`), all removed with the directory once that `agy` process is gone; and a
 message inbox per conversation. A server that is killed leaves its
 rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
 for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars
@@ -216,9 +216,11 @@ Meridian sends it some time after the agent's turn ends (the usual timing, which
 how long you waited for that turn), and typing resets that timer. A turn that Meridian's
 watcher or an `agy` background command's exit started on its own does not reset it and sends
 no second notice. You also get the cache warning before the prompt cache expires: Meridian
-assumes a 30-minute cache (Google publishes no cache window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026) and warns
-`idle.warn_minutes` (10 by default) before it ends, so the warning comes about 20 minutes after
-the turn. Adjust it with `ttl_seconds` and `warn_minutes` below. Meridian reads each turn's end from the plugin's server; nothing is typed into
+assumes a 30-minute cache and warns `idle.warn_minutes` (10 by default) before it ends, so the
+warning comes about 20 minutes after the turn. Google publishes no cache window, and it depends
+on the model: in November 2026 `gemini-4-neon` at Medium effort still hit the cache after
+55 minutes idle, while `gemini-3.8-flash-low` had lost it by then. Set `ttl_seconds` below to
+fit the model you run, such as `3600` for Neon Medium, and `warn_minutes` for the lead. Meridian reads each turn's end from the plugin's server; nothing is typed into
 your terminal. When the warning goes out and the session has a work item, Meridian also queues
 a message asking the model to bring the work item up to date (`state_reminder`, on by default);
 it wakes an idle session like any message. With `keepwarm = true` (off by default) the
@@ -233,7 +235,7 @@ compaction does not end the pings. To configure it, see
 ```toml
 [harness.agy.idle]
 enabled = true        # false turns off the push and the warning
-ttl_seconds = 1800    # your estimate of the model's cache lifetime (the default)
+ttl_seconds = 1800    # your estimate of your model's cache lifetime (the default)
 warn_minutes = 3      # warn this long before it ends; overrides [idle] warn_minutes (10)
 state_reminder = true # ask the model to update the work item at the warning
 keepwarm = false      # true: keep the cache warm with Meridian messages after the warning

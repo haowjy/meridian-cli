@@ -24,7 +24,6 @@ from meridian.lib.harness.agy.state import (
     is_safe_id,
     process_birth,
     process_dir,
-    wake_path,
     watch_lock_path,
 )
 from meridian.lib.platform import fcntl
@@ -43,7 +42,7 @@ def watch_command(agy_pid: int, conversation: str) -> str:
 
 
 def start_instructions(agy_pid: int, conversation: str) -> str:
-    """How the model starts the watcher; the ``Stop`` reply and both wake notices say it."""
+    """How the model starts the watcher; the ``Stop`` reply and the wake notice say it."""
 
     return (
         f"Run `{watch_command(agy_pid, conversation)}` with run_command, WaitMsBeforeAsync "
@@ -90,13 +89,6 @@ def _inbox_signature(conversation: str) -> tuple[int, int, int] | None:
     return (stat.st_ino, stat.st_size, stat.st_mtime_ns) if stat.st_size > 0 else None
 
 
-def _wake_text(proc_dir: Path, conversation: str) -> str | None:
-    try:
-        return wake_path(proc_dir, conversation).read_text().strip() or "Meridian woke you."
-    except OSError:
-        return None
-
-
 def run(agy_pid: int, conversation: str) -> int:
     """Run until the session is idle and has a reason to wake; always returns 0."""
 
@@ -140,17 +132,13 @@ def run(agy_pid: int, conversation: str) -> int:
             return 0
         if busy_path(proc_dir, conversation).exists():
             continue
-        text = _wake_text(proc_dir, conversation)
-        if text is None:
-            signature = _inbox_signature(conversation)
-            if signature is None or signature == noted:
-                continue
-            text = (
-                "A Meridian message arrived for this session. "
-                "It will arrive in this turn: act on it."
-            )
+        signature = _inbox_signature(conversation)
+        if signature is None or signature == noted:
+            continue
         print(
-            f"{text}\n\nThen start the watcher again. {start_instructions(agy_pid, conversation)}"
+            "A Meridian message arrived for this session. "
+            "It will arrive in this turn: act on it.\n\n"
+            f"Then start the watcher again. {start_instructions(agy_pid, conversation)}"
         )
         sys.stdout.flush()
         return 0

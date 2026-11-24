@@ -168,13 +168,6 @@ def watch_lock_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "watch" / f"{conversation_id}.lock"
 
 
-def wake_path(proc_dir: Path, conversation_id: str) -> Path:
-    """Text the watcher prints to wake the session when it is next idle. ``guard.sh`` removes
-    it on every ``PreInvocation``: any model call satisfies it."""
-
-    return proc_dir / "wake" / conversation_id
-
-
 def inbox_path(conversation_id: str) -> Path:
     return agy_root() / "inbox" / f"{conversation_id}.jsonl"
 
@@ -249,7 +242,6 @@ __all__ = [
     "row_path",
     "scrubbed_env",
     "seen_path",
-    "wake_path",
     "watch_lock_path",
     "write_private_json",
     "write_seen",
