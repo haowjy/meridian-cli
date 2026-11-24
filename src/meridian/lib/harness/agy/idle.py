@@ -32,13 +32,15 @@ POLL_SECONDS = 1.0
 
 # The Claude mod's reminder (``claude_runtime/meridian-idle/hooks/keepwarm.ts``
 # ``reminderText``) without its closing choices: ``agy`` cannot compact on demand (#1049)
-# and has no pings to stop. The mod is TypeScript, so the wording is kept in step by hand.
+# and has no pings to stop. It ends by restarting the watcher, which the wake already asks
+# for, so a model that follows both makes one model call, not two. The mod is TypeScript,
+# so the two wordings are kept in step by hand.
 STATE_REMINDER = (
     "[Meridian] State reminder. This turn keeps your prompt cache warm while the user is "
     "away; it is about to expire. Run `meridian work show` and update the work item's "
     "recorded state in place: status, decisions with their reasons, open questions, promises "
-    "to other sessions, where you stopped. If nothing changed, write nothing. Then end your "
-    "reply."
+    "to other sessions, where you stopped. If nothing changed, write nothing. Then start the "
+    "watcher again, as the wake notice asks, and end your reply."
 )
 
 
