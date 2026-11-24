@@ -196,9 +196,10 @@ def _env_value(
     owner = IdleConfig if option.field_path[0] == "idle" else HarnessIdleConfig
     field = owner.model_fields[option.field_path[-1]]
     try:
-        return TypeAdapter(Annotated[(field.annotation, *field.metadata, "")]).validate_python(
-            value
-        )
+        checked: object = TypeAdapter[object](
+            Annotated[(field.annotation, *field.metadata, "")]
+        ).validate_python(value)
+        return checked
     except ValidationError as error:
         raise ValueError(
             f"Invalid environment override '{option.primary_env_var}': {error.errors()[0]['msg']}."
