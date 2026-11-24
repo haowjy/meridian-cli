@@ -186,8 +186,8 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   returns False, the sidecar returns the slot, and a dropped reminder stays owed
   (`Stretch.reminder_owed`) for the next turn end. The sidecar spends a slot before `send` and
   leaves it spent if the send is cancelled. The wording mirrors the Claude mod's without `compact-now` (`agy` cannot compact on
-  demand) and ends by restarting the watcher. Keepwarm's later pings are timed by the sidecar
-  (`idle/sidecar.py`, `idle/keepwarm.py`; in-memory record, none after a restart), one lead after
+  demand); the wake notice, not the prompt, asks for the watcher restart. Keepwarm's later pings are timed by the sidecar
+  (`idle/keepwarm.py`; in-memory record, none after a restart), one lead after
   each non-return turn end. The sensor remembers the ids it sent; a turn whose steps carry one
   is reported with `IdleEvent.prompt_replies`, from which core reads `stop-waiting`. The ping turn
   is not kept read-only: `PreToolUse` carries no read-only flag, a known gap.
