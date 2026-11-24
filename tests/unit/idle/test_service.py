@@ -4,6 +4,8 @@ from collections.abc import Callable
 from threading import Lock
 from typing import TypeVar
 
+import pytest
+
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.idle_types import BackgroundTask, CacheTtl, DetectIdleTtl
 from meridian.lib.idle.service import (
@@ -137,6 +139,18 @@ def test_a_harness_warn_minutes_overrides_the_global_one_for_that_harness_only()
     assert effective("warn_minutes", "agy", config, {"MERIDIAN_IDLE_WARN_MINUTES": "3"}) == 3
     env = {"MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY": "2", "MERIDIAN_IDLE_WARN_MINUTES": "3"}
     assert effective("warn_minutes", "agy", config, env) == 2
+
+
+def test_env_values_meet_the_constraints_file_values_do() -> None:
+    config = MeridianConfig.model_validate({})
+
+    for name in ("MERIDIAN_IDLE_WARN_MINUTES", "MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY"):
+        with pytest.raises(ValueError, match=name):
+            effective("warn_minutes", "agy", config, {name: "-5"})
+    with pytest.raises(ValueError, match="MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS"):
+        effective(
+            "quick_turn_push_seconds", "agy", config, {"MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS": "0"}
+        )
 
 
 def test_a_warning_that_acts_answers_the_push_for_the_rest_of_the_stretch() -> None:
