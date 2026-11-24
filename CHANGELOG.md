@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-11-24
+
+### Added
+- Antigravity (`agy`) sessions now get Meridian's idle push notification, as other harnesses do, and the cache warning when you set `[harness.agy.idle] ttl_seconds` (agy has no default, because Google publishes no cache window). `[harness.agy.idle]` takes `enabled` and `ttl_seconds`; `meridian agy` warns if `keepwarm` is set there, since agy has no keepwarm. The push also goes out when you leave a session after pressing Esc.
+
+### Fixed
+- When Meridian's agy MCP server hit an error while serving a conversation, the conversation's spawn row stayed `running`; it is now completed as failed (#1031).
+
 ## [0.27.2] - 2026-11-23
 
 ### Added
