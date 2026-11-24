@@ -178,3 +178,64 @@ def test_a_wake_after_a_same_process_readoption_continues_the_stretch(session: S
     assert after is not None
     assert after.stretch == typed.stretch
     assert after.last_turn_id == "0"
+
+
+def test_the_reply_to_a_prompt_meridian_sent_is_reported_with_the_turn_end(
+    session: Session,
+) -> None:
+    import os
+
+    from meridian.lib.harness.agy import inbox
+    from meridian.lib.harness.agy.state import watch_lock_path
+    from meridian.lib.platform import fcntl
+
+    sensor = AgyIdleSensor(session.proc, CONVERSATION, stored_turn_id=None, poll_seconds=0.02)
+    lock = watch_lock_path(session.proc, CONVERSATION)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_turn(first: str, reply: str) -> None:
+        steps = (
+            {"type": "SYSTEM_MESSAGE", "content": first},
+            {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": reply},
+        )
+        with session.transcript.open("a") as handle:
+            for step in steps:
+                step |= {"step_index": session.steps, "created_at": "2026-11-23T22:15:50Z"}
+                handle.write(json.dumps(step) + "\n")
+                session.steps += 1
+
+    async def end_turn() -> None:
+        busy_path(session.proc, CONVERSATION).unlink()
+        await asyncio.sleep(0.2)
+        busy_path(session.proc, CONVERSATION).touch()  # the next turn starts
+        await asyncio.sleep(0.2)
+
+    async def main() -> list[tuple[str, ...]]:
+        replies: list[tuple[str, ...]] = []
+
+        async def collect() -> None:
+            async for event in sensor.events():
+                replies.append(event.prompt_replies)
+                if len(replies) == 2:
+                    return
+
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.1)
+        fd = os.open(lock, os.O_RDONLY | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)  # a watcher runs
+        try:
+            assert await sensor.send("ping", stop_offered=True)
+        finally:
+            os.close(fd)
+        (entry,) = inbox.claim(CONVERSATION, None)
+        busy_path(session.proc, CONVERSATION).touch()  # the wake's turn starts
+        await asyncio.sleep(0.1)
+        write_turn(f"[meridian:{entry.id}] ping", "ok\nstop-waiting")
+        await end_turn()
+        write_turn("task exited", "later")
+        await end_turn()
+        await asyncio.wait_for(task, 3)
+        return replies
+
+    # The turn that carried the marker reports its reply; the next one reports none.
+    assert asyncio.run(main()) == [("ok\nstop-waiting",), ()]

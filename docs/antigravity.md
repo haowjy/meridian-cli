@@ -221,7 +221,13 @@ assumes a 30-minute cache (Google publishes no cache window; the cache was obser
 the turn. Adjust it with `ttl_seconds` and `warn_minutes` below. Meridian reads each turn's end from the plugin's server; nothing is typed into
 your terminal. When the warning goes out and the session has a work item, Meridian also queues
 a message asking the model to bring the work item up to date (`state_reminder`, on by default);
-it wakes an idle session like any message. `keepwarm` does nothing for agy. To configure it, see
+it wakes an idle session like any message. With `keepwarm = true` (off by default) the
+warning is followed by up to `keepwarm_pings` Meridian messages that keep the cache warm, one
+lead apart; each costs two model calls on your quota, only goes out while the watcher runs, and
+ends when you type or the model's reply ends with `stop-waiting`. Known gaps: unlike Claude's
+ping, agy's ping turn is not kept read-only (the hook cannot tell which tools only read), so a
+model that acts on one runs an ordinary turn; a ping can arrive while you are typing; and a
+compaction does not end the pings. To configure it, see
 [`[harness.<harness>.idle]`](configuration.md#harnessharnessidle) with `agy` as the harness:
 
 ```toml
@@ -230,4 +236,6 @@ enabled = true        # false turns off the push and the warning
 ttl_seconds = 1800    # your estimate of the model's cache lifetime (the default)
 warn_minutes = 3      # warn this long before it ends; overrides [idle] warn_minutes (10)
 state_reminder = true # ask the model to update the work item at the warning
+keepwarm = false      # true: keep the cache warm with Meridian messages after the warning
+keepwarm_pings = 3    # at most this many per stretch (the reminder takes the first)
 ```

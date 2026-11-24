@@ -34,6 +34,15 @@ session while the cache is warm, once the box is quiet; it measures its own
 cold-cache deadline from the reminder's turn and stops if another compaction
 lands first. Core never compacts and does not see the choice.
 
-The sidecar hands `remind` to a sensor that has `remind()` (`StateReminderSink` in
+The sidecar hands `remind` to a sensor that takes prompts (`PromptSink` in
 `harness/idle_types.py`); core names no harness. agy's sensor queues the reminder in the
-conversation's inbox, so it waits for the session's next model call and offers no choice.
+conversation's inbox, so it waits for the session's next model call and offers no `compact-now`.
+
+Keepwarm for such a sensor is timed here, not in a mod: `Stretch` (`keepwarm.py`) is an
+in-memory record per stretch. Ping 1 goes out when `fire warn` acts (the reminder takes its
+slot), each later one a `lead` after a non-return turn end of the stretch (the lead taken from
+the arm that placed the warning, as Claude's mod does), up to `keepwarm_pings`, stopping a
+minute before the cache would expire; a return cancels, and an `IdleEvent.prompt_replies` entry ending in
+`stop-waiting` ends them. A sensor that could not deliver spends no slot. A sidecar with no record
+(it restarted mid-stretch) sends none: core's `done["warn"]` persists, so it never re-warns, and
+adding an `IdleState` field older builds cannot read is the alternative this rules out.

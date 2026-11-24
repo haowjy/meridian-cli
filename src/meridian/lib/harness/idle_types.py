@@ -52,6 +52,10 @@ class IdleEvent:
     last_assistant_text: str | None = None
     provider: str | None = None
     background_tasks: tuple[BackgroundTask, ...] = ()
+    # Every reply without a tool call from a turn that answered a prompt Meridian sent through
+    # ``PromptSink`` (a keepwarm ping or the state reminder); core reads its choice from them.
+    # All of them, since a ``Stop`` continuation (restarting the watcher) answers last.
+    prompt_replies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,11 +106,16 @@ class IdleSensor(Protocol):
 
 
 @runtime_checkable
-class StateReminderSink(Protocol):
-    """A sensor whose harness acts on the state reminder: the sidecar calls it when a fired
-    warning answers ``remind``. Sensors without it get no reminder."""
+class PromptSink(Protocol):
+    """A sensor whose harness takes a prompt from Meridian at the cache warning: the state
+    reminder, and keepwarm pings. Sensors without it get neither.
 
-    async def remind(self) -> None: ...
+    ``stop_offered`` says the prompt may end with ``stop-waiting`` (keepwarm is on). Returns
+    whether the prompt was delivered: one the harness could not deliver (no way to wake the
+    session) spends no keepwarm slot.
+    """
+
+    async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -139,6 +148,6 @@ __all__ = [
     "IdleSensorContext",
     "NativeIdleHook",
     "PinnedIdleSession",
+    "PromptSink",
     "SidecarContext",
-    "StateReminderSink",
 ]

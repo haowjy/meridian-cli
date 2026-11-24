@@ -264,7 +264,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "idle": GroupHelp(
         summary="Manage harness idle schedules.",
-        long_help="Adapter-facing idle scheduling and safety decisions. Idle handling runs only in an interactive primary session, and keepwarm and the state reminder only where the harness can submit a prompt at the cache warning: the Claude mod today.",
+        long_help="Adapter-facing idle scheduling and safety decisions. Idle handling runs only in an interactive primary session, and keepwarm and the state reminder only where the harness can submit a prompt at the cache warning: the Claude mod and agy today.",
         agent_notes="Called by harness adapters; humans use `idle status`.",
         agent_subcommands=(
             "config",
