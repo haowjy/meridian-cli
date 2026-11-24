@@ -224,7 +224,7 @@ def test_the_reply_to_a_prompt_meridian_sent_is_reported_with_the_turn_end(
         fd = os.open(lock, os.O_RDONLY | os.O_CREAT)
         fcntl.flock(fd, fcntl.LOCK_EX)  # a watcher runs
         try:
-            assert await sensor.send("ping", stop_offered=True)
+            assert await sensor.send("ping", stop_offered=True, expires_at=2**62)
         finally:
             os.close(fd)
         (entry,) = inbox.claim(CONVERSATION, None)

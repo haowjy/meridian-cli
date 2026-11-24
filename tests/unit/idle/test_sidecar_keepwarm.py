@@ -39,7 +39,9 @@ class Sensor:
     async def busy(self) -> bool:
         return self.running
 
-    async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+    async def send(
+        self, kind: Literal["reminder", "ping"], *, stop_offered: bool, expires_at: int
+    ) -> bool:
         self.sent.append((kind, stop_offered))
         self.running = self.busy_after_send
         return self.delivers
@@ -185,7 +187,9 @@ def test_stop_reply_parsing_matches_the_claude_mod() -> None:
 
 def test_a_send_cancelled_by_a_turn_end_stays_spent() -> None:
     class Slow(Sensor):
-        async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+        async def send(
+            self, kind: Literal["reminder", "ping"], *, stop_offered: bool, expires_at: int
+        ) -> bool:
             self.sent.append((kind, stop_offered))
             if len(self.sent) == 2:  # a turn ends while this ping's inbox write is in flight
                 await self.events_in.put(_turn())
@@ -200,7 +204,9 @@ def test_a_send_cancelled_by_a_turn_end_stays_spent() -> None:
 
 def test_a_reminder_that_could_not_be_sent_is_the_next_prompt_before_any_ping() -> None:
     class RefusesFirst(Sensor):
-        async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+        async def send(
+            self, kind: Literal["reminder", "ping"], *, stop_offered: bool, expires_at: int
+        ) -> bool:
             self.sent.append((kind, stop_offered))
             return len(self.sent) > 1
 

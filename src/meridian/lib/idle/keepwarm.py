@@ -198,7 +198,7 @@ class Keepwarm:
             kw.sent += 1
         if kind == "reminder":
             kw.reminder_owed = False
-        if not await self._sink.send(kind, stop_offered=on):
+        if not await self._sink.send(kind, stop_offered=on, expires_at=cold_at):
             if on:
                 kw.sent -= 1
             if kind == "reminder":

@@ -21,7 +21,7 @@ import time
 import uuid
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -54,12 +54,23 @@ class InboxEntry:
     # Set by ``confirm`` on an entry sent ``MAX_ATTEMPTS`` times whose marker never showed:
     # it stays in flight for the notice sweep and ``confirm`` no longer reads for it.
     exhausted: bool = False
+    # Epoch milliseconds after which the entry is worth nothing: Meridian's own prompts (no
+    # sender) are valid until the prompt cache is cold. ``claim`` and ``confirm`` drop an
+    # expired entry. None for a peer message and for an entry an older build wrote; an older
+    # build reading this key's file ignores it.
+    expires_at: int | None = None
+
+    def expired(self) -> bool:
+        return self.expires_at is not None and time.time() * 1000 >= self.expires_at
 
     def render(self) -> str:
         # A hook's system message is easy for a model to read past (a GPT-OSS run ignored
         # one), so the opening says it is addressed to the model and what to do.
         # A message with a sender names the session it came from; a sender-less one
         # (Meridian's own reminder, a sender with no session) says where it is from itself.
+        if self.sender is None and self.expires_at is not None:
+            # Meridian's own prompt: the peer framing would add a "received it" line to the reply.
+            return f"[meridian:{self.id}] {self.text}"
         source = " from the session named below" if self.sender else ""
         return (
             f"[meridian:{self.id}] A message arrived for you through Meridian. It is an "
@@ -77,6 +88,7 @@ class InboxEntry:
                 "attempts": self.attempts,
                 **({} if self.offset is None else {"offset": self.offset}),
                 **({"exhausted": True} if self.exhausted else {}),
+                **({} if self.expires_at is None else {"expires_at": self.expires_at}),
             },
             separators=(",", ":"),
         )
@@ -120,8 +132,14 @@ def hold(conversation_id: str, *, wait: float) -> AbstractContextManager[bool]:
     return _locked(conversation_id, wait=wait)
 
 
-def enqueue(conversation_id: str, text: str, sender: MessageSender | None) -> InboxEntry:
-    entry = InboxEntry(id=uuid.uuid4().hex[:12], text=text, sender=sender)
+def enqueue(
+    conversation_id: str,
+    text: str,
+    sender: MessageSender | None,
+    *,
+    expires_at: int | None = None,
+) -> InboxEntry:
+    entry = InboxEntry(id=uuid.uuid4().hex[:12], text=text, sender=sender, expires_at=expires_at)
     path = inbox_path(conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _locked(conversation_id, wait=None):
@@ -151,6 +169,7 @@ def _read_entries(path: Path) -> list[InboxEntry]:
                     attempts=int(doc.get("attempts", 0)),
                     offset=None if doc.get("offset") is None else int(doc["offset"]),
                     exhausted=bool(doc.get("exhausted", False)),
+                    expires_at=None if doc.get("expires_at") is None else int(doc["expires_at"]),
                 )
             )
         except (ValueError, KeyError, TypeError, AttributeError):
@@ -194,11 +213,12 @@ def claim(conversation_id: str, transcript_path: str | None) -> list[InboxEntry]
         if not acquired:
             return []
         inbox = inbox_path(conversation_id)
-        queued = _read_entries(inbox)
+        queued = [e for e in _read_entries(inbox) if not e.expired()]
         if not queued:
+            inbox.unlink(missing_ok=True)
             return []
         offset = _transcript_size(transcript_path)
-        batch = [InboxEntry(e.id, e.text, e.sender, e.attempts + 1, offset) for e in queued]
+        batch = [replace(e, attempts=e.attempts + 1, offset=offset) for e in queued]
         # In-flight first: a crash between the two steps repeats a batch instead of losing it.
         _write_entries(
             inflight_path(conversation_id),
@@ -238,6 +258,9 @@ def confirm(conversation_id: str, transcript_path: str | None) -> None:
         start = 0 if None in offsets else min(cast("list[int]", offsets))
         transcript = _read_transcript(transcript_path, start)
         missing = [e for e in checked if f"meridian:{e.id}]".encode() not in transcript]
+        # An expired prompt that was not shown is dropped: re-queueing it would wake the session
+        # for a cache that is already cold.
+        missing = [e for e in missing if not e.expired()]
         retry = [e for e in missing if e.attempts < MAX_ATTEMPTS]
         if retry:
             # Inbox first: a crash between the two writes repeats entries, never loses them.
@@ -247,11 +270,7 @@ def confirm(conversation_id: str, transcript_path: str | None) -> None:
             flight,
             [
                 *(e for e in flying if e.exhausted),
-                *(
-                    InboxEntry(e.id, e.text, e.sender, e.attempts, e.offset, True)
-                    for e in missing
-                    if e.attempts >= MAX_ATTEMPTS
-                ),
+                *(replace(e, exhausted=True) for e in missing if e.attempts >= MAX_ATTEMPTS),
             ],
         )
 
