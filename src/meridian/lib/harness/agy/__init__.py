@@ -20,7 +20,7 @@ State lives under ``<meridian home>/agy/``:
 - ``<pid>-<birth>/seen/<conversation>``: ``<offset> <transcript path>``, how far the hook
   has read the transcript. The shell guard greps the bytes after it for a compaction.
 - ``inbox/<conversation>.jsonl``, ``inflight/<conversation>.jsonl``: queued and
-  delivered-but-unconfirmed messages (see ``inbox.py``).
+  sent-but-unconfirmed messages (see ``inbox.py``).
 
 ``mars/hooks/meridian-session/guard.sh`` computes the same paths, so a
 change to the layout changes both.

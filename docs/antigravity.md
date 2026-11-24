@@ -128,7 +128,9 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
   and a no-argument `spawn wait` works.
 - **Messages.** `meridian spawn message <spawn or chat> --message "..."` to the session
   prints `queued`. `agy` has no way to push a message in, so it reaches the model at the
-  session's next model call: later in the current turn, or when the session wakes.
+  session's next model call: later in the current turn, or when the session wakes. The plugin
+  confirms it at the turn's end by finding it in `agy`'s transcript; one it cannot find is
+  queued again, which wakes an idle session, up to three sends.
 - **Waking for messages.** An idle session wakes by itself, about a second after a message
   arrives, while its Meridian watcher runs. The watcher is a background command,
   `meridian harness-watch agy ...`, that the model starts when the plugin's `Stop` hook asks
@@ -179,7 +181,7 @@ conversation IDs can't be read as sessions.
   the command that resumes it.
 - **Deliver to a session that ended.** A message that `agy` never showed its model is not
   delivered: the process exited first, or the transcript did not show it after three
-  injections (the message is then not injected again). The sender is told, but late: the
+  sends (the message is then not sent again). The sender is told, but late: the
   notice goes out when the next `agy` server starts or the next primary session starts,
   in any project, not at the moment the session ends. A sender that has finished by then
   gets nothing, and so does one with no Meridian session. A notice can repeat.

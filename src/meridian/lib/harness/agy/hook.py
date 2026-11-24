@@ -1,14 +1,15 @@
 """``meridian harness-hook agy <event>``: the ``SessionStart``, ``PreInvocation``, ``Stop`` hooks.
 
 ``agy`` runs this before model calls and at the end of each turn, and waits for it, so it
-takes no blocking locks (at most a 0.5 s wait to register a conversation), starts no
-process, imports nothing from the idle stack, and prints nothing when it has no opinion
-(never ``{}``: ``agy`` reads some empty replies as a decision). Every failure is swallowed:
-a broken hook must not break the person's session.
+takes no blocking locks (at most a 0.5 s wait to register a conversation or to confirm a
+batch), starts no process, imports nothing from the idle stack, and prints nothing when it
+has no opinion (never ``{}``: ``agy`` reads some empty replies as a decision). Every failure
+is swallowed: a broken hook must not break the person's session.
 
-``Stop`` marks where a turn ends. It asks the model once per turn to start the watcher
-(``watch.py``) when none runs, and otherwise removes the turn's ``busy`` and ``asked`` marks.
-``guard.sh`` creates ``busy`` on every ``PreInvocation``.
+``Stop`` marks where a turn ends. It confirms the messages the turn showed the model
+(``inbox.confirm``), asks the model once per turn to start the watcher (``watch.py``) when
+none runs, and otherwise removes the turn's ``busy`` and ``asked`` marks. ``guard.sh``
+creates ``busy`` on every ``PreInvocation``.
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         # Under the conversation's lock, so a notice sweep that is settling this
         # conversation finishes first. A held lock means a sweep is mid-notice (seconds):
         # skip this call and register on the next hook instead of making the model wait.
-        with inbox.hold(conversation, wait=inbox.REGISTER_WAIT_SECONDS) as acquired:
+        with inbox.hold(conversation, wait=inbox.HOOK_LOCK_WAIT_SECONDS) as acquired:
             if not acquired:
                 return None
             request = _register(proc_dir, conversation, payload)
@@ -106,7 +107,7 @@ def _handle(event: str, agy_pid: int, payload: dict[str, Any]) -> str | None:
         _log_error("guidance")
         texts = []
     try:
-        texts.extend(entry.render() for entry in inbox.claim_batch(conversation, transcript))
+        texts.extend(entry.render() for entry in inbox.claim(conversation, transcript))
     except Exception:
         _log_error("inbox")
     return inject_reply(texts) if texts else None
@@ -119,9 +120,11 @@ _MAX_SKIPPED_TURN_ENDS = 32
 
 
 def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, Any]) -> str | None:
-    """Ask the model, once a turn, to start the watcher; otherwise end the turn's marks.
+    """Confirm the turn's messages, ask once a turn for the watcher, end the turn's marks.
 
-    The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
+    Confirming comes first so an ask's early return cannot defer it: an Esc during the
+    continuation fires no ``Stop``, and a batch that came back would wait for the next typed
+    turn. The ask keeps the turn going, so ``busy`` stays and ``asked`` is what stops a second
     ask on the continuation's own ``Stop``. A subagent is never asked (its model would
     start a watcher the person's session does not own) and a cancelled turn is not nagged.
     A model or person that declines is asked again next turn. After two asks in a row ended
@@ -130,6 +133,11 @@ def _stop(agy_pid: int, proc_dir: Path, conversation: str, payload: dict[str, An
     asked again. A ``Stop`` that sees a watcher running clears it. Per conversation.
     """
 
+    transcript = payload.get("transcriptPath")
+    try:
+        inbox.confirm(conversation, transcript if isinstance(transcript, str) else None)
+    except Exception:
+        _log_error("confirm")
     asked = asked_path(proc_dir, conversation)
     try:
         request = read_json(request_path(proc_dir, conversation))
