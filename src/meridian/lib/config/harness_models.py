@@ -23,6 +23,7 @@ class HarnessIdleConfig(ConfigModel):
 
     enabled: bool = True
     ttl_seconds: Annotated[int | None, Field(gt=0)] = None
+    warn_minutes: Annotated[int, Field(ge=0)] = 10
     keepwarm: bool = False
     keepwarm_pings: int = 3
     state_reminder: bool = True
@@ -80,6 +81,7 @@ def harness_idle_model(
     value_kinds: dict[str, ValueKind] = {
         "enabled": "bool",
         "ttl_seconds": "int",
+        "warn_minutes": "int",
         "keepwarm": "bool",
         "keepwarm_pings": "int",
         "state_reminder": "bool",

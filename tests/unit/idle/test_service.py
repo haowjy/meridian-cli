@@ -127,6 +127,18 @@ def test_effective_env_level_beats_more_specific_file_in_both_directions() -> No
     assert effective("enabled", "codex", specific_true, {}) is True
 
 
+def test_a_harness_warn_minutes_overrides_the_global_one_for_that_harness_only() -> None:
+    config = MeridianConfig.model_validate(
+        {"harness": {"agy": {"idle": {"warn_minutes": 1}}}, "idle": {"warn_minutes": 7}}
+    )
+
+    assert effective("warn_minutes", "agy", config, {}) == 1
+    assert effective("warn_minutes", "codex", config, {}) == 7
+    assert effective("warn_minutes", "agy", config, {"MERIDIAN_IDLE_WARN_MINUTES": "3"}) == 3
+    env = {"MERIDIAN_HARNESS_IDLE_WARN_MINUTES_AGY": "2", "MERIDIAN_IDLE_WARN_MINUTES": "3"}
+    assert effective("warn_minutes", "agy", config, env) == 2
+
+
 def test_config_role_and_enabled_gates_do_not_write() -> None:
     disabled, _, disabled_store, _ = service(
         config=MeridianConfig.model_validate({"idle": {"enabled": False}})
