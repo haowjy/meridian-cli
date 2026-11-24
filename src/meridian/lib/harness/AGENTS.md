@@ -120,7 +120,8 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   conversation's lock, the one the notice sweep decides closed-ness under), no output for
   no opinion, catch everything. It writes request files, `briefed` and `seen` markers and, at
   `Stop`, the idle-wake marks below (`asked`, `backoff`, removing `busy`); it claims inbox
-  entries at `PreInvocation` and confirms them at `Stop`. It never reads the whole transcript. Its guidance comes from the launch builders in `guidance.py` (local
+  entries at `PreInvocation` and confirms them at `Stop`. The per-call path never reads the
+  whole transcript. Its guidance comes from the launch builders in `guidance.py` (local
   imports, about 0.4 s, so only the call that registers a conversation, the one `PreInvocation`
   after the row appears and the first one after a compaction pay it); never fork that text. The row file the server writes is the signal that
   the session's facts can be injected, and `guard.sh` lets the hook run for it until the

@@ -1,9 +1,9 @@
 """``meridian harness-hook agy <event>``: the ``SessionStart``, ``PreInvocation``, ``Stop`` hooks.
 
 ``agy`` runs this before model calls and at the end of each turn, and waits for it, so it
-takes no blocking locks (at most a 0.5 s wait to register a conversation), starts no
-process, imports nothing from the idle stack, and prints nothing when it has no opinion
-(never ``{}``: ``agy`` reads some empty replies as a decision). Every failure is swallowed:
+takes no blocking locks (at most a 0.5 s wait to register a conversation or to confirm a
+batch), starts no process, imports nothing from the idle stack, and prints nothing when it
+has no opinion (never ``{}``: ``agy`` reads some empty replies as a decision). Every failure is swallowed:
 a broken hook must not break the person's session.
 
 ``Stop`` marks where a turn ends. It confirms the messages the turn showed the model
