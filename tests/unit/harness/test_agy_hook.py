@@ -326,7 +326,8 @@ def test_confirm_reads_from_the_earliest_batch_left_by_a_turn_without_stop(
 
     inbox.confirm("c1", str(transcript))
 
-    assert [e.id for e in inbox._read_entries(inbox.inbox_path("c1"))] == [lost.id]  # pyright: ignore[reportPrivateUsage]
+    queued = [json.loads(line) for line in inbox.inbox_path("c1").read_text().splitlines()]
+    assert [e["id"] for e in queued] == [lost.id]
     assert not inflight_path("c1").exists()
 
 
