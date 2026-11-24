@@ -14,19 +14,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
-from contextlib import nullcontext
+from collections.abc import Coroutine
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender
 from meridian.lib.harness.agy import inbox
+from meridian.lib.harness.agy.idle import AgyIdleSensor
 from meridian.lib.harness.agy.state import (
     read_json,
     request_path,
     row_path,
+    scrubbed_env,
     write_private_json,
 )
 
@@ -62,6 +67,47 @@ class HeldRow:
     cwd: Path
 
 
+def call_env(row: HeldRow) -> dict[str, str]:
+    """The environment of one command: the session's identity, call by call.
+
+    The server's own environment belongs to whoever started ``agy``, so identity comes
+    only from the conversation's row.
+    """
+
+    from meridian.lib.core.resolved_context import ResolvedContext
+    from meridian.lib.core.types import SpawnId
+
+    env = scrubbed_env(os.environ)
+    env.update(
+        ResolvedContext(
+            spawn_id=SpawnId(row.spawn_id),
+            project_root=row.project_root,
+            runtime_root=row.runtime_root,
+            chat_id=row.chat_id,
+        ).child_env_overrides(increment_depth=False)
+    )
+    return env
+
+
+def _idle_env(row: HeldRow) -> dict[str, str]:
+    """The row's identity plus the config the person set in the shell that started ``agy``.
+
+    The identity scrub drops every ``MERIDIAN_*`` name, config overrides such as
+    ``MERIDIAN_NOTIFY_PUSH_BACKEND`` among them; the idle service must see those as it does
+    for any other harness.
+    """
+
+    from meridian.lib.config.loader import OPTION_CATALOG
+
+    env = call_env(row)
+    env["_MERIDIAN_HARNESS"] = "agy"
+    for option in OPTION_CATALOG.options:
+        for name in option.env_vars:
+            if name in os.environ:
+                env[name] = os.environ[name]
+    return env
+
+
 class _Reopen(NamedTuple):
     chat_id: str
     hold: ContinueHold
@@ -73,6 +119,8 @@ class _Hold:
     ready: threading.Event = field(default_factory=threading.Event)
     stop: threading.Event = field(default_factory=threading.Event)
     row: HeldRow | None = None
+    # This server process already held the conversation: the person never left it.
+    readopted: bool = False
     error: str | None = None
     thread: threading.Thread | None = None
 
@@ -82,6 +130,7 @@ class ConversationHolds:
         self._proc_dir = proc_dir
         self._holds: dict[str, _Hold] = {}
         self._failures: dict[str, tuple[str, float]] = {}  # conversation -> (error, when)
+        self._adopted: set[str] = set()
         self._lock = threading.Lock()
 
     def sync(self) -> None:
@@ -136,7 +185,8 @@ class ConversationHolds:
             request = read_json(request_path(self._proc_dir, conversation))
             if request is None or request.get("role") != "primary":
                 return None
-            hold = _Hold(conversation)
+            hold = _Hold(conversation, readopted=conversation in self._adopted)
+            self._adopted.add(conversation)
             self._holds[conversation] = hold
         hold.thread = threading.Thread(
             target=self._run,
@@ -250,17 +300,36 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
         )
         hold.row = held
         hold.ready.set()
+        failure: str | None = None
         try:
-            asyncio.run(_serve(launch, conversation, hold.stop))
+            _run_loop(_serve(launch, held, conversation, proc_dir, hold.stop, hold.readopted))
+        except Exception as exc:
+            failure = str(exc) or type(exc).__name__
+            raise
         finally:
             primary.complete(
-                exit_code=0,
+                exit_code=0 if failure is None else 1,
                 extraction=None,
                 started_monotonic=started,
                 cancellation_observed=False,
                 identity_error=None,
-                launch_failure=None,
+                launch_failure=failure,
             )
+
+
+def _run_loop(main: Coroutine[Any, Any, None]) -> None:
+    """``asyncio.run`` without its wait for worker threads.
+
+    A notice mid-send holds a worker for up to 10 s, and ``agy`` gives the server about
+    400 ms at exit: the row must complete first.
+    """
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(main)
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        loop.close()
 
 
 def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reopen | None:
@@ -300,7 +369,14 @@ def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reope
     return None if hold is None else _Reopen(chat_id, hold)
 
 
-async def _serve(launch: LaunchPaths, conversation: str, stop: threading.Event) -> None:
+async def _serve(
+    launch: LaunchPaths,
+    held: HeldRow,
+    conversation: str,
+    proc_dir: Path,
+    stop: threading.Event,
+    readopted: bool,
+) -> None:
     from meridian.lib.launch.process.primary_control_socket import serving_route
 
     async def deliver(text: str, sender: MessageSender | None) -> DeliveryKind:
@@ -308,7 +384,46 @@ async def _serve(launch: LaunchPaths, conversation: str, stop: threading.Event) 
         return DeliveryKind.QUEUED
 
     async with serving_route(launch, MessageRoute(deliver, _ROUTE_NOTE)):
-        await asyncio.to_thread(stop.wait)
+        idle = asyncio.create_task(_run_idle(launch, held, conversation, proc_dir, stop, readopted))
+        try:
+            await asyncio.to_thread(stop.wait)
+        finally:
+            idle.cancel()
+            with suppress(asyncio.CancelledError):
+                await idle
 
 
-__all__ = ["ConversationHolds", "HeldRow", "HoldError"]
+async def _run_idle(
+    launch: LaunchPaths,
+    held: HeldRow,
+    conversation: str,
+    proc_dir: Path,
+    stop: threading.Event,
+    readopted: bool,
+) -> None:
+    """Idle notices for the conversation; a failure here never ends the row."""
+
+    from meridian.lib.core.types import HarnessId
+    from meridian.lib.harness.idle_types import SidecarContext
+    from meridian.lib.launch.hold_idle import run_hold_idle
+
+    try:
+        ctx = SidecarContext(
+            harness_id=HarnessId.AGY,
+            harness_session_id=conversation,
+            env=MappingProxyType(_idle_env(held)),
+            tui_alive=lambda: not stop.is_set(),
+            launch=launch,
+        )
+        await run_hold_idle(
+            lambda stored_turn_id: AgyIdleSensor(
+                proc_dir, conversation, stored_turn_id=stored_turn_id
+            ),
+            ctx,
+            readopted=readopted,
+        )
+    except Exception:
+        logger.warning("agy conversation %s has no idle notices", conversation, exc_info=True)
+
+
+__all__ = ["ConversationHolds", "HeldRow", "HoldError", "call_env"]

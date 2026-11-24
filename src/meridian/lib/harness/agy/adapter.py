@@ -185,6 +185,27 @@ class AgyAdapter(AgyReader, BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
+    def launch_environment_warnings(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+    ) -> tuple[CompositionWarning, ...]:
+        from meridian.lib.config.loader import load_config
+
+        project = Path(child_env.get("MERIDIAN_PROJECT_DIR") or child_cwd)
+        if not load_config(project).harness.agy.idle.keepwarm:
+            return ()
+        return (
+            CompositionWarning(
+                code="agy_keepwarm_ignored",
+                message=(
+                    "[harness.agy.idle] keepwarm does nothing: agy has no keepwarm. Idle push "
+                    "and, with a ttl_seconds, the cache warning still work."
+                ),
+            ),
+        )
+
     def project_launch_env(
         self,
         *,

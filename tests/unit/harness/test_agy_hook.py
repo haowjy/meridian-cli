@@ -10,9 +10,9 @@ import pytest
 
 from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
-from meridian.lib.harness.agy.holds import HeldRow
+from meridian.lib.harness.agy.holds import HeldRow, call_env
 from meridian.lib.harness.agy.hook import run_hook
-from meridian.lib.harness.agy.mcp_server import call_env, format_result, root_conversation
+from meridian.lib.harness.agy.mcp_server import format_result, root_conversation
 from meridian.lib.harness.agy.notices import send_owed_notices
 from meridian.lib.harness.agy.state import (
     agy_root,

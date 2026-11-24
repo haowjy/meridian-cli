@@ -2,11 +2,13 @@
 
 Meridian never starts Antigravity (`agy`). You start `agy` yourself, with a command Meridian
 prints (`meridian agy`, below) or your own; Meridian installs a plugin that lets the session spawn agents on other harnesses, wait for them, and receive
-messages from other sessions. Meridian cannot stop `agy`. It reads two things of `agy`'s
+messages from other sessions. Meridian cannot stop `agy`. It reads three things of `agy`'s
 own: the conversation's transcript (`transcript_full.jsonl`, under `~/.gemini/antigravity-cli/brain/<conversation>/`),
 to show it and to see whether a queued message reached the model, and
-the `subagents` folder of its conversation store, to tell a native subagent from a session.
-Nothing else of `agy`'s is read.
+the `subagents` folder of its conversation store, to tell a native subagent from a session,
+and the `executor_metadata` table of the conversation's SQLite database
+(`~/.gemini/antigravity-cli/conversations/<conversation>.db`, opened read-only), to notice
+that you cancelled a turn with Esc. Nothing else of `agy`'s is read.
 
 ## Install
 
@@ -160,9 +162,15 @@ conversation IDs can't be read as sessions.
 
 ## What it can't do
 
-- **Wake after Esc, or without a watcher.** `agy` fires no hook when you cancel a turn with
-  Esc, so Meridian still counts the session as busy: a message sent after a cancel waits
-  until you type. So does a message to a session whose watcher is not running.
+- **Wake without a watcher.** A message to a session whose watcher is not running waits
+  until you type.
+- **Wake after Esc.** After you cancel a turn with Esc, `agy` waits for you to type before it
+  acts on a finished background command (seen on `agy` 1.5.15), so a Meridian message sent
+  after Esc waits until you type; the watcher stays running. The idle push and the cache
+  warning still go out after Esc: `agy` fires no hook for the cancel, so Meridian reads it
+  from the `executor_metadata` table of the conversation's database. An Esc within about a
+  second of any model call starting can be missed; the notices then wait until the next turn
+  ends.
 - **Show the tool on the first prompt.** `agy` often offers the tool only from a
   conversation's second prompt, and the session's chat ID arrives with it. Until then the
   model has the guidance but may find no tool.
@@ -198,3 +206,20 @@ message inbox per conversation. A server that is killed leaves its
 rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
 for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars
 installs.
+
+## Idle notices
+
+Like other harnesses, an agy session gets a push notice when it has been waiting for you:
+Meridian sends it some time after the agent's turn ends (the usual timing, which depends on
+how long you waited for that turn), and typing resets that timer. A turn that Meridian's
+watcher or an `agy` background command's exit started on its own does not reset it and sends
+no second notice. With `ttl_seconds` set, you also get the cache warning before the prompt
+cache expires. Meridian reads each turn's end from the plugin's server; nothing is typed into
+your terminal. `keepwarm` and `state_reminder` do nothing for agy. To configure it, see
+[`[harness.<harness>.idle]`](configuration.md#harnessharnessidle) with `agy` as the harness:
+
+```toml
+[harness.agy.idle]
+enabled = true        # false turns off the push and the warning
+ttl_seconds = 1200    # your estimate of the model's cache lifetime; none by default
+```

@@ -126,6 +126,10 @@ class AgyTranscriptParser(TranscriptEventParser):
         return NormalizedTranscriptEvent([], rendering_reason=_UNRECOGNISED)
 
 
+def transcript_path(native_store: Path, session_id: str) -> Path:
+    return native_store / session_id / ".system_generated" / "logs" / "transcript_full.jsonl"
+
+
 class AgyReader(BaseNativeStoreReader):
     def transcript_parser(self) -> TranscriptEventParser:
         return AgyTranscriptParser()
@@ -133,5 +137,5 @@ class AgyReader(BaseNativeStoreReader):
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         if not is_safe_id(session_id):
             return None
-        path = native_store / session_id / ".system_generated" / "logs" / "transcript_full.jsonl"
+        path = transcript_path(native_store, session_id)
         return path if path.is_file() else None
