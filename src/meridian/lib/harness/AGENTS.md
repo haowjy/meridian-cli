@@ -144,14 +144,14 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   doesn't ask, it removes `busy` and `asked`. After two asks in a row end with no watcher, it
   skips 2 turn ends before asking again, then 4, 8, up to 32 (`backoff/<conversation>`); a
   `Stop` that sees a watcher running deletes that back-off file.
-  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves `busy`; `state.TurnState`
-  (the one "is a turn running" read, for the watcher and the idle sensor, each with its own
-  baseline) ends the turn when a new `executor_metadata` row with termination reason 2
-  (`USER_CANCELED`) appears in the conversation's SQLite database after `busy` was last
-  touched. That schema is undocumented (seen on 1.5.15); anything unreadable, and a baseline
-  not yet read, leave the turn running. An Esc within about a second of any model invocation can
-  be missed (it counts as busy until the next turn ends); a build that renumbers the enum could
-  read a mid-turn execution end as an Esc. Its terminal sandbox (Auto mode) has its own process list and hides `~/.meridian`,
+  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves the `busy` file. `TurnState`
+  ends the turn when a new `executor_metadata` row with termination reason 2 (`USER_CANCELED`)
+  appears in the conversation's SQLite database; each reader's baseline is the highest row index
+  it read when it first saw `busy` touched, and until that read succeeds the turn counts as
+  running. That schema is undocumented (seen on 1.5.15); anything unreadable leaves the turn
+  running. An Esc within about a second of any model invocation can be missed; a build that
+  renumbers the enum could read a mid-turn execution end as an Esc. agy's terminal sandbox
+  (Auto mode) has its own process list and hides `~/.meridian`,
   so the start command says `BypassSandbox true`, and a watcher that cannot see its state
   prints a notice that it is sandboxed and exits. These files live in the `agy` process
   directory, so the notice sweep's removal of it is their only cleanup. The message itself
@@ -161,18 +161,28 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
   logging goes to stderr, and each command runs with piped stdio and the identity of
   the calling conversation's row, never the server's inherited `MERIDIAN_*`.
-  Each hold also runs the idle sidecar (`launch/hold_idle.py`: closes the conversation's old
-  stretch, then `sidecar.run`) with `AgyIdleSensor` (`idle.py`): `busy` is `state.TurnState`,
-  and each turn end reads the transcript past a kept offset (a typed `USER_INPUT` step is a
-  return, with its `created_at` as `returned_at_ms`; a wake's `SYSTEM_MESSAGE` is not). A sensor
-  restarted mid-session compares the last typed step with `IdleState.last_turn_id`, which
-  `launch/hold_idle.py` reads once before closing the old stretch and the sidecar's first
-  arm (that arm replaces it with none); a hold the same server process already had does not
-  close the stretch. A transcript that cannot be read reports no turn end until it can. Idle
-  config (and the person's `MERIDIAN_*` config env vars) reach it through `holds._idle_env`.
-  agy has no keepwarm and no default TTL; `meridian agy` warns when
-  `[harness.agy.idle] keepwarm` is on. The loop is not `asyncio.run`: a notice mid-send must
-  not hold up `primary.complete`, and a serving failure completes the row as failed.
+  Each hold also runs the idle sidecar (`lib/launch/hold_idle.py`: closes the conversation's
+  old stretch, then `sidecar.run`) with `AgyIdleSensor` (`lib/harness/agy/idle.py`). The
+  sensor and the watcher both ask `state.TurnState.running()` (`agy/state.py`) whether the turn
+  is live; it reads the `busy` file. On each turn end the sensor reads the transcript past an
+  in-memory offset (kept on the sensor, not persisted; a transcript that shrank is re-read).
+  A step with `type` `USER_INPUT` and `source` `USER_EXPLICIT` is a typed prompt: a return,
+  with its `created_at` as `returned_at_ms`. A wake's `SYSTEM_MESSAGE` (and hook-injected
+  `SYSTEM_SDK` steps) is not. An unreadable transcript reports nothing and is retried next poll.
+  `IdleState.last_turn_id` is the step index of the last typed step the stored stretch saw.
+  `hold_idle.py` reads it before closing the old stretch because the sidecar's first arm (an
+  identity pin that opens a stretch with no return) overwrites it with none; the sensor
+  treats a typed step equal to it as already reported. A re-adoption in the same server
+  process (a failed hold retried by the poll) is not a reopen and does not close the stretch.
+  Config reaches the sidecar through `holds._idle_env`: `call_env(row)` (identity only, the
+  `MERIDIAN_*` strip above) plus the env vars of every option in `config.loader.OPTION_CATALOG`
+  that the server's own environment sets, and `_MERIDIAN_HARNESS=agy`; the result is
+  `SidecarContext.env`, which `IdleService` and notice delivery read. agy has no keepwarm and
+  no default TTL; `meridian agy` warns when `[harness.agy.idle] keepwarm` is on. `holds._run_loop`
+  runs each hold's coroutine on its own `new_event_loop()` and closes it without joining the
+  default executor (`asyncio.run` would): a notice mid-send in a `to_thread` worker lasts up to
+  10 s, and `primary.complete` must run within the ~400 ms agy gives the server. A serving
+  failure completes the row as failed.
 - `inbox.py`, `notices.py`: a queued message (`DeliveryKind.QUEUED`) is injected at the next
   `PreInvocation` and confirmed against `agy`'s transcript; a message injected three times
   without showing there stays in flight, uninjected, and is owed a notice. The sender
