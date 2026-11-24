@@ -6,6 +6,16 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.5] - 2026-11-24
+
+### Added
+- Antigravity (`agy`) sessions now get Meridian's state reminder. When the cache warning goes out and the session has a work item, Meridian queues a message asking the model to bring the work item up to date, and the message watcher wakes the idle session to deliver it. As with the warning, it needs `[harness.agy.idle] ttl_seconds`. `state_reminder = false` turns it off. agy can't compact on demand, so the reminder offers no `compact-now` there.
+- `[harness.<harness>.idle] warn_minutes` (env `MERIDIAN_HARNESS_IDLE_WARN_MINUTES_<HARNESS>`) sets how long before the cache goes cold the warning goes out, per harness, overriding `[idle] warn_minutes`. The global 10 minutes is longer than agy's whole cache window, so agy needs it: `ttl_seconds = 180` with `warn_minutes = 2` warns about a minute after a turn ends.
+
+### Fixed
+- After a cache warning that replaced the idle push, a turn Meridian started on its own in the same stretch (a keepwarm ping on Claude, a state reminder on agy) sent the push anyway, as a second notice. The warning now counts as the stretch's answer.
+- An idle setting given by environment variable now meets the same limits as one in the config file. For example, a negative `MERIDIAN_IDLE_WARN_MINUTES` is rejected instead of placing the warning after the cache went cold.
+
 ## [0.27.4] - 2026-11-24
 
 ### Fixed
