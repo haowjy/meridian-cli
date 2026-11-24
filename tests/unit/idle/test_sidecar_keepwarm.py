@@ -195,3 +195,15 @@ def test_a_send_cancelled_by_a_turn_end_stays_spent() -> None:
     _run(sensor, [_turn(typed="1"), _turn(), _turn(), _turn()], pings=2)
 
     assert len(sensor.sent) == 2
+
+
+def test_a_reminder_that_could_not_be_sent_is_the_next_prompt_before_any_ping() -> None:
+    class RefusesFirst(Sensor):
+        async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
+            self.sent.append((kind, stop_offered))
+            return len(self.sent) > 1
+
+    sensor = RefusesFirst()
+    _run(sensor, [_turn(typed="1")] + [_turn()] * 4, work_item=True)
+
+    assert [kind for kind, _ in sensor.sent] == ["reminder", "reminder", "ping", "ping"]

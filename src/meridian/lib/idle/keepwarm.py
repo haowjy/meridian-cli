@@ -5,6 +5,7 @@ the reply rule. Claude's mod keeps its own copy of both in TypeScript
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 STOP = "stop-waiting"
 # Every check before a ping stops this long before the cache would expire.
@@ -40,7 +41,18 @@ class Stretch:
     warned: bool = False
     ended: bool = False
 
+    # A reminder the warning could not send is the stretch's next prompt, before any ping.
+    reminder_owed: bool = False
+
+    def next_kind(self) -> Literal["reminder", "ping"] | None:
+        """What the stretch sends next, as the mod's ``nextKind``: an owed reminder (until the
+        stretch's slots are used up), else a ping while keepwarm is on and slots remain."""
+
+        if self.ended or (self.limit and self.sent >= self.limit):
+            return None
+        if self.reminder_owed:
+            return "reminder"
+        return "ping" if self.limit else None
+
     def due(self) -> bool:
-        return (
-            self.warned and not self.ended and self.sent < self.limit and self.lead_ms is not None
-        )
+        return self.warned and self.lead_ms is not None and self.next_kind() is not None

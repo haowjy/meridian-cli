@@ -207,8 +207,11 @@ class _Coordinator:
         if kw is not None and on:
             kw.sent += 1
         delivered = await self.sensor.send("reminder" if remind else "ping", stop_offered=on)
-        if kw is not None and on and not delivered:
-            kw.sent -= 1
+        if not delivered:
+            if kw is not None and on:
+                kw.sent -= 1
+            if kw is not None and remind:
+                kw.reminder_owed = True
 
     async def _track(self, event: IdleEvent, result: ArmResult) -> None:
         """Keep the stretch's keepwarm record from an arm: its start, its lead, its reply."""
@@ -244,8 +247,9 @@ class _Coordinator:
             self.error_reporter.record(phase="keepwarm", error=exc)
 
     async def _ping(self, kw: Stretch, fire_at: int, deadline: int) -> None:
-        """One later ping, one lead after a turn that ended in this stretch. A turn running
-        then skips it without a slot: that turn's own end schedules the next."""
+        """One later prompt (an owed reminder, else a ping), one lead after a turn that ended in
+        this stretch. A turn running then skips it without a slot: that turn's own end
+        schedules the next."""
 
         assert isinstance(self.sensor, PromptSink)
         await self.clock.sleep_until_ms(fire_at)
@@ -264,11 +268,18 @@ class _Coordinator:
         if not states or not states[0].stretch_open or states[0].stretch != kw.stretch:
             kw.ended = True
             return
-        if kw.sent >= kw.limit:
+        kind = kw.next_kind()
+        if kind is None:
             return
-        kw.sent += 1  # spent before the send; see ``_warned``
-        if not await self.sensor.send("ping", stop_offered=True):
-            kw.sent -= 1
+        on = kw.limit > 0
+        # Taken before the send, as in ``_warned``; the reminder takes a slot only with keepwarm on.
+        if on:
+            kw.sent += 1
+        kw.reminder_owed = kw.reminder_owed and kind != "reminder"
+        if not await self.sensor.send(kind, stop_offered=on):
+            if on:
+                kw.sent -= 1
+            kw.reminder_owed = kw.reminder_owed or kind == "reminder"
 
     async def _drive_safely(self, arm: ArmResult) -> None:
         try:
