@@ -22,6 +22,7 @@ export function pingText(nonce: string): string {
 
 /**
  * The state reminder: the model writes what only the conversation knows into the work item, then ends its reply with its choice.
+ * agy's copy (`STATE_REMINDER` in `lib/harness/agy/idle.py`) mirrors this wording without the choices: change them together.
  * `stop-waiting` is offered only with keepwarm on: with it off there are no pings to stop.
  */
 export function reminderText(nonce: string, keepwarmOn: boolean): string {

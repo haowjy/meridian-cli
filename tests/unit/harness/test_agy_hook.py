@@ -377,6 +377,8 @@ def test_state_reminder_is_queued_as_a_message_with_no_sender(agy_home: Path) ->
     (entry,) = inbox.claim("c1", None)
     assert (entry.text, entry.sender) == (STATE_REMINDER, None)
     assert "compact-now" not in entry.text
+    assert "session named below" not in entry.render()
+    assert "session named below" in inbox.InboxEntry("x", "t", _sender("p7")).render()
 
 
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
