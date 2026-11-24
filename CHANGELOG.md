@@ -6,6 +6,11 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.8] - 2026-11-24
+
+### Fixed
+- On Antigravity (`agy`), a typed `/compact` no longer starts a new idle stretch, and `/clear` ends the old conversation's stretch, so keepwarm pings and state reminders stop after either command and resume after your next model turn. Before, a ping went out about a minute after `/compact`, and after `/clear` pings kept waking the conversation you had just left.
+
 ## [0.27.7] - 2026-11-24
 
 None. Removes an internal `agy` watcher file that nothing ever wrote; no user-visible behavior changes.
