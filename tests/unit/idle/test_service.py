@@ -139,6 +139,26 @@ def test_a_harness_warn_minutes_overrides_the_global_one_for_that_harness_only()
     assert effective("warn_minutes", "agy", config, env) == 2
 
 
+def test_a_warning_that_acts_answers_the_push_for_the_rest_of_the_stretch() -> None:
+    config = MeridianConfig.model_validate({"harness": {"agy": {"idle": {"ttl_seconds": 1200}}}})
+    idle, clock, store, sender = service(config=config)
+    idle._has_work_item = lambda: False  # type: ignore[method-assign]
+    clock.value = 1_000_000
+    armed = idle.arm(
+        harness="agy", session="c1", implies_return=True, turn_id="1", returned_at_ms=970_000
+    )
+    assert armed.push_at is None  # the warning is first and replaces it
+    clock.value = armed.warn_at or 0
+    idle.fire("warn", harness="agy", session="c1", stretch=armed.stretch, anchor=armed.anchor)
+
+    clock.value += 30_000
+    later = idle.arm(harness="agy", session="c1")  # a turn the session started itself
+
+    assert later.push_at is None
+    assert store.read("agy", "c1").push_owed_since_ms is None  # type: ignore[union-attr]
+    assert len(sender.notices) == 1
+
+
 def test_config_role_and_enabled_gates_do_not_write() -> None:
     disabled, _, disabled_store, _ = service(
         config=MeridianConfig.model_validate({"idle": {"enabled": False}})

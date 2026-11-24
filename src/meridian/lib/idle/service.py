@@ -509,7 +509,14 @@ class IdleService:
                 raise RuntimeError("idle stage cannot be claimed without state")
             done = dict(current.done)
             done[stage] = "sent"
-            claimed_state = current.model_copy(update={"done": done})
+            update: dict[str, object] = {"done": done}
+            if stage == "warn" and "push" not in done:
+                # The warning answers the wait a dropped push would have: a later turn in
+                # this stretch (a reminder, a ping) must not place the push again. The
+                # value is one an older build already writes for a skipped stage.
+                done["push"] = "skipped:warned"
+                update["push_owed_since_ms"] = None
+            claimed_state = current.model_copy(update=update)
             return claimed_state, (result, claimed_state)
 
         result, claimed_state = self.store.mutate(harness, session, transition)
