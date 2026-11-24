@@ -251,12 +251,33 @@ class AgyIdleSensor:
         # Ids of prompts sent and not yet seen in the transcript; lost with the sensor, which
         # costs only the read of one reply.
         self._prompts: set[str] = set()
+        # The ``busy`` mark was seen and has since gone, and that turn's end is not yet yielded.
+        self._seen_running = False
+        self._unreported = False
+        self._observe_lock = threading.Lock()
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         _ = event
 
     async def busy(self) -> bool:
-        return await asyncio.to_thread(self._turn.running)
+        """A turn runs, or ended and its end is not yet reported: the poll sees the mark go up
+        to a second late, and a prompt sent in that window would follow a turn that just warmed
+        the cache (or a return the sidecar has not yet seen)."""
+
+        return await asyncio.to_thread(self._busy)
+
+    def _observe(self) -> bool:
+        """Whether the turn runs; notes the moment the mark goes, from whichever caller sees it."""
+
+        with self._observe_lock:
+            running = self._turn.running()
+            if self._seen_running and not running:
+                self._unreported = True
+            self._seen_running = running
+            return running
+
+    def _busy(self) -> bool:
+        return self._observe() or self._unreported
 
     async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
         """Queue the prompt as a message from Meridian when the session can be woken for it.
@@ -280,19 +301,20 @@ class AgyIdleSensor:
         return (
             watcher_running(self._proc_dir, self._conversation)
             and not busy_path(self._proc_dir, self._conversation).exists()
+            and not self._unreported
         )
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        was_running = await asyncio.to_thread(self._turn.running)
+        await asyncio.to_thread(self._observe)
         while True:
             await asyncio.sleep(self._poll_seconds)
-            running = await asyncio.to_thread(self._turn.running)
-            if was_running and not running:
+            await asyncio.to_thread(self._observe)
+            if self._unreported:
                 event = await asyncio.to_thread(self._turn_end)
                 if event is None:
                     continue  # the transcript was unreadable: report this end at the next poll
                 yield event
-            was_running = running
+                self._unreported = False
 
     def _turn_end(self) -> IdleEvent | None:
         steps = self._read_steps()

@@ -239,3 +239,28 @@ def test_the_reply_to_a_prompt_meridian_sent_is_reported_with_the_turn_end(
 
     # The turn that carried the marker reports its reply; the next one reports none.
     assert asyncio.run(main()) == [("ok\nstop-waiting",), ()]
+
+
+def test_the_sensor_is_busy_from_the_mark_going_until_the_turn_end_is_reported(
+    session: Session,
+) -> None:
+    sensor = AgyIdleSensor(session.proc, CONVERSATION, stored_turn_id=None, poll_seconds=0.5)
+
+    async def main() -> tuple[bool, bool, bool]:
+        session.transcript.touch()
+        events = sensor.events()
+        busy_path(session.proc, CONVERSATION).touch()
+        assert await sensor.busy()
+        first = asyncio.ensure_future(anext(events))
+        await asyncio.sleep(0.05)
+        busy_path(session.proc, CONVERSATION).unlink()
+        gone = await sensor.busy()  # before the poll reports the end: still busy
+        await first
+        reported = await sensor.busy()  # yielded, the consumer has not asked for more yet
+        nxt = asyncio.ensure_future(anext(events))
+        await asyncio.sleep(0.7)
+        after = await sensor.busy()
+        nxt.cancel()
+        return gone, reported, after
+
+    assert asyncio.run(main()) == (True, True, False)
