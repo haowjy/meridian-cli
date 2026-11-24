@@ -223,8 +223,8 @@ your terminal. When the warning goes out and the session has a work item, Meridi
 a message asking the model to bring the work item up to date (`state_reminder`, on by default);
 it wakes an idle session like any message. With `keepwarm = true` (off by default) the
 warning is followed by up to `keepwarm_pings` Meridian messages that keep the cache warm, one
-lead apart; each costs two model calls on your quota, only goes out while the watcher runs, and
-ends when you type or the model's reply ends with `stop-waiting`. Known gaps: unlike Claude's
+lead apart; each costs two model calls on your quota, only goes out when the session can be woken for it
+(the watcher runs and no turn is running or left open by an Esc), and ends when you type or the model's reply ends with `stop-waiting`. Known gaps: unlike Claude's
 ping, agy's ping turn is not kept read-only (the hook cannot tell which tools only read), so a
 model that acts on one runs an ordinary turn; a ping can arrive while you are typing; and a
 compaction does not end the pings. To configure it, see

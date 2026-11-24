@@ -404,7 +404,7 @@ silence only the permission notice.
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 | `keepwarm` | `false` | `MERIDIAN_IDLE_KEEPWARM` | Start an interactive primary with keepwarm on, where its harness can keep the provider cache warm (Claude and agy today) |
 | `keepwarm_pings` | `3` | `MERIDIAN_IDLE_KEEPWARM_PINGS` | Keep-warm prompts per stretch; `0` or less turns keepwarm off |
-| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there, then end its reply with `compact-now` (compact while the cache is warm), `stop-waiting` (keepwarm on only) or anything else to keep waiting (Claude today); on agy, a queued message with no choices |
+| `state_reminder` | `true` | `MERIDIAN_IDLE_STATE_REMINDER` | At the cache warning, ask an interactive primary that has a work item to record its state there, then end its reply with `compact-now` (compact while the cache is warm), `stop-waiting` (keepwarm on only) or anything else to keep waiting (Claude today); on agy, a queued message with no `compact-now`, and with keepwarm on `stop-waiting` |
 
 The cache warning and the keep-warm pings are timed from the provider's
 prompt-cache lifetime (`ttl_seconds`, sensed or the adapter's fixed value), and a
@@ -439,19 +439,21 @@ on the cache you were about to lose, so set `state_reminder = false` to avoid it
 
 On agy the reminder is a queued message from Meridian, with no `compact-now`
 (agy cannot compact on demand); with keepwarm on it takes ping 1's slot and offers
-`stop-waiting`. It is queued only while the session's watcher runs, since that is
-what wakes an idle session; with no watcher it is dropped rather than shown in your
-next prompt, and spends no slot. It does not wait for a quiet prompt box: a running
-turn shows it at its next model call.
+`stop-waiting`. It is queued only when something can wake the session for it: the
+session's watcher runs and no turn is running or left behind by an Esc (the watcher
+never exits for those). Otherwise it is dropped rather than shown in your next
+prompt, and a reminder dropped this way is sent again at the stretch's next turn end,
+before any ping. A `warn_minutes` of 1 or less sends no prompt at all, the reminder
+included (the last minute before the cache expires is kept free), as on Claude. It
+does not wait for a quiet prompt box.
 
 agy keepwarm (`[harness.agy.idle] keepwarm = true`, off by default; `keepwarm_pings`
 bounds it) works the same way: ping 1 at the cache warning, then one more a lead
 (`ttl_seconds - warn_minutes`) after each later turn that ends in the stretch, up to
-`keepwarm_pings`. A ping is a queued message from Meridian, sent only while the
-watcher runs; typing cancels the rest; a reply whose last line is `stop-waiting` ends
+`keepwarm_pings`. A ping is a queued message from Meridian, sent only when the session can be woken
+for it (a watcher runs, no turn is running, no Esc left the turn open); typing cancels the rest; a reply whose last line is `stop-waiting` ends
 them; none sends a notification. Each ping costs two model calls (the ping, then
-restarting the watcher), against your Antigravity quota. A `warn_minutes` of 1 or less leaves no later pings (the last minute before the cache
-expires is kept free). A global `[idle] keepwarm = true` applies to agy as well. Known gaps:
+restarting the watcher), against your Antigravity quota. A global `[idle] keepwarm = true` applies to agy as well. Known gaps:
 agy shows Meridian no prompt-box state, so a ping can arrive while you are typing (as a message
 does); a compaction does not end the pings as it does on Claude; and Claude denies
 tool calls that change anything during a ping's turn and agy does not (its hook

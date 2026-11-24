@@ -181,9 +181,12 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   The sensor is also the sidecar's `PromptSink`: when `fire warn` acts, the sidecar calls
   `AgyIdleSensor.send("reminder" | "ping", stop_offered=...)`, which queues `prompt_text(...)`
   through `inbox.enqueue` with no sender (so no notice is owed if it is never shown), but only
-  while the conversation's watcher runs: without one the entry would wait for the person's next
-  prompt and tell them they are away, so `send` returns False and the sidecar spends no keepwarm
-  slot. The wording mirrors the Claude mod's without `compact-now` (`agy` cannot compact on
+  when a wake is possible (`_can_wake`: the watcher runs, no `busy` mark exists, and no turn end
+  is unreported; the watcher never exits for a running turn or an Esc's leftover mark): otherwise
+  the entry would wait for the person's next prompt and tell them they are away, so `send`
+  returns False, the sidecar returns the slot, and a dropped reminder stays owed
+  (`Stretch.reminder_owed`) for the next turn end. The sidecar spends a slot before `send` and
+  leaves it spent if the send is cancelled. The wording mirrors the Claude mod's without `compact-now` (`agy` cannot compact on
   demand) and ends by restarting the watcher. Keepwarm's later pings are timed by the sidecar
   (`idle/sidecar.py`, `idle/keepwarm.py`; in-memory record, none after a restart), one lead after
   each non-return turn end. The sensor remembers the ids it sent; a turn whose steps carry one
