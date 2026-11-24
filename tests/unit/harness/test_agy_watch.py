@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.agy import inbox, watch
-from meridian.lib.harness.agy.state import busy_path, process_dir, wake_path, watch_lock_path
+from meridian.lib.harness.agy.state import busy_path, process_dir, watch_lock_path
 
 CONVERSATION = "c1"
 
@@ -71,17 +71,6 @@ def test_busy_session_is_never_woken_and_a_stuck_old_entry_is_not_a_reason(
     assert watcher.wait(3)
 
 
-def test_wake_file_wakes_an_idle_session_with_its_text(
-    proc_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    wake = wake_path(proc_dir, CONVERSATION)
-    wake.parent.mkdir(parents=True)
-    wake.write_text("Keep the cache warm.")
-
-    assert _Watcher(capsys).wait(3)
-    assert "Keep the cache warm." in capsys.readouterr().out
-
-
 def test_second_watcher_says_one_runs_and_exits(
     proc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -92,9 +81,7 @@ def test_second_watcher_says_one_runs_and_exits(
 
     assert "already runs" in capsys.readouterr().out
     assert not first.wait(0.1)
-    wake = wake_path(proc_dir, CONVERSATION)  # ends the first watcher with the test
-    wake.parent.mkdir(parents=True)
-    wake.write_text("done")
+    inbox.enqueue(CONVERSATION, "ends the first watcher with the test", None)
     assert first.wait(3)
 
 

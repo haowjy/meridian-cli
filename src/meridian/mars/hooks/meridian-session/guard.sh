@@ -1,7 +1,6 @@
 # Run by agy's `sh -c` handler as: sh guard.sh <event> <agy pid>.
 # On every PreInvocation, before anything else: creates busy/<conversation> (a turn is
-# running; the Stop hook removes it) and removes wake/<conversation> (a model call
-# satisfies a pending wake request).
+# running; the Stop hook removes it).
 # Then starts Meridian for Stop always, and for the other events only when this
 # conversation has no request file yet, has queued messages, has a row the
 # hook has not yet briefed it on, or whose transcript shows a compaction since the hook
@@ -29,7 +28,6 @@ root=${MERIDIAN_HOME:-$HOME/.meridian}/agy
 p=$root/$pid-$birth
 if [ "$event" = PreInvocation ]; then
   mkdir -p "$p/busy" 2>/dev/null && : > "$p/busy/$c"
-  [ ! -e "$p/wake/$c" ] || rm -f "$p/wake/$c"
 fi
 if [ "$event" != Stop ] && [ -e "$p/requests/$c.json" ] \
   && [ ! -s "$root/inbox/$c.jsonl" ] \

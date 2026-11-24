@@ -203,7 +203,7 @@ messages.
 State is under `~/.meridian/agy/`: one directory per running `agy` process
 (`<pid>-<birth>`) with a request file per conversation (written by the hook), the row
 the server holds, and the watcher's per-conversation files (`busy/`, `asked/`, `watch/`,
-`wake/`, `backoff/`), all removed with the directory once that `agy` process is gone; and a
+`backoff/`), all removed with the directory once that `agy` process is gone; and a
 message inbox per conversation. A server that is killed leaves its
 rows to recovery. See [`src/meridian/lib/harness/agy/`](../src/meridian/lib/harness/agy/)
 for the hook and server, and [`src/meridian/mars/`](../src/meridian/mars/) for what Mars

@@ -135,11 +135,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   agent when a background command it started exits, so the agent keeps `harness-watch agy`
   running. The watcher imports only `state.py`, reads state and writes none: it opens
   `watch/<conversation>.lock` (which `Stop` creates) and holds its `flock` while it lives. It
-  exits, waking the agent, when the session is not busy and either the inbox changed since it
-  started or a `wake/<conversation>` file exists (written by the server for wakes that are not
-  messages, such as keepwarm; nothing writes one yet). It exits silently when its parent
-  shell or the `agy` process is gone.
-  `guard.sh` creates `busy/<conversation>` and removes `wake/<conversation>` on every
+  exits, waking the agent, when the session is not busy and the inbox changed since it
+  started (keepwarm pings and the state reminder arrive as inbox messages). It exits silently
+  when its parent shell or the `agy` process is gone.
+  `guard.sh` creates `busy/<conversation>` on every
   `PreInvocation`. At `Stop`, when no watcher holds the lock, the hook asks the model once
   per turn (`asked`) to start one; it never asks for a subagent or a cancelled turn. When it
   doesn't ask, it removes `busy` and `asked`. After two asks in a row end with no watcher, it
