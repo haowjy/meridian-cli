@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.agy.state import TurnState, busy_path, native_store
+from meridian.lib.harness.agy.idle import TurnState
+from meridian.lib.harness.agy.state import busy_path, native_store
 
 CONVERSATION = "c1"
 NORMAL_END = bytes([0x08, 0x04])  # field 1 = 4, NO_TOOL_CALL
@@ -69,21 +70,6 @@ def test_an_unreadable_baseline_never_ends_a_running_turn(proc_dir: Path) -> Non
     assert turn.running()
     _append(_database(), CANCEL)
     assert not turn.running()
-
-
-def test_readers_agree_when_a_cancel_lands_between_their_polls(proc_dir: Path) -> None:
-    database = _database()
-    _append(database, NORMAL_END)
-    sensor, watcher = TurnState(proc_dir, CONVERSATION), TurnState(proc_dir, CONVERSATION)
-    _touch(proc_dir)
-    assert sensor.running()  # the first reader records the baseline
-    _append(database, CANCEL)  # the Esc
-    assert not sensor.running()
-    assert not watcher.running()  # its first poll comes after the cancel, with the same baseline
-
-    _touch(proc_dir)  # the next turn: the stale baseline is replaced
-    assert watcher.running()
-    assert sensor.running()
 
 
 def test_no_mark_is_no_turn(proc_dir: Path) -> None:

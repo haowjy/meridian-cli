@@ -144,14 +144,17 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   doesn't ask, it removes `busy` and `asked`. After two asks in a row end with no watcher, it
   skips 2 turn ends before asking again, then 4, 8, up to 32 (`backoff/<conversation>`); a
   `Stop` that sees a watcher running deletes that back-off file.
-  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves the `busy` file. `TurnState`
-  ends the turn when a new `executor_metadata` row with termination reason 2 (`USER_CANCELED`)
-  appears in the conversation's SQLite database; the baseline is the highest row index, recorded by
-  the first reader to see a `busy` touch in `baseline/<conversation>` (with the touch's time)
-  and shared by the watcher and the sensor; until one is recorded the turn counts as running. That schema is undocumented (seen on 1.5.15); anything unreadable leaves the turn
-  running. An Esc within about a second of any model invocation can be missed; a build that
-  renumbers the enum could read a mid-turn execution end as an Esc. agy's terminal sandbox
-  (Auto mode) has its own process list and hides `~/.meridian`,
+  agy 1.5.15 fires no `Stop` on Esc, so a cancelled turn leaves the `busy` file, and after any
+  Esc agy makes no model call for a finished background command until the person types: a
+  message after Esc waits, and the watcher waits on `busy` alone (it stays running). Only the
+  idle sensor reads the cancel, through `agy/idle.py` `TurnState`: a new `executor_metadata`
+  row with termination reason 2 (`USER_CANCELED`) in the conversation's SQLite database after
+  `busy` was last touched, against the highest row index noted at that touch; until that
+  read succeeds the turn counts as running. That schema is undocumented (seen on 1.5.15);
+  anything unreadable leaves the turn running. An Esc within about a second of any model
+  invocation can be missed (no idle notice until the turn ends); a build that renumbers the
+  enum could read a mid-turn execution end as an Esc. agy's terminal sandbox (Auto mode) has
+  its own process list and hides `~/.meridian`,
   so the start command says `BypassSandbox true`, and a watcher that cannot see its state
   prints a notice that it is sandboxed and exits. These files live in the `agy` process
   directory, so the notice sweep's removal of it is their only cleanup. The message itself
@@ -163,8 +166,8 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   the calling conversation's row, never the server's inherited `MERIDIAN_*`.
   Each hold also runs the idle sidecar (`lib/launch/hold_idle.py`: closes the conversation's
   old stretch, then `sidecar.run`) with `AgyIdleSensor` (`lib/harness/agy/idle.py`). The
-  sensor and the watcher both ask `state.TurnState.running()` (`agy/state.py`) whether the turn
-  is live; it reads the `busy` file. On each turn end the sensor reads the transcript past an
+  sensor asks `TurnState.running()` (same file) whether the turn is live: the `busy` file, plus
+  the cancel read above. On each turn end the sensor reads the transcript past an
   in-memory offset (kept on the sensor, not persisted; a transcript that shrank is re-read).
   A step with `type` `USER_INPUT` and `source` `USER_EXPLICIT` is a typed prompt: a return,
   with its `created_at` as `returned_at_ms`. A wake's `SYSTEM_MESSAGE` (and hook-injected

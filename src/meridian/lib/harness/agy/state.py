@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import subprocess
-import threading
 from collections.abc import Mapping
-from contextlib import closing, suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -152,140 +149,6 @@ def busy_path(proc_dir: Path, conversation_id: str) -> Path:
     return proc_dir / "busy" / conversation_id
 
 
-def _varint(blob: bytes, pos: int) -> tuple[int, int]:
-    """The varint at ``pos`` and the position after it; ``IndexError`` when it is cut off."""
-
-    value = shift = 0
-    while True:
-        byte = blob[pos]
-        pos += 1
-        value |= (byte & 0x7F) << shift
-        shift += 7
-        if byte < 0x80:
-            return value, pos
-
-
-def _termination_reason(blob: bytes) -> int | None:
-    """Field 1 of an ``executor_metadata`` row: ``agy``'s ExecutorTerminationReason."""
-
-    pos = 0
-    try:
-        while pos < len(blob):
-            key, pos = _varint(blob, pos)
-            field, wire = key >> 3, key & 7
-            if wire == 0:
-                value, pos = _varint(blob, pos)
-                if field == 1:
-                    return value
-            elif wire == 1:
-                pos += 8
-            elif wire == 5:
-                pos += 4
-            elif wire == 2:
-                length, pos = _varint(blob, pos)
-                pos += length
-            else:
-                return None
-    except IndexError:
-        return None
-    return None
-
-
-_USER_CANCELED = 2
-
-
-class TurnState:
-    """Whether a turn of one conversation is running: the one answer for the watcher (which
-    waits out a turn) and the idle sensor (which reports its end).
-
-    A turn runs while ``busy/<conversation>`` exists, which ``guard.sh`` touches on every
-    ``PreInvocation`` and the ``Stop`` hook removes. ``agy`` fires no ``Stop`` on Esc, so
-    the mark would stay; but it appends a row to the conversation database's
-    ``executor_metadata`` when an execution ends, and field 1 of that row is the
-    termination reason (2 is ``USER_CANCELED``, 4 a normal end). The first reader to see a
-    new touch records the highest row index in ``baseline/<conversation>`` with the touch's
-    time, and every reader judges against that one baseline, so they cannot disagree about
-    a cancel that lands between their polls; a later row with reason 2 means the turn
-    ended. Normal ends are not read: ``Stop`` removes the mark for them, and a ``Stop``
-    continuation's first execution also ends with a row.
-
-    Google documents none of this (the table, the protobuf, the enum): seen on ``agy``
-    1.5.15. Every failure to read it, and a missing baseline, leave the turn running, so a
-    working session is never taken for an idle one; the baseline is retried on each poll.
-    That also means an Esc within about a second of any model invocation (the mark is
-    touched on each, and the baseline is taken at the next poll) can be missed, and the
-    session then counts as busy until the next turn ends. The one way this fails open: a
-    later build that renumbers the enum so that 2 marks an execution ending mid-turn would
-    read as an Esc.
-    """
-
-    def __init__(self, proc_dir: Path, conversation: str) -> None:
-        self._proc_dir = proc_dir
-        self._conversation = conversation
-        # ``busy()`` and ``events()`` run on separate worker threads and share one reader.
-        self._lock = threading.Lock()
-
-    def running(self) -> bool:
-        with self._lock:
-            return self._running()
-
-    def _running(self) -> bool:
-        try:
-            touched = busy_path(self._proc_dir, self._conversation).stat().st_mtime_ns
-        except OSError:
-            return False
-        baseline = self._recorded(touched)
-        if baseline is None:
-            # Two readers may record at once: either value is fine, because from the next
-            # poll both read whichever the file holds.
-            last = self._last_index()
-            if last is not None:
-                with suppress(OSError):
-                    atomic_write_text(
-                        baseline_path(self._proc_dir, self._conversation),
-                        f"{touched} {last}",
-                        durable=False,
-                        permissions=PRIVATE_FILE_MODE,
-                    )
-            return True
-        rows = self._query("SELECT data FROM executor_metadata WHERE idx > ?", baseline)
-        return rows is None or _USER_CANCELED not in (
-            _termination_reason(data) for (data,) in rows if isinstance(data, bytes)
-        )
-
-    def _recorded(self, touched: int) -> int | None:
-        """The shared baseline of the touch at ``touched``; None when missing or stale."""
-
-        try:
-            recorded, index = baseline_path(self._proc_dir, self._conversation).read_text().split()
-            return int(index) if int(recorded) == touched else None
-        except (OSError, ValueError):
-            return None
-
-    def _last_index(self) -> int | None:
-        rows = self._query("SELECT COALESCE(MAX(idx), -1) FROM executor_metadata")
-        return rows[0][0] if rows else None
-
-    def _query(self, sql: str, *params: int) -> list[tuple[Any, ...]] | None:
-        """The rows of a read-only query on the conversation's database, None when it fails."""
-
-        database = native_store().parent / "conversations" / f"{self._conversation}.db"
-        try:
-            with closing(
-                sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=0.2)
-            ) as db:
-                return db.execute(sql, params).fetchall()
-        except (sqlite3.Error, ValueError):
-            return None
-
-
-def baseline_path(proc_dir: Path, conversation_id: str) -> Path:
-    """``<busy mtime_ns> <highest executor_metadata idx>``: the cancel baseline of the turn
-    that touched ``busy`` at that time, shared by every ``TurnState`` reader."""
-
-    return proc_dir / "baseline" / conversation_id
-
-
 def asked_path(proc_dir: Path, conversation_id: str) -> Path:
     """Empty file: this turn's ``Stop`` already asked the model to start the watcher."""
 
@@ -366,11 +229,9 @@ __all__ = [
     "PRINTED_APPROVALS",
     "PROJECT_ENV",
     "ROOT_CONVERSATION_ID_KEY",
-    "TurnState",
     "agy_root",
     "ask_backoff_path",
     "asked_path",
-    "baseline_path",
     "briefed_path",
     "busy_path",
     "inbox_path",

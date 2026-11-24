@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from meridian.lib.harness.agy.state import (
-    TurnState,
+    busy_path,
     inbox_path,
     is_safe_id,
     process_birth,
@@ -122,7 +122,6 @@ def run(agy_pid: int, conversation: str) -> int:
             return 0
         time.sleep(0.05)
 
-    turn = TurnState(proc_dir, conversation)
     noted = _inbox_signature(conversation)
     print(
         "Meridian watcher started. It exits when a Meridian message is waiting for this "
@@ -139,7 +138,7 @@ def run(agy_pid: int, conversation: str) -> int:
             return 0
         if polls % _ALIVE_EVERY_POLLS == 0 and process_birth(agy_pid) != birth:
             return 0
-        if turn.running():
+        if busy_path(proc_dir, conversation).exists():
             continue
         text = _wake_text(proc_dir, conversation)
         if text is None:
