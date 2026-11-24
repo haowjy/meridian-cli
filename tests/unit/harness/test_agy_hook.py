@@ -330,6 +330,22 @@ def test_confirm_reads_from_the_earliest_batch_left_by_a_turn_without_stop(
     assert not inflight_path("c1").exists()
 
 
+def test_crash_in_claim_then_stop_shows_the_message_once(agy_home: Path) -> None:
+    transcript = agy_home / "t.jsonl"
+    transcript.write_text("x\n")
+    entry = inbox.enqueue("c1", "ping", None)
+    batch = inbox.claim("c1", str(transcript))
+    # claim was killed before it unlinked the inbox: nothing was injected, the id is in both.
+    inbox.inbox_path("c1").write_text(entry.to_line() + "\n")
+
+    inbox.confirm("c1", str(transcript))  # the turn's Stop: no marker
+
+    assert [e.id for e in inbox.claim("c1", str(transcript))] == [entry.id]
+    assert len(batch) == 1
+    flying = [json.loads(line) for line in inflight_path("c1").read_text().splitlines()]
+    assert [(e["id"], e["attempts"]) for e in flying] == [(entry.id, 2)]
+
+
 def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> None:
     from meridian.lib.platform import fcntl
 

@@ -163,6 +163,19 @@ def _write_entries(path: Path, entries: list[InboxEntry]) -> None:
     )
 
 
+def _merge(*groups: list[InboxEntry]) -> list[InboxEntry]:
+    """One entry per id, in first-seen order. A crash between two writes leaves an id in
+    both files; the copy with more ``attempts`` wins (the later group's on a tie), so
+    ``MAX_ATTEMPTS`` still bounds it and the model is shown it once."""
+
+    merged: dict[str, InboxEntry] = {}
+    for entry in (e for group in groups for e in group):
+        seen = merged.get(entry.id)
+        if seen is None or entry.attempts >= seen.attempts:
+            merged[entry.id] = entry
+    return list(merged.values())
+
+
 def claim(conversation_id: str, transcript_path: str | None) -> list[InboxEntry]:
     """Move the queued messages in flight and return them for the hook to inject.
 
@@ -179,10 +192,10 @@ def claim(conversation_id: str, transcript_path: str | None) -> list[InboxEntry]
         offset = _transcript_size(transcript_path)
         batch = [InboxEntry(e.id, e.text, e.sender, e.attempts + 1, offset) for e in queued]
         # In-flight first: a crash between the two steps repeats a batch instead of losing it.
-        # The same entry in both files then is one entry: the new copy replaces the old.
-        sent = {e.id for e in batch}
-        flying = [e for e in _read_entries(inflight_path(conversation_id)) if e.id not in sent]
-        _write_entries(inflight_path(conversation_id), [*flying, *batch])
+        _write_entries(
+            inflight_path(conversation_id),
+            _merge(_read_entries(inflight_path(conversation_id)), batch),
+        )
         inbox.unlink(missing_ok=True)
         return batch
 
@@ -211,9 +224,8 @@ def confirm(conversation_id: str, transcript_path: str | None) -> None:
         retry = [e for e in missing if e.attempts < MAX_ATTEMPTS]
         if retry:
             # Inbox first: a crash between the two writes repeats entries, never loses them.
-            _write_entries(
-                inbox_path(conversation_id), [*retry, *_read_entries(inbox_path(conversation_id))]
-            )
+            inbox = inbox_path(conversation_id)
+            _write_entries(inbox, _merge(retry, _read_entries(inbox)))
         _write_entries(flight, [e for e in missing if e.attempts >= MAX_ATTEMPTS])
 
 
@@ -239,15 +251,14 @@ def settle_undelivered(
         if is_open():
             return
         transcript = _read_transcript(transcript_path, 0)
-        # A crash between ``claim``'s two writes leaves an entry in both files.
-        queued = {
-            e.id: e
-            for e in [
-                *_read_entries(inflight_path(conversation_id)),
-                *_read_entries(inbox_path(conversation_id)),
-            ]
-        }
-        owed = [e for e in queued.values() if f"meridian:{e.id}]".encode() not in transcript]
+        owed = [
+            e
+            for e in _merge(
+                _read_entries(inflight_path(conversation_id)),
+                _read_entries(inbox_path(conversation_id)),
+            )
+            if f"meridian:{e.id}]".encode() not in transcript
+        ]
         # One file from here on: a crash between these two steps repeats entries, never loses.
         _write_entries(inbox_path(conversation_id), owed)
         inflight_path(conversation_id).unlink(missing_ok=True)
