@@ -36,17 +36,16 @@ from meridian.lib.platform import fcntl
 POLL_SECONDS = 1.0
 
 # The Claude mod's prompts (``claude_runtime/meridian-idle/hooks/keepwarm.ts``, ``pingText`` and
-# ``reminderText``) without ``compact-now`` (``agy`` cannot compact on demand, #1049). Each ends by
-# restarting the watcher, which the wake already asks for, so a model that follows both makes
-# one model call, not two; so ``stop-waiting`` is a last line, not the whole reply. The ping
-# also says to do no other work: the turn is not kept read-only as Claude's is, so the text is
-# all that holds it to a reply. The mod is TypeScript, so the wordings are kept in step by hand.
+# ``reminderText``) without ``compact-now`` (``agy`` cannot compact on demand, #1049). The wake
+# notice (``watch.py``) asks for the watcher restart, so the text does not; ``stop-waiting`` is
+# a last line, not the whole reply. The ping also says to do no other work: the turn is not kept
+# read-only as Claude's is, so the text is all that holds it to a reply. The mod is
+# TypeScript, so the wordings are kept in step by hand.
 _STOP_LINE = (
     " To end this stretch's pings, end your reply with a last line that is exactly "
     "stop-waiting: you then accept the cache going cold before the user returns. Anything "
     "else keeps waiting."
 )
-_RESTART = " Start the watcher again, as the wake notice asks, before you end your reply."
 _STATE_REMINDER = (
     "[Meridian] State reminder. This turn keeps your prompt cache warm while the user is "
     "away; it is about to expire. Run `meridian work show` and update the work item's "
@@ -61,7 +60,7 @@ _KEEPWARM_PING = (
 
 def prompt_text(kind: Literal["reminder", "ping"], *, stop_offered: bool) -> str:
     base = _STATE_REMINDER if kind == "reminder" else _KEEPWARM_PING
-    return base + _RESTART + (_STOP_LINE if stop_offered else "")
+    return base + (_STOP_LINE if stop_offered else "")
 
 
 def _varint(blob: bytes, pos: int) -> tuple[int, int]:
@@ -137,30 +136,29 @@ class TurnState:
         self._conversation = conversation
         self._touched: int | None = None
         self._baseline: int | None = None
-        # ``busy()`` and ``events()`` run on separate worker threads and share one reader.
-        self._lock = threading.Lock()
 
-    def running(self) -> bool:
-        with self._lock:
-            return self._running()
+    def state(self) -> Literal["running", "idle", "cancelled"]:
+        """``cancelled``: the mark is left over from an Esc. Callers serialize (the sensor's
+        ``_observe_lock``): the reader keeps a baseline."""
 
-    def _running(self) -> bool:
         try:
             touched = busy_path(self._proc_dir, self._conversation).stat().st_mtime_ns
         except OSError:
             self._touched = None
-            return False
+            return "idle"
         if touched != self._touched:
             self._touched = touched
             self._baseline = self._last_index()
-            return True
+            return "running"
         if self._baseline is None:
             self._baseline = self._last_index()
-            return True
+            return "running"
         rows = self._query("SELECT data FROM executor_metadata WHERE idx > ?", self._baseline)
-        return rows is None or _USER_CANCELED not in (
+        if rows is None or _USER_CANCELED not in (
             _termination_reason(data) for (data,) in rows if isinstance(data, bytes)
-        )
+        ):
+            return "running"
+        return "cancelled"
 
     def _last_index(self) -> int | None:
         rows = self._query("SELECT COALESCE(MAX(idx), -1) FROM executor_metadata")
@@ -278,18 +276,19 @@ class AgyIdleSensor:
 
         return await asyncio.to_thread(self._busy)
 
-    def _observe(self) -> bool:
-        """Whether the turn runs; notes the moment the mark goes, from whichever caller sees it."""
+    def _observe(self) -> Literal["running", "idle", "cancelled"]:
+        """The turn's state; notes the moment the mark goes, from whichever caller sees it."""
 
         with self._observe_lock:
-            running = self._turn.running()
+            state = self._turn.state()
+            running = state == "running"
             if self._seen_running and not running:
                 self._unreported = True
             self._seen_running = running
-            return running
+            return state
 
     def _busy(self) -> bool:
-        return self._observe() or self._unreported
+        return self._observe() == "running" or self._unreported
 
     async def send(self, kind: Literal["reminder", "ping"], *, stop_offered: bool) -> bool:
         """Queue the prompt as a message from Meridian when the session can be woken for it.
@@ -306,14 +305,15 @@ class AgyIdleSensor:
         self._prompts.add(inbox.enqueue(self._conversation, text, None).id)
 
     def _can_wake(self) -> bool:
-        """A watcher runs and no ``busy`` mark exists. The mark means a turn is running or an
-        Esc left it behind; the watcher never exits for either, so nothing would wake the
-        session (#1051)."""
+        """A watcher runs and the turn is idle. A running turn or an Esc's leftover mark never
+        makes the watcher exit, so nothing would wake the session (#1051)."""
 
+        with self._observe_lock:
+            state = self._turn.state()
         return (
-            watcher_running(self._proc_dir, self._conversation)
-            and not busy_path(self._proc_dir, self._conversation).exists()
+            state == "idle"
             and not self._unreported
+            and watcher_running(self._proc_dir, self._conversation)
         )
 
     def _in_tui(self) -> bool:

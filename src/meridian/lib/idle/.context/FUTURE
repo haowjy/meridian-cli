@@ -2,8 +2,6 @@
 
 - `sidecar.py`: diagnose repeated arms without a user return so event drift does
   not silently disable later idle cycles.
-- `sidecar.py` and `harness/idle_types.py`: declare the `external_events`
-  capability rather than relying on a duck-typed flag with silent defaults.
 - `claude_runtime/meridian-idle`: check host busy state before a due push, and
   forward permission prompts without holding the push for a waiting subagent.
 - `claude_runtime/meridian-idle`: the plugin `$.store` is one file shared by

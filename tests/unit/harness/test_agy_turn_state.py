@@ -48,29 +48,29 @@ def test_a_cancel_after_the_mark_was_touched_ends_the_turn(proc_dir: Path) -> No
     _append(database, NORMAL_END, CANCEL)  # history: an earlier Esc
     turn = TurnState(proc_dir, CONVERSATION)
     _touch(proc_dir)
-    assert turn.running()
-    assert turn.running()
+    assert turn.state() == "running"
+    assert turn.state() == "running"
 
     _append(database, NORMAL_END)  # a normal end is Stop's to report
-    assert turn.running()
+    assert turn.state() == "running"
     _append(database, CANCEL)
-    assert not turn.running()
+    assert turn.state() == "cancelled"
 
     _touch(proc_dir)  # the next turn's PreInvocation
-    assert turn.running()
+    assert turn.state() == "running"
 
 
 def test_an_unreadable_baseline_never_ends_a_running_turn(proc_dir: Path) -> None:
     turn = TurnState(proc_dir, CONVERSATION)
     _touch(proc_dir)
-    assert turn.running()  # no database yet: the baseline is unknown
+    assert turn.state() == "running"  # no database yet: the baseline is unknown
 
     _append(_database(), NORMAL_END, CANCEL)  # past cancels appear once it is readable
-    assert turn.running()  # this poll takes the baseline
-    assert turn.running()
+    assert turn.state() == "running"  # this poll takes the baseline
+    assert turn.state() == "running"
     _append(_database(), CANCEL)
-    assert not turn.running()
+    assert turn.state() == "cancelled"
 
 
 def test_no_mark_is_no_turn(proc_dir: Path) -> None:
-    assert not TurnState(proc_dir, CONVERSATION).running()
+    assert TurnState(proc_dir, CONVERSATION).state() == "idle"

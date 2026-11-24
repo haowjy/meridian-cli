@@ -13,7 +13,7 @@ from meridian.lib.harness.idle_types import (
     PromptSink,
     SidecarContext,
 )
-from meridian.lib.idle.keepwarm import EXPIRY_MARGIN_MS, Stretch, reply_stops
+from meridian.lib.idle.keepwarm import Keepwarm
 from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability.debug_tracer import DebugTracer
 from meridian.lib.state.idle_store import IdleState, Stage
@@ -115,17 +115,13 @@ class _Coordinator:
     schedule_task: asyncio.Task[None] | None = None
     schedule_key: tuple[int, int] | None = None
     session_mismatch_recorded: bool = False
-    keepwarm: Stretch | None = None
-    ping_task: asyncio.Task[None] | None = None
+    external_events: bool = False
+    keepwarm: Keepwarm | None = None
 
-    async def cancel_ping(self) -> None:
-        task = self.ping_task
-        self.ping_task = None
-        if task is None:
-            return
-        task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await task
+    async def busy(self) -> bool:
+        """Whether a timed prompt must wait: only a sensor with ``external_events`` can say."""
+
+        return self.external_events and await self.sensor.busy()
 
     async def cancel_schedule(self) -> None:
         task = self.schedule_task
@@ -176,7 +172,7 @@ class _Coordinator:
             await self.clock.sleep_until_ms(deadline)
             if not self.ctx.tui_alive():
                 return
-            if getattr(self.sensor, "external_events", False) and await self.sensor.busy():
+            if await self.busy():
                 continue
             fired = await asyncio.to_thread(
                 self.service.fire,
@@ -186,111 +182,8 @@ class _Coordinator:
                 stretch=arm.stretch,
                 anchor=arm.anchor,
             )
-            if stage == "warn" and fired.decision == "act":
-                await self._warned(arm, remind=fired.remind, due_ms=deadline)
-
-    async def _warned(self, arm: ArmResult, *, remind: bool, due_ms: int) -> None:
-        """The warning acted: send the state reminder, else ping 1 when keepwarm is on. The
-        reminder takes ping 1's slot with keepwarm on and none with it off."""
-
-        if not isinstance(self.sensor, PromptSink):
-            return
-        kw = self.keepwarm if self.keepwarm and self.keepwarm.stretch == arm.stretch else None
-        on = kw is not None and kw.limit > 0
-        if kw is not None:
-            kw.warned = True
-        if not (remind or on):
-            return
-        # The margin applies to every prompt, this one included: with a lead of a minute or
-        # less there is no time left to keep warm, and a timer that ran late ends the stretch.
-        warn_ms = (
-            await asyncio.to_thread(self.service.config_for, self.harness)
-        ).policy.warn_minutes * 60_000
-        if warn_ms <= EXPIRY_MARGIN_MS:
-            return
-        if self.clock.now_ms() >= due_ms + warn_ms - EXPIRY_MARGIN_MS:
-            if kw is not None:
-                kw.ended = True
-            return
-        # The slot is taken before the send and given back only when the sensor says nothing
-        # was queued: a send cancelled mid-way (its inbox write still lands) stays spent, so
-        # a stretch can lose a ping but never exceed its limit.
-        if kw is not None and on:
-            kw.sent += 1
-        delivered = await self.sensor.send("reminder" if remind else "ping", stop_offered=on)
-        if not delivered:
-            if kw is not None and on:
-                kw.sent -= 1
-            if kw is not None and remind:
-                kw.reminder_owed = True
-
-    async def _track(self, event: IdleEvent, result: ArmResult) -> None:
-        """Keep the stretch's keepwarm record from an arm: its start, its lead, its reply."""
-
-        if result.stretch is None or not isinstance(self.sensor, PromptSink):
-            return
-        policy = (await asyncio.to_thread(self.service.config_for, self.harness)).policy
-        kw = self.keepwarm
-        if kw is None or kw.stretch != result.stretch:
-            await self.cancel_ping()
-            limit = policy.keepwarm_pings if policy.keepwarm else 0
-            kw = self.keepwarm = Stretch(result.stretch, limit)
-        now = self.clock.now_ms()
-        if kw.lead_ms is None and result.warn_at is not None:
-            kw.lead_ms = result.warn_at - now
-        if any(reply_stops(reply) for reply in event.prompt_replies):
-            kw.ended = True
-        if kw.ended or event.implies_return:
-            await self.cancel_ping()
-        elif kw.due() and policy.warn_minutes * 60_000 > EXPIRY_MARGIN_MS:
-            await self.cancel_ping()
-            assert kw.lead_ms is not None
-            fire_at = now + kw.lead_ms
-            deadline = fire_at + policy.warn_minutes * 60_000 - EXPIRY_MARGIN_MS
-            self.ping_task = asyncio.create_task(self._ping_safely(kw, fire_at, deadline))
-
-    async def _ping_safely(self, kw: Stretch, fire_at: int, deadline: int) -> None:
-        try:
-            await self._ping(kw, fire_at, deadline)
-        except asyncio.CancelledError:
-            raise
-        except BaseException as exc:
-            self.error_reporter.record(phase="keepwarm", error=exc)
-
-    async def _ping(self, kw: Stretch, fire_at: int, deadline: int) -> None:
-        """One later prompt (an owed reminder, else a ping), one lead after a turn that ended in
-        this stretch. A turn running then skips it without a slot: that turn's own end
-        schedules the next."""
-
-        assert isinstance(self.sensor, PromptSink)
-        await self.clock.sleep_until_ms(fire_at)
-        if not self.ctx.tui_alive() or kw.ended:
-            return
-        if self.clock.now_ms() >= deadline:
-            kw.ended = True  # the cache is cold: further pings would only prefill again
-            return
-        if getattr(self.sensor, "external_events", False) and await self.sensor.busy():
-            return
-        # Something else may have closed the stretch (a new process, ``meridian idle return``):
-        # only the store says so.
-        states = await asyncio.to_thread(
-            self.service.status, harness=self.harness, session=self.ctx.harness_session_id
-        )
-        if not states or not states[0].stretch_open or states[0].stretch != kw.stretch:
-            kw.ended = True
-            return
-        kind = kw.next_kind()
-        if kind is None:
-            return
-        on = kw.limit > 0
-        # Taken before the send, as in ``_warned``; the reminder takes a slot only with keepwarm on.
-        if on:
-            kw.sent += 1
-        kw.reminder_owed = kw.reminder_owed and kind != "reminder"
-        if not await self.sensor.send(kind, stop_offered=on):
-            if on:
-                kw.sent -= 1
-            kw.reminder_owed = kw.reminder_owed or kind == "reminder"
+            if stage == "warn" and fired.decision == "act" and self.keepwarm is not None:
+                await self.keepwarm.on_warn(arm, remind=fired.remind, due_ms=deadline)
 
     async def _drive_safely(self, arm: ArmResult) -> None:
         try:
@@ -316,12 +209,13 @@ class _Coordinator:
         )
         if event.kind == "user_prompt":
             await self.cancel_schedule()
-            await self.cancel_ping()
-            self.keepwarm = None
+            if self.keepwarm is not None:
+                await self.keepwarm.close()
             return
         if isinstance(result, ArmResult):
             # The record first: the arm may start the stage timer that reads it.
-            await self._track(event, result)
+            if self.keepwarm is not None:
+                await self.keepwarm.on_turn_end(event, result)
             await self.apply_arm(result)
 
 
@@ -386,6 +280,17 @@ async def run(
         error_reporter=resolved_error_reporter,
     )
     external_events = bool(getattr(sensor, "external_events", False))
+    coordinator.external_events = external_events
+    if isinstance(sensor, PromptSink):
+        coordinator.keepwarm = Keepwarm(
+            sensor,
+            ctx=ctx,
+            service=resolved_service,
+            clock=resolved_clock,
+            harness=coordinator.harness,
+            busy=coordinator.busy,
+            report=lambda exc: resolved_error_reporter.record(phase="keepwarm", error=exc),
+        )
     tasks: set[asyncio.Task[None]] = set()
     if external_events:
         try:
@@ -419,7 +324,8 @@ async def run(
                 await task
         try:
             await coordinator.cancel_schedule()
-            await coordinator.cancel_ping()
+            if coordinator.keepwarm is not None:
+                await coordinator.keepwarm.close()
         finally:
             if error_reporter is None:
                 resolved_error_reporter.close()
