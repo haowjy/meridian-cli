@@ -6,6 +6,12 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.10] - 2026-11-24
+
+### Fixed
+- agy: a keepwarm ping or state reminder that is still queued when the prompt cache goes cold is dropped. It no longer lands in a turn you type after quitting and resuming the conversation, and a prompt the session did not show is no longer re-queued past that time.
+- agy: Meridian's own pings and reminders no longer carry the peer-message wording that asks the model to say it received them, so replies lose that extra line.
+
 ## [0.27.9] - 2026-11-24
 
 ### Changed
