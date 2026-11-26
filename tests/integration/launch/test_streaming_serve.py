@@ -9,9 +9,11 @@ import pytest
 from meridian.cli import streaming_serve as streaming_serve_module
 from meridian.cli.invocation import GlobalOptions, invocation_scope
 from meridian.cli.output import OutputConfig
+from meridian.lib.core.caller_boundary import CALLER_BOUNDARY_ENV, CallerBoundary
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.codex_rules import MERIDIAN_RULES_FILE_CONTENT
+from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
 from meridian.lib.streaming.spawn_manager import DrainOutcome
@@ -32,11 +34,22 @@ def _streaming_serve_cli_context(monkeypatch: pytest.MonkeyPatch) -> Generator[N
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent", ["lead", ""], ids=["spawn-capable", "profileless"])
+@pytest.mark.parametrize(
+    ("agent", "sandbox", "can_spawn"),
+    [
+        ("lead", "workspace-write", True),
+        ("", None, True),
+        ("", "workspace-write", True),
+        ("worker", "workspace-write", False),
+    ],
+    ids=["spawn-capable", "profileless", "sandboxed-profileless", "no-subagents"],
+)
 async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     agent: str,
+    sandbox: str | None,
+    can_spawn: bool,
 ) -> None:
     write_minimal_mars_config(tmp_path)
     runtime_root = resolve_runtime_root(tmp_path)
@@ -51,24 +64,27 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
         sandbox="workspace-write",
         subagents=("reviewer",),
     )
+    write_agent(tmp_path, name="worker", model="gpt-5.4", harness="codex")
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         harness_model="gpt-5.4",
-        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write" if agent else None),
+        execution_policy=ResolvedExecutionPolicy(sandbox=sandbox),
     )
 
     async def _run_streaming_spawn(**kwargs: object) -> DrainOutcome:
         helper_calls.append((str(kwargs["spawn_id"]), str(kwargs["runtime_root"])))
-        rules = codex_home / "rules"
-        if agent:
-            assert (rules / "meridian.rules").read_text() == MERIDIAN_RULES_FILE_CONTENT
+        config = kwargs["config"]
+        assert isinstance(config, ConnectionConfig)
+        boundary = CallerBoundary.from_env_value(config.child_env[CALLER_BOUNDARY_ENV])
+        assert boundary.has_spawn_capability == can_spawn
+        assert boundary.sandbox == (sandbox or "default")
+        rule_file = codex_home / "rules" / "meridian.rules"
+        if can_spawn:
+            assert rule_file.read_text() == MERIDIAN_RULES_FILE_CONTENT
         else:
-            assert not (rules / "meridian.rules").exists()
-            assert (rules / "meridian-message.rules").read_text().splitlines()[-1] == (
-                'prefix_rule(pattern=["meridian", "spawn", "message"], decision="allow")'
-            )
+            assert not rule_file.exists()
         return DrainOutcome(status="cancelled", exit_code=1)
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)

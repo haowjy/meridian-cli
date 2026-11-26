@@ -39,7 +39,10 @@ from meridian.lib.harness.codex_rollout import (
     materialize_fork_rollout,
     resolve_codex_home,
 )
-from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
+from meridian.lib.harness.codex_rules import (
+    codex_meridian_rules_enabled,
+    ensure_codex_meridian_rules,
+)
 from meridian.lib.harness.codex_settings import codex_network_config_warnings
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
@@ -102,9 +105,12 @@ def materialize_codex_spec(
     child_cwd: Path,
 ) -> ResolvedLaunchSpec:
     """Project Meridian's execpolicy rule before the Codex process starts."""
+
+    if not codex_meridian_rules_enabled(spec):
+        return spec
     return spec.model_copy(
         update={
-            "codex_runtime": ensure_codex_meridian_rules(spec, env, child_cwd=child_cwd),
+            "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd),
         }
     )
 

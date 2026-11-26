@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from meridian.lib.harness.codex_rules import codex_meridian_command
+from meridian.lib.harness.codex_rules import codex_meridian_rules_enabled
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     project_codex_native_config,
@@ -319,9 +319,7 @@ def _codex_report(
     native_config_report: EnforcementReport,
 ) -> EnforcementReport:
     lines: list[ReportLine] = []
-    command_rule = codex_meridian_command(spec)
-    rules_error = spec.codex_runtime.rules_file_error
-    rules_path = spec.codex_runtime.rules_file_path
+    spawn_escape = codex_meridian_rules_enabled(spec)
     for rule in policy.rules:
         switch = _tool_switch(rule)
         if (
@@ -398,20 +396,22 @@ def _codex_report(
             commands = ", ".join(
                 f"{command.match} {command.command!r}" for command in platform.commands
             )
-            if command_rule is not None and rules_error is not None:
+            rules_error = spec.codex_runtime.rules_file_error
+            rules_path = spec.codex_runtime.rules_file_path
+            if spawn_escape and rules_error is not None:
                 note = (
                     "Meridian could not write its Codex rules file, so commands remain subject "
                     f"to the sandbox ({rules_error}); requested matches: {commands}"
                 )
-            elif command_rule is not None and rules_path is None:
+            elif spawn_escape and rules_path is None:
                 note = (
-                    f"a real launch would install the Codex rule for `{command_rule}` "
-                    "so it can run outside the sandbox; other requested "
+                    "a real launch would write $CODEX_HOME/rules/meridian.rules so "
+                    "`meridian spawn` can run outside Codex's sandbox; other requested "
                     f"matches remain ordinary shell calls ({commands})"
                 )
-            elif command_rule is not None:
+            elif spawn_escape:
                 note = (
-                    f"`{rules_path}` lets `{command_rule}` run outside "
+                    "the Meridian-owned user rules file lets `meridian spawn` run outside "
                     "Codex's sandbox for every Codex session of this user; other requested "
                     f"matches remain ordinary shell calls ({commands})"
                 )
@@ -421,7 +421,7 @@ def _codex_report(
                     "ordinary shell calls, subject to its sandbox and approval policy"
                 )
             status: ReportStatus = (
-                "partial" if command_rule is not None and rules_error is None else "unsupported"
+                "partial" if spawn_escape and rules_error is None else "unsupported"
             )
             if permissions.tool_hook is not None:
                 note += "; the shell hook lets them past the profile's shell rules"
@@ -436,22 +436,24 @@ def _codex_report(
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
         sandbox_status = "native"
-        if command_rule is not None:
+        if spawn_escape:
+            rules_error = spec.codex_runtime.rules_file_error
+            rules_path = spec.codex_runtime.rules_file_path
             if rules_error is not None:
                 sandbox_status = "partial"
                 sandbox_note += (
                     "; Meridian could not write "
-                    f"{rules_path or 'its Codex rules file'}, so `{command_rule}` "
+                    f"{rules_path or '$CODEX_HOME/rules/meridian.rules'}, so `meridian spawn` "
                     f"remains inside Codex's sandbox: {rules_error}"
                 )
             elif rules_path is None:
                 sandbox_note += (
-                    f"; a real launch would install the rule allowing `{command_rule}` "
-                    "outside Codex's sandbox"
+                    "; a real launch would write $CODEX_HOME/rules/meridian.rules so "
+                    "`meridian spawn` can run outside Codex's sandbox"
                 )
             else:
                 sandbox_note += (
-                    f"; `{command_rule}` runs outside Codex's sandbox via "
+                    "; `meridian spawn` runs outside Codex's sandbox via "
                     f"{rules_path}, for every Codex session of this user"
                 )
         lines.append(
@@ -487,7 +489,8 @@ def _codex_report(
                 )
             )
         else:
-            escaped = command_rule is not None and rules_error is None
+            rules_error = spec.codex_runtime.rules_file_error
+            escaped = spawn_escape and rules_error is None
             lines.append(
                 ReportLine(
                     network_element,
@@ -495,7 +498,7 @@ def _codex_report(
                     (
                         "-c sandbox_workspace_write.network_access=false"
                         + (
-                            f"; the Meridian-owned user rule lets `{command_rule}` run "
+                            "; the Meridian-owned user rule still lets `meridian spawn` run "
                             "outside the sandbox with network access"
                             if escaped
                             else ""

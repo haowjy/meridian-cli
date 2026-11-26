@@ -29,8 +29,8 @@ _SPAWN_CAPABILITIES = (
     "`prompts/` with `meridian work path`, pass its absolute path to `--prompt-file`, attach "
     "skills with `--skills`, pass files or a folder with `-f`, carry a prior run with "
     "`--from`, choose its checkout with `--task-dir`, or override its model with `-m`.\n"
-    "- Agents you can spawn, and when to use each: run `meridian spawn subagents` "
-    "before delegating.\n"
+    "- Run `meridian spawn subagents` before delegating. Use `--all` to see installed "
+    "agents when this session has no profile.\n"
     "- Live model catalog / model-specific prompting: `meridian mars models list` / "
     "`meridian mars models prompting`."
 )
@@ -360,7 +360,7 @@ def build_spawn_usage_contract(
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
     if profile is None:
-        return False
+        return True
     if profile.meridian_capabilities is not None and profile.meridian_capabilities.spawn is False:
         return False
     return len(profile.subagents) > 0

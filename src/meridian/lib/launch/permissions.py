@@ -160,8 +160,8 @@ def launch_permission_rules(
 ) -> tuple[tuple[ToolRule, ...], tuple[PlatformRule, ...]]:
     """Select ordinary platform denies and the remaining mechanism rules for a launch.
 
-    Every launch gets Meridian's completion and read commands. A launch whose profile can
-    spawn also gets the spawn command prefix. A harness's own defaults can close the shell to
+    Every launch gets Meridian's completion and read commands. A spawn-capable launch
+    also gets the spawn command prefix. A harness's own defaults can close the shell to
     a headless child even without tool rules, so these grants cannot depend on the profile's
     shell rules. A compile whose shell is already open has nothing to add for them.
     """

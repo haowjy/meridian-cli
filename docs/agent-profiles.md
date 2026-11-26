@@ -389,8 +389,9 @@ See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agen
 
 ## Which agents a caller sees
 
-A spawn-capable agent (one with a non-empty `subagents:` list and no
-`harness-overrides.meridian-cli.capabilities.spawn: false`) is told to run
+A session without a profile can spawn. A named profile can spawn when it has a
+nonempty `subagents:` list and leaves spawn capability enabled. Spawn-capable
+sessions are told to run
 `meridian spawn subagents` before delegating. The command reads the installed agents
 live, so a long session sees agents added after it started. By default it lists the
 agents in the caller's `subagents:` list, one line each with its description:
@@ -700,8 +701,8 @@ them:
   `read-only` sandbox can only read the projected roots. Claude `read-only` and every
   `workspace-write` launch can write Meridian runtime state, so `spawn message` and `cancel`
   do not claim a separate delegation boundary.
-- **Meridian commands.** Meridian adds completion and read-command grants to every launch;
-  a profile that can spawn also gets the `meridian spawn ...` launch commands. Completion
+- **Meridian commands.** Meridian adds completion and read-command grants to every launch.
+  Sessions that can spawn also get the `meridian spawn ...` launch commands. Completion
   (`spawn done` / `rearm`) is control-plane liveness and a profile cannot restrict it.
   Pi, Codex and OpenCode decide these grants before any profile rule, so no profile rule
   restricts them; the report marks a deny or ask that reaches a grant `partial` and names the grants that still run. Claude checks every deny and ask before any allow, so there a profile
@@ -714,14 +715,13 @@ them:
   only those explicit profile modes. If the profile leaves `sandbox` unset while Claude's
   own settings enable it, nested creation stays inside that sandbox and the PID-namespace
   guard refuses it; set `sandbox:` in the profile. Codex maintains
-  `$CODEX_HOME/rules/meridian.rules` before spawn-capable launches in those modes, allowing
-  the same standalone prefix outside Codex's sandbox. The whole matching command runs
+  `$CODEX_HOME/rules/meridian.rules` before spawn-capable launches in those modes and
+  before launches without a profile, such as `-a ""`, that use Codex's sandbox default.
+  The rule allows the same standalone prefix outside Codex's sandbox. The matching command runs
   outside the sandbox, including its filesystem and network access. Codex's rule is
   user-wide: it applies to every Codex session using that home, including profiles without
-  spawn capability and sessions not launched by Meridian. A Codex launch without a profile,
-  including `-a ""`, installs a separate `meridian-message.rules` with the
-  `meridian spawn message` prefix. This works when Codex chooses its own sandbox.
-  The messaging rule leaves any delegation rule from another launch intact.
+  spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
+  `meridian.rules`. Other Codex rules files belong to their owners.
 - **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
   sandbox, spawn capability, and Meridian-projected network in a launcher-owned boundary
   record. Only `read-only` and

@@ -174,7 +174,8 @@ def test_primary_surface_denies_agent_but_not_task(
     ):
         assert f"Bash({command})" in allowed
         assert f"Bash({command} *)" in allowed
-    assert "Bash(meridian work path *)" not in allowed
+    assert "Bash(meridian spawn *)" in allowed
+    assert "Bash(meridian work path *)" in allowed
     assert "Bash(meridian work task-dir *)" not in allowed
     assert _TASK_DENIES.isdisjoint(disallowed)
 
