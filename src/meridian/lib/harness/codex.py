@@ -91,7 +91,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
@@ -102,16 +101,10 @@ def materialize_codex_spec(
     env: Mapping[str, str],
     child_cwd: Path,
 ) -> ResolvedLaunchSpec:
-    """Project Meridian's execpolicy rule for a real constrained Codex launch."""
-
-    if (
-        spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES
-        or not spec.permission_policy.has_spawn_capability
-    ):
-        return spec
+    """Project Meridian's execpolicy rule before the Codex process starts."""
     return spec.model_copy(
         update={
-            "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd),
+            "codex_runtime": ensure_codex_meridian_rules(spec, env, child_cwd=child_cwd),
         }
     )
 

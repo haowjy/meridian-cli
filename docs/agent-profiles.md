@@ -718,8 +718,10 @@ them:
   the same standalone prefix outside Codex's sandbox. The whole matching command runs
   outside the sandbox, including its filesystem and network access. Codex's rule is
   user-wide: it applies to every Codex session using that home, including profiles without
-  spawn capability and sessions not launched by Meridian. Meridian owns and rewrites only
-  `meridian.rules`; it does not touch other Codex rules files.
+  spawn capability and sessions not launched by Meridian. A Codex launch without a profile,
+  including `-a ""`, installs a separate `meridian-message.rules` with the
+  `meridian spawn message` prefix. This works when Codex chooses its own sandbox.
+  The messaging rule leaves any delegation rule from another launch intact.
 - **Child-spawn CLI guardrail.** Every Meridian-launched harness receives its resolved
   sandbox, spawn capability, and Meridian-projected network in a launcher-owned boundary
   record. Only `read-only` and

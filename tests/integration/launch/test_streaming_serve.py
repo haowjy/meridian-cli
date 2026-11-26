@@ -32,9 +32,11 @@ def _streaming_serve_cli_context(monkeypatch: pytest.MonkeyPatch) -> Generator[N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["lead", ""], ids=["spawn-capable", "profileless"])
 async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent: str,
 ) -> None:
     write_minimal_mars_config(tmp_path)
     runtime_root = resolve_runtime_root(tmp_path)
@@ -54,19 +56,24 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         harness_model="gpt-5.4",
-        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write"),
+        execution_policy=ResolvedExecutionPolicy(sandbox="workspace-write" if agent else None),
     )
 
     async def _run_streaming_spawn(**kwargs: object) -> DrainOutcome:
         helper_calls.append((str(kwargs["spawn_id"]), str(kwargs["runtime_root"])))
-        assert (codex_home / "rules" / "meridian.rules").read_text(
-            encoding="utf-8"
-        ) == MERIDIAN_RULES_FILE_CONTENT
+        rules = codex_home / "rules"
+        if agent:
+            assert (rules / "meridian.rules").read_text() == MERIDIAN_RULES_FILE_CONTENT
+        else:
+            assert not (rules / "meridian.rules").exists()
+            assert (rules / "meridian-message.rules").read_text().splitlines()[-1] == (
+                'prefix_rule(pattern=["meridian", "spawn", "message"], decision="allow")'
+            )
         return DrainOutcome(status="cancelled", exit_code=1)
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
 
-    await streaming_serve_module.streaming_serve("codex", "hello", agent="lead")
+    await streaming_serve_module.streaming_serve("codex", "hello", agent=agent)
 
     assert helper_calls == [("p1", str(runtime_root))]
     row = get_spawn(runtime_root, "p1")
