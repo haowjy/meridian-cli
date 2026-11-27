@@ -42,7 +42,8 @@ REMOTE_INBOX_ERROR = "the inbox of another machine is not built yet: file the me
 class RefNotFound(ValueError):
     """A spawn, chat or selector reference names nothing.
 
-    A ``ValueError`` because callers already catch that for bad references.
+    A ``ValueError`` because callers already catch that for bad references. The one error
+    for a missing spawn or chat: the CLI prints it with kind ``not_found``.
     """
 
     def __init__(

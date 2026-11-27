@@ -15,6 +15,7 @@ class OutputSink(Protocol):
         *,
         exit_code: int = 1,
         name: str | None = None,
+        kind: str | None = None,
     ) -> None: ...
 
     def heartbeat(self, message: str) -> None: ...
@@ -38,8 +39,9 @@ class NullSink:
         *,
         exit_code: int = 1,
         name: str | None = None,
+        kind: str | None = None,
     ) -> None:
-        _ = (message, exit_code, name)
+        _ = (message, exit_code, name, kind)
 
     def heartbeat(self, message: str) -> None:
         _ = message

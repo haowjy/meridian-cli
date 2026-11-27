@@ -9,6 +9,7 @@ side printed and exits with its status.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Sequence
 from typing import Never
@@ -21,6 +22,9 @@ from meridian.lib.machines.resolve import MachineError, resolve_machine, this_ma
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_object
+
+# An error kind is a short word: what the other side sends is not trusted to be one.
+_KIND_RE = re.compile(r"[a-z_]{1,32}")
 
 
 def base_caller() -> dict[str, object]:
@@ -144,15 +148,17 @@ def _finish(target: SavedMachine, answer: Answered) -> Never:
             f"timed out after {READ_LIMIT_SECONDS} s on {target.name}",
         )
     if answer.exit != 0 and get_global_options().output.format == "json":
-        fail(target.name, "failed", _error_text(answer))
+        kind, text = _error(answer)
+        fail(target.name, kind, f"{target.name}: {text}")
     sys.stdout.write(answer.stdout)
     sys.stdout.flush()
     sys.stderr.write(answer.stderr)
     raise SystemExit(answer.exit)
 
 
-def _error_text(answer: Answered) -> str:
-    """The other side's error: the ``error`` of its legacy JSON object, else its stderr."""
+def _error(answer: Answered) -> tuple[str, str]:
+    """The other side's error as ``(kind, text)``, from its legacy JSON object: the ``kind``
+    it gave, else ``failed``. With no such object the text is its stderr."""
 
     for line in reversed(answer.stderr.strip().splitlines()):
         try:
@@ -161,8 +167,10 @@ def _error_text(answer: Answered) -> str:
             continue
         fields = json_object(document)
         if fields is not None and isinstance(fields.get("error"), str):
-            return str(fields["error"])
-    return answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
+            kind = fields.get("kind")
+            known = isinstance(kind, str) and _KIND_RE.fullmatch(kind) is not None
+            return (str(kind) if known else "failed"), str(fields["error"])
+    return "failed", answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 
 
 __all__ = ["base_caller", "fail", "forward_if_remote", "other_machine", "request_argv"]
