@@ -10,6 +10,7 @@ import pytest
 import structlog
 
 from tests.support.git import is_git_env_key
+from tests.support.machine_ids import plant_id_claims
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PI_DIST_ROOT = PACKAGE_ROOT / "src" / "meridian" / "pi_runtime" / "dist"
@@ -129,13 +130,15 @@ def _clean_meridian_runtime_env(
     `~/.config/mars/config.toml` is a config layer (agents, models, settings).
     """
 
-    session_home = os.environ.get("MERIDIAN_HOME")
     for key in tuple(os.environ):
         if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")) or key in _NATIVE_STORE_ENV:
             monkeypatch.delenv(key, raising=False)
 
-    if session_home is not None:
-        monkeypatch.setenv("MERIDIAN_HOME", session_home)
+    # Issued IDs are machine-wide state under the home: a fresh home per test keeps
+    # every test's numbering independent and never touches the real ~/.meridian.
+    home = tmp_path_factory.mktemp("meridian-home")
+    monkeypatch.setenv("MERIDIAN_HOME", str(home))
+    plant_id_claims(home)
 
     mars_user = tmp_path_factory.mktemp("mars-user")
     monkeypatch.setenv("MARS_CONFIG_DIR", str(mars_user / "config"))

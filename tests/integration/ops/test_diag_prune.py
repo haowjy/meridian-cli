@@ -239,9 +239,11 @@ def test_global_prune_cannot_unlink_live_session_lock_inode(tmp_path: Path) -> N
     user_home = tmp_path / "user-home"
     runtime_root = user_home / "projects" / "project-uuid"
     runtime_root.mkdir(parents=True)
-    ready = multiprocessing.Event()
-    release = multiprocessing.Event()
-    process = multiprocessing.Process(target=_hold_session, args=(runtime_root, ready, release))
+    # The forkserver default would carry an earlier test's MERIDIAN_HOME into the child.
+    ctx = multiprocessing.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    process = ctx.Process(target=_hold_session, args=(runtime_root, ready, release))
     process.start()
     try:
         assert ready.wait(5)

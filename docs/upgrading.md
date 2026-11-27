@@ -1,5 +1,33 @@
 # Upgrade notes
 
+## Spawn and chat IDs are unique on the machine
+
+New in this release. Meridian now issues `pN` and `cN` from one list kept in
+`~/.meridian/machine/ids/` instead of one counter per project.
+
+- **IDs jump.** The first new ID is above every ID your projects have used, rounded up to
+  the next thousand plus one thousand: on a machine whose highest spawn is `p19220` the next
+  one is `p21000`. IDs stop being consecutive within a project; they still rise with time.
+- **Old IDs keep their numbers** and mean something only inside their own project, as
+  before: from another project, name it with `-C`.
+- **Restart sessions started before 0.28, and above all before 0.27.11.** A session still
+  running older code keeps allocating from its project's old counter, so its IDs are legacy
+  IDs: right inside the project, with no claim, so nothing outside it finds them. Until
+  those sessions end, a project's newest ID is not always its highest, and lists follow the
+  number. A session started before 0.27.11 also finds spawns by walking that counter, so
+  its `spawn list` can miss spawns that 0.28 started; `spawn show <id>` still works.
+- Each project's `spawn-id-counter` and `session-id-counter` stop moving. A project that
+  had spawns but no `spawn-id-counter` gets one.
+- Meridian creates a symlink per ID under `machine/ids/` and never deletes one, so the
+  directory grows with every spawn and chat.
+- **Rolling back works.** An older build carries on from each project's frozen counter
+  (and from the counter 0.28 writes into a project that had none), and it reads rows with
+  the new IDs: `spawn list`, `spawn show`, filters and `session log` on an existing chat.
+  Its IDs stay below the new range unless one process issues more IDs in a project than
+  the room left above that project's counter: at least 1,000 in any project, 1,779 in the
+  busiest on the machine this was tested on. A new ID is findable by bare ID only inside
+  its own project, as before, and the ordering caveat above applies until old sessions end.
+
 ## `meridian agy` prints an Antigravity launch
 
 New in this release; needs the Mars release that routes a `--harness agy` pin to `agy` (Mars

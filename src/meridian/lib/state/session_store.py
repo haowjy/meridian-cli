@@ -36,6 +36,7 @@ from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.json_doc import read_model, write_model
 from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.state.machine_ids import allocate
 from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.session_fold import (
@@ -443,24 +444,8 @@ def resolve_session_instance_id(
     return session_instance_for_event(held_generation, lease_generation, record)
 
 
-def _read_session_counter(paths: RuntimePaths) -> int:
-    if not paths.session_id_counter.is_file():
-        return 0
-    try:
-        return int(paths.session_id_counter.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
-
-
 def reserve_chat_id(runtime_root: Path) -> str:
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.session_id_counter_flock):
-        current = _read_session_counter(paths)
-        next_value = current + 1
-        atomic_write_text(
-            paths.session_id_counter, f"{next_value}\n", permissions=PRIVATE_FILE_MODE
-        )
-        return f"c{next_value}"
+    return allocate("c", runtime_root)
 
 
 def read_session_events(

@@ -127,9 +127,7 @@ def test_cross_process_reserve_spawn_id_returns_unique_contiguous_ids(tmp_path: 
 
     reserved = sorted(reserved)
     assert reserved == [f"p{idx}" for idx in range(1, process_count + 1)]
-    assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == str(
-        process_count
-    )
+    assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "0"
 
 
 def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path) -> None:
