@@ -60,14 +60,22 @@ def _path(value: str | None) -> str | None:
     return value if value is not None and value.isprintable() and value.startswith("/") else None
 
 
-def _project_id(value: str | None) -> str | None:
-    return value if value is not None and is_project_id_form(value) else None
+def _project_id(value: object) -> str | None:
+    """A committed project ID, ``None`` when the field is absent. A session's project is what
+    limits the inbox messages it sees."""
+
+    if value is None:
+        return None
+    if isinstance(value, str) and is_project_id_form(value):
+        return value
+    raise ValueError("not a project ID")
 
 
 def parse_machine_caller(raw: object) -> MachineCaller | None:
     """The caller block of a request, ``None`` when it is absent, has no usable machine, or
-    names a session by something that is not an ID. Dropping that ID instead would turn a
-    session into a terminal of its machine, which may do more. A terminal's block has neither
+    names a session or its project by something that is not an ID. Dropping a session ID
+    instead would turn a session into a terminal of its machine, and dropping its project
+    into a session with none: each may do or see more. A terminal's block has neither session
     ID, so a ``reply_id`` with no ``spawn_id`` is no terminal either."""
 
     fields = json_object(raw)
@@ -84,6 +92,7 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
     try:
         spawn_id = _session_id(fields.get("spawn_id"))
         reply_id = _session_id(fields.get("reply_id"), chat=True)
+        project_id = _project_id(fields.get("project_id"))
     except ValueError:
         return None
     if reply_id is not None and spawn_id is None:
@@ -96,7 +105,7 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
         claimed=fields.get("claimed") is True,
         can_reply=fields.get("can_reply") is True,
         project_root=_path(_text(fields, "project_root")),
-        project_id=_project_id(_text(fields, "project_id")),
+        project_id=project_id,
     )
 
 

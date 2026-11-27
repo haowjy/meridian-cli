@@ -393,8 +393,8 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   `--via-ref`; without them the repeat may file a second message. A `release` from a
   terminal is the other repeat to check first: a terminal may release any claim, so if
   another session took the message after the first try, the repeat releases that
-  session's claim. A hook or daemon that releases should read the message again before
-  it repeats. An error whose kind this Meridian doesn't know also reads as
+  session's claim. The error says so in place of "a repeat is safe", and a hook or
+  daemon that releases should read the message again before it repeats. An error whose kind this Meridian doesn't know also reads as
   `maybe_delivered` for these three commands. `list` and `read` fail with
   `unreachable`: nothing was changed.
 - **Offering to a session on another machine.** Run `offer` on the machine that holds

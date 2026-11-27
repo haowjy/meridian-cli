@@ -40,10 +40,10 @@ Each is judged not worth a change yet. Revisit when the condition in it shows up
   project only.
 - **A terminal's repeated `release` can drop a claim made in between.** A terminal may
   release any claim. If its `release` is cut off after it was sent and another session
-  takes the message before the repeat, the repeat ("Run it again: a repeat is safe")
-  releases that session's claim. The caller this can happen to is a daemon that calls
-  `release` from a terminal on behalf of people. A release that names the claim it means
-  to drop would close it.
+  takes the message before the repeat, the repeat releases that session's claim. The
+  `maybe_delivered` text tells a terminal to read the message first. The caller this can
+  happen to is a daemon that calls `release` from a terminal on behalf of people. A
+  release that names the claim it means to drop would close it.
 - **A session whose ID isn't machine-wide gets no reply address across machines.** Its
   way back is `<id> --machine <name> -C <path>`, and a message's `reply_to` is one
   address. `inbox read` says it has no reply address.
