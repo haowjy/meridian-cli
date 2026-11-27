@@ -177,8 +177,20 @@ def run_machine_call(*, check: bool) -> None:
         _emit(RESULT_MARKER, _refused(refusal))
         return
     caller = request.get("caller")
-    if parse_machine_caller(caller) is None:
+    parsed_caller = parse_machine_caller(caller)
+    if parsed_caller is None:
         _emit(RESULT_MARKER, _refused("the request names no usable caller"))
+        return
+    if parsed_caller.machine_id == identity.id:
+        # Two machines with one identity file (a cloned home, a restored backup): the caller's
+        # sessions would pass for this machine's own.
+        _emit(
+            RESULT_MARKER,
+            _refused(
+                "the calling machine has this machine's ID: one of the two is a copy. Remove "
+                "`machine.json` from the copy's Meridian home so it gets its own ID"
+            ),
+        )
         return
     _emit(RESULT_MARKER, _run_child(argv, stdin, limit, caller))
 

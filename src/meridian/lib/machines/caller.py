@@ -67,7 +67,8 @@ def _project_id(value: str | None) -> str | None:
 def parse_machine_caller(raw: object) -> MachineCaller | None:
     """The caller block of a request, ``None`` when it is absent, has no usable machine, or
     names a session by something that is not an ID. Dropping that ID instead would turn a
-    session into a terminal of its machine, which may do more."""
+    session into a terminal of its machine, which may do more. A terminal's block has neither
+    ID, so a ``reply_id`` with no ``spawn_id`` is no terminal either."""
 
     fields = json_object(raw)
     if fields is None:
@@ -84,6 +85,8 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
         spawn_id = _session_id(fields.get("spawn_id"))
         reply_id = _session_id(fields.get("reply_id"), chat=True)
     except ValueError:
+        return None
+    if reply_id is not None and spawn_id is None:
         return None
     return MachineCaller(
         machine=machine,

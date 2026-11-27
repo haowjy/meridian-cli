@@ -12,7 +12,7 @@ import json
 import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from typing import Never
+from typing import Final, Never
 
 from meridian.cli.invocation import GlobalOptions, get_global_options
 from meridian.lib.core.refs import parse_ref
@@ -20,11 +20,15 @@ from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
+from meridian.lib.message.result import ERROR_KINDS
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_object
 
 # An error kind is a short word: what the other side sends is not trusted to be one.
 _KIND_RE = re.compile(r"[a-z_]{1,32}")
+# The kinds of a command that changes state there: the message list and `meridian inbox`'s
+# ``taken``.
+_CHANGE_KINDS: Final = ERROR_KINDS | {"taken"}
 
 
 def base_caller() -> dict[str, object]:
@@ -141,8 +145,11 @@ def forward_if_remote(
         fail(target.name, *failure)
     assert isinstance(result, Answered)
     if result.exit != 0 and options.output.format == "json":
-        # A newer build's kind says nothing about whether the command acted.
+        # For a command that changes state, no kind, or one this build doesn't know (a newer
+        # build's), doesn't say whether it acted: `meridian message` reads its answers so too.
         kind, text = _error(result, "failed" if may_have is None else "maybe_delivered")
+        if may_have is not None and kind not in _CHANGE_KINDS:
+            kind = "maybe_delivered"
         fail(target.name, kind, f"{target.name}: {text}")
     sys.stdout.write(result.stdout)
     sys.stdout.flush()

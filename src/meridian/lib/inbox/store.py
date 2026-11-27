@@ -68,10 +68,8 @@ class NoSuchMessage(InboxError):
     kind = "not_found"
 
     def __init__(self, message_id: str) -> None:
-        # Named, because the command may have been sent here from another machine.
-        here = machine_identity_or_none()
-        where = f"the inbox of {here.name}" if here is not None else "this machine's inbox"
-        super().__init__(f"no message {message_id} in {where}")
+        # Not "this machine's": the command may have been sent here from another machine.
+        super().__init__(f"no message {message_id} in the inbox")
 
 
 class MessageTaken(InboxError):
