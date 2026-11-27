@@ -24,10 +24,18 @@ SELECTORS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 
-type RefKind = Literal["spawn", "chat", "selector", "native"]
+type RefKind = Literal["spawn", "chat", "selector", "native", "machine"]
 
 
-_KIND_LABEL: dict[RefKind, str] = {"spawn": "Spawn", "chat": "Chat", "native": "Session"}
+_KIND_LABEL: dict[RefKind, str] = {
+    "spawn": "Spawn",
+    "chat": "Chat",
+    "native": "Session",
+    "machine": "Session",
+}
+
+_MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
+INBOX_ADDRESS_ERROR = "the inbox address is not built yet"
 
 
 class RefNotFound(ValueError):
@@ -95,8 +103,12 @@ class RefAmbiguous(ValueError):
 
 @dataclass(frozen=True)
 class Ref:
+    """``kind`` ``machine`` is ``<machine>/<id>``: ``machine`` is the name typed and ``value``
+    the spawn or chat ID after it."""
+
     kind: RefKind
     value: str
+    machine: str | None = None
 
 
 def is_spawn_id(value: str) -> bool:
@@ -111,6 +123,18 @@ def is_chat_id(value: str) -> bool:
     return _CHAT_ID_RE.fullmatch(value) is not None
 
 
+def is_machine_name(value: str) -> bool:
+    """The rule for a machine's name: ``[a-z][a-z0-9-]{0,62}``, not ``inbox`` (reserved for an
+    address), not shaped like a spawn or chat ID (it would read as one)."""
+
+    return (
+        _MACHINE_NAME_RE.fullmatch(value) is not None
+        and value != "inbox"
+        and not is_spawn_id(value)
+        and not is_chat_id(value)
+    )
+
+
 def parse_ref(raw: str) -> Ref:
     value = raw.strip()
     if not value:
@@ -122,6 +146,11 @@ def parse_ref(raw: str) -> Ref:
                 + ", ".join(sorted(SELECTORS))
             )
         return Ref("selector", value)
+    head, slash, tail = value.partition("/")
+    if value == "inbox" or (slash and tail == "inbox"):
+        raise ValueError(INBOX_ADDRESS_ERROR)
+    if slash and is_machine_name(head) and (is_spawn_id(tail) or is_chat_id(tail)):
+        return Ref("machine", tail, head)
     if is_spawn_id(value):
         return Ref("spawn", value)
     if is_chat_id(value):
@@ -130,12 +159,14 @@ def parse_ref(raw: str) -> Ref:
 
 
 __all__ = [
+    "INBOX_ADDRESS_ERROR",
     "SELECTORS",
     "Ref",
     "RefAmbiguous",
     "RefKind",
     "RefNotFound",
     "is_chat_id",
+    "is_machine_name",
     "is_spawn_id",
     "parse_ref",
     "project_is_named",

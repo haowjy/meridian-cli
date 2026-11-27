@@ -30,11 +30,13 @@ from meridian.lib.core.refs import (
     Ref,
     RefAmbiguous,
     RefNotFound,
+    is_spawn_id,
     parse_ref,
     project_is_named,
 )
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
+from meridian.lib.machines.resolve import MachineError, resolve_machine
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryCoordinationError
@@ -44,6 +46,7 @@ from meridian.lib.state.history_index import (
     indexed_spawn_scan,
 )
 from meridian.lib.state.machine_ids import claim_root, lowest_claim
+from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
@@ -132,6 +135,26 @@ def _hit(ref: Ref, root: Path, found: SpawnRecord | session_store.SessionRecord)
     return ChatHit(ref, root, found)
 
 
+def _local_ref(parsed: Ref) -> Ref:
+    """``<machine>/<id>`` for this machine is the bare ID, whichever command it reaches; for
+    another machine it is an error here. A command that crosses has forwarded such a reference
+    before it gets this far, so what arrives is a command that may not."""
+
+    if parsed.kind != "machine":
+        return parsed
+    assert parsed.machine is not None
+    try:
+        target = resolve_machine(parsed.machine)
+    except MachineError as exc:
+        raise ValueError(exc.text) from exc
+    if isinstance(target, SavedMachine):
+        raise ValueError(
+            f"`{parsed.machine}/{parsed.value}` names another machine, and this command "
+            "doesn't reach another machine"
+        )
+    return Ref("spawn" if is_spawn_id(parsed.value) else "chat", parsed.value)
+
+
 def locate(
     project_root: Path,
     ref: str,
@@ -145,7 +168,7 @@ def locate(
     project and the user did not name a project with ``-C``.
     """
 
-    parsed = parse_ref(ref)
+    parsed = _local_ref(parse_ref(ref))
     own = runtime_root or resolve_runtime_root_for_read(project_root)
     claimed = claim_root(parsed.value) if parsed.kind in ("spawn", "chat") else None
     if claimed is not None and (own is None or not same_runtime_root(claimed, own)):
@@ -204,6 +227,8 @@ def _locate_in(
                 record.chat_id for record in reversed(generations) if record.chat_id != chat.chat_id
             )
             return ChatHit(parsed, root, chat, tuple(other_chats))
+        case "machine":
+            raise AssertionError("a machine reference is made local before it is located")
 
 
 def chat_spawn(hit: ChatHit) -> SpawnId | None:
