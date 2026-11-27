@@ -10,6 +10,7 @@ from meridian.lib.core.refs import RefAmbiguous, RefNotFound, project_named_scop
 from meridian.lib.ops.locate import SpawnHit, locate
 from meridian.lib.ops.spawn.models import SpawnWaitInput
 from meridian.lib.state import spawn_store
+from meridian.lib.state.machine_ids import ids_dir
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch_paths import launch_paths
 
@@ -41,12 +42,18 @@ def test_claimed_id_resolves_from_another_project_with_its_project_root(tmp_path
     here, _ = _project(tmp_path, "here")
     there, there_root = _project(tmp_path, "there")
     claimed = _start(there, there_root)
-    legacy = _start(there, there_root, spawn_id="p41")  # explicit ID: no claim
+    never_issued = "p99999"
+    # Without the test home's planted p0 claim, p0 is below every claim: issued before them.
+    (ids_dir() / "p" / "0" / "p0").unlink()
+    legacy = _start(there, there_root, spawn_id="p0")
 
     hit = locate(here, claimed)
 
     assert isinstance(hit, SpawnHit)
     assert (hit.runtime_root, hit.project_root) == (there_root, there)
+    with pytest.raises(RefNotFound) as exc:
+        locate(here, never_issued)
+    assert "issued before" not in str(exc.value)
     with pytest.raises(RefNotFound, match="issued before machine-wide IDs"):
         locate(here, legacy)
 

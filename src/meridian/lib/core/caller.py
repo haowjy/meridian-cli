@@ -47,13 +47,24 @@ def caller_spawn_id(environ: Mapping[str, str] | None = None) -> SpawnId | None:
 
 def caller_runtime_root(environ: Mapping[str, str] | None = None) -> Path | None:
     """The runtime root of the project the calling environment names, if it names one:
-    ``ResolvedContext``'s rule, through the same function."""
+    ``ResolvedContext``'s rule, through the same function.
 
+    The process's own environment may name no project (a session started outside Meridian
+    startup, as in tests): the caller is then in the project this process runs from.
+    """
+
+    from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.state.runtime_root import environment_runtime_root
 
     env = os.environ if environ is None else environ
     project = env.get("MERIDIAN_PROJECT_DIR", "").strip()
-    return environment_runtime_root(Path(project) if project else None, env)
+    if project:
+        project_root = Path(project)
+    elif environ is None:
+        project_root = resolve_project_root_resolution().project_root
+    else:
+        project_root = None
+    return environment_runtime_root(project_root, env)
 
 
 def caller_identity(environ: Mapping[str, str] | None = None) -> CallerIdentity | None:
