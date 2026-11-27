@@ -107,10 +107,11 @@ project (`adhoc.…`) counts as none. A session sees messages with its own proje
 none.
 
 A root that gives no ID `fields.is_project_id` accepts refuses the command. An ID is in
-the safe set and is one path component, with no `/`: `lib/machines/caller.py` holds the
-project ID a call from another machine carries to the same rule. Two things produce a
-root that fails: `meridian.toml` can set any string as a project ID, and
-`_MERIDIAN_RUNTIME_DIR` can put a root anywhere. The command is refused because the
+the safe set and is one path component, with no `/`. That is narrower than the form of a
+committed ID (`core/refs.is_project_id_form`, which `project_identity` and
+`lib/machines/caller.py` apply). Two things produce a root that fails: `meridian.toml` can
+set an ID with a `/` or a character outside the safe set, and `_MERIDIAN_RUNTIME_DIR` can
+put a root anywhere. The command is refused because the
 alternative is to read such a session as having no project, and its messages would then
 be shown to every session.
 

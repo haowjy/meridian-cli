@@ -17,6 +17,7 @@ from meridian.lib.core.refs import (
     is_chat_id,
     is_machine_id,
     is_machine_name,
+    is_project_id_form,
     is_spawn_id,
     project_is_named,
 )
@@ -59,12 +60,7 @@ def _path(value: str | None) -> str | None:
 
 
 def _project_id(value: str | None) -> str | None:
-    """A project ID names a directory under ``projects/``: a relative path of printable
-    components (``team/proj``), none of them empty, ``.`` or ``..``."""
-
-    if value is None or not value.isprintable() or len(value) > 255:
-        return None
-    return value if all(part not in ("", ".", "..") for part in value.split("/")) else None
+    return value if value is not None and is_project_id_form(value) else None
 
 
 def parse_machine_caller(raw: object) -> MachineCaller | None:

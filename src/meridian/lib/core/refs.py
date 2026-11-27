@@ -36,6 +36,10 @@ _KIND_LABEL: dict[RefKind, str] = {
 
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
+PROJECT_ID_FORM = (
+    "one or more components joined by `/`, each printable and none of them empty, `.` or "
+    "`..`, at most 255 characters in all"
+)
 REMOTE_INBOX_ERROR = "the inbox of another machine is not built yet: file the message there"
 
 
@@ -144,6 +148,18 @@ def is_machine_id(value: str) -> bool:
     return _MACHINE_ID_RE.fullmatch(value) is not None
 
 
+def is_project_id_form(value: str) -> bool:
+    """The form of a committed project ID (``PROJECT_ID_FORM``). The ID is joined onto
+    ``projects/`` as the runtime root and read back from that path, so only an ID that is
+    already a normalised relative path survives the round trip."""
+
+    return (
+        value.isprintable()
+        and len(value) <= 255
+        and all(part not in ("", ".", "..") for part in value.split("/"))
+    )
+
+
 def parse_ref(raw: str) -> Ref:
     value = raw.strip()
     if not value:
@@ -170,6 +186,7 @@ def parse_ref(raw: str) -> Ref:
 
 
 __all__ = [
+    "PROJECT_ID_FORM",
     "REMOTE_INBOX_ERROR",
     "SELECTORS",
     "Ref",
@@ -179,6 +196,7 @@ __all__ = [
     "is_chat_id",
     "is_machine_id",
     "is_machine_name",
+    "is_project_id_form",
     "is_spawn_id",
     "parse_ref",
     "project_is_named",

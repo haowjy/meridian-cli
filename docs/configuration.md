@@ -66,6 +66,11 @@ machine-managed ID is stable across moves and is shared by clones and worktrees
 when `meridian.toml` is committed. A `mars.toml`-only project is committed but
 unminted; its next Meridian write adds the ID to `meridian.toml`.
 
+An ID you set by hand is one or more components joined by `/` (`team/proj`), each
+printable and none of them empty, `.` or `..`, at most 255 characters in all, and not
+starting with `adhoc.`. Every command in a project whose ID is outside that form fails
+with an error naming `meridian.toml` and the value.
+
 A directory with neither marker uses **ad-hoc identity**, derived from its
 canonical path. Reads create nothing. The first runtime write materializes state
 under `~/.meridian/projects/adhoc.<slug>.<hash>/` and default context under the
