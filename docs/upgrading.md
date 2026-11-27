@@ -88,10 +88,22 @@ waiting message in two ways: a line in its prompt when it starts fresh, or an
 - **A message and a claim record the machine's ID** as `machine_id`, beside its name, in
   the files and in `--json`. The ID decides whose a claim is, so renaming a machine keeps
   the messages a session on it already took.
-- **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`, so a
-  sandboxed Codex session can run `meridian inbox` when it can run `meridian message`:
-  when it was launched with a profile that lists subagents (`-a <profile>`). It is written like the other two and
-  applies to every Codex session of the user.
+- **A primary session can run `meridian inbox` and `meridian message` from inside its
+  sandbox, whatever its profile.** Every primary is told of waiting messages and offers,
+  so every primary may take them; before, only a session launched with a profile that lists
+  subagents could, and a primary with no profile was blocked (or, in Claude's auto mode,
+  refused) from running the `meridian inbox take` its offer printed. A spawn still gets
+  them only when its profile may spawn, and `meridian spawn` stays behind that rule for
+  every session, except on Codex (next item).
+- **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`. A sandboxed
+  Codex launch writes the rules files for the commands it was granted: a primary whose
+  profile may not spawn writes `meridian-message.rules` and `meridian-inbox.rules`, not
+  `meridian.rules`. Like the first, each applies to every Codex session of the user once
+  written, children included: after any sandboxed Codex primary has run, every Codex
+  session using that `$CODEX_HOME`, whatever its profile, runs `meridian message` and
+  `meridian inbox` outside its sandbox (and `meridian spawn`, once a spawn-capable launch
+  has run). A child is still refused `inbox take`, `release` and `offer` by the inbox's own
+  role check.
 
 ## Machines can reach each other over SSH
 
@@ -126,12 +138,15 @@ New in this release. `meridian machine add <ssh target>` saves another computer;
   `~/.claude/settings.json` on the receiving machine; it then applies to every peer
   message that session gets. See
   [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate).
-- **A sandboxed session reaches another machine only if its profile may spawn.** A harness
-  lets `meridian message` and `meridian spawn …` out of its sandbox for a session launched
-  with a profile that lists subagents (`-a <profile>`), the rule 0.27 has for `meridian
-  spawn message`. A session launched with no profile, or with one that may not spawn, runs
-  them inside the sandbox, and so does every session for `meridian session …` and
-  `meridian machine …`. There `ssh` is blocked: on Linux the call fails with kind
+- **A sandboxed session reaches another machine with `meridian message` and `meridian
+  inbox`, and with `meridian spawn …` only if its profile may spawn.** A harness lets
+  `meridian message` and `meridian inbox` out of its sandbox for every primary session,
+  whatever its profile, and for a spawn whose profile lists subagents; it lets `meridian
+  spawn …` out only for a session launched with such a profile (`-a <profile>`), the rule
+  0.27 has for `meridian spawn message`. A spawn whose profile may not spawn runs all of
+  them inside the sandbox (on Codex, only until a rules file for them has been written:
+  those files apply to every Codex session of the user), and every session runs `meridian session …` and `meridian
+  machine …` there. There `ssh` is blocked: on Linux the call fails with kind
   `sandboxed`; on macOS it keeps the kind `ssh` gave it (usually `unreachable`, with
   `Operation not permitted`) and its text names the sandbox.
 - **`machine run` there reads the default `~/.meridian`.** An SSH command doesn't read a

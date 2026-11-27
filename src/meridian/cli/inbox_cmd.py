@@ -24,7 +24,7 @@ from meridian.cli.app_tree import inbox_app
 from meridian.cli.invocation import get_global_options
 from meridian.cli.machine_forward import ask_machine, forward_if_remote, other_machine
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.caller_boundary import inside_launcher_sandbox
+from meridian.lib.core.caller_boundary import SANDBOX_DENIAL_ERRNOS, inside_launcher_sandbox
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, visible
@@ -88,14 +88,15 @@ def _inbox_command() -> Generator[InboxCaller]:
                 caller.spawn_id if caller is not None else None,
                 caller.project_root if caller is not None else None,
             )
-        except PermissionError as exc:
-            if inside_launcher_sandbox() is False:
+        except OSError as exc:
+            if exc.errno not in SANDBOX_DENIAL_ERRNOS or inside_launcher_sandbox() is False:
                 raise
             raise InboxError(
                 f"the inbox can't be reached ({exc}): this command ran inside the session's "
                 "sandbox. Run it as a command of its own that begins `meridian inbox` (no "
-                "`cd … &&`, no pipe, no `VAR=1` in front). A session started before this "
-                "Meridian has no grant for that: restart it.",
+                "`cd … &&`, no pipe, no `VAR=1` in front). Only a primary session or one "
+                "whose profile may spawn has a grant for that, and a session started before "
+                "this Meridian has none: restart it.",
                 kind="sandboxed",
             ) from exc
     except InboxError as exc:

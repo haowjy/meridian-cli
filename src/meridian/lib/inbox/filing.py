@@ -137,7 +137,7 @@ def file_from_command(
     sender_project_root: Path | None,
 ) -> MessageResult:
     """File *text* for the caller the invocation names. Every kind but ``maybe_delivered``
-    (``MaybeFiled``) means nothing was written. A ``PermissionError`` is the caller's to
+    (``MaybeFiled``) means nothing was written. An ``OSError`` is the caller's to
     read: only it knows whether a sandbox raised it."""
 
     try:

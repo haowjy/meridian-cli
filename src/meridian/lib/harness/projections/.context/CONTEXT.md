@@ -44,8 +44,9 @@ user, project and local settings; their allows are reported when a gate or allow
 present. `autoAllowBashIfSandboxed` must be explicitly false for gates, allowlists and
 ask: otherwise sandbox auto-approval can bypass them.
 
-A launch with spawn capability excludes `meridian spawn *` from Claude's Bash sandbox,
-even when sandbox enablement comes from user settings. Claude runs matching standalone
+A launch with spawn capability excludes `meridian spawn *` from Claude's Bash sandbox, and
+a primary or a launch with spawn capability excludes `meridian message *` and
+`meridian inbox *`, even when sandbox enablement comes from user settings. Claude runs matching standalone
 commands outside the sandbox; compound commands stay inside, and the spawn operation
 refuses a different PID namespace when procfs is readable.
 
@@ -83,9 +84,10 @@ network policy remains authoritative.
 Codex network restrictions apply only under `workspace-write`; proxy-based restrictions
 are partial because local services remain reachable. `read-only` stays offline. Unset
 network denies access in constrained Claude and Codex sandboxes. Pi and OpenCode
-report restrictions unenforced. Under Codex's constrained sandboxes, a Meridian-owned
-user rules file grants the `meridian spawn` prefix outside the sandbox for every session
-using that Codex home; a write failure is reported without blocking launch.
+report restrictions unenforced. Under Codex's constrained sandboxes, Meridian-owned
+user rules files grant the launch's outside-sandbox prefixes (`codex_rules_files`: `meridian
+spawn` only with spawn capability, `meridian message` and `meridian inbox` for a primary too)
+for every session using that Codex home; a write failure is reported without blocking launch.
 
 ## OpenCode
 

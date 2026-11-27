@@ -14,6 +14,7 @@ from meridian.lib.launch.permissions import (
     SPAWN_PLATFORM_COMMAND,
 )
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError, atomic_write_text
+from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES, PermissionPolicy
 
 
 def _rules_content(command: str) -> str:
@@ -28,7 +29,11 @@ def _rules_content(command: str) -> str:
 @dataclass(frozen=True)
 class RulesFile:
     name: str
-    content: str
+    command: str
+
+    @property
+    def content(self) -> str:
+        return _rules_content(self.command)
 
 
 MERIDIAN_RULES_FILE_CONTENT = _rules_content(SPAWN_PLATFORM_COMMAND.command)
@@ -38,14 +43,39 @@ MERIDIAN_RULES_FILE_CONTENT = _rules_content(SPAWN_PLATFORM_COMMAND.command)
 # and forth, and the older build never writes a file it doesn't know. A new grant is a
 # new file.
 RULES_FILES: tuple[RulesFile, ...] = (
-    RulesFile("meridian.rules", MERIDIAN_RULES_FILE_CONTENT),
-    RulesFile("meridian-message.rules", _rules_content(MESSAGE_PLATFORM_COMMAND.command)),
-    RulesFile("meridian-inbox.rules", _rules_content(INBOX_PLATFORM_COMMAND.command)),
+    RulesFile("meridian.rules", SPAWN_PLATFORM_COMMAND.command),
+    RulesFile("meridian-message.rules", MESSAGE_PLATFORM_COMMAND.command),
+    RulesFile("meridian-inbox.rules", INBOX_PLATFORM_COMMAND.command),
 )
 
-# For the lines that tell a user what the files do.
-ESCAPING_COMMANDS_TEXT = "`meridian spawn`, `meridian message` and `meridian inbox`"
-SIBLING_RULES_FILES_TEXT = " and ".join(file.name for file in RULES_FILES[1:])
+
+def codex_rules_files(policy: PermissionPolicy) -> tuple[RulesFile, ...]:
+    """The rules files a launch writes: one per command it may run outside its sandbox.
+
+    Codex has no per-launch rule, so only a sandbox Meridian constrains needs them, and a
+    launch writes only the grants it was given.
+    """
+
+    if policy.sandbox not in CONSTRAINED_SANDBOX_MODES:
+        return ()
+    granted = {command.command for command in policy.outside_sandbox_commands}
+    return tuple(file for file in RULES_FILES if file.command in granted)
+
+
+def _and_join(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def escaping_commands_text(files: tuple[RulesFile, ...]) -> str:
+    """Name the files' commands for the lines that tell a user what the files do."""
+
+    return _and_join([f"`{file.command}`" for file in files])
+
+
+def rules_files_text(files: tuple[RulesFile, ...]) -> str:
+    """Name the files for the lines that tell a user what the files do."""
+
+    return _and_join([file.name for file in files])
 
 
 def _ensure_rules_file(rules_dir: Path, file: RulesFile) -> str | None:
@@ -72,11 +102,12 @@ def ensure_codex_meridian_rules(
     launch_env: Mapping[str, str],
     *,
     child_cwd: Path,
+    files: tuple[RulesFile, ...],
 ) -> CodexRuntimeResolution:
-    """Atomically project Meridian's rules into the launch environment's Codex home.
+    """Atomically project ``files`` into the launch environment's Codex home.
 
-    ``rules_file_path`` names ``meridian.rules``; ``rules_file_error`` is the first
-    failure among the files.
+    ``rules_file_path`` names the first of them; ``rules_file_error`` is the first failure
+    among them.
     """
 
     codex_home = resolve_codex_home(launch_env)
@@ -86,17 +117,22 @@ def ensure_codex_meridian_rules(
         resolved_home = codex_home.resolve()
     except OSError as error:
         return CodexRuntimeResolution(
-            rules_file_path=(codex_home / "rules" / RULES_FILES[0].name).as_posix(),
+            rules_file_path=(codex_home / "rules" / files[0].name).as_posix(),
             rules_file_error=str(error),
         )
     rules_dir = resolved_home / "rules"
-    errors = [
-        error for file in RULES_FILES if (error := _ensure_rules_file(rules_dir, file)) is not None
-    ]
+    errors = [error for file in files if (error := _ensure_rules_file(rules_dir, file)) is not None]
     return CodexRuntimeResolution(
-        rules_file_path=(rules_dir / RULES_FILES[0].name).as_posix(),
+        rules_file_path=(rules_dir / files[0].name).as_posix(),
         rules_file_error=errors[0] if errors else None,
     )
 
 
-__all__ = ["MERIDIAN_RULES_FILE_CONTENT", "RULES_FILES", "ensure_codex_meridian_rules"]
+__all__ = [
+    "MERIDIAN_RULES_FILE_CONTENT",
+    "RULES_FILES",
+    "codex_rules_files",
+    "ensure_codex_meridian_rules",
+    "escaping_commands_text",
+    "rules_files_text",
+]

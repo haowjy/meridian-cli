@@ -24,6 +24,7 @@ from meridian.cli.machine_forward import base_caller, other_machine
 from meridian.lib.core.caller import caller_identity, caller_project_root
 from meridian.lib.core.caller_boundary import (
     SANDBOX_BLOCKED_SENTENCE,
+    SANDBOX_DENIAL_ERRNOS,
     inside_launcher_sandbox,
 )
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
@@ -621,8 +622,8 @@ async def send_message(
                 filer = resolve_caller(sender_spawn_id, sender_project_root)
             except InboxError as exc:
                 return Failed(exc.kind, str(exc), receiver)
-            except PermissionError:
-                if inside_launcher_sandbox() is False:
+            except OSError as exc:
+                if exc.errno not in SANDBOX_DENIAL_ERRNOS or inside_launcher_sandbox() is False:
                     raise
                 return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
             return await _send_to_machine(
