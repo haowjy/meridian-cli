@@ -1723,12 +1723,18 @@ def indexed_spawn_scan(
     *,
     parent_id: str | None = None,
     work_id: str | None = None,
+    statuses: set[str] | None = None,
     deadline: float | None = None,
 ) -> SpawnScan:
-    """Discovery partition; corruption fails coverage rather than omitting a sibling."""
+    """Discovery partition; corruption fails coverage rather than omitting a sibling.
+
+    ``statuses`` asks the index for rows in those stored statuses only, so a caller that
+    wants the running ones does not load a project's whole history.
+    """
     records = HistoryIndex(runtime_root).spawns(
         parent_id=parent_id,
         work_id=work_id,
+        status=statuses,
         deadline=deadline,
     )
     return SpawnScan.ordered(records, ())

@@ -896,8 +896,12 @@ def _spawn_list(
         ),
     ] = None,
     limit: Annotated[
-        int, Parameter(name="--limit", help="Maximum number of spawns to return.")
-    ] = 20,
+        int | None,
+        Parameter(
+            name="--limit",
+            help="Maximum number of spawns to return (20; `--global` has no limit unless set).",
+        ),
+    ] = None,
     failed: Annotated[
         bool,
         Parameter(name="--failed", help="Shortcut for status=failed."),
@@ -918,7 +922,7 @@ def _spawn_list(
     normalized_view = view.strip().lower() if view.strip() else "active"
     if all_spawns:
         normalized_view = "all"
-        if limit == 20:  # user didn't override the default
+        if limit is None:
             limit = 5
     view_map: dict[str, tuple[SpawnStatus, ...]] = {
         "active": _ACTIVE_VIEW_STATUSES,
@@ -952,7 +956,9 @@ def _spawn_list(
             profile=profile,
             primary=primary,
             work=work,
-            limit=limit,
+            # 0 is no limit for `--global`: its list is bounded by what is running, and a
+            # silent cut would hide sessions from a caller that lists them all.
+            limit=limit if limit is not None else (0 if all_projects else 20),
             failed=False,
             all_projects=all_projects,
         ),

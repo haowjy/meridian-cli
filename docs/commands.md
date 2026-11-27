@@ -181,7 +181,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `--limit N` | `spawn list` only: maximum rows (default 20). The `--all` shortcut drops the default to 5; use `--view all --limit N` to list a work item's full history |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
-| `--global` | `spawn list` only: running sessions in every project on this machine. Finds projects by their held lifetime lock, so a session that has not started yet is missing for that moment. Takes no `--all`, `--status`, `--view`, `--failed` or `--work` (history is `session search --global`) |
+| `--global` | `spawn list` only: running sessions in every project on this machine. Finds projects by their held lifetime lock, and also opens the project of every ID issued in the last two minutes, so a session that has just been launched is listed. It has no default `--limit`: the list is bounded by what is running. Takes no `--all`, `--status`, `--view`, `--failed` or `--work` (history is `session search --global`) |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
 | `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; harness support differs |
 | `--network MODE` | `allow` \| `deny` \| `allowlist`. Overrides the profile mode for this launch; shell network only |

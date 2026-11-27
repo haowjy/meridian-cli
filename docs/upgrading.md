@@ -95,7 +95,8 @@ session from any directory.
   its own project, as before, and the ordering caveat above applies until old sessions end.
 - **`meridian spawn list --global`** lists the running sessions of every project on the
   machine, each with its `project_root`. `--all`, `--status`, `--view`, `--failed` and
-  `--work` are refused with it: history across projects is `session search --global`.
+  `--work` are refused with it: history across projects is `session search --global`. It has
+  no default `--limit` (give one to cut it), and it reads only each project's running rows.
 - **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
   additive JSON fields and are present without `--global`. `machine` is this machine's name,
   kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is

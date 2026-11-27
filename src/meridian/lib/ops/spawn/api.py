@@ -79,6 +79,7 @@ from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.machine_identity import machine_identity_or_none
+from meridian.lib.state.machine_ids import recent_claim_roots
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -735,6 +736,24 @@ def _filter_listed(payload: SpawnListInput, spawns: list[SpawnRecord]) -> list[S
     return spawns
 
 
+def _listed_rows(runtime_root: Path, payload: SpawnListInput) -> list[SpawnRecord]:
+    """The rows ``payload`` can list, oldest first, from the index.
+
+    Unless the list is of every status, the index is asked for the stored-active rows and
+    the wanted statuses only, as ``locate_run`` asks for the active ones: reading a project's
+    whole history to show a handful of live rows costs seconds on a busy project.
+    ``overlay_derived`` moves a stored-active row to a terminal status and no other way, so
+    the stored-active rows hold every row that can be listed as running.
+    """
+
+    stored: set[str] | None = None
+    if payload.statuses != ():
+        wanted = payload.statuses or ((payload.status,) if payload.status is not None else ())
+        stored = {*ACTIVE_SPAWN_STATUSES, *map(str, wanted)}
+    scan = indexed_spawn_scan(runtime_root, statuses=stored)
+    return overlay_derived(runtime_root, scan.records)
+
+
 def _list_entries(
     runtime_root: Path, rows: Sequence[SpawnRecord], *, machine: str | None
 ) -> list[SpawnListEntry]:
@@ -783,6 +802,9 @@ def _machine_name() -> str | None:
     return identity.name if identity is not None else None
 
 
+_NEW_CLAIM_WINDOW_SECONDS = 120.0
+
+
 def _live_project_roots() -> list[Path]:
     """Runtime roots with a running session: the ones whose lifetime lock is held.
 
@@ -824,15 +846,18 @@ def _spawn_list_all_projects(payload: SpawnListInput) -> SpawnListOutput:
         )
     machine = _machine_name()
     found: list[tuple[Path, SpawnRecord]] = []
-    for root in _live_project_roots():
+    # A spawn reports running before its runner takes the lifetime lock, so the roots of
+    # claims from the last two minutes are opened too.
+    for root in sorted({*_live_project_roots(), *recent_claim_roots(_NEW_CLAIM_WINDOW_SECONDS)}):
+        if not root.is_dir():  # a claim's root that was pruned
+            continue
         try:
-            rows = overlay_derived(root, indexed_spawn_scan(root).records)
+            rows = _listed_rows(root, payload)
         except (OSError, history_index.HistoryIndexBusy, sqlite3.Error):
             continue  # pruned or rebuilt while the list was being built: it reads as empty
         found.extend((root, row) for row in _filter_listed(payload, rows))
     found.sort(key=lambda item: item[1].started_at or "", reverse=True)
-    limit = payload.limit if payload.limit > 0 else 20
-    selected = found[:limit]
+    selected = found[: payload.limit] if payload.limit > 0 else found
     entries_by_root = {
         root: {
             entry.spawn_id: entry
@@ -879,8 +904,7 @@ def spawn_list_sync(
     if work_id is not None:
         spawns = list(reversed(work_spawns(runtime_root, work_id)))
     else:
-        scanned = overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
-        spawns = list(reversed(scanned))
+        spawns = list(reversed(_listed_rows(runtime_root, payload)))
     spawns = _filter_listed(payload, spawns)
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
