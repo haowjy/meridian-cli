@@ -22,6 +22,7 @@ from meridian.cli.output import emit as emit_output
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
+from meridian.lib.state.saved_machines import SavedMachine
 
 
 class Caller(BaseModel):
@@ -59,6 +60,13 @@ class GlobalOptions(BaseModel):
     caller: Caller | None = None
     # Startup's decision that a primary launch prints a command (``launch_prints``).
     prints_launch: bool = False
+    # The command as typed without global options, and without ``--``'s passthrough: what a
+    # command that crosses to another machine sends.
+    argv: tuple[str, ...] = ()
+    # ``--machine`` naming another machine: the command runs there, and ``-C`` is not applied
+    # here. ``remote_directory`` is the ``-C`` text as typed, a path on that machine.
+    machine: SavedMachine | None = None
+    remote_directory: str | None = None
 
 
 class Emitter(Protocol):

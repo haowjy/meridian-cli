@@ -12,13 +12,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from meridian.lib.core.refs import RefAmbiguous, RefNotFound
+from meridian.lib.core.refs import RefAmbiguous, RefNotFound, parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.inbox.caller import project_of_root
 from meridian.lib.inbox.fields import shown
 from meridian.lib.inbox.models import Claim, Message
 from meridian.lib.inbox.store import InboxError, record_offer, waiting_message
-from meridian.lib.message.address import AddressError, SessionAddress, parse_address
 from meridian.lib.message.result import Delivered, Failed, MessageResult
 from meridian.lib.ops.locate import RunTarget, locate_run
 from meridian.lib.state import spawn_store
@@ -91,16 +90,17 @@ def offer(
     """
 
     try:
-        address = parse_address(session.strip())
-    except AddressError as exc:
-        raise InboxError(exc.text, kind=exc.kind) from exc
-    if not isinstance(address, SessionAddress):
+        ref = parse_ref(session)
+    except ValueError:
+        ref = None
+    if ref is None or ref.kind not in ("spawn", "chat", "machine"):
         raise InboxError(
             f"`{session}` is not a session: an offer goes to a spawn ID or chat ID", kind="usage"
         )
     # The spawn store is read before ``inbox.lock`` is taken: the lock is a leaf.
+    # ``locate_run`` takes the reference as typed: it refuses another machine's name.
     try:
-        target = locate_run(project_root, address.id)
+        target = locate_run(project_root, session)
     except RefAmbiguous as exc:
         raise InboxError(str(exc), kind="ambiguous") from exc
     except (RefNotFound, ValueError) as exc:
@@ -109,7 +109,7 @@ def offer(
     if record is None or record.kind != "primary":
         what = f"a {record.kind} session" if record is not None else "unrecorded"
         raise InboxError(
-            f"session {address.id} is {what}, not a primary: only a primary session can "
+            f"session {ref.value} is {what}, not a primary: only a primary session can "
             "take a message, so only a primary is offered one. Nothing was sent.",
             kind="refused",
         )
@@ -118,13 +118,13 @@ def offer(
     message = waiting_message(message_id)
     if message.project is not None and message.project != session_project:
         raise InboxError(
-            f"{message_id} is for project {message.project}; session {address.id} is in "
+            f"{message_id} is for project {message.project}; session {ref.value} is in "
             f"{'project ' + session_project if session_project else 'no project'}. "
             "Nothing was sent.",
             kind="refused",
         )
 
-    result = send(address.id, notice(message_id, message))
+    result = send(ref.value, notice(message_id, message))
     if not isinstance(result, Delivered):
         reason = result.text if isinstance(result, Failed) else "it was not delivered"
         if isinstance(result, Failed) and result.kind == "cold":
@@ -134,7 +134,7 @@ def offer(
             kind=result.kind if isinstance(result, Failed) else "failed",
         )
 
-    to = result.receiver.chat_id or result.receiver.spawn_id or address.id
+    to = result.receiver.chat_id or result.receiver.spawn_id or ref.value
     try:
         record_offer(message_id, to, now)
     except InboxError as exc:

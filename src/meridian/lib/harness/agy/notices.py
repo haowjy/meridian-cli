@@ -25,6 +25,7 @@ from meridian.lib.harness.agy.state import (
     request_path,
     row_path,
 )
+from meridian.lib.message.reply import reply_tokens, saved_machine_by_id
 from meridian.lib.platform.python_module import module_argv
 
 _SEND_TIMEOUT_SECONDS = 40.0
@@ -47,18 +48,27 @@ def _send(sender: MessageSender, text: str) -> None:
     been tried, so a held notice would be dropped silently.
     """
 
+    address = [sender.spawn_id, "-C", sender.project_root]
+    if sender.machine_id is not None:
+        # A sender on another machine is answered by the name saved here; with no way back,
+        # there is nobody to tell.
+        saved = saved_machine_by_id(sender.machine_id)
+        tokens = (
+            reply_tokens(
+                saved,
+                sender.reply_id or sender.spawn_id,
+                claimed=sender.claimed,
+                project_root=sender.project_root,
+            )
+            if saved is not None
+            else None
+        )
+        if tokens is None:
+            return
+        address = tokens
     with suppress(OSError, subprocess.TimeoutExpired):
         subprocess.run(
-            module_argv(
-                "meridian",
-                "message",
-                sender.spawn_id,
-                "-C",
-                sender.project_root,
-                "--wake",
-                "--message",
-                text,
-            ),
+            module_argv("meridian", "message", *address, "--wake", "--message", text),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=_SEND_TIMEOUT_SECONDS,

@@ -14,6 +14,9 @@ The one statement of cross-store lock order; other docs link here. Outer to inne
 3. `locks/spawns/<id>.lock` (`write_state_locked()`)
 4. `locks/process-scopes/<id>.lock` (process-scope projection)
 
+`locks/machine.lock` (identity rename) and `locks/machines.lock` (saved list) are leaf locks:
+nothing else is taken while holding either, and neither is held across an SSH call.
+
 Sessions take gate shared, then `sessions.jsonl.flock`, only through
 `session_store.session_writes()`; never take `sessions_flock` alone. `work-store.flock`
 and the session pair are never held together, in either order: a command that changes

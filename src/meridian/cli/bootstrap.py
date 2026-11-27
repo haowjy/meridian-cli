@@ -49,6 +49,7 @@ class ParsedGlobalOptions:
     forced_render_mode: RenderMode | None
     directory: str | None
     directory_explicit: bool = False
+    machine: str | None = None
 
 
 def iter_positional_tokens(argv: Sequence[str]) -> Iterator[tuple[int, str]]:
@@ -109,6 +110,7 @@ def extract_global_options(
     config_file: str | None = None
     harness: str | None = None
     directory: str | None = None
+    machine: str | None = None
     yes = False
     no_input = False
     output_explicit = False
@@ -171,6 +173,20 @@ def extract_global_options(
             directory = arg.partition("=")[2].strip()
             if not directory:
                 raise SystemExit("--directory requires a non-empty value")
+            index += 1
+            continue
+        if arg == "--machine":
+            if index + 1 >= len(argv):
+                raise SystemExit("--machine requires a value")
+            machine = argv[index + 1].strip()
+            if not machine:
+                raise SystemExit("--machine requires a non-empty value")
+            index += 2
+            continue
+        if arg.startswith("--machine="):
+            machine = arg.partition("=")[2].strip()
+            if not machine:
+                raise SystemExit("--machine requires a non-empty value")
             index += 1
             continue
         if arg == "--harness":
@@ -251,6 +267,7 @@ def extract_global_options(
         harness=harness,
         directory=directory,
         directory_explicit=directory is not None,
+        machine=machine,
         yes=yes,
         no_input=no_input,
         output_explicit=output_explicit,

@@ -15,11 +15,13 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
+from meridian.cli.machine_forward import forward_if_remote
 from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.machines.caller import require_project_or_global
 from meridian.lib.platform.python_module import module_argv
 
 if TYPE_CHECKING:
@@ -302,6 +304,7 @@ def _session_log(
 ) -> None:
     from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 
+    forward_if_remote([ref] if ref else [])
     resolved_tail: int | None = None
     if tail is not None:
         if len(tail) > 1:
@@ -409,6 +412,9 @@ def _session_search(
 ) -> None:
     from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 
+    forward_if_remote([ref] if ref else [])
+    if not (ref or file_path or workspace or global_scope):
+        require_project_or_global("`session search`")
     with _hint_gone_directory(file_path):
         output = session_search_sync(
             SessionSearchInput(

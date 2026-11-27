@@ -22,6 +22,12 @@ asks the catalog, never the command name. A reply line or help text that sends a
 message begins `meridian message`, with global options after the address: a harness lets
 a command out of its sandbox by its first words.
 
+`--machine` is a global option: `main` resolves it before `-C` and, for another machine,
+refuses a command that doesn't cross (`CommandDescriptor.crosses`, the one list, read again
+by `machine run` on arrival) and applies neither `-C` nor startup preparation. A crossing
+handler calls `forward_if_remote(refs)` first; `message` has its own route. Don't add a
+command to the list that has any form that writes.
+
 Session browse returns a re-entry decision; the handler execs it only after the
 full-screen app closes. Build help profiles per invocation rather than mutating
 shared `App` objects.

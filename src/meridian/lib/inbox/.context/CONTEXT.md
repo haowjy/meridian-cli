@@ -110,6 +110,20 @@ A process no session runs has a project only from `--project-id`, never from its
 directory: a hook row runs in home, and a daemon's directory is not what its messages are
 about.
 
+## Other machines
+
+The inbox is this machine's only; `<machine>/inbox` is not built. Three places refuse it,
+each with a kind, and building it means changing all three:
+
+- `core/refs.parse_ref` refuses `<machine>/inbox` (`REMOTE_INBOX_ERROR`), so
+  `machine_forward.other_machine` never resolves a machine for it.
+- `message/address.parse_address` refuses `inbox` with `--machine`, and `inbox` in a
+  command another machine sent (`is_machine_call`): filed here it would be recorded as
+  from a terminal on this machine.
+- The `inbox` commands are not on the crossing list (`CommandDescriptor.crosses`), so
+  `main` refuses `--machine` for them. `offer` hands its session to `locate_run` as
+  typed, which refuses another machine's `<machine>/<id>`.
+
 ## What a sender controls
 
 Meridian never stores or prints a command a caller supplied.

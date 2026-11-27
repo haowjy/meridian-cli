@@ -10,7 +10,6 @@ import asyncio
 import dataclasses
 import json
 import os
-import shlex
 import sys
 import time
 from datetime import UTC, datetime
@@ -21,7 +20,8 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import message_app
 from meridian.cli.invocation import get_global_options
-from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.cli.machine_forward import base_caller, other_machine
+from meridian.lib.core.caller import caller_identity
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
 from meridian.lib.core.process_start import starting_cwd, starting_env
@@ -29,14 +29,20 @@ from meridian.lib.core.refs import RefAmbiguous, RefNotFound
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.inbox.filing import FilingOptions, file_from_command
+from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, call_machine
+from meridian.lib.machines.caller import machine_call_caller
+from meridian.lib.machines.resolve import MachineError
+from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import (
     AddressError,
     InboxAddress,
+    MachineAddress,
     PersonAddress,
     local_machine_name,
     parse_address,
 )
 from meridian.lib.message.people import deliver_to_person
+from meridian.lib.message.reply import Sender, local_sender, machine_sender
 from meridian.lib.message.result import (
     Delivered,
     Failed,
@@ -47,9 +53,10 @@ from meridian.lib.message.result import (
     print_result,
 )
 from meridian.lib.ops.locate import locate_run
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
+from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
 from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES, control_socket_path
@@ -69,9 +76,11 @@ _SANDBOX_SENTENCE: Final = (
 
 MESSAGE_ADDRESS_HELP: Final = (
     "Required. Where the message goes: a session's spawn ID or chat ID (that chat's running "
-    "session), `@person` for a person, or `inbox` to leave it in this machine's inbox for a "
-    "session to take. A new ID works from any directory; `-C <repo>` reaches an ID issued "
-    "before machine-wide IDs in another project."
+    "session), `<machine>/<id>` for a session on a saved machine (`meridian machine list`), "
+    "`@person` for a person, or `inbox` to leave it in this machine's inbox for a session to "
+    "take. A new ID works from any directory; `-C <repo>` reaches an ID issued before "
+    "machine-wide IDs in another project. For an old ID on another machine: "
+    "`--machine <name> -C <path on that machine>`, after the address."
 )
 MESSAGE_WAKE_HELP: Final = (
     "Deliver to a session whose prompt cache has gone cold. Without it, a message to a session "
@@ -80,7 +89,9 @@ MESSAGE_WAKE_HELP: Final = (
     "never held. Not valid with an `@` address."
 )
 MESSAGE_TEXT_HELP: Final = (
-    "Message text, or `-` to read it from stdin. Put long content in a file and send its path."
+    "Message text, or `-` to read it from stdin. Put long content in a file and send its path; "
+    "for another machine send the content, or put it in the work item's directory: a path "
+    "means nothing there."
 )
 _INBOX_ONLY: Final = "Only with the `inbox` address."
 MESSAGE_PROJECT_ID_HELP: Final = (
@@ -140,45 +151,20 @@ def _duration_text(seconds: float) -> str:
     return f"{minutes // 60} h {minutes % 60} min"
 
 
-def framed_message(
-    message: str,
-    *,
-    sender_spawn_id: str | None = None,
-    sender: SpawnRecord | None = None,
-    can_reply: bool = False,
-    reply_project: Path | None = None,
-) -> str:
+def framed_message(message: str, sender: Sender | None = None) -> str:
     """Open the message with its sender and, when it exists, a way to answer.
 
-    A session that receives a message otherwise cannot tell which session sent
-    it, or where to reply. The frame is text, not wire metadata: every harness's
-    delivery path carries it unchanged. *sender* is the sender's own record, absent
-    when its state can't be read from here; *can_reply* is whether a post back
-    would resolve a route; *reply_project* is the sender's project, used only when
-    the sender lives in another project and its ID is not machine-wide, which is when
-    the reply needs ``-C`` (after the address, so the line begins ``meridian message``).
+    A session that receives a message otherwise cannot tell which session sent it, or where
+    to reply. The frame is text, not wire metadata: every harness's delivery path carries it
+    unchanged. *sender* is ``None`` when the message has no sender identity.
     """
 
-    if sender_spawn_id is None:
+    if sender is None:
         provenance = f"{MARKER} Message with no sender identity; it has no reply address."
-    elif sender is None or not can_reply:
-        where = f"spawn {sender_spawn_id}"
-        if sender is not None and sender.continue_chat_id:
-            where += f" (chat {sender.continue_chat_id})"
-        provenance = f"{MARKER} Message from {where}; it has no reply route here."
+    elif sender.reply is None:
+        provenance = f"{MARKER} Message from {sender.where}; {sender.no_reply}."
     else:
-        # The sender's current chat: after a /clear the entry chat is a past session.
-        address = sender.continue_chat_id or sender.id
-        via = ""
-        if reply_project is not None and claim_root(address) is None:
-            via = f"-C {shlex.quote(reply_project.as_posix())} "
-        where = f"spawn {sender.id}"
-        if sender.continue_chat_id:
-            where += f" (chat {sender.continue_chat_id})"
-        provenance = (
-            f"{MARKER} Message from {where}. To answer, run "
-            f'`meridian message {address} {via}"..."`.'
-        )
+        provenance = f"{MARKER} Message from {sender.where}. To answer, run `{sender.reply}`."
     return f"{provenance}\n\n{message}"
 
 
@@ -204,6 +190,30 @@ def _can_receive_reply(sender: SpawnRecord, sender_root: Path) -> bool:
     return (
         is_active_spawn_status(sender.status)
         and control_socket_path(sender_root, sender.id).exists()
+    )
+
+
+def _local_sender(
+    sender_spawn_id: str | None,
+    *,
+    sender_root: Path | None,
+    runtime_root: Path,
+    reply_project: Path,
+) -> Sender | None:
+    """The sender on this machine: its record names its current chat, the ID to answer."""
+
+    sender = _sender_record(sender_root, sender_spawn_id)
+    can_reply = (
+        sender is not None and sender_root is not None and _can_receive_reply(sender, sender_root)
+    )
+    # The sender's current chat: after a /clear the entry chat is a past session.
+    reply_id = (sender.continue_chat_id or sender.id) if sender is not None and can_reply else None
+    return local_sender(
+        sender_spawn_id,
+        chat_id=sender.continue_chat_id if sender is not None else None,
+        reply_id=reply_id,
+        claimed=reply_id is not None and claim_root(reply_id) is not None,
+        reply_project=reply_project if sender_root != runtime_root else None,
     )
 
 
@@ -237,9 +247,8 @@ async def _send_to_session(
     message, and a script that read it as a plain failure would send it twice.
     """
 
-    # Sending reads state and writes to a socket: it never makes the directory it runs
-    # from a project, which may be one Meridian chose (a hook row runs in home).
-    project_root = resolve_project_root_resolution().project_root
+    project_root = resolve_project_authority().project_root
+    current_root = resolve_runtime_root_for_read(project_root)
     try:
         target = locate_run(project_root, session_id)
     except RefAmbiguous as exc:
@@ -264,23 +273,21 @@ async def _send_to_session(
         return cold
 
     sandbox = inside_launcher_sandbox()
-    sender_root = (
-        resolve_runtime_root_for_read(sender_project_root or project_root)
-        if sender_spawn_id is not None
-        else None
-    )
-    sender = _sender_record(sender_root, sender_spawn_id)
-    framed = framed_message(
-        text,
-        sender_spawn_id=sender_spawn_id,
-        sender=sender,
-        can_reply=sender is not None
-        and sender_root is not None
-        and _can_receive_reply(sender, sender_root),
-        reply_project=(sender_project_root or project_root)
-        if sender_root != runtime_root
-        else None,
-    )
+    remote = machine_call_caller()
+    if remote is not None:
+        sender = machine_sender(remote)
+    else:
+        sender = _local_sender(
+            sender_spawn_id,
+            sender_root=(
+                resolve_runtime_root_for_read(sender_project_root)
+                if sender_project_root is not None
+                else current_root
+            ),
+            runtime_root=runtime_root,
+            reply_project=sender_project_root or project_root,
+        )
+    framed = framed_message(text, sender)
 
     socket_path = control_socket_path(runtime_root, spawn_id)
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
@@ -323,7 +330,16 @@ async def _send_to_session(
 
     # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
     request: dict[str, object] = {"type": "user_message", "text": framed}
-    if sender_spawn_id is not None:
+    if remote is not None:
+        if remote.spawn_id is not None and remote.project_root is not None:
+            request["sender"] = {
+                "spawn_id": remote.spawn_id,
+                "project_root": remote.project_root,
+                "machine_id": remote.machine_id,
+                "reply_id": remote.reply_id,
+                "claimed": remote.claimed,
+            }
+    elif sender_spawn_id is not None:
         request["sender"] = {
             "spawn_id": sender_spawn_id,
             "project_root": (sender_project_root or project_root).as_posix(),
@@ -399,22 +415,140 @@ async def _send_to_session(
         return may_have_arrived(f"no usable answer from spawn {spawn_id} ({exc})")
 
 
+def _machine_caller_block() -> dict[str, object]:
+    """What the receiving machine's frame needs about the sender, which is a file on this one.
+
+    ``reply_id`` is the sender's current chat, else its spawn (not the environment: after a
+    ``/clear`` the entry chat is a past session). Everything past the machine is absent when
+    the caller is a person at a terminal.
+    """
+
+    block = base_caller()
+    identity = caller_identity()
+    if identity is None:
+        return block
+    record = read_derived(identity.runtime_root, identity.spawn_id)
+    reply_id = (record.continue_chat_id or record.id) if record is not None else identity.spawn_id
+    project = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
+    block.update(
+        {
+            "spawn_id": str(identity.spawn_id),
+            "reply_id": reply_id,
+            "claimed": claim_root(reply_id) is not None,
+            "can_reply": record is not None and _can_receive_reply(record, identity.runtime_root),
+            "project_id": identity.runtime_root.name,
+        }
+    )
+    if project:
+        block["project_root"] = project
+    return block
+
+
+def _delivered_or_failed(
+    answer: Answered, receiver: Receiver, address: MachineAddress
+) -> MessageResult:
+    """The other side's ``message --json`` object as a result; anything else it printed means
+    the message may have arrived."""
+
+    def uncertain(why: str) -> Failed:
+        return Failed(
+            "maybe_delivered",
+            f"{why}; the message may have been delivered and was not resent",
+            receiver,
+        )
+
+    if answer.timed_out or answer.truncated:
+        return uncertain(f"{address.machine.name} timed out answering")
+    parsed = None
+    for line in reversed(answer.stdout.strip().splitlines()):
+        try:
+            parsed = json_object(json.loads(line))
+        except ValueError:
+            continue
+        break
+    if parsed is None or not isinstance(parsed.get("ok"), bool):
+        detail = answer.stderr.strip().splitlines()[-1:] or [f"exit status {answer.exit}"]
+        return uncertain(f"{address.machine.name} gave no usable answer ({detail[0]})")
+    ids = {key: parsed[key] for key in ("spawn_id", "chat_id") if isinstance(parsed.get(key), str)}
+    receiver = dataclasses.replace(receiver, **ids)
+    if parsed["ok"] is True:
+        note = parsed.get("note")
+        return Delivered(
+            delivery_kind(parsed.get("delivery")),
+            f"{address.machine.name}/{address.id}",
+            note if isinstance(note, str) else None,
+            receiver,
+        )
+    error = json_object(parsed.get("error")) or {}
+    text = error.get("text")
+    return Failed(
+        error_kind(error.get("kind"), unknown="maybe_delivered"),
+        text.strip() if isinstance(text, str) and text.strip() else "unknown error",
+        receiver,
+    )
+
+
+async def _send_to_machine(
+    address: MachineAddress,
+    text: str,
+    receiver: Receiver,
+    *,
+    wake: bool,
+    remote_directory: str | None,
+) -> MessageResult:
+    """Deliver through ``machine run`` on a saved machine: that machine's own ``message`` does the
+    delivery, so its result is read back, never re-derived here. The text goes on stdin, never in
+    ``argv``: one argument is limited to 128 KiB and a message may be 16 MiB."""
+
+    receiver = dataclasses.replace(receiver, machine=address.machine.name)
+    argv = ["message", address.id, "-", "--json"]
+    if wake:
+        argv.append("--wake")
+    if remote_directory is not None:
+        argv += ["-C", remote_directory]
+    result = await asyncio.to_thread(
+        call_machine,
+        address.machine.ssh,
+        argv,
+        text,
+        MESSAGE_LIMIT_SECONDS,
+        address.machine.id,
+        caller=_machine_caller_block(),
+        label=address.machine.name,
+    )
+    match result:
+        case NotSent(kind, why):
+            return Failed(kind, why, receiver)
+        case Unanswered(why):
+            return Failed(
+                "maybe_delivered",
+                f"{why}; the message may have been delivered and was not resent",
+                receiver,
+            )
+        case Answered():
+            return _delivered_or_failed(result, receiver, address)
+
+
 async def send_message(
     ref: str,
     message: str,
     *,
     sender_spawn_id: str | None = None,
     sender_project_root: Path | None = None,
-    machine: str | None = None,
+    machine: SavedMachine | None = None,
+    remote_directory: str | None = None,
+    directory_explicit: bool = False,
     wake: bool = False,
     filing: FilingOptions | None = None,
 ) -> MessageResult:
     """Send *message* to the receiver *ref* names and return what happened.
 
     *ref* is a spawn ID, a chat ID, ``<machine>/<id>``, an ``@person`` or ``inbox``.
-    *sender_project_root* is the sender's project when it differs from this one; the
-    sender's record is read from there. *filing* holds the flags of the ``inbox``
-    address. Nothing is printed.
+    *machine* is the other machine ``--machine`` named, *remote_directory* the ``-C`` that
+    goes with it, and *directory_explicit* that ``-C`` was applied here.
+    *sender_project_root* is the sender's project when it differs from this one; the sender's
+    record is read from there. *filing* holds the flags of the ``inbox`` address. Nothing is
+    printed.
     """
 
     address = ref.strip()
@@ -429,7 +563,14 @@ async def send_message(
     if not text:
         return Failed("usage", "message is required", receiver)
     try:
-        parsed = parse_address(address, machine=machine)
+        target = (
+            machine
+            if address.startswith("@") or address == "inbox"
+            else other_machine(
+                [address], option_machine=machine, directory_explicit=directory_explicit
+            )
+        )
+        parsed = parse_address(address, machine=target)
         if isinstance(parsed, InboxAddress):
             if wake:
                 raise AddressError("usage", "--wake belongs to a session address, not the inbox")
@@ -455,6 +596,10 @@ async def send_message(
             return await deliver_to_person(
                 parsed.address, text, receiver, env=starting_env(), cwd=starting_cwd()
             )
+        if isinstance(parsed, MachineAddress):
+            return await _send_to_machine(
+                parsed, text, receiver, wake=wake, remote_directory=remote_directory
+            )
         return await _send_to_session(
             parsed.id,
             text,
@@ -463,7 +608,7 @@ async def send_message(
             sender_project_root=sender_project_root,
             wake=wake,
         )
-    except AddressError as exc:
+    except (AddressError, MachineError) as exc:
         return Failed(exc.kind, exc.text, receiver)
     except Exception as exc:
         # Only what happens before a route writes: each route answers its own failures after.
@@ -471,11 +616,7 @@ async def send_message(
 
 
 def run_message(
-    ref: str,
-    message: str,
-    machine: str | None = None,
-    wake: bool = False,
-    filing: FilingOptions | None = None,
+    ref: str, message: str, wake: bool = False, filing: FilingOptions | None = None
 ) -> None:
     """The body of ``meridian message`` and of the deprecated ``spawn message``."""
 
@@ -494,7 +635,9 @@ def run_message(
                 text,
                 sender_spawn_id=caller.spawn_id if caller is not None else None,
                 sender_project_root=caller.project_root if caller is not None else None,
-                machine=machine,
+                machine=options.machine,
+                remote_directory=options.remote_directory,
+                directory_explicit=options.directory_explicit,
                 wake=wake,
                 filing=filing,
             )
@@ -507,7 +650,6 @@ def cmd_message(
     ref: Annotated[str, Parameter(show_default=False, help=MESSAGE_ADDRESS_HELP)] = "",
     message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
     *,
-    machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
     wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
     project_id: Annotated[
         str | None, Parameter(name="--project-id", help=MESSAGE_PROJECT_ID_HELP)
@@ -526,11 +668,7 @@ def cmd_message(
     """Send a message to a running session or a person, or file it in the machine's inbox."""
 
     run_message(
-        ref,
-        message,
-        machine,
-        wake,
-        FilingOptions(project_id, reply_to, via_program, via_ref, via_sender),
+        ref, message, wake, FilingOptions(project_id, reply_to, via_program, via_ref, via_sender)
     )
 
 

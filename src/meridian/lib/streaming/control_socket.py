@@ -273,8 +273,15 @@ def _parse_sender(value: object) -> MessageSender | None | Literal[False]:
     if isinstance(value, dict):
         fields = cast("dict[str, object]", value)
         spawn_id, project_root = fields.get("spawn_id"), fields.get("project_root")
+        machine_id, reply_id = fields.get("machine_id"), fields.get("reply_id")
         if isinstance(spawn_id, str) and isinstance(project_root, str):
-            return MessageSender(spawn_id, project_root)
+            return MessageSender(
+                spawn_id,
+                project_root,
+                machine_id if isinstance(machine_id, str) else None,
+                reply_id if isinstance(reply_id, str) else None,
+                fields.get("claimed") is True,
+            )
     return False
 
 

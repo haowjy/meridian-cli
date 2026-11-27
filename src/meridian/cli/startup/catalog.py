@@ -27,6 +27,9 @@ class CommandDescriptor:
     default_output_mode: str
     root_source: RootSource = RootSource.CWD
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY
+    # May run on another machine (``--machine``, ``<machine>/<id>``): reading and messaging
+    # only, with no form that writes. ``machine run`` reads this on arrival too.
+    crosses: bool = False
 
 
 class CommandCatalog:
@@ -79,6 +82,7 @@ def _descriptor(
     *,
     root_source: RootSource = RootSource.CWD,
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     bootstrap_plan = BootstrapPlan(
         StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement
@@ -92,6 +96,7 @@ def _descriptor(
         default_output_mode=default_output_mode,
         root_source=root_source,
         startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -113,6 +118,7 @@ def _read_rootless(
     startup_class: StartupClass = StartupClass.READ_ROOTLESS,
     default_output_mode: str = "text",
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     """Path- or user-level read commands that do not require a Meridian project."""
 
@@ -124,6 +130,7 @@ def _read_rootless(
         default_output_mode,
         summary,
         startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -182,6 +189,8 @@ def _read_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -190,6 +199,8 @@ def _read_runtime(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -199,6 +210,7 @@ def _write_runtime(
     *,
     default_output_mode: str = "text",
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -208,6 +220,7 @@ def _write_runtime(
         default_output_mode,
         summary,
         startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -289,16 +302,19 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn", "list"),
         "List spawns.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "show"),
         "Show spawn details.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "status"),
         "Show spawn status details without report body by default.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "wait"),
@@ -327,7 +343,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
     _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
-    _write_rootless(
+    _read_runtime(
         ("spawn", "message"),
         "Deprecated: use `meridian message`.",
         startup_error=StartupErrorShape.MESSAGE,
@@ -336,13 +352,14 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn", "children"),
         "List child spawns.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "subagents"),
         "List the agents to delegate to; `--all` for every installed agent.",
     ),
     _read_runtime(("spawn", "stats"), "Show spawn stats."),
-    _read_runtime(("spawn", "report", "show"), "Show a spawn report."),
+    _read_runtime(("spawn", "report", "show"), "Show a spawn report.", crosses=True),
     _read_runtime(
         ("spawn", "report", "search"),
         "Search spawn reports.",
@@ -351,9 +368,9 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("session", "browse"),
         "Browse recent sessions; resume stopped or fork live ones.",
     ),
-    _read_runtime(("session", "log"), "Show session log."),
+    _read_runtime(("session", "log"), "Show session log.", crosses=True),
     _read_runtime(("session", "export"), "Export session log."),
-    _read_runtime(("session", "search"), "Search session logs."),
+    _read_runtime(("session", "search"), "Search session logs.", crosses=True),
     _write_runtime(
         ("session", "repair"),
         "Repair stored session metadata from explicit harness-session detection.",
@@ -465,10 +482,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
     _write_rootless(("notify",), "Send a notification through its hook routes."),
-    _write_rootless(
+    _read_runtime(
         ("message",),
         "Send a message to a running session or a person.",
         startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _read_rootless(("inbox",), "Show inbox help.", startup_error=StartupErrorShape.MESSAGE),
     _read_rootless(
@@ -490,6 +508,14 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Tell a running session an inbox message looks like its own.",
         startup_error=StartupErrorShape.MESSAGE,
     ),
+    _read_rootless(("machine",), "Machines this one can reach."),
+    _write_rootless(("machine", "add"), "Save a machine."),
+    _read_rootless(("machine", "list"), "List saved machines.", crosses=True),
+    _write_rootless(("machine", "remove"), "Forget a saved machine."),
+    _read_rootless(("machine", "status"), "Call each saved machine and report its state."),
+    _read_rootless(("machine", "name"), "Print this machine's name.", crosses=True),
+    _write_rootless(("machine", "rename"), "Rename this machine."),
+    _read_rootless(("machine", "run"), "Receive a call from another machine."),
     _read_rootless(
         ("idle",),
         "Manage harness idle schedules.",

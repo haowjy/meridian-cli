@@ -315,6 +315,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_GATE_FD", "Launch gate read descriptor.", child=False),
     _internal_handle("_MERIDIAN_GATE_SCOPE", "Launch guardian signal scope.", child=False),
     _internal_handle("_MERIDIAN_GATE_GRACE", "Launch guardian TERM grace period.", child=False),
+    _internal_handle(
+        "_MERIDIAN_MACHINE_CALL",
+        "JSON `caller` block of a request from another machine; set only on the command "
+        "`meridian machine run` starts, which then has no current project.",
+        child=False,
+    ),
     _internal_handle("_MERIDIAN_DEPTH", "Current delegated spawn depth."),
     _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier.", project_scoped=True),
     _internal_handle(

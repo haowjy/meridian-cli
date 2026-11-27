@@ -211,9 +211,10 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
     )
     monkeypatch.setattr(
         message_module,
-        "resolve_project_root_resolution",
+        "resolve_project_authority",
         lambda: SimpleNamespace(project_root=project_root),
     )
+    monkeypatch.setattr(message_module, "resolve_runtime_root_for_read", lambda _root: control_root)
     monkeypatch.setattr(
         locate_module,
         "resolve_runtime_root_for_read",
