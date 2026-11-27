@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.core.caller import caller_runtime_root
-from meridian.lib.inbox.fields import SAFE_FIELD_RULE, is_project_id
+from meridian.lib.inbox.fields import SAFE_FIELD_RULE, is_project_id, is_safe_field
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.state import spawn_store
@@ -106,7 +106,8 @@ def resolve_caller(spawn_id: str | None, project_root: Path | None) -> InboxCall
                 chat_id=record.continue_chat_id or spawn_id,
                 kind=record.kind,
                 project=project_of_root(root),
-                agent=record.agent or None,
+                # A label only, so a name the inbox can't store is left out, not refused.
+                agent=record.agent if is_safe_field(record.agent or "") else None,
             )
     raise InboxError(
         f"this command runs as session {spawn_id} (MERIDIAN_SPAWN_ID), which has no record "

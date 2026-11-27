@@ -106,7 +106,9 @@ about.
 
 Meridian never stores or prints a command a caller supplied.
 
-- `from`, `project` and the default `reply_to` are filled in from the caller.
+- `from`, `project` and the default `reply_to` are filled in from the caller. The
+  session's agent name in `from` is a profile name, which a repository chooses, so it is
+  held to `SAFE_FIELD` too; a name outside it is left out of the message.
 - `--reply-to` must have the form of a message address; `read` and `take` build the reply
   command from it.
 - `via` and `--project-id` are held to `SAFE_FIELD`. The models validate the same rules on

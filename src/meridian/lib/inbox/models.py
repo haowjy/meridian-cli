@@ -47,7 +47,8 @@ class Party(_Doc):
     id: SafeField | None = None
     """A session's chat ID, the ID a reply address uses."""
     project: ProjectId | None = None
-    agent: str | None = None
+    agent: SafeField | None = None
+    """The session's profile name, which a repository chooses."""
 
     def same_as(self, other: Party) -> bool:
         return (self.kind, self.machine, self.id) == (other.kind, other.machine, other.id)
