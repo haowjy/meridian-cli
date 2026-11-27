@@ -98,7 +98,9 @@ otherwise a bare launch would submit it as the first message. A work item's goal
 looked up with `meridian work show` so the prompt cannot retain stale text or an ID.
 
 The inbox line ("3 messages are waiting in this machine's inbox") is the one count in a
-prompt. A fresh primary launch computes it; a continue or fork leaves the block out, so
+prompt. It is a block of its own under `# Inbox`, after the capabilities: as an unheaded
+last line of the spawn rules, a model with the line in its prompt reported that nothing
+was waiting. A fresh primary launch computes it; a continue or fork leaves the block out, so
 every continue recomposes the same bytes. The cost is one changed prompt between a fresh
 launch that had the line and its first continue, on harnesses that don't replay a prompt
 snapshot. Storing the line in the launch snapshot would avoid that, at the price of a new

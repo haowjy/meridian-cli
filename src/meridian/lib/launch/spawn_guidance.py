@@ -404,6 +404,12 @@ def build_guidance_blocks(
             "",
         )
     )
+    if inbox_line is not None:
+        # Its own heading, after the capabilities: as the last line of the spawn rules a
+        # model read it as one of them and reported no waiting messages.
+        blocks.append(
+            CompositionBlock("inbox", GuidancePhase.GUIDANCE, 6, f"# Inbox\n\n{inbox_line}")
+        )
     if spawn_capable:
         blocks.append(
             CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 7, _SPAWN_PROMPTING)
@@ -418,8 +424,6 @@ def build_guidance_blocks(
         )
     if waiting_line is not None:
         blocks.append(CompositionBlock("waiting", GuidancePhase.GUIDANCE, 12, waiting_line))
-    if inbox_line is not None:
-        blocks.append(CompositionBlock("inbox", GuidancePhase.GUIDANCE, 13, inbox_line))
     harness_hint = (harness_guidance or "").strip()
     if harness_hint:
         blocks.append(
