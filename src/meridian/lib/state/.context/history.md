@@ -35,3 +35,15 @@ binding whose native transcript is missing does not fall back to a retained
 snapshot. Imported or restored records can read their own sealed snapshot.
 
 KB `state/portable-history.md` covers the full design.
+
+## Discovering unmarked spawns
+
+Spawns written by a build on another schema never mark this schema's queue. Catch-up
+finds them by listing `spawns/`, gated by that directory's modification time, kept in the
+`spawns-dir` cursor row (nanoseconds in `extent`). Publishing a spawn renames its staged
+directory into `spawns/`, which changes the time, so a reserved ID is found when it is
+published, whatever its number; nothing reads `spawn-id-counter`. The time is read before
+listing. It is not remembered when a spawn's lock was busy, or when it is within two
+seconds of the read (coarse-timestamp file systems), so the next catch-up lists again.
+Builds on the same schema ignore the row; an older build's `spawns` counter row is
+neither read nor written.
