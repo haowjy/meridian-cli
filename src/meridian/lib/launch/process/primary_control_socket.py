@@ -6,7 +6,7 @@ import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 
-from meridian.lib.core.delivery import MessageRoute
+from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender
 from meridian.lib.harness.bundle import PrimaryMessageRoute, PrimaryRouteContext
 from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.idle.delivery import end_stretch_on_delivery
@@ -24,15 +24,17 @@ async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncGenera
     """Bind the spawn's control socket to *route*, journaled, for the block's duration."""
 
     coordinator = ControlActionCoordinator(launch=launch)
+
+    async def deliver(text: str, sender: MessageSender | None) -> DeliveryKind:
+        delivery = await coordinator.deliver(
+            lambda sent: route.deliver(sent, sender), text, source="control_socket"
+        )
+        await end_stretch_on_delivery(launch.runtime_root, launch.spawn_id, delivery)
+        return delivery
+
     server = ControlSocketServer(
         control_socket_path(launch.runtime_root, launch.spawn_id),
-        MessageRoute(
-            lambda text, sender: coordinator.deliver(
-                lambda sent: route.deliver(sent, sender), text, source="control_socket"
-            ),
-            route.note,
-        ),
-        lambda delivery: end_stretch_on_delivery(launch.runtime_root, launch.spawn_id, delivery),
+        MessageRoute(deliver, route.note),
     )
     await server.start()
     try:

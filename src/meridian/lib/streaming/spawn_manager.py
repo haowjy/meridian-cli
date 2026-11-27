@@ -8,7 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from meridian.lib.core.delivery import DeliveryKind, MessageRoute, TransportDead
+from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender, TransportDead
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
@@ -70,11 +70,12 @@ def _default_control_server_factory(
     socket_path: Path,
     manager: SpawnManager,
 ) -> ControlSocketServer:
-    return ControlSocketServer(
-        socket_path,
-        MessageRoute(lambda text, _: manager.deliver(spawn_id, text, source="control_socket")),
-        lambda delivery: end_stretch_on_delivery(manager.runtime_root, str(spawn_id), delivery),
-    )
+    async def deliver(text: str, _sender: MessageSender | None) -> DeliveryKind:
+        delivery = await manager.deliver(spawn_id, text, source="control_socket")
+        await end_stretch_on_delivery(manager.runtime_root, str(spawn_id), delivery)
+        return delivery
+
+    return ControlSocketServer(socket_path, MessageRoute(deliver))
 
 
 def _build_spawn_application_service(
