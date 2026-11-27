@@ -56,7 +56,11 @@ pruned number.
 
 **Take**: check the message file exists, then `link(2)` a claim to `taken/<id>.json`. If
 the name exists, the same taker (`Claim.same_taker`: kind, machine, chat ID, and the `via`
-program and sender) succeeds and anyone else is refused. **Release** unlinks the claim; a
+program and sender) succeeds and anyone else is refused. The machine is compared by ID
+(`Party.same_as`, the one rule for whose a claim is): `machine` is the name at the time,
+kept as a label and for the reply address, and a rename must not lose a session its claim.
+A party written before `machine_id` was stored has only the name, and is this machine's
+when that is its current or a former name. **Release** unlinks the claim; a
 message with no claim is already released, which is a success so a cut-off call can be
 repeated.
 

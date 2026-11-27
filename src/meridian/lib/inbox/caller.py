@@ -15,6 +15,7 @@ from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_fi
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.state import spawn_store
+from meridian.lib.state.machine_identity import MachineIdentity
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
@@ -51,10 +52,13 @@ class InboxCaller:
 
         return self.is_terminal or project is None or project == self.project or all_projects
 
-    def party(self, machine: str | None) -> Party:
+    def party(self, here: MachineIdentity | None) -> Party:
+        """The caller as the inbox records it, *here* being this machine."""
+
+        name, machine_id = (here.name, here.id) if here is not None else (None, None)
         if self.is_terminal:
-            return Party(kind="terminal", machine=machine)
-        return Party(kind="session", machine=machine, id=self.chat_id)
+            return Party(kind="terminal", machine=name, machine_id=machine_id)
+        return Party(kind="session", machine=name, machine_id=machine_id, id=self.chat_id)
 
 
 def project_of_root(runtime_root: Path) -> str | None:
