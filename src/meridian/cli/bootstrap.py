@@ -13,6 +13,7 @@ from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mod
 from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
 from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
 from meridian.lib.core.types import HarnessId
+from meridian.lib.machines.caller import is_machine_call_without_project
 
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
     {
@@ -49,6 +50,7 @@ class ParsedGlobalOptions:
     forced_render_mode: RenderMode | None
     directory: str | None
     directory_explicit: bool = False
+    machine: str | None = None
 
 
 def iter_positional_tokens(argv: Sequence[str]) -> Iterator[tuple[int, str]]:
@@ -109,6 +111,7 @@ def extract_global_options(
     config_file: str | None = None
     harness: str | None = None
     directory: str | None = None
+    machine: str | None = None
     yes = False
     no_input = False
     output_explicit = False
@@ -171,6 +174,20 @@ def extract_global_options(
             directory = arg.partition("=")[2].strip()
             if not directory:
                 raise SystemExit("--directory requires a non-empty value")
+            index += 1
+            continue
+        if arg == "--machine":
+            if index + 1 >= len(argv):
+                raise SystemExit("--machine requires a value")
+            machine = argv[index + 1].strip()
+            if not machine:
+                raise SystemExit("--machine requires a non-empty value")
+            index += 2
+            continue
+        if arg.startswith("--machine="):
+            machine = arg.partition("=")[2].strip()
+            if not machine:
+                raise SystemExit("--machine requires a non-empty value")
             index += 1
             continue
         if arg == "--harness":
@@ -251,6 +268,7 @@ def extract_global_options(
         harness=harness,
         directory=directory,
         directory_explicit=directory is not None,
+        machine=machine,
         yes=yes,
         no_input=no_input,
         output_explicit=output_explicit,
@@ -292,7 +310,7 @@ def maybe_bootstrap_runtime_state(
     downstream startup work instead of resolving it again.
     """
 
-    if is_agent_render_mode(render_mode):
+    if is_agent_render_mode(render_mode) or is_machine_call_without_project():
         return None
 
     requirement = plan.state_requirement if plan is not None else None

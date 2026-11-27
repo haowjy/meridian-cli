@@ -16,8 +16,9 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
 - **A new ID needs no `-C`.** `meridian message c20417 "..."` reaches the session from any
   project, by spawn ID or chat ID; see [IDs are unique on the machine](#spawn-and-chat-ids-are-unique-on-the-machine).
   A `--json` result also carries `machine`, this machine's name, and the address may be
-  written `<this machine's name>/<id>`. Any other machine name fails as `not_found`
-  ("unknown machine") until Meridian can reach other machines. An ID that names a session in
+  written `<this machine's name>/<id>`; another saved machine's name sends it there (see
+  [Machines](#machines-can-reach-each-other-over-ssh)). Any other name fails as `not_found`
+  ("unknown machine"). An ID that names a session in
   two projects fails as `ambiguous`; one issued before machine-wide IDs that is not in the
   current project fails as `not_found`, with its text saying so.
 - **A message to a cold session is held.** A session that is idle with its prompt cache
@@ -47,6 +48,38 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
 - **A session's control server says whether a refused message arrived.** Its failure reply
   gains `kind`. A session that an older build started still answers without one, which
   reads as `maybe_delivered` until the session restarts.
+
+## Machines can reach each other over SSH
+
+New in this release. `meridian machine add <ssh target>` saves another computer;
+`--machine <name>` or a `<name>/<id>` reference then runs `spawn list|show|status|children`,
+`spawn report show`, `session log|search` and `message` there. See
+[Machines](commands.md#machines).
+
+- **Plain SSH, your keys.** Meridian opens no port and stores no password or key. Every call
+  is a new `ssh -T` with `BatchMode`, so a host key must be known first: `machine add` is
+  where you accept it, in a terminal.
+- **The other machine needs this release.** `machine add` finds Meridian there (`command -v
+  meridian`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.cargo/bin`), and in a
+  terminal offers to install it with `uv`, or to upgrade an older one (default No: sessions
+  running there keep the old build until restarted, and a sandboxed one can't run `meridian
+  message` until it is). Without a terminal it prints the command and asks nothing.
+- **Names, not IDs, are what you type.** Rename this machine first if the default
+  (`<login>-<hostname>`) is not what you want: `meridian machine rename jimyao-homebox`.
+  Machines that saved it follow the rename on their next call; the machine's ID, in
+  `~/.meridian/machine.json`, never changes. If that file is deleted the machine gets a new ID
+  and peers refuse it until you `machine remove` and `machine add` it again.
+- **Replies need the way back.** `machine add` offers to save this machine on the other one,
+  testing from there which target reaches it. A message to a machine that hasn't saved the
+  sender says so in its reply line.
+- **`machine run` there reads the default `~/.meridian`.** An SSH command doesn't read a
+  `MERIDIAN_HOME` set in a shell profile; set it in `~/.ssh/environment` or link the
+  directory.
+- **Put `--machine` after the command words** (`meridian spawn list --machine NAME`): in
+  front, the command stays inside a harness sandbox.
+- `~/.meridian/machines.json` is read by 0.28 only. After a rollback, 0.27 ignores it.
+  Hand-edit it only with care: an entry that is wrong is skipped with a warning, a file that
+  is not JSON stops every call to another machine and is never overwritten.
 
 ## Spawn and chat IDs are unique on the machine
 

@@ -1,21 +1,23 @@
 """The address grammar of ``meridian message``: which receiver a typed address names.
 
-Forms are tested in the order of the machines design's "References and addresses" table.
-Only the form is checked here; whether a session or a person exists is the route's
-question. An address that fits no form is an error and is never guessed to be a person:
-a mistyped session ID must not end up in Slack.
+``@…`` is tested here and everything else goes to ``parse_ref``, the one place that knows the
+reference forms (design ``machines.md``, "References and addresses"). Only the form is checked
+here; whether a session or a person exists is the route's question. An address that fits no
+form is an error and is never guessed to be a person: a mistyped session ID must not end up in
+Slack.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Final
 
-from meridian.lib.core.refs import SELECTORS, is_chat_id, is_spawn_id
+from meridian.lib.core.refs import SELECTORS, parse_ref
+from meridian.lib.machines.caller import is_machine_call
+from meridian.lib.machines.resolve import MachineError, resolve_machine
 from meridian.lib.state.machine_identity import machine_identity_or_none
+from meridian.lib.state.saved_machines import SavedMachine
 
-_MACHINE_NAME_RE: Final = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MAX_PERSON_ADDRESS_BYTES: Final = 256
 
 
@@ -36,6 +38,14 @@ class SessionAddress:
 
 
 @dataclass(frozen=True)
+class MachineAddress:
+    """A session on a saved machine, by bare spawn or chat ID."""
+
+    machine: SavedMachine
+    id: str
+
+
+@dataclass(frozen=True)
 class PersonAddress:
     """``@…``: a person or a thread, passed to the people program as typed."""
 
@@ -50,18 +60,6 @@ def local_machine_name() -> str | None:
     return identity.name if identity is not None else None
 
 
-def resolve_machine(name: str) -> None:
-    """Accept a machine part that names this machine, by its name or a former one (``was``).
-
-    Raises ``AddressError`` ``not_found`` ("unknown machine") for any other, until saved
-    machines exist.
-    """
-
-    identity = machine_identity_or_none()
-    if identity is None or name not in (identity.name, *identity.was):
-        raise AddressError("not_found", f"unknown machine `{name}`")
-
-
 def _person_address(address: str) -> PersonAddress:
     if len(address) == 1:
         raise AddressError("usage", "an address that starts with @ needs a name after it")
@@ -72,12 +70,11 @@ def _person_address(address: str) -> PersonAddress:
     return PersonAddress(address)
 
 
-def _is_session_id(value: str) -> bool:
-    return is_spawn_id(value) or is_chat_id(value)
-
-
-def parse_address(raw: str, *, machine: str | None = None) -> SessionAddress | PersonAddress:
-    """Classify *raw* (already trimmed); *machine* is the ``--machine`` option."""
+def parse_address(
+    raw: str, *, machine: SavedMachine | None = None
+) -> SessionAddress | MachineAddress | PersonAddress:
+    """Classify *raw* (already trimmed). *machine* is the other machine ``--machine`` named, or
+    ``None`` (``main`` drops ``--machine`` when it names this machine)."""
 
     if raw.startswith("@"):
         if raw in SELECTORS:
@@ -90,39 +87,36 @@ def parse_address(raw: str, *, machine: str | None = None) -> SessionAddress | P
             raise AddressError("usage", "an @ address does not cross machines: drop --machine")
         return _person_address(raw)
 
-    head, slash, tail = raw.partition("/")
-    if raw == "inbox" or (slash and tail == "inbox"):
-        raise AddressError("usage", "the inbox address is not built yet")
-
-    if slash and _MACHINE_NAME_RE.fullmatch(head) and not _is_session_id(head):
-        if not _is_session_id(tail):
-            raise AddressError(
-                "usage",
-                f"`{raw}`: after the machine name, a spawn ID or chat ID is expected "
-                "(`<machine>/p123` or `<machine>/c123`)",
-            )
-        if machine is not None and machine != head:
-            raise AddressError("usage", "two machines in one command: use one")
-        resolve_machine(head)
-        return SessionAddress(tail)
-
-    if _is_session_id(raw):
-        if machine is not None:
-            resolve_machine(machine)
-        return SessionAddress(raw)
-
-    raise AddressError(
-        "usage",
-        f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
-        "`<machine>/<id>` or an @person",
-    )
+    try:
+        ref = parse_ref(raw)
+    except ValueError as exc:
+        raise AddressError("usage", str(exc)) from exc
+    if ref.kind not in ("spawn", "chat", "machine"):
+        raise AddressError(
+            "usage",
+            f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
+            "`<machine>/<id>` or an @person",
+        )
+    if ref.machine is None:
+        return SessionAddress(ref.value) if machine is None else MachineAddress(machine, ref.value)
+    try:
+        named = resolve_machine(ref.machine)
+    except MachineError as exc:
+        raise AddressError(exc.kind, exc.text) from exc
+    if machine is not None and (not isinstance(named, SavedMachine) or named.id != machine.id):
+        raise AddressError("usage", "two machines in one command: use one")
+    if not isinstance(named, SavedMachine):
+        return SessionAddress(ref.value)
+    if is_machine_call():
+        raise AddressError("refused", "a call from another machine can't reach a third machine")
+    return MachineAddress(named, ref.value)
 
 
 __all__ = [
     "AddressError",
+    "MachineAddress",
     "PersonAddress",
     "SessionAddress",
     "local_machine_name",
     "parse_address",
-    "resolve_machine",
 ]

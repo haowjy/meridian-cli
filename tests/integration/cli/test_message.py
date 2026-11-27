@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,11 +23,11 @@ from meridian.lib.core.delivery import (
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.harness.claude_inbox import claude_primary_message_route
 from meridian.lib.launch.process.primary_control_socket import primary_control_socket
+from meridian.lib.message.reply import local_sender
 from meridian.lib.message.result import Delivered, Failed
 from meridian.lib.ops import locate as locate_module
 from meridian.lib.state import spawn_store
-from meridian.lib.state.machine_ids import allocate
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.machine_ids import allocate, claim_root
 from meridian.lib.streaming.control_socket import (
     ControlSocketServer,
     control_socket_path,
@@ -85,11 +86,9 @@ async def test_claude_primary_message_reaches_published_inbox(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        message_cli,
-        "resolve_runtime_root_and_config",
-        lambda _root: (tmp_path, object()),
+        message_cli, "resolve_project_authority", lambda: SimpleNamespace(project_root=tmp_path)
     )
-    monkeypatch.setattr(message_cli, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(message_cli, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     monkeypatch.setattr(locate_module, "resolve_runtime_root_for_read", lambda _root: tmp_path)
 
     spawn_store.start_spawn(
@@ -155,9 +154,9 @@ def running_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         worker_pid=os.getpid(),
     )
     monkeypatch.setattr(
-        message_cli, "resolve_runtime_root_and_config", lambda _root: (tmp_path, object())
+        message_cli, "resolve_project_authority", lambda: SimpleNamespace(project_root=tmp_path)
     )
-    monkeypatch.setattr(message_cli, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(message_cli, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     monkeypatch.setattr(locate_module, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     path = control_socket_path(tmp_path, "p1")
     prepare_socket_directory(path.parent)
@@ -227,13 +226,15 @@ def test_reply_address_names_dash_c_after_the_address_for_a_legacy_sender_only(
     claimed = allocate("c", tmp_path / "runtime-root")
 
     def reply(chat_id: str) -> str:
-        sender = SpawnRecord.model_construct(id="p9", current_chat_id=chat_id, run_boundary=None)
         return message_cli.framed_message(
             "hi",
-            sender_spawn_id="p9",
-            sender=sender,
-            can_reply=True,
-            reply_project=Path("/work/repo"),
+            local_sender(
+                "p9",
+                chat_id=chat_id,
+                reply_id=chat_id,
+                claimed=claim_root(chat_id) is not None,
+                reply_project=Path("/work/repo"),
+            ),
         )
 
     assert f'`meridian message {claimed} "..."`' in reply(claimed)

@@ -6,6 +6,7 @@ from meridian.lib.message.address import (
     SessionAddress,
     parse_address,
 )
+from meridian.lib.state.saved_machines import SavedMachine
 
 
 @pytest.mark.parametrize(
@@ -39,7 +40,7 @@ def test_address_that_names_a_receiver(raw: str, expected: SessionAddress | Pers
         ("native-session-uuid", "usage"),
         ("a/b/c", "usage"),
         ("some-machine/native-id", "usage"),
-        # A machine part is step 4's seam: every name is unknown until saved machines exist.
+        # A machine name that is not this machine and not saved.
         ("some-machine/c204", "not_found"),
     ],
 )
@@ -51,5 +52,5 @@ def test_address_that_is_refused_has_a_kind(raw: str, kind: str) -> None:
 
 def test_person_address_does_not_cross_machines() -> None:
     with pytest.raises(AddressError) as refused:
-        parse_address("@alice", machine="some-machine")
+        parse_address("@alice", machine=SavedMachine("some-machine", "host", "0" * 12))
     assert refused.value.kind == "usage"

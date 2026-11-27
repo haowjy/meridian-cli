@@ -43,9 +43,10 @@ OpenCode managed primaries honor explicit provider/model selections without edit
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
 
 **`meridian message ADDRESS "text" [-C REPO]`** sends a message to a running session or a
-person. `ADDRESS` is a spawn ID or a chat ID (that chat's running session), or `@person`
-for a person. A new ID works from any directory; `-C` reaches a session with an ID
-issued before machine-wide IDs in another project.
+person. `ADDRESS` is a spawn ID or a chat ID (that chat's running session),
+`<machine>/<id>` for a session on a [saved machine](#machines), or `@person` for a person.
+A new ID works from any directory; `-C` reaches a session with an ID issued before
+machine-wide IDs in another project.
 `meridian spawn message ADDRESS --message "text"` is the deprecated name for it: it works
 through 0.28.x, prints a line on stderr naming the new command, and fails from 0.29.0.
 Put `-C` after the address so the command begins `meridian message`: a harness lets a
@@ -358,6 +359,48 @@ transcript is unreadable and the recorded directory is gone. Details: [Troublesh
 
 Runner-history pruning is explicit, never automatic; see
 [Prune redundant runner streams](history.md#prune-redundant-runner-streams).
+
+## Machines
+
+A saved machine is another computer you can reach over plain SSH with your own keys. Nothing
+listens and no connection stays open: each call is one `ssh`. Saved machines live in
+`~/.meridian/machines.json`, a file only Meridian writes; this machine's own name and ID are
+in `~/.meridian/machine.json`.
+
+| Command | |
+| --- | --- |
+| `meridian machine add TARGET` | Save the machine at an SSH target (a `Host` from `~/.ssh/config`, `user@host`, `ssh://user@host:port`). It saves the name the machine gives itself. In a terminal it asks: to install Meridian there with `uv` if there is none (default Yes), to upgrade an old one (default No), and to save this machine there too so its sessions can reply (default Yes). Without a terminal it asks nothing and prints the command to run. `--yes` answers each question with its default. |
+| `meridian machine list` | The saved machines: name, target, ID, former names. |
+| `meridian machine remove NAME` | Forget one. Nothing changes on that machine. |
+| `meridian machine status [NAME]` | One call to each machine; prints its Meridian version or what failed. |
+| `meridian machine name` | This machine's name. |
+| `meridian machine rename NEW` | Rename this machine: `[a-z][a-z0-9-]{0,62}`, not `inbox`, not shaped like `p123` or `c123`. Peers correct their saved name on their next call, and a reference written with the old name still resolves. |
+
+**Reading and messaging cross; nothing else does.** `spawn list|show|status|children`,
+`spawn report show`, `session log|search` and `message` take `--machine NAME` (after the
+command words) or a `NAME/ID` reference such as `jimyao-minibox/c2041`:
+
+```bash
+meridian spawn list --global --machine jimyao-minibox
+meridian session log jimyao-minibox/c2041 --tail 5
+meridian message jimyao-minibox/c2041 "the PR is up"
+```
+
+The reference goes to the other machine unchanged and its own `meridian` runs the command
+there, with no current project: a new ID resolves by its claim, an older one needs
+`--machine NAME -C <path on that machine>`, and `spawn list` and `session search` need
+`--global`. A command that doesn't cross, or a global option other than `-C`, `--json` and
+`--format` (`--config`, `--harness`, `--yes`, `--no-input`), is refused before anything
+connects. Two machines in one command is an error, and so is `-C` beside `NAME/ID` without
+`--machine`: `-C` would be applied here.
+
+A call that fails says why in `--json` as `{"ok": false, "machine": ..., "error": {"kind":
+..., "text": ...}}`. Kinds beyond the message kinds: `unreachable` (nothing was sent, safe to
+run again), `auth`, `host_key` (background calls accept only host keys already known; run
+`meridian machine add` in a terminal), `version` (Meridian there is missing or too old),
+`refused`, `too_large`. For `message`, a connection that ends after the request was written is
+`maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
+there, as here (`--wake` crosses).
 
 ## Work Items
 
