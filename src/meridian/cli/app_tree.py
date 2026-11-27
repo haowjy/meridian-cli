@@ -51,6 +51,7 @@ mermaid_app = _group_app("mermaid")
 artifact_app = _group_app("artifact")
 notify_app = _group_app("notify")
 message_app = _group_app("message")
+inbox_app = _group_app("inbox")
 machine_app = _group_app("machine")
 idle_app = App(
     name="idle",
@@ -82,6 +83,7 @@ app.command(mermaid_app, name="mermaid")
 app.command(artifact_app, name="artifact")
 app.command(notify_app, name="notify")
 app.command(message_app, name="message")
+app.command(inbox_app, name="inbox")
 app.command(machine_app, name="machine")
 app.command(idle_app, name="idle")
 app.command(qi_app, name="qi")
@@ -106,6 +108,7 @@ for _group_name, _group_app_obj in {
     "artifact": artifact_app,
     "notify": notify_app,
     "message": message_app,
+    "inbox": inbox_app,
     "machine": machine_app,
     "idle": idle_app,
     "qi": qi_app,
@@ -124,6 +127,7 @@ __all__ = [
     "ext_app",
     "hooks_app",
     "idle_app",
+    "inbox_app",
     "kg_app",
     "machine_app",
     "mermaid_app",

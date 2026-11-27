@@ -56,13 +56,25 @@ class Delivered:
 
 
 @dataclass(frozen=True)
+class Filed:
+    """The message waits in the machine inbox as ``message`` (``m412``); no session has it.
+
+    Its own variant, so ``inbox`` stays out of ``DeliveryKind``, which the control socket
+    and the harness adapters share.
+    """
+
+    message: str
+    receiver: Receiver = field(default_factory=Receiver)
+
+
+@dataclass(frozen=True)
 class Failed:
     kind: str
     text: str
     receiver: Receiver = field(default_factory=Receiver)
 
 
-type MessageResult = Delivered | Failed
+type MessageResult = Delivered | Filed | Failed
 
 
 def delivery_kind(value: object) -> DeliveryKind:
@@ -85,7 +97,7 @@ def result_json(result: MessageResult) -> dict[str, object]:
     """The one object ``--json`` prints for every outcome."""
 
     receiver = result.receiver
-    payload: dict[str, object] = {"ok": isinstance(result, Delivered)}
+    payload: dict[str, object] = {"ok": not isinstance(result, Failed)}
     for key, value in (
         ("address", receiver.address),
         ("machine", receiver.machine),
@@ -98,6 +110,9 @@ def result_json(result: MessageResult) -> dict[str, object]:
         payload["delivery"] = result.delivery.value
         if result.note is not None:
             payload["note"] = result.note
+    elif isinstance(result, Filed):
+        payload["delivery"] = "inbox"
+        payload["message"] = result.message
     else:
         payload["error"] = {"kind": result.kind, "text": result.text}
     return payload
@@ -125,15 +140,18 @@ def print_result(result: MessageResult, *, json_mode: bool) -> int:
                 print(f"Message posted to {result.to} (no receipt)")
         if result.note is not None:
             print(result.note)
+    elif isinstance(result, Filed):
+        print(f"Message {result.message} filed in this machine's inbox")
     else:
         print(f"Error: {result.text}", file=sys.stderr)
-    return 0 if isinstance(result, Delivered) else 1
+    return 1 if isinstance(result, Failed) else 0
 
 
 __all__ = [
     "ERROR_KINDS",
     "Delivered",
     "Failed",
+    "Filed",
     "MessageResult",
     "Receiver",
     "delivery_kind",

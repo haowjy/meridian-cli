@@ -14,7 +14,8 @@ to their role. Public names are stable and fall into four groups:
   `MERIDIAN_SPAWN_DURATION_SECS`, `MERIDIAN_SPAWN_COST_USD`,
   `MERIDIAN_SPAWN_ERROR`, and for notification events
   `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`,
-  `MERIDIAN_NOTIFICATION_PRIORITY`); and
+  `MERIDIAN_NOTIFICATION_PRIORITY`, and for `inbox.received`
+  `MERIDIAN_INBOX_MESSAGE_ID`, `MERIDIAN_INBOX_MESSAGE_PATH`); and
 - **inter-tool signals**, currently `MERIDIAN_MANAGED`.
 
 `_MERIDIAN_*` is repo-internal process plumbing. These values are documented

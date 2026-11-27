@@ -21,6 +21,7 @@ from meridian.lib.config.errors import config_validation_error, warn_unknown_mod
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
     EVENTS,
+    MACHINE_EVENT_SOURCE,
     Hook,
     HookEventName,
     HookWhen,
@@ -345,6 +346,19 @@ def hooks_from_spec(
             )
 
     interval = spec.interval or (builtin.default_interval if builtin is not None else None)
+    for event in events:
+        if not EVENTS[event].machine:
+            continue
+        if source != MACHINE_EVENT_SOURCE:
+            raise ValueError(
+                f"Invalid value for '{row_source}.event': {event!r} is a machine event, read "
+                f"only from the {MACHINE_EVENT_SOURCE} config; this row never runs."
+            )
+        if interval is not None:
+            raise ValueError(
+                f"Invalid value for '{row_source}.interval': {event!r} is a machine event and "
+                "has no project state to keep an interval in."
+            )
 
     return tuple(
         Hook(

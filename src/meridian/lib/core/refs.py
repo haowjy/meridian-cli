@@ -36,7 +36,7 @@ _KIND_LABEL: dict[RefKind, str] = {
 
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
-INBOX_ADDRESS_ERROR = "the inbox address is not built yet"
+REMOTE_INBOX_ERROR = "the inbox of another machine is not built yet: file the message there"
 
 
 class RefNotFound(ValueError):
@@ -156,8 +156,10 @@ def parse_ref(raw: str) -> Ref:
             )
         return Ref("selector", value)
     head, slash, tail = value.partition("/")
-    if value == "inbox" or (slash and tail == "inbox"):
-        raise ValueError(INBOX_ADDRESS_ERROR)
+    if value == "inbox":
+        raise ValueError("`inbox` is an address for `meridian message`, not a session")
+    if slash and tail == "inbox":
+        raise ValueError(REMOTE_INBOX_ERROR)
     if slash and is_machine_name(head) and (is_spawn_id(tail) or is_chat_id(tail)):
         return Ref("machine", tail, head)
     if is_spawn_id(value):
@@ -168,7 +170,7 @@ def parse_ref(raw: str) -> Ref:
 
 
 __all__ = [
-    "INBOX_ADDRESS_ERROR",
+    "REMOTE_INBOX_ERROR",
     "SELECTORS",
     "Ref",
     "RefAmbiguous",

@@ -31,12 +31,14 @@ from meridian.lib.core.process_start import starting_cwd, starting_env
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
+from meridian.lib.inbox.filing import FilingOptions, file_from_command
 from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import machine_call_caller
 from meridian.lib.machines.resolve import MachineError
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import (
     AddressError,
+    InboxAddress,
     MachineAddress,
     PersonAddress,
     local_machine_name,
@@ -72,8 +74,9 @@ _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 MESSAGE_ADDRESS_HELP: Final = (
     "Required. Where the message goes: a session's spawn ID or chat ID (that chat's running "
     "session), `<machine>/<id>` for a session on a saved machine (`meridian machine list`), "
-    "or `@person` for a person. A new ID works from any directory; `-C <repo>` reaches an ID "
-    "issued before machine-wide IDs in another project. For an old ID on another machine: "
+    "`@person` for a person, or `inbox` to leave it in this machine's inbox for a session to "
+    "take. A new ID works from any directory; `-C <repo>` reaches an ID issued before "
+    "machine-wide IDs in another project. For an old ID on another machine: "
     "`--machine <name> -C <path on that machine>`, after the address."
 )
 MESSAGE_WAKE_HELP: Final = (
@@ -87,6 +90,23 @@ MESSAGE_TEXT_HELP: Final = (
     "for another machine send the content, or put it in the work item's directory: a path "
     "means nothing there."
 )
+_INBOX_ONLY: Final = "Only with the `inbox` address."
+MESSAGE_PROJECT_ID_HELP: Final = (
+    "The project the message is for, by project ID: sessions in other projects don't see it. "
+    f"Only from a process no session runs; a session's message carries its own. {_INBOX_ONLY}"
+)
+MESSAGE_REPLY_TO_HELP: Final = (
+    "The address an answer goes to (a session ID, `<machine>/<id>` or an @person) when it is "
+    f"not the sender. {_INBOX_ONLY}"
+)
+MESSAGE_VIA_PROGRAM_HELP: Final = (
+    f"The outside program that passes the message on, shown as its claim. {_INBOX_ONLY}"
+)
+MESSAGE_VIA_REF_HELP: Final = (
+    "That program's own ID for the message. The same program and ref filed twice is one "
+    f"inbox message. {_INBOX_ONLY}"
+)
+MESSAGE_VIA_SENDER_HELP: Final = f"Who that program says wrote the message. {_INBOX_ONLY}"
 
 
 def _held_if_cold(runtime_root: Path, spawn_id: str, receiver: Receiver) -> Failed | None:
@@ -517,14 +537,16 @@ async def send_message(
     remote_directory: str | None = None,
     directory_explicit: bool = False,
     wake: bool = False,
+    filing: FilingOptions | None = None,
 ) -> MessageResult:
     """Send *message* to the receiver *ref* names and return what happened.
 
-    *ref* is a spawn ID, a chat ID, ``<machine>/<id>`` or an ``@person``. *machine* is the
-    other machine ``--machine`` named, *remote_directory* the ``-C`` that goes with it, and
-    *directory_explicit* that ``-C`` was applied here.
+    *ref* is a spawn ID, a chat ID, ``<machine>/<id>``, an ``@person`` or ``inbox``.
+    *machine* is the other machine ``--machine`` named, *remote_directory* the ``-C`` that
+    goes with it, and *directory_explicit* that ``-C`` was applied here.
     *sender_project_root* is the sender's project when it differs from this one; the sender's
-    record is read from there. Nothing is printed.
+    record is read from there. *filing* holds the flags of the ``inbox`` address. Nothing is
+    printed.
     """
 
     address = ref.strip()
@@ -532,14 +554,16 @@ async def send_message(
     receiver = Receiver(address=address or None)
     if not address:
         return Failed(
-            "usage", "an address is required: a spawn ID, a chat ID or an @person", receiver
+            "usage",
+            "an address is required: a spawn ID, a chat ID, an @person or `inbox`",
+            receiver,
         )
     if not text:
         return Failed("usage", "message is required", receiver)
     try:
         target = (
             machine
-            if address.startswith("@")
+            if address.startswith("@") or address == "inbox"
             else other_machine(
                 [address], option_machine=machine, directory_explicit=directory_explicit
             )
@@ -549,6 +573,25 @@ async def send_message(
             receiver, machine=target.name if target is not None else local_machine_name()
         )
         parsed = parse_address(address, machine=target)
+        if isinstance(parsed, InboxAddress):
+            if wake:
+                raise AddressError("usage", "--wake belongs to a session address, not the inbox")
+            try:
+                return file_from_command(
+                    text,
+                    filing or FilingOptions(),
+                    receiver,
+                    sender_spawn_id=sender_spawn_id,
+                    sender_project_root=sender_project_root,
+                )
+            except PermissionError:
+                if inside_launcher_sandbox() is False:
+                    raise
+                return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
+        if filing is not None and filing.given():
+            raise AddressError(
+                "usage", f"{', '.join(filing.given())} belongs to the `inbox` address"
+            )
         if isinstance(parsed, PersonAddress):
             if wake:
                 raise AddressError("usage", "--wake belongs to a session address, not an @ address")
@@ -574,7 +617,9 @@ async def send_message(
         return Failed("failed", str(exc) or type(exc).__name__, receiver)
 
 
-def run_message(ref: str, message: str, wake: bool = False) -> None:
+def run_message(
+    ref: str, message: str, wake: bool = False, filing: FilingOptions | None = None
+) -> None:
     """The body of ``meridian message`` and of the deprecated ``spawn message``."""
 
     options = get_global_options()
@@ -596,6 +641,7 @@ def run_message(ref: str, message: str, wake: bool = False) -> None:
                 remote_directory=options.remote_directory,
                 directory_explicit=options.directory_explicit,
                 wake=wake,
+                filing=filing,
             )
         )
     raise SystemExit(print_result(result, json_mode=json_mode))
@@ -607,10 +653,25 @@ def cmd_message(
     message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
     *,
     wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
+    project_id: Annotated[
+        str | None, Parameter(name="--project-id", help=MESSAGE_PROJECT_ID_HELP)
+    ] = None,
+    reply_to: Annotated[
+        str | None, Parameter(name="--reply-to", help=MESSAGE_REPLY_TO_HELP)
+    ] = None,
+    via_program: Annotated[
+        str | None, Parameter(name="--via-program", help=MESSAGE_VIA_PROGRAM_HELP)
+    ] = None,
+    via_ref: Annotated[str | None, Parameter(name="--via-ref", help=MESSAGE_VIA_REF_HELP)] = None,
+    via_sender: Annotated[
+        str | None, Parameter(name="--via-sender", help=MESSAGE_VIA_SENDER_HELP)
+    ] = None,
 ) -> None:
-    """Send a message to a running session or a person."""
+    """Send a message to a running session or a person, or file it in the machine's inbox."""
 
-    run_message(ref, message, wake)
+    run_message(
+        ref, message, wake, FilingOptions(project_id, reply_to, via_program, via_ref, via_sender)
+    )
 
 
 __all__ = [

@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from meridian.lib.harness.codex_rules import ESCAPING_COMMANDS_TEXT, SIBLING_RULES_FILES_TEXT
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     project_codex_native_config,
@@ -406,15 +407,15 @@ def _codex_report(
                 )
             elif spawn_escape and rules_path is None:
                 note = (
-                    "a real launch would write $CODEX_HOME/rules/meridian.rules and "
-                    "meridian-message.rules so `meridian spawn` and `meridian message` can "
+                    "a real launch would write $CODEX_HOME/rules/meridian.rules, "
+                    f"{SIBLING_RULES_FILES_TEXT} so {ESCAPING_COMMANDS_TEXT} can "
                     "run outside Codex's sandbox; other requested "
                     f"matches remain ordinary shell calls ({commands})"
                 )
             elif spawn_escape:
                 note = (
-                    "the Meridian-owned user rules files let `meridian spawn` and "
-                    "`meridian message` run outside Codex's sandbox for every Codex "
+                    f"the Meridian-owned user rules files let {ESCAPING_COMMANDS_TEXT} "
+                    "run outside Codex's sandbox for every Codex "
                     "session of this user; other requested "
                     f"matches remain ordinary shell calls ({commands})"
                 )
@@ -446,20 +447,20 @@ def _codex_report(
                 sandbox_status = "partial"
                 sandbox_note += (
                     "; Meridian could not write "
-                    f"{rules_path or '$CODEX_HOME/rules/meridian.rules'}, so `meridian spawn` "
-                    f"and `meridian message` remain inside Codex's sandbox: {rules_error}"
+                    f"{rules_path or '$CODEX_HOME/rules/meridian.rules'}, so "
+                    f"{ESCAPING_COMMANDS_TEXT} remain inside Codex's sandbox: {rules_error}"
                 )
             elif rules_path is None:
                 sandbox_note += (
-                    "; a real launch would write $CODEX_HOME/rules/meridian.rules and "
-                    "meridian-message.rules so `meridian spawn` and `meridian message` "
+                    "; a real launch would write $CODEX_HOME/rules/meridian.rules, "
+                    f"{SIBLING_RULES_FILES_TEXT} so {ESCAPING_COMMANDS_TEXT} "
                     "can run outside Codex's sandbox"
                 )
             else:
                 sandbox_note += (
-                    "; `meridian spawn` and `meridian message` run outside Codex's sandbox via "
-                    f"{rules_path} and its meridian-message.rules sibling, for every Codex "
-                    "session of this user"
+                    f"; {ESCAPING_COMMANDS_TEXT} run outside Codex's sandbox via "
+                    f"{rules_path} and its siblings {SIBLING_RULES_FILES_TEXT}, for every "
+                    "Codex session of this user"
                 )
         lines.append(
             ReportLine(
@@ -503,8 +504,9 @@ def _codex_report(
                     (
                         "-c sandbox_workspace_write.network_access=false"
                         + (
-                            "; the Meridian-owned user rules still let `meridian spawn` and "
-                            "`meridian message` run outside the sandbox with network access"
+                            "; the Meridian-owned user rules still let "
+                            f"{ESCAPING_COMMANDS_TEXT} run outside the sandbox with network "
+                            "access"
                             if escaped
                             else ""
                         )

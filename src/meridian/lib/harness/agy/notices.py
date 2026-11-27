@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from contextlib import suppress
 
+from meridian.env_registry import session_free_env
 from meridian.lib.core.delivery import MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.state import (
@@ -23,7 +24,6 @@ from meridian.lib.harness.agy.state import (
     read_json,
     request_path,
     row_path,
-    scrubbed_env,
 )
 from meridian.lib.message.reply import reply_tokens, saved_machine_by_id
 from meridian.lib.platform.python_module import module_argv
@@ -73,7 +73,7 @@ def _send(sender: MessageSender, text: str) -> None:
             capture_output=True,
             timeout=_SEND_TIMEOUT_SECONDS,
             check=False,
-            env=scrubbed_env(os.environ),
+            env=session_free_env(os.environ),
         )
 
 

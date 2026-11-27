@@ -379,7 +379,11 @@ def build_guidance_blocks(
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
     waiting_line: str | None = None,
+    inbox_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
+    """``waiting_line`` is a harness's sentence telling a child how to wait; ``inbox_line``
+    says messages wait in the machine's inbox, for a primary at a fresh launch."""
+
     blocks: list[CompositionBlock] = []
     blocks.append(
         CompositionBlock(
@@ -400,6 +404,12 @@ def build_guidance_blocks(
             "",
         )
     )
+    if inbox_line is not None:
+        # Its own heading, after the capabilities: as the last line of the spawn rules a
+        # model read it as one of them and reported no waiting messages.
+        blocks.append(
+            CompositionBlock("inbox", GuidancePhase.GUIDANCE, 6, f"# Inbox\n\n{inbox_line}")
+        )
     if spawn_capable:
         blocks.append(
             CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 7, _SPAWN_PROMPTING)

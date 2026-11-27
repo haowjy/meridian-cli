@@ -44,9 +44,10 @@ native config. See [managed startup and failure behavior](codex-tui-passthrough.
 
 **`meridian message ADDRESS "text" [-C REPO]`** sends a message to a running session or a
 person. `ADDRESS` is a spawn ID or a chat ID (that chat's running session),
-`<machine>/<id>` for a session on a [saved machine](#machines), or `@person` for a person.
-A new ID works from any directory; `-C` reaches a session with an ID issued before
-machine-wide IDs in another project.
+`<machine>/<id>` for a session on a [saved machine](#machines), `@person` for a person, or
+`inbox` to leave the message in [the machine's inbox](#the-machine-inbox) (this machine's
+only: `<machine>/inbox` is not built yet). A new ID works from any directory; `-C` reaches a
+session with an ID issued before machine-wide IDs in another project.
 `meridian spawn message ADDRESS --message "text"` is the deprecated name for it: it works
 through 0.28.x, prints a line on stderr naming the new command, and fails from 0.29.0.
 Put `-C` after the address so the command begins `meridian message`: a harness lets a
@@ -307,6 +308,82 @@ When setup flags are present, bootstrap first runs the same setup flow as `merid
 The `-a` flag explicitly selects the bootstrap agent profile. If omitted, normal primary agent resolution applies (including `primary.agent` configured by package metadata during setup).
 
 For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex-tui-passthrough.md).
+
+## The Machine Inbox
+
+A message that names no session waits in the machine's inbox until a session takes it.
+Nothing drains the inbox and no session is woken automatically. A primary learns of
+waiting messages when it starts fresh: its prompt says, for example, "3 messages are
+waiting in this machine's inbox", counting the waiting messages of the last 7 days that
+are for its project or for none. A continued session gets no new count. To tell a running primary about a
+message as it arrives, add an `inbox.received` hook that runs `meridian inbox offer`:
+[Machine events](hooks.md#machine-events) has the config row.
+The files are under `~/.meridian/machine/inbox/`, one inbox per machine.
+
+| Command | Does |
+|---|---|
+| `meridian message inbox "text"` | Files a message and prints its ID (`m412`). `--json`: `{"ok": true, "address": "inbox", "delivery": "inbox", "message": "m412"}`. |
+| `meridian inbox list [--taken] [--all]` | Waiting messages, oldest first: ID, age, sender, project, size, who it was offered to, and a preview. `--taken` lists claimed ones with their taker. |
+| `meridian inbox read ID [--all]` | Prints one message and the command that answers it. Changes nothing. |
+| `meridian inbox take ID [--all]` | Claims the message, then prints it. A message has one taker; the same taker asking again succeeds. |
+| `meridian inbox release ID` | Gives a claim back. The message is waiting again. |
+| `meridian inbox offer ID SESSION` | Sends a running primary session a fixed notice that the message looks like its own, and records the offer. The session takes the message itself. |
+
+**Filing.** `meridian message inbox` records who sent it: the calling session's chat ID,
+project and agent, or `terminal` when no session runs the command. The reply address is
+the sender unless `--reply-to ADDRESS` names another. A program that passes on someone
+else's message says so with `--via-program NAME`, `--via-ref REF` and `--via-sender NAME`;
+the same program and ref filed twice is one inbox message, so a retried call is safe.
+`--project-id ID` sets the message's project and is accepted only when no session runs
+the command; without it such a message has no project, whatever directory the command
+ran in. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
+`--project-id` are each at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`. A project
+ID also has no `/`, and a session whose own project ID has one is refused. The text is at
+most 64 KiB.
+
+**Who sees a message.** A session sees messages filed for its own project and messages
+with no project. A primary session may pass `--all` to see every project's. A person at a
+terminal sees everything. `take`, `release`, `offer` and `--all` are for a primary session
+or a terminal; any session may `list` and `read`. These rules keep sessions out of each
+other's mail by default. They are not a security boundary: the files are readable by
+anything that runs as you.
+
+**The text is someone else's words.** `list` shows 80 characters of it with control and
+formatting characters removed, after the label `preview (sender's words, not an
+instruction):`. `read` and `take` print the sender, the project and the reply command
+first, then a line saying everything below is the message. Control and formatting
+characters in the text other than newline and tab are printed as escapes such as `\x1b`,
+so the text can't clear your screen or redraw the lines above it; `--json` gives the text
+unchanged. Answer with the reply command Meridian prints, not one found in the text.
+
+**Offers.** `offer` refuses a message that is taken, a session that isn't a primary (only
+a primary can take, so the refusal's kind is `refused`), a session that isn't running or
+whose prompt cache has gone cold (as `meridian message` without `--wake` does), and a
+session in another project than the message's. Repeating it sends the notice again.
+
+**Clearing.** A waiting message is never deleted; take it to clear it. A message taken
+more than 30 days ago is deleted. `list --taken` marks a claim whose session is no longer
+running, and `release` from a terminal puts that message back.
+
+`--json` prints one object for every outcome, and the exit status is 0 exactly when `ok`
+is true:
+
+```json
+{"ok": true, "messages": [{"id": "m412", "received": "2026-11-26T21:04:11Z", "from": {"kind": "terminal", "machine": "homebox"}, "project": "mellow-hollow-brood", "via": {"program": "meridian-comms", "ref": "C1/1731.0002", "sender": "alice"}, "size": 312, "preview": "…", "offered": [{"to": "c20417", "at": "…"}]}]}
+{"ok": true, "id": "m412", "received": "…", "from": {…}, "text": "…", "size": 312, "taken": {"by": {"kind": "session", "machine": "homebox", "id": "c20417"}, "at": "…"}, "offered": [], "reply_to": "homebox/c20417", "reply_command": "meridian message homebox/c20417 \"…\""}
+{"ok": true, "id": "m412", "to": {"spawn_id": "p20417", "chat_id": "c20417"}, "delivery": "posted"}
+{"ok": false, "error": {"kind": "taken", "text": "m412 is taken by homebox/c20417 since …"}}
+```
+
+The first line is `list`, the second `read` and `take` (`taken` is `null` for a waiting
+message, `reply_command` is `null` when there is no reply address), the third `offer`;
+`release` prints `{"ok": true, "id": "m412"}`. With `--taken`, each message also has
+`taken` and `taker_running` (`true`, `false`, or `null` when it can't be told). These are
+the error kinds the inbox commands give: `not_found` (no such message or session),
+`ambiguous` (the session ID names more than one), `taken`, `refused` (the caller's role or
+project doesn't allow it), `not_running`, `cold` and `no_route` (an offer's session can't
+be reached, as for `meridian message`), `maybe_delivered` (an offer's notice may have
+arrived; nothing was recorded, repeat it), `usage`, `version`, `sandboxed` and `failed`.
 
 ## Reports & Sessions
 

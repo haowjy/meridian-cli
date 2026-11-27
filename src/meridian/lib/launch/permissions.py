@@ -115,6 +115,9 @@ SPAWN_PLATFORM_COMMAND = _prefix("meridian spawn", runs_outside_sandbox=True)
 # `meridian message` reaches control sockets, ssh and the people program, all out of a
 # sandbox's reach; a harness matches the first words, so it needs a grant of its own.
 MESSAGE_PLATFORM_COMMAND = _prefix("meridian message", runs_outside_sandbox=True)
+# The machine inbox is under `~/.meridian/machine/`, outside every project's runtime root,
+# and `inbox offer` sends as `meridian message` does.
+INBOX_PLATFORM_COMMAND = _prefix("meridian inbox", runs_outside_sandbox=True)
 
 # Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
 # directories beneath the active work directory, so it is intentionally not a general read grant.
@@ -192,9 +195,15 @@ def launch_permission_rules(
             _SPAWN_WORK_PATH_COMMAND,
             SPAWN_PLATFORM_COMMAND,
             MESSAGE_PLATFORM_COMMAND,
+            INBOX_PLATFORM_COMMAND,
         )
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 
 
-__all__ = ["MESSAGE_PLATFORM_COMMAND", "SPAWN_PLATFORM_COMMAND", "launch_permission_rules"]
+__all__ = [
+    "INBOX_PLATFORM_COMMAND",
+    "MESSAGE_PLATFORM_COMMAND",
+    "SPAWN_PLATFORM_COMMAND",
+    "launch_permission_rules",
+]

@@ -1,9 +1,9 @@
 """The address grammar of ``meridian message``: which receiver a typed address names.
 
-``@…`` is tested here and everything else goes to ``parse_ref``, the one place that knows the
-reference forms. Only the form is checked here; whether a session or a person exists is the
-route's question. An address that fits no form is an error and is never guessed to be a
-person: a mistyped session ID must not end up in Slack.
+``@…`` and ``inbox`` are tested here and everything else goes to ``parse_ref``, the one place
+that knows the reference forms. Only the form is checked here; whether a session or a person
+exists is the route's question. An address that fits no form is an error and is never guessed
+to be a person: a mistyped session ID must not end up in Slack.
 """
 
 from __future__ import annotations
@@ -11,12 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from meridian.lib.core.refs import SELECTORS, parse_ref
+from meridian.lib.core.refs import REMOTE_INBOX_ERROR, SELECTORS, parse_ref
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.saved_machines import SavedMachine
 
 _MAX_PERSON_ADDRESS_BYTES: Final = 256
+_SESSION_KINDS: Final = ("spawn", "chat", "machine")
 
 
 class AddressError(Exception):
@@ -50,6 +51,11 @@ class PersonAddress:
     address: str
 
 
+@dataclass(frozen=True)
+class InboxAddress:
+    """``inbox``: this machine's inbox, where a message waits for a session to take it."""
+
+
 def local_machine_name() -> str | None:
     """This machine's name, for ``machine`` in the JSON; ``None`` when its identity file
     can't be created."""
@@ -68,9 +74,24 @@ def _person_address(address: str) -> PersonAddress:
     return PersonAddress(address)
 
 
+def is_address_form(raw: str) -> bool:
+    """True when *raw* has the form of a session or person address, on any machine.
+
+    For an address Meridian stores and prints back as a reply command: nothing is
+    resolved, so a machine this one has not saved passes.
+    """
+
+    if raw.startswith("@"):
+        return len(raw) > 1 and raw not in SELECTORS
+    try:
+        return parse_ref(raw).kind in _SESSION_KINDS
+    except ValueError:
+        return False
+
+
 def parse_address(
     raw: str, *, machine: SavedMachine | None = None
-) -> SessionAddress | MachineAddress | PersonAddress:
+) -> SessionAddress | MachineAddress | PersonAddress | InboxAddress:
     """Classify *raw* (already trimmed). *machine* is the other machine the command names,
     from ``other_machine``: the one place that decides it. ``None`` means this machine."""
 
@@ -87,24 +108,33 @@ def parse_address(
             raise AddressError("refused", "an @ address doesn't reach another machine")
         return _person_address(raw)
 
+    if raw == "inbox":
+        if machine is not None:
+            raise AddressError("usage", REMOTE_INBOX_ERROR)
+        if is_machine_call():
+            raise AddressError("refused", "the inbox doesn't take a message from another machine")
+        return InboxAddress()
+
     try:
         ref = parse_ref(raw)
     except ValueError as exc:
         raise AddressError("usage", str(exc)) from exc
-    if ref.kind not in ("spawn", "chat", "machine"):
+    if ref.kind not in _SESSION_KINDS:
         raise AddressError(
             "usage",
             f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
-            "`<machine>/<id>` or an @person",
+            "`<machine>/<id>`, an @person or `inbox`",
         )
     return SessionAddress(ref.value) if machine is None else MachineAddress(machine, ref.value)
 
 
 __all__ = [
     "AddressError",
+    "InboxAddress",
     "MachineAddress",
     "PersonAddress",
     "SessionAddress",
+    "is_address_form",
     "local_machine_name",
     "parse_address",
 ]

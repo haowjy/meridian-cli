@@ -65,7 +65,7 @@ class NotifyHook:
 
         start = time.monotonic()
         notification = context.notification
-        if notification is None:
+        if notification is None or context.project_root is None:
             return self._skipped(context, config, "no_notification")
         priority = cast("int | None", config.options.get("priority"))
         channels = cast("tuple[str, ...] | None", config.options.get("channels"))

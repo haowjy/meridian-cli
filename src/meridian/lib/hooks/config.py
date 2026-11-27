@@ -6,9 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from meridian.lib.config.layers import iter_config_layers
+from meridian.lib.config.layers import iter_config_layers, read_config_payload
+from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.hooks.schema import hook_row_values, hooks_from_spec, normalize_hook_row
-from meridian.lib.hooks.types import NOTIFICATION_EVENTS, Hook, HookEventName
+from meridian.lib.hooks.types import (
+    MACHINE_EVENT_SOURCE,
+    NOTIFICATION_EVENTS,
+    Hook,
+    HookEventName,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
@@ -134,6 +140,20 @@ def load_hooks_config_report(
         config=HooksConfig(hooks=_apply_name_overrides(tuple(hooks))),
         errors=tuple(errors),
     )
+
+
+def load_machine_hooks_config_report() -> HookConfigLoad:
+    """Load the rows a machine event runs: the user config's, and no project file.
+
+    A project file is never opened, so a repository can't replace the owner's row by
+    name and a broken one can't stop the event.
+    """
+
+    path = resolve_user_config_path(None)
+    if path is None:
+        return HookConfigLoad(config=HooksConfig(hooks=()))
+    hooks, errors = _hooks_from_payload(read_config_payload(path), source=MACHINE_EVENT_SOURCE)
+    return HookConfigLoad(config=HooksConfig(hooks=_apply_name_overrides(hooks)), errors=errors)
 
 
 def load_hooks_config(
