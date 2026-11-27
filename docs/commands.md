@@ -540,9 +540,11 @@ On this machine the same miss prints `{"error": "Spawn 'p12' not found", "exit_c
 `maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
 there, as here (`--wake` crosses).
 
-**Inside a harness sandbox, only `meridian spawn …` and `meridian message` reach another
-machine.** A harness lets a command out of its sandbox by its first words, and only for a
-session whose profile may spawn. `meridian session …` and `meridian machine …` stay inside
+**Inside a harness sandbox, only `meridian spawn …`, `meridian message` and `meridian
+inbox` reach another machine.** A harness lets a command out of its sandbox by its first
+words: `meridian message` and `meridian inbox` for a primary session or a session whose
+profile may spawn, `meridian spawn …` only for a session whose profile may spawn.
+`meridian session …` and `meridian machine …` stay inside
 the sandbox, where `ssh` is blocked: a call to another machine then fails with kind
 `sandboxed`, and its text says so. On macOS Meridian can't tell whether a command left the
 sandbox, so the call keeps the kind `ssh` gave it (usually `unreachable`) and the same

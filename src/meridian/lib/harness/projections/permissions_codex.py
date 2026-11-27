@@ -14,7 +14,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from meridian.lib.harness.codex_rules import ESCAPING_COMMANDS_TEXT, SIBLING_RULES_FILES_TEXT
+from meridian.lib.harness.codex_rules import (
+    RULES_FILES,
+    codex_rules_files,
+    escaping_commands_text,
+    rules_files_text,
+)
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import (
     project_codex_native_config,
@@ -28,7 +33,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.policy import (
-    CONSTRAINED_SANDBOX_MODES,
     Allow,
     ApprovalMode,
     EffectivePolicy,
@@ -320,6 +324,9 @@ def _codex_report(
     native_config_report: EnforcementReport,
 ) -> EnforcementReport:
     lines: list[ReportLine] = []
+    rules_files = codex_rules_files(policy)
+    escaping = escaping_commands_text(rules_files) if rules_files else ""
+    rules_names = rules_files_text(rules_files) if rules_files else ""
     for rule in policy.rules:
         switch = _tool_switch(rule)
         if (
@@ -398,23 +405,21 @@ def _codex_report(
             )
             rules_error = spec.codex_runtime.rules_file_error
             rules_path = spec.codex_runtime.rules_file_path
-            constrained_sandbox = policy.sandbox in CONSTRAINED_SANDBOX_MODES
-            spawn_escape = constrained_sandbox and policy.has_spawn_capability
-            if spawn_escape and rules_error is not None:
+            escapes = bool(rules_files)
+            if escapes and rules_error is not None:
                 note = (
                     "Meridian could not write its Codex rules file, so commands remain subject "
                     f"to the sandbox ({rules_error}); requested matches: {commands}"
                 )
-            elif spawn_escape and rules_path is None:
+            elif escapes and rules_path is None:
                 note = (
-                    "a real launch would write $CODEX_HOME/rules/meridian.rules, "
-                    f"{SIBLING_RULES_FILES_TEXT} so {ESCAPING_COMMANDS_TEXT} can "
-                    "run outside Codex's sandbox; other requested "
+                    f"a real launch would write {rules_names} under $CODEX_HOME/rules/ so "
+                    f"{escaping} can run outside Codex's sandbox; other requested "
                     f"matches remain ordinary shell calls ({commands})"
                 )
-            elif spawn_escape:
+            elif escapes:
                 note = (
-                    f"the Meridian-owned user rules files let {ESCAPING_COMMANDS_TEXT} "
+                    f"the Meridian-owned user rules files {rules_names} let {escaping} "
                     "run outside Codex's sandbox for every Codex "
                     "session of this user; other requested "
                     f"matches remain ordinary shell calls ({commands})"
@@ -424,9 +429,7 @@ def _codex_report(
                     f"Codex cannot grant shell command matches ({commands}); they run as "
                     "ordinary shell calls, subject to its sandbox and approval policy"
                 )
-            status: ReportStatus = (
-                "partial" if spawn_escape and rules_error is None else "unsupported"
-            )
+            status: ReportStatus = "partial" if escapes and rules_error is None else "unsupported"
             if permissions.tool_hook is not None:
                 note += "; the shell hook lets them past the profile's shell rules"
                 status = "platform" if status == "unsupported" else status
@@ -440,27 +443,25 @@ def _codex_report(
     if permissions.sandbox_mode is not None:
         sandbox_note = f"sandbox_mode={permissions.sandbox_mode}"
         sandbox_status = "native"
-        if policy.sandbox in CONSTRAINED_SANDBOX_MODES and policy.has_spawn_capability:
+        if rules_files:
             rules_error = spec.codex_runtime.rules_file_error
             rules_path = spec.codex_runtime.rules_file_path
             if rules_error is not None:
                 sandbox_status = "partial"
                 sandbox_note += (
                     "; Meridian could not write "
-                    f"{rules_path or '$CODEX_HOME/rules/meridian.rules'}, so "
-                    f"{ESCAPING_COMMANDS_TEXT} remain inside Codex's sandbox: {rules_error}"
+                    f"{rules_path or '$CODEX_HOME/rules/' + rules_files[0].name}, so "
+                    f"{escaping} remain inside Codex's sandbox: {rules_error}"
                 )
             elif rules_path is None:
                 sandbox_note += (
-                    "; a real launch would write $CODEX_HOME/rules/meridian.rules, "
-                    f"{SIBLING_RULES_FILES_TEXT} so {ESCAPING_COMMANDS_TEXT} "
-                    "can run outside Codex's sandbox"
+                    f"; a real launch would write {rules_names} under $CODEX_HOME/rules/ so "
+                    f"{escaping} can run outside Codex's sandbox"
                 )
             else:
                 sandbox_note += (
-                    f"; {ESCAPING_COMMANDS_TEXT} run outside Codex's sandbox via "
-                    f"{rules_path} and its siblings {SIBLING_RULES_FILES_TEXT}, for every "
-                    "Codex session of this user"
+                    f"; {escaping} run outside Codex's sandbox via {rules_names} in "
+                    f"{rules_path.rsplit('/', 1)[0]}, for every Codex session of this user"
                 )
         lines.append(
             ReportLine(
@@ -496,6 +497,7 @@ def _codex_report(
             )
         else:
             rules_error = spec.codex_runtime.rules_file_error
+            # The rules files are user-wide: one another launch wrote still applies here.
             escaped = rules_error is None
             lines.append(
                 ReportLine(
@@ -505,8 +507,8 @@ def _codex_report(
                         "-c sandbox_workspace_write.network_access=false"
                         + (
                             "; the Meridian-owned user rules still let "
-                            f"{ESCAPING_COMMANDS_TEXT} run outside the sandbox with network "
-                            "access"
+                            f"{escaping_commands_text(RULES_FILES)} run outside the sandbox "
+                            "with network access"
                             if escaped
                             else ""
                         )

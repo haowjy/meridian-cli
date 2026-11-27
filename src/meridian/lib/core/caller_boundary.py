@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 from collections.abc import Iterable
@@ -30,14 +31,19 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
 )
 SANDBOX_BLOCKED_SENTENCE = (
     "this command ran inside the session's sandbox, which blocks the connection. Only a "
-    "command of its own that begins `meridian message` or `meridian spawn` leaves the sandbox "
-    "(no `cd … &&`, no pipe, no `VAR=1` in front), and only in a session whose profile may "
+    "command of its own that begins `meridian message` leaves the sandbox (no `cd … &&`, no "
+    "pipe, no `VAR=1` in front), and only in a primary session or one whose profile may "
     "spawn; `meridian session …` and `meridian machine …` stay inside it. A session started "
-    "before Meridian 0.28 has no grant for `meridian message`: restart it, or use "
-    '`meridian spawn message <address> --message "…"`, which works through 0.28.x.'
+    "before Meridian 0.28 has no grant for `meridian message`: restart it, or, if its profile "
+    'may spawn, use `meridian spawn message <address> --message "…"`, which works through '
+    "0.28.x."
 )
 """What a failed connection is told when ``inside_launcher_sandbox()`` is true (the whole
 error, kind ``sandboxed``) or ``None`` (appended to the error it had)."""
+
+# A sandbox refuses a write with EROFS where it binds the filesystem read-only (Linux) and
+# with EACCES or EPERM elsewhere.
+SANDBOX_DENIAL_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
 

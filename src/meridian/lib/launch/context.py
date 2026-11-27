@@ -1582,6 +1582,7 @@ def bind_launch_context(
         profile_tool_rules=profile_tool_rules,
         platform_tool_rules=resolved_request.platform_tool_rules,
         spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
+        primary=runtime.composition_surface == LaunchCompositionSurface.PRIMARY,
         has_spawn_capability=prepared.has_spawn_capability,
         native_agent_copy=native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from meridian.lib.harness.codex_rules import (
     MERIDIAN_RULES_FILE_CONTENT,
+    RULES_FILES,
     ensure_codex_meridian_rules,
 )
 
@@ -24,7 +25,9 @@ def test_message_grant_goes_in_its_own_file_and_leaves_the_first_alone(tmp_path:
     first.write_text(V0_27_10_MERIDIAN_RULES, encoding="utf-8")
     inode = first.stat().st_ino
 
-    resolution = ensure_codex_meridian_rules({"CODEX_HOME": str(tmp_path)}, child_cwd=tmp_path)
+    resolution = ensure_codex_meridian_rules(
+        {"CODEX_HOME": str(tmp_path)}, child_cwd=tmp_path, files=RULES_FILES
+    )
 
     assert resolution.rules_file_error is None
     assert first.stat().st_ino == inode
