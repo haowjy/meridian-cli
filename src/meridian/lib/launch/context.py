@@ -854,6 +854,7 @@ def compile_prepared_policy_surface(
     project_root: Path,
     harness_registry: HarnessRegistry,
     catalog: CatalogSession,
+    mars_agents: MarsAgentInventory | None,
     dry_run: bool = False,
 ) -> PreparedPolicySurface:
 
@@ -893,6 +894,7 @@ def compile_prepared_policy_surface(
         SurfacePolicyInput(
             surface=runtime.composition_surface,
             catalog=catalog,
+            mars_agents=mars_agents,
             layers=(cli_overrides, env_overrides),
             config_overrides=config_overrides,
             config=config,

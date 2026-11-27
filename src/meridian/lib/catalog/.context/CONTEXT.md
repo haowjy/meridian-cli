@@ -14,8 +14,9 @@ refuses `--root ~` from its next minor). Meridian does no walk-up of its own. A 
 the passthrough's `add`/`link` gate keys on it). Where Meridian must know the root
 (`config show`, `context`, `doctor`, the bootstrap store), it reads the `root` of Mars's
 `--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`. A launch lists
-agents once (`try_mars_agent_inventory`, passed to `prepare_launch_surface`), for the bootstrap
-store and for whether the harness has native agent copies. When Mars can't answer,
+agents once (`try_mars_agent_inventory`, passed to `compile_prepared_policy_surface` and
+`prepare_launch_surface`), for the bootstrap store, for whether the harness has native agent
+copies, and for the store a replayed relative profile path resolves in. When Mars can't answer,
 `MarsRootReport.error` carries why (no binary, or Mars's own message) and `doctor` and
 `config show` warn with it.
 Meridian reads installed files only where Mars points (an agent's `source_path`, the store

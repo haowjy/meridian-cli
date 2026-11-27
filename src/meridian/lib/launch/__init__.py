@@ -199,6 +199,7 @@ def launch_primary(
         project_root=resolved_project_root,
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
+        mars_agents=mars_agents,
         dry_run=request.dry_run,
     )
     prepared = prepare_launch_surface(

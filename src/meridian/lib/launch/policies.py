@@ -22,6 +22,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.ops.mars import MarsAgentInventory
 from meridian.lib.safety.policy import (
     CONSTRAINED_SANDBOX_MODES,
     SandboxDerivedNetwork,
@@ -104,6 +105,9 @@ class SurfacePolicyInput:
 
     surface: LaunchCompositionSurface
     catalog: CatalogSession
+    # One `mars agents list` per launch, shared with `prepare_launch_surface`; None when
+    # Mars cannot answer.
+    mars_agents: MarsAgentInventory | None
     layers: tuple[RuntimeOverrides, ...]
     config_overrides: RuntimeOverrides
     config: MeridianConfig
@@ -575,6 +579,7 @@ def _resolve_policy_from_snapshot(
         project_root=surface.catalog.project_root,
         harness_registry=surface.harness_registry,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
+        mars_root=surface.mars_agents.root if surface.mars_agents is not None else None,
     )
     execution_policy = replayed.execution_policy.model_copy(
         update={
