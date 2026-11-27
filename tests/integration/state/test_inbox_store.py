@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     import pytest
 
 _KILLED = 86
-# Every call that can change what is on disk. A kill lands before one.
+# Every call that makes a name appear, move or go. A kill lands before one; a kill after
+# any other call (`mkdir`, `write`, `fsync`) leaves the same names as one before the next.
 _STEPS = ("open", "symlink", "link", "rename", "replace", "unlink")
 
 
@@ -61,7 +62,11 @@ def _killed_writer(ref: str, step: int) -> bool:
     )
     process.start()
     process.join(timeout=30)
-    assert process.exitcode in (0, _KILLED)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        raise AssertionError(f"the writer for step {step} did not exit within 30s")
+    assert process.exitcode in (0, _KILLED), f"the writer for step {step} failed"
     return process.exitcode == _KILLED
 
 
@@ -112,6 +117,7 @@ def test_a_writer_killed_at_any_step_never_loses_duplicates_or_reuses_a_number(
             break
         state = _left_behind(root, ref, issued_before, names_before)
         seen_states.add(state)
+        issued_after_kill = store.read_issued(root) or 0
 
         # A reader sees whole messages only, and every earlier one unchanged.
         listed = _waiting_by_ref()
@@ -130,7 +136,8 @@ def test_a_writer_killed_at_any_step_never_loses_duplicates_or_reuses_a_number(
         if state == "a whole message":
             assert message_id == f"m{issued_before + 1}"
         else:
-            assert store.message_number(message_id) > issued_before
+            # The dead writer may have issued a number it never used: that one is spent too.
+            assert store.message_number(message_id) > issued_after_kill
         filed[ref] = message_id
         assert _waiting_by_ref() == {ref_: [id_] for ref_, id_ in filed.items()}
 
