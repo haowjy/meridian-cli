@@ -26,9 +26,6 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: full CLI invocation")
     config.addinivalue_line("markers", "contract: parity/drift checks")
     config.addinivalue_line("markers", "slow: takes >1s")
-    config.addinivalue_line(
-        "markers", "unseeded_machine_ids: start with no ID claims, so the first one is seeded"
-    )
     config.addinivalue_line("markers", "requires_pi_dist: test requires built Pi extension bundles")
     if config.getoption("--runner-history") == "off":
         blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
@@ -121,7 +118,6 @@ def _isolate_home(
 
 @pytest.fixture(autouse=True)
 def _clean_meridian_runtime_env(
-    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
     _isolate_meridian_home: None,
@@ -142,8 +138,7 @@ def _clean_meridian_runtime_env(
     # every test's numbering independent and never touches the real ~/.meridian.
     home = tmp_path_factory.mktemp("meridian-home")
     monkeypatch.setenv("MERIDIAN_HOME", str(home))
-    if request.node.get_closest_marker("unseeded_machine_ids") is None:
-        plant_id_claims(home)
+    plant_id_claims(home)
 
     mars_user = tmp_path_factory.mktemp("mars-user")
     monkeypatch.setenv("MARS_CONFIG_DIR", str(mars_user / "config"))

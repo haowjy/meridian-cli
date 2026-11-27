@@ -8,22 +8,21 @@ rationale: ``../.context/CONTEXT.md``.
 
 import os
 import re
-import time
 from collections.abc import Iterator
-from contextlib import ExitStack, suppress
+from contextlib import suppress
 from pathlib import Path
 from typing import Final, Literal
 
 from meridian.lib.platform.atomic import atomic_write_text, fsync_directory
-from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.user_paths import get_user_home
 
 type IdKind = Literal["p", "c"]
 
 FORMAT_VERSION: Final = "1"
-LOCK_TIMEOUT_SECONDS: Final = 5.0
-_PROGRESS_CHECK_SECONDS: Final = 0.5
+# After this many lost races, list the claims again instead of adding one each time.
+_RELIST_AFTER: Final = 8
 _BUCKET_SIZE: Final = 1000
+_CLAIM_ID: Final = re.compile(r"[pc](0|[1-9][0-9]*)", re.ASCII)
 # Room left above every legacy number for older builds that are still running.
 _SEED_HEADROOM: Final = 1000
 
@@ -53,13 +52,13 @@ def claim_root(claim_id: str) -> Path | None:
     One ``readlink``; the link is never followed, so a pruned root still answers.
     """
 
-    kind, digits = claim_id[:1], claim_id[1:]
-    if kind not in ("p", "c") or not digits.isdecimal():
+    if _CLAIM_ID.fullmatch(claim_id) is None:
         return None
-    link = _claim_path(ids_dir(), kind, int(digits))
+    link = _claim_path(ids_dir(), claim_id[0], int(claim_id[1:]))
     try:
         target = os.readlink(link)
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
+        # A claim directory hidden from a sandbox reads as no claim: look in the own project.
         return None
     return Path(os.path.normpath(os.path.join(link.parent, target)))
 
@@ -67,53 +66,32 @@ def claim_root(claim_id: str) -> Path | None:
 def allocate(kind: IdKind, runtime_root: Path) -> str:
     """Issue the next ``kind`` ID for ``runtime_root`` and return it (``p20001``).
 
-    ``ids.lock`` is the innermost lock and is held only while a number is chosen.
+    The number is above the highest claim and above ``runtime_root``'s own legacy
+    counter. ``symlink(2)`` fails if the name is taken, so concurrent allocators need
+    no lock: whoever loses an ``EEXIST`` tries a higher number.
     """
 
     root = ids_dir()
     _check_format(root)
-    seed = _seed(kind, runtime_root) if _highest(root, kind) is None else None
-    with ExitStack() as stack:
-        _acquire_ids_lock(stack, root)
+    highest = _highest(root, kind)
+    if highest is None:
+        seed = _seed(kind, runtime_root)
+        # Another allocator may have claimed while the seed was computed: its claims win.
         highest = _highest(root, kind)
-        if highest is not None:
-            number = highest + 1
-        else:
-            number = seed if seed is not None else _seed(kind, runtime_root)
-        while True:
-            try:
-                _create_claim(root, kind, number, runtime_root)
-            except FileExistsError:
-                number += 1
-                continue
-            return f"{kind}{number}"
-
-
-def _acquire_ids_lock(stack: ExitStack, root: Path) -> None:
-    """Take ``ids.lock``, failing only after ``LOCK_TIMEOUT_SECONDS`` without progress.
-
-    ``lock_file`` polls, so a holder that releases and allocates again at once can keep
-    winning while its peers wait. The limit exists to catch a holder that is stuck, so
-    the wait restarts whenever a claim of either kind appears.
-    """
-
-    lock_path = root / "ids.lock"
-    seen = (_highest(root, "p"), _highest(root, "c"))
-    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        if highest is None:
+            highest = seed - 1
+    number = max(highest, _counter_in_root(kind, runtime_root)) + 1
+    attempt = 0
     while True:
         try:
-            stack.enter_context(lock_file(lock_path, timeout=_PROGRESS_CHECK_SECONDS))
-            return
-        except FileLockTimeout:
-            now = (_highest(root, "p"), _highest(root, "c"))
-            if now != seen:
-                seen = now
-                deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-            elif time.monotonic() >= deadline:
-                raise MachineIdError(
-                    f"No ID was issued: waited {LOCK_TIMEOUT_SECONDS:g}s on {lock_path} and "
-                    "no claim appeared meanwhile; the process holding it is stopped or stuck."
-                ) from None
+            _create_claim(root, kind, number, runtime_root)
+        except FileExistsError:
+            attempt += 1
+            number += 1
+            if attempt % _RELIST_AFTER == 0:
+                number = max(number, (_highest(root, kind) or 0) + 1)
+            continue
+        return f"{kind}{number}"
 
 
 def _claim_path(root: Path, kind: str, number: int) -> Path:
@@ -187,16 +165,18 @@ def _runtime_roots(runtime_root: Path) -> Iterator[Path]:
                 yield Path(entry.path)
 
 
-def _used_in_root(kind: IdKind, root: Path) -> int:
-    counter, directory = (
-        ("spawn-id-counter", root / "spawns")
-        if kind == "p"
-        else ("session-id-counter", root / "sessions")
-    )
-    used = max(numbered_names(directory, kind), default=0)
+def _counter_in_root(kind: IdKind, root: Path) -> int:
+    """The root's legacy counter for ``kind``, 0 when absent or unreadable."""
+
+    name = "spawn-id-counter" if kind == "p" else "session-id-counter"
     with suppress(OSError, ValueError):
-        used = max(used, int((root / counter).read_text(encoding="utf-8").strip()))
-    return used
+        return int((root / name).read_text(encoding="utf-8").strip())
+    return 0
+
+
+def _used_in_root(kind: IdKind, root: Path) -> int:
+    directory = root / ("spawns" if kind == "p" else "sessions")
+    return max(max(numbered_names(directory, kind), default=0), _counter_in_root(kind, root))
 
 
 __all__ = ["MachineIdError", "allocate", "claim_root", "ids_dir", "numbered_names"]

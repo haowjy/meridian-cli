@@ -90,13 +90,6 @@ def _spawn_counter_path(paths: RuntimePaths) -> Path:
     return paths.root_dir / "spawn-id-counter"
 
 
-def read_spawn_counter(runtime_root: Path) -> int:
-    try:
-        return int((runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
-
-
 def _allocate_spawn_id(paths: RuntimePaths) -> SpawnId:
     """Issue a machine-wide spawn ID; the caller holds ``spawns_flock``.
 
