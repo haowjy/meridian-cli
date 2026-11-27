@@ -150,7 +150,14 @@ def print_result(result: MessageResult, *, json_mode: bool) -> int:
     return 1 if isinstance(result, Failed) else 0
 
 
+COLD_ADVICE: Final = (
+    "Send again with --wake to deliver anyway, or start a new session from its context with"
+)
+"""How a ``cold`` refusal's text goes on after what happened. It is ``meridian message``'s
+advice: a sender that has no ``--wake`` (an inbox offer) cuts the text here."""
+
 __all__ = [
+    "COLD_ADVICE",
     "ERROR_KINDS",
     "Delivered",
     "Failed",

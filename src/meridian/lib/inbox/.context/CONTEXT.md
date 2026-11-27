@@ -150,22 +150,33 @@ own files. Nothing here reads or writes another machine's directory.
   (`caller._from_machine`): the session's chat ID (`reply_id`) and project
   (`project_id`), or with no session a terminal of that machine. Its `machine_id` is the
   request's, which is what tells its sessions from this machine's; the name beside it is
-  the one this machine saved it under, else the one it gives itself. The calling side sends step 4's block
-  (`cli/message.py:machine_caller_block`), whose project ID comes from the same
-  `runtime_root_project_id`; it resolves its own `InboxCaller` first, so a session with
-  no record or no usable project is refused before anything connects.
+  the one this machine saved it under, else the one it gives itself. Its reply address
+  is `message/reply.way_back`'s answer, the rule the reply line of a delivered message
+  uses: none when this machine hasn't saved the caller's, or the session can't be reached.
+  A block whose session ID is not an ID never arrives: `machine run` refuses it, because
+  a block with no session is a terminal, which may do more.
+- **What the calling side sends** is built from the `InboxCaller` it resolved and
+  checked (`cli/message.py:inbox_caller_block`, from the runtime root the record was
+  found under), through step 4's `session_caller_block`. Don't build it from the
+  environment: that is a second resolver, and the two disagreed for a session whose
+  working directory was in another project. A session with no record or no usable
+  project is refused before anything connects.
 - **A repeat is safe**, which is what makes `maybe_delivered` recoverable: the taker is
   (machine, chat ID), the same on every retry, so taking again succeeds; releasing a
   message with no claim succeeds; a repeated offer sends the notice again; and a filing
   with a `via` ref matches `by-origin`. A filing without one can be filed twice.
 - **`offer` runs where the message is.** Its session may be on another machine
   (`<machine>/<id>`): the notice then goes out as an ordinary cross-machine `message`,
-  names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`.
+  names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`
+  on a line of its own, unquoted (Claude's delivery drops backticks).
   What that machine reports decides the refusals: `spawn show --json` gives the kind (it
   leaves a child's out, so "no kind" is "not a primary"); `spawn list --global --json`
   gives the project ID and is asked only when the message has a project, and a session
   missing from it is not running; whether it runs and whether it is cold are that
-  machine's `message` to refuse. A command another machine sent can't name a third
+  machine's `message` to refuse. Those two reads go through
+  `machine_forward.ask_machine`, the one "ask another machine a read" beside
+  `forward_if_remote`; `_remote_target` only checks fields, and keeps a `kind` only when
+  this build knows it. A command another machine sent can't name a third
   machine (`other_machine`), so `offer <id> <machine>/<id> --machine <holder>` is refused
   there: run `offer` on the machine that holds the message.
 - **The hook process drops `_MERIDIAN_MACHINE_CALL`** (`session_free_env`: it is an

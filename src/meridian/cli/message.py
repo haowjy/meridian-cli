@@ -49,6 +49,7 @@ from meridian.lib.message.address import (
 from meridian.lib.message.people import deliver_to_person
 from meridian.lib.message.reply import Sender, local_sender, machine_sender
 from meridian.lib.message.result import (
+    COLD_ADVICE,
     Delivered,
     Failed,
     Filed,
@@ -87,7 +88,7 @@ MESSAGE_WAKE_HELP: Final = (
     "Deliver to a session whose prompt cache has gone cold. Without it, a message to a session "
     "that is idle past its cache's expiry is held and fails with kind `cold`: waking it "
     "re-reads the whole conversation. Best effort: a session that reports no idle state is "
-    "never held. Not valid with an `@` address."
+    "never held. Not valid with an `@` address or with `inbox`."
 )
 MESSAGE_TEXT_HELP: Final = (
     "Message text, or `-` to read it from stdin. Put long content in a file and send its path; "
@@ -139,8 +140,7 @@ def _held_if_cold(runtime_root: Path, spawn_id: str, receiver: Receiver) -> Fail
         "cold",
         f"spawn {spawn_id} is cold: idle for {idle_for}, past its prompt cache's expiry. "
         f"Model {record.model or 'unknown'}; cost so far {cost_text}. Waking it re-reads the whole "
-        "conversation. Nothing was sent. Send again with --wake to deliver anyway, or start "
-        f"a new session from its context with `--from {chat}`.",
+        f"conversation. Nothing was sent. {COLD_ADVICE} `--from {chat}`.",
         receiver,
     )
 
@@ -603,6 +603,9 @@ async def send_message(
         if isinstance(parsed, InboxAddress):
             if wake:
                 raise AddressError("usage", "--wake belongs to a session address, not the inbox")
+            if parsed.machine is not None:
+                # However the machine was named (`--machine` too), the result names it.
+                receiver = dataclasses.replace(receiver, address=f"{parsed.machine.name}/inbox")
             filing = filing or FilingOptions()
             try:
                 if parsed.machine is None:

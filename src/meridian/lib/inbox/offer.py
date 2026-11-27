@@ -18,7 +18,7 @@ from meridian.lib.inbox.fields import shown
 from meridian.lib.inbox.models import Claim, Message
 from meridian.lib.inbox.store import InboxError, record_offer, waiting_message
 from meridian.lib.message.address import local_machine_name
-from meridian.lib.message.result import Delivered, Failed, MessageResult
+from meridian.lib.message.result import COLD_ADVICE, Delivered, Failed, MessageResult
 from meridian.lib.ops.locate import locate_run, run_is_live
 from meridian.lib.state import spawn_store
 from meridian.lib.state.machine_identity import MachineIdentity
@@ -86,10 +86,11 @@ def notice(message_id: str, message: Message, holder: str | None = None) -> str:
         line += f" (project {shown(message.project)})"
     where = f"the inbox of {holder}" if holder else "this machine's inbox"
     take = f"meridian inbox take {message_id}" + (f" --machine {holder}" if holder else "")
+    # The command has a line to itself and no quoting: Claude's delivery drops backticks.
     return (
         f"A message is waiting in {where} and looks like yours: {line}.\n"
-        f"`{take}` claims and prints it. If it isn't yours, do "
-        "nothing and it stays for someone else."
+        f"To claim it and print it, run: {take}\n"
+        "If it isn't yours, do nothing and it stays for someone else."
     )
 
 
@@ -155,7 +156,8 @@ def offer(message_id: str, session: str, *, find: Find, send: Send, now: datetim
     if not isinstance(result, Delivered):
         reason = result.text if isinstance(result, Failed) else "it was not delivered"
         if isinstance(result, Failed) and result.kind == "cold":
-            reason = f"an offer never wakes a cold session. {reason}"
+            happened = reason.partition(COLD_ADVICE)[0].rstrip()
+            reason = f"an offer never wakes a cold session. {happened}"
         raise InboxError(
             f"no offer was recorded: {reason}",
             kind=result.kind if isinstance(result, Failed) else "failed",

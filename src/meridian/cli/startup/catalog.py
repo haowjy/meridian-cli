@@ -27,9 +27,11 @@ class CommandDescriptor:
     default_output_mode: str
     root_source: RootSource = RootSource.CWD
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY
-    # May run on another machine (``--machine``, ``<machine>/<id>``): reading and messaging
-    # only, with no form that writes, except the inbox's ``take``, ``release`` and ``offer``.
-    # ``machine run`` reads this on arrival too.
+    # May run on another machine (``--machine``, ``<machine>/<id>``, ``<machine>/inbox``):
+    # the reads, ``message`` (which delivers to a session or files in the inbox) and the
+    # five ``inbox`` commands, of which ``take``, ``release`` and ``offer`` change the inbox.
+    # Nothing that starts, stops or edits a session crosses. ``machine run`` reads this on
+    # arrival too.
     crosses: bool = False
 
 

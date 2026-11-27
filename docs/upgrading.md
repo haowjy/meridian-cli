@@ -77,6 +77,14 @@ message automatically and no session is woken. See
   events 0.27 had are unchanged. `project_root` and `runtime_root` may now be `null`, and
   are for `inbox.received`, which adds `inbox_message`. A hook that checks the version for
   an exact 3 needs updating.
+- **Another machine's inbox is reached like its sessions.** `meridian message
+  <machine>/inbox "..."` files there, and each `meridian inbox` command takes `--machine
+  <machine>`; see [Another machine's inbox](commands.md#another-machines-inbox). Both
+  machines need this release: an older one refuses the call with a kind (`refused`,
+  `usage` or `version`) and nothing is changed there.
+- **A message and a claim record the machine's ID** as `machine_id`, beside its name, in
+  the files and in `--json`. The ID decides whose a claim is, so `meridian machine rename`
+  doesn't lose a session the messages it took.
 - **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`, so a
   sandboxed Codex session whose profile may spawn can run `meridian inbox`, as it can
   `meridian message`. It is written like the other two and

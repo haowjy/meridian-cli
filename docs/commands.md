@@ -381,6 +381,10 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   project; from a terminal, `terminal on jimyao-pop-os`. The role is checked on your
   machine before anything connects, so a session that isn't a primary is refused
   `take`, `release`, `offer` and `--all` there too.
+- **A message filed from another machine has a reply address only when a reply would
+  arrive:** the machine that holds it has saved the sender's machine, and the sending
+  session can be reached. Otherwise `inbox read` says it has no reply address, where a
+  command that fails would mislead. `--reply-to` still sets one by hand.
 - **A call that got no answer may have acted.** `take`, `release` and `offer` fail with
   kind `maybe_delivered` ("m412 may have been taken") when the connection ended after
   the request was sent, and so does a filing. Run the command again: the same taker
@@ -392,8 +396,9 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   the message and name the session as `<machine>/<id>`:
   `meridian inbox offer m412 jimyao-minibox/c2041`. The notice names
   `m412 on jimyao-raspberrypi` and gives the session the command
-  `meridian inbox take m412 --machine jimyao-raspberrypi`. The same refusals hold, from
-  what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
+  `meridian inbox take m412 --machine jimyao-raspberrypi`, on a line of its own. The same
+  refusals hold, from what the session's machine reports; a session ID that machine
+  doesn't know fails with kind `failed` and that machine's text, not `not_found`. `offer m412 <machine>/<id> --machine <holder>` is
   refused, because a call can't reach a third machine.
 - **An older Meridian there** refuses with a kind: `version` when it can't take calls
   at all, `refused` or `usage` when it takes calls and doesn't know the inbox.
