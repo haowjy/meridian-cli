@@ -21,8 +21,7 @@ from meridian.lib.machines.ssh import (
     TIMED_OUT,
     SshProcess,
     SshUnavailable,
-    failure_kind,
-    failure_text,
+    not_connected,
 )
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
@@ -102,9 +101,10 @@ def discover(target: str, label: str | None = None) -> Discovery | NotSent:
         if exited.status < 0:
             # Our own ssh was stopped by a signal: not an answer from the other side.
             return NotSent("unreachable", f"the ssh call to {label} was interrupted")
-        kind = failure_kind(exited.stderr) if exited.status == 255 else "failed"
+        if exited.status == 255:
+            return not_connected(exited, label, target)
         last = exited.last_line or f"ssh exited {exited.status}"
-        return NotSent(kind, failure_text(kind, label, target, last))
+        return NotSent("failed", f"{label} can't be reached over SSH: {last}")
     path = old = uv = bad = None
     for line in lines:
         marker, _, rest = line.partition(" ")

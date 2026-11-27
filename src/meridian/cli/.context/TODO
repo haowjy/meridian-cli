@@ -7,3 +7,8 @@
   of associated spawns: `--view all` reserves slots for active rows, so a limit
   equal to the finished count drops finished rows. Either make `--all` mean all or
   document the cap, then simplify the hint.
+- In 0.29.0, end the deprecation of `meridian spawn message`: it fails with one line that
+  names `meridian message`, as the 0.28.0 changelog and `docs/upgrading.md` promise. Its
+  handler in `cli/spawn.py` stops calling `run_message` and loses the stderr deprecation
+  line, and `SANDBOX_BLOCKED_SENTENCE` (`lib/core/caller_boundary.py`) loses its
+  `meridian spawn message` clause.

@@ -21,8 +21,11 @@ from cyclopts import Parameter
 from meridian.cli.app_tree import message_app
 from meridian.cli.invocation import get_global_options
 from meridian.cli.machine_forward import base_caller, other_machine
-from meridian.lib.core.caller import caller_identity
-from meridian.lib.core.caller_boundary import inside_launcher_sandbox
+from meridian.lib.core.caller import caller_identity, caller_project_root
+from meridian.lib.core.caller_boundary import (
+    SANDBOX_BLOCKED_SENTENCE,
+    inside_launcher_sandbox,
+)
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
 from meridian.lib.core.process_start import starting_cwd, starting_env
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound
@@ -54,6 +57,7 @@ from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
+from meridian.lib.state.project_identity import resolve_project_identity, state_id
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -64,13 +68,6 @@ from meridian.lib.utils.json_shapes import json_object
 _RESPONSE_TIMEOUT_SECONDS = SEND_TIMEOUT_SECONDS + 2.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
-
-_SANDBOX_SENTENCE: Final = (
-    "this command ran inside the session's sandbox, which blocks the connection. Run it as "
-    "a command of its own that begins `meridian message` (no `cd … &&`, no pipe, no `VAR=1` "
-    "in front). A session started before Meridian 0.28 has no grant for that: restart it, "
-    'or use `meridian spawn message <address> --message "…"`, which works through 0.28.x.'
-)
 
 MESSAGE_ADDRESS_HELP: Final = (
     "Required. Where the message goes: a session's spawn ID or chat ID (that chat's running "
@@ -286,14 +283,14 @@ async def _send_to_session(
         except FileNotFoundError:
             visible = False
         except PermissionError:
-            return Failed("sandboxed", _SANDBOX_SENTENCE, receiver)
+            return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
         else:
             visible = True
         if visible:
             break
         if sandbox is True:
             # A sandbox with a private /tmp hides the socket file; waiting would end in no_route.
-            return Failed("sandboxed", _SANDBOX_SENTENCE, receiver)
+            return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
             older = (
@@ -304,7 +301,7 @@ async def _send_to_session(
             )
             no_route = f"spawn {spawn_id} has no message route{older}"
             if sandbox is None:
-                no_route += f"; {_SANDBOX_SENTENCE}"
+                no_route += f"; {SANDBOX_BLOCKED_SENTENCE}"
             return Failed("no_route", no_route, receiver)
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
@@ -335,17 +332,17 @@ async def _send_to_session(
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
     except PermissionError:
-        return Failed("sandboxed", _SANDBOX_SENTENCE, receiver)
+        return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
     except (ConnectionRefusedError, FileNotFoundError) as exc:
         if sandbox is True:
-            return Failed("sandboxed", _SANDBOX_SENTENCE, receiver)
+            return Failed("sandboxed", SANDBOX_BLOCKED_SENTENCE, receiver)
         text_ = (
             f"connection refused: spawn {spawn_id} is not running"
             if isinstance(exc, ConnectionRefusedError)
             else f"spawn not running: {spawn_id} control socket disappeared"
         )
         if sandbox is None:
-            text_ += f"; {_SANDBOX_SENTENCE}"
+            text_ += f"; {SANDBOX_BLOCKED_SENTENCE}"
         return Failed("not_running", text_, receiver)
 
     def may_have_arrived(why: str) -> Failed:
@@ -409,18 +406,22 @@ def _machine_caller_block() -> dict[str, object]:
         return block
     record = read_derived(identity.runtime_root, identity.spawn_id)
     reply_id = (record.continue_chat_id or record.id) if record is not None else identity.spawn_id
-    project = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
     block.update(
         {
             "spawn_id": str(identity.spawn_id),
             "reply_id": reply_id,
             "claimed": claim_root(reply_id) is not None,
             "can_reply": record is not None and _can_receive_reply(record, identity.runtime_root),
-            "project_id": identity.runtime_root.name,
         }
     )
-    if project:
-        block["project_root"] = project
+    project_root = caller_project_root()
+    if project_root is not None:
+        block["project_root"] = project_root.as_posix()
+        # From the project, not the runtime root's name: `_MERIDIAN_RUNTIME_DIR` may put the
+        # root anywhere.
+        project_id = state_id(resolve_project_identity(project_root))
+        if project_id is not None:
+            block["project_id"] = project_id
     return block
 
 
@@ -480,7 +481,6 @@ async def _send_to_machine(
     delivery, so its result is read back, never re-derived here. The text goes on stdin, never in
     ``argv``: one argument is limited to 128 KiB and a message may be 16 MiB."""
 
-    receiver = dataclasses.replace(receiver, machine=address.machine.name)
     argv = ["message", address.id, "-", "--json"]
     if wake:
         argv.append("--wake")
@@ -531,7 +531,7 @@ async def send_message(
 
     address = ref.strip()
     text = message.strip()
-    receiver = Receiver(address=address or None, machine=local_machine_name())
+    receiver = Receiver(address=address or None)
     if not address:
         return Failed(
             "usage", "an address is required: a spawn ID, a chat ID or an @person", receiver
@@ -545,6 +545,10 @@ async def send_message(
             else other_machine(
                 [address], option_machine=machine, directory_explicit=directory_explicit
             )
+        )
+        # Only now is it known which machine the address is on: an unknown one names none.
+        receiver = dataclasses.replace(
+            receiver, machine=target.name if target is not None else local_machine_name()
         )
         parsed = parse_address(address, machine=target)
         if isinstance(parsed, PersonAddress):
