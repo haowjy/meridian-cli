@@ -35,7 +35,7 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
   "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it
   ignores it, with a warning, in a project's `meridian.toml`, `meridian.local.toml` or a file
   named by `--config` or `MERIDIAN_CONFIG`. `@latest`, `@last-failed` and `@last-completed`
-  still fail, and `inbox` is reserved. **After a rollback, remove `[message]`:** 0.27.11
+  still fail. **After a rollback, remove `[message]`:** 0.27.11
   doesn't know the table and prints `Ignoring unknown Meridian config key 'message'.` on
   stderr, twice, on every command. Nothing else changes.
 - **Reply lines print `meridian message`, with `-C` after the address.** Every message a
@@ -44,12 +44,54 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
   and a text that says to restart the session, or to use `meridian spawn message` meanwhile.
   Restart sandboxed sessions started before 0.28.
 - **Codex gets a second rules file**, `$CODEX_HOME/rules/meridian-message.rules`, beside the
-  unchanged `meridian.rules`. Each build rewrites only the files it knows, so a 0.27 and a
-  0.28 process starting Codex sessions never undo each other. Like the first, it applies to
-  every Codex session of the user.
+  unchanged `meridian.rules`, and a third for [the inbox](#the-machine-has-an-inbox). Each
+  build rewrites only the files it knows, so a 0.27 and a 0.28 process starting Codex
+  sessions never undo each other. Like the first, each applies to every Codex session of
+  the user.
 - **A session's control server says whether a refused message arrived.** Its failure reply
   gains `kind`. A session that an older build started still answers without one, which
   reads as `maybe_delivered` until the session restarts.
+
+## The machine has an inbox
+
+New in this release. `meridian message inbox "..."` leaves a message that names no session.
+It waits until someone runs `meridian inbox take` for it: you, or a primary session.
+Nothing takes a message automatically and no session is woken. A primary learns of a
+waiting message in two ways: a line in its prompt when it starts fresh, or an
+`inbox.received` hook row of yours that runs `meridian inbox offer`. See
+[The machine inbox](commands.md#the-machine-inbox).
+
+- **`inbox` is an address now.** Before this release it was not one, and failed.
+- **A new directory, `~/.meridian/machine/inbox/`,** holds the messages, claims and offers as
+  files, one inbox per machine. 0.27 never reads it, so after a rollback the messages stay
+  there, untaken, until you upgrade again.
+- **A primary's first prompt may gain one line**, such as "3 messages are waiting in this
+  machine's inbox", when messages of the last 7 days are waiting for its project or for
+  none.
+- **A new hook event, `inbox.received`,** fires when a message is filed. Meridian reads its
+  rows from the user config only (`~/.meridian/config.toml`, or the file `MERIDIAN_CONFIG`
+  names), and runs them with no project: see [Machine events](hooks.md#machine-events).
+  **After a rollback, remove those rows:** 0.27 doesn't know the event, and while one is in
+  the user config its `meridian hooks list`, `hooks check` and `hooks run` exit 1. Its other
+  commands drop the row with a warning and carry on.
+- **Hook commands now get `schema_version` 4 on stdin**, for every event. The fields of the
+  events 0.27 had are unchanged. `project_root` and `runtime_root` may now be `null`, and
+  are for `inbox.received`, which adds `inbox_message`. A hook that checks the version for
+  an exact 3 needs updating.
+- **Another machine's inbox is reached by its saved name.** Once `meridian machine add
+  <ssh target>` has saved a machine ([below](#machines-can-reach-each-other-over-ssh)),
+  `meridian message <machine>/inbox "..."` files there, and each `meridian inbox` command
+  takes `--machine <machine>`; see
+  [Another machine's inbox](commands.md#another-machines-inbox). Both
+  machines need this release: an older one refuses the call with a kind (`refused`,
+  `usage` or `version`) and nothing is changed there.
+- **A message and a claim record the machine's ID** as `machine_id`, beside its name, in
+  the files and in `--json`. The ID decides whose a claim is, so renaming a machine keeps
+  the messages a session on it already took.
+- **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`, so a
+  sandboxed Codex session can run `meridian inbox` when it can run `meridian message`:
+  when it was launched with a profile that lists subagents (`-a <profile>`). It is written like the other two and
+  applies to every Codex session of the user.
 
 ## Machines can reach each other over SSH
 

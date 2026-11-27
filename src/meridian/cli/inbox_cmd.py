@@ -1,5 +1,8 @@
 """``meridian inbox``: list, read, take, release and offer the machine inbox's messages.
 
+Each command takes `--machine <name>` and then runs on that machine: this side checks the
+caller's role and sends who is calling, and prints what comes back.
+
 A message's text is another party's words. ``list`` shows 80 cleaned characters of it
 after a fixed label; ``read`` and ``take`` print everything Meridian says first and the
 text with its control characters escaped, so nothing after the header can pass for
@@ -13,19 +16,21 @@ import json
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Final, Never
+from typing import Annotated, Final, Never, get_args
 
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import inbox_app
 from meridian.cli.invocation import get_global_options
+from meridian.cli.machine_forward import ask_machine, forward_if_remote, other_machine
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, visible
 from meridian.lib.inbox.filing import via_from_flags
 from meridian.lib.inbox.models import Claim, Message
-from meridian.lib.inbox.offer import offer, taker_running
+from meridian.lib.inbox.offer import Target, local_target, offer, taker_running
 from meridian.lib.inbox.prune import prune_if_due
 from meridian.lib.inbox.store import (
     Entry,
@@ -36,8 +41,14 @@ from meridian.lib.inbox.store import (
     release,
     take,
 )
+from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, READ_LIMIT_SECONDS
+from meridian.lib.machines.resolve import MachineError
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, MessageResult, print_result
+from meridian.lib.state.machine_identity import machine_identity_or_none
+from meridian.lib.state.saved_machines import SavedMachine
+from meridian.lib.utils.json_shapes import json_list, json_object
+from meridian.plugin_api.types import SpawnKind
 
 _ALL_HELP: Final = (
     "Include messages filed for other projects. A session sees its own project's messages "
@@ -108,9 +119,19 @@ def _require_changer(caller: InboxCaller, what: str) -> None:
         )
 
 
+def _cross(
+    caller: InboxCaller, *, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS
+) -> None:
+    """Run the command on the machine `--machine` names and exit with its answer; return
+    when it runs here. Called once the caller's role has been checked: the request carries
+    who is calling, not what it may do."""
+
+    from meridian.cli.message import inbox_caller_block
+
+    forward_if_remote(caller=lambda: inbox_caller_block(caller), limit=limit, may_have=may_have)
+
+
 def _require_visible(caller: InboxCaller, found: Entry, *, all_projects: bool) -> None:
-    if all_projects:
-        _require_changer(caller, "--all")
     if not caller.may_see(found.message.project, all_projects=all_projects):
         _refuse(
             f"{found.id} is for project {found.message.project}, not this session's. A primary "
@@ -235,7 +256,8 @@ Commands:
   meridian inbox release <id>             Give a claim back
   meridian inbox offer <id> <session>     Tell a running primary a message looks like its own
 
-File a message with: meridian message inbox "…\""""
+Each takes --machine <name> for a saved machine's inbox (`meridian machine list`).
+File a message with: meridian message inbox "…" (or <machine>/inbox)"""
     )
     raise SystemExit(0)
 
@@ -254,8 +276,9 @@ def cmd_inbox_list(
     with _inbox_command() as caller:
         if all_projects:
             _require_changer(caller, "--all")
+        _cross(caller)
         now = datetime.now(UTC)
-        machine = local_machine_name()
+        machine = machine_identity_or_none()
         here = resolve_project_root_resolution().project_root
         found = [
             (item, taker_running(item.claim, machine, here) if item.claim is not None else None)
@@ -278,6 +301,9 @@ def cmd_inbox_read(
     """Print one message and the command to answer it. Changes nothing."""
 
     with _inbox_command() as caller:
+        if all_projects:
+            _require_changer(caller, "--all")
+        _cross(caller)
         found = entry(message_id)
         _require_visible(caller, found, all_projects=all_projects)
         _print_message(found)
@@ -297,10 +323,11 @@ def cmd_inbox_take(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox take`")
+        _cross(caller, may_have=f"{message_id} may have been taken")
         via = via_from_flags(via_program, None, via_sender)
         _require_visible(caller, entry(message_id), all_projects=all_projects)
         _print_message(
-            take(message_id, caller.party(local_machine_name()), via, _now_to_the_second())
+            take(message_id, caller.party(machine_identity_or_none()), via, _now_to_the_second())
         )
 
 
@@ -310,7 +337,8 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox release`")
-        released = release(message_id, caller.party(local_machine_name()))
+        _cross(caller, may_have=f"{message_id} may have been released")
+        released = release(message_id, caller.party(machine_identity_or_none()))
         _print(
             {"id": message_id},
             f"{message_id} released: it is waiting again"
@@ -323,12 +351,48 @@ def _now_to_the_second() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
 
+def _remote_target(machine: SavedMachine, session_id: str, message: Message) -> Target:
+    """A session on another machine, from what that machine's own commands report.
+
+    `spawn show` gives its kind. Its project ID is only in `spawn list --global`, which
+    lists running sessions, and is asked only for a message that has a project. Whether it
+    runs and whether it is cold is the other machine's `meridian message` to refuse.
+    """
+
+    shown = ask_machine(machine, ["spawn", "show", session_id])
+    kind, spawn_id = shown.get("kind"), shown.get("spawn_id")
+    project: str | None = None
+    if message.project is not None:
+        listed = ask_machine(machine, ["spawn", "list", "--global"])
+        rows = [row for row in map(json_object, json_list(listed.get("spawns")) or []) if row]
+        row = next((row for row in rows if row.get("spawn_id") == spawn_id), None)
+        if row is None or not isinstance(spawn_id, str):
+            raise InboxError(
+                f"session {machine.name}/{session_id} is not running. Nothing was sent.",
+                kind="not_running",
+            )
+        found = row.get("project_id")
+        if isinstance(found, str):
+            project = found
+    return Target(
+        address=f"{machine.name}/{session_id}",
+        # Another machine's answer: only a kind this build knows is kept, and printed.
+        kind=kind if isinstance(kind, str) and kind in get_args(SpawnKind) else None,
+        project=project,
+        machine=machine.name,
+    )
+
+
 @inbox_app.command(name="offer")
 def cmd_inbox_offer(
     message_id: Annotated[str, Parameter(help=_ID_HELP)],
     session: Annotated[
         str,
-        Parameter(help="The primary session to tell: the spawn ID or chat ID of one running here."),
+        Parameter(
+            help="The primary session to tell: the spawn ID or chat ID of one running on the "
+            "machine that holds the message, or `<machine>/<id>` for one on a machine saved "
+            "there."
+        ),
     ],
 ) -> None:
     """Send a running primary session the fixed notice that a message looks like its own.
@@ -336,35 +400,48 @@ def cmd_inbox_offer(
     Refuses a message that is taken, a session that isn't a primary (only a primary can
     take), one that isn't running or whose prompt cache has gone cold, and one in another
     project than the message's. The session claims the message itself; repeating the
-    offer sends the notice again.
+    offer sends the notice again. `--machine` names the machine that holds the message; the
+    session may be on another one only when the command runs where the message is.
     """
 
     from meridian.cli.message import send_message
 
-    def send(session_id: str, text: str) -> MessageResult:
-        sender = get_global_options().caller
+    options = get_global_options()
+
+    def send(address: str, text: str) -> MessageResult:
+        sender = options.caller
         return asyncio.run(
             send_message(
-                session_id,
+                address,
                 text,
                 sender_spawn_id=sender.spawn_id if sender else None,
                 sender_project_root=sender.project_root if sender else None,
+                directory_explicit=options.directory_explicit,
             )
         )
 
+    def find(message: Message) -> Target:
+        try:
+            away = other_machine(
+                [session], option_machine=None, directory_explicit=options.directory_explicit
+            )
+            if away is None:
+                return local_target(session, resolve_project_root_resolution().project_root)
+            return _remote_target(away, parse_ref(session).value, message)
+        except MachineError as exc:
+            raise InboxError(f"{visible(exc.text)}. Nothing was sent.", kind=exc.kind) from exc
+
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
-        offered = offer(
-            message_id,
-            session,
-            project_root=resolve_project_root_resolution().project_root,
-            send=send,
-            now=_now_to_the_second(),
-        )
+        _cross(caller, may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
+        offered = offer(message_id, session, find=find, send=send, now=_now_to_the_second())
         receiver = offered.delivered.receiver
+        to: dict[str, object] = {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id}
+        if receiver.machine != local_machine_name():
+            to["machine"] = receiver.machine
         payload: dict[str, object] = {
             "id": message_id,
-            "to": {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id},
+            "to": to,
             "delivery": offered.delivered.delivery.value,
         }
         text = f"{message_id} offered to {offered.to}"

@@ -83,6 +83,18 @@ def saved_machine_by_id(machine_id: str) -> SavedMachine | None:
         return None
 
 
+def way_back(caller: MachineCaller, saved: SavedMachine | None) -> list[str] | None:
+    """The words after ``meridian message`` that answer the session a request names, *saved*
+    being its machine as saved here; ``None`` when a message sent back would not arrive.
+    The one rule for it: the frame's reply line and the inbox's reply address both ask here."""
+
+    if saved is None or not caller.can_reply or caller.reply_id is None:
+        return None
+    return reply_tokens(
+        saved, caller.reply_id, claimed=caller.claimed, project_root=caller.project_root
+    )
+
+
 def machine_sender(caller: MachineCaller) -> Sender | None:
     """A sender on another machine, from the request's ``caller`` block."""
 
@@ -92,9 +104,11 @@ def machine_sender(caller: MachineCaller) -> Sender | None:
     label = saved.name if saved is not None else caller.machine
     chat = caller.reply_id if caller.reply_id and is_chat_id(caller.reply_id) else None
     where = f"{_where(caller.spawn_id, chat)} on {label}"
-    if not caller.can_reply or caller.reply_id is None:
-        return Sender(where)
-    if saved is None:
+    tokens = way_back(caller, saved)
+    if tokens is not None:
+        reply = "meridian message " + " ".join(shlex.quote(t) for t in tokens) + ' "..."'
+        return Sender(where, reply)
+    if saved is None and caller.can_reply and caller.reply_id is not None:
         return Sender(
             where,
             no_reply=(
@@ -102,12 +116,14 @@ def machine_sender(caller: MachineCaller) -> Sender | None:
                 f"{caller.machine}>` to make one"
             ),
         )
-    tokens = reply_tokens(
-        saved, caller.reply_id, claimed=caller.claimed, project_root=caller.project_root
-    )
-    if tokens is None:
-        return Sender(where)
-    return Sender(where, "meridian message " + " ".join(shlex.quote(t) for t in tokens) + ' "..."')
+    return Sender(where)
 
 
-__all__ = ["Sender", "local_sender", "machine_sender", "reply_tokens", "saved_machine_by_id"]
+__all__ = [
+    "Sender",
+    "local_sender",
+    "machine_sender",
+    "reply_tokens",
+    "saved_machine_by_id",
+    "way_back",
+]

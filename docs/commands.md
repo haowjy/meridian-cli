@@ -45,8 +45,8 @@ native config. See [managed startup and failure behavior](codex-tui-passthrough.
 **`meridian message ADDRESS "text" [-C REPO]`** sends a message to a running session or a
 person. `ADDRESS` is a spawn ID or a chat ID (that chat's running session),
 `<machine>/<id>` for a session on a [saved machine](#machines), `@person` for a person, or
-`inbox` to leave the message in [the machine's inbox](#the-machine-inbox) (this machine's
-only: `<machine>/inbox` is not built yet). A new ID works from any directory; `-C` reaches a
+`inbox` to leave the message in [the machine's inbox](#the-machine-inbox)
+(`<machine>/inbox` for a saved machine's). A new ID works from any directory; `-C` reaches a
 session with an ID issued before machine-wide IDs in another project.
 `meridian spawn message ADDRESS --message "text"` is the deprecated name for it: it works
 through 0.28.x, prints a line on stderr naming the new command, and fails from 0.29.0.
@@ -90,7 +90,7 @@ environment `meridian` was started with, and reads one line of JSON back
 `meridian.local.toml` or a file named by `--config` or `MERIDIAN_CONFIG` it is ignored
 with a warning, because a message runs outside the sandbox and a repository file must not
 choose the program. `@latest`, `@last-failed` and `@last-completed` are references, not
-addresses, and fail. `inbox` is reserved.
+addresses, and fail.
 
 `meridian message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
@@ -318,7 +318,9 @@ waiting in this machine's inbox", counting the waiting messages of the last 7 da
 are for its project or for none. A continued session gets no new count. To tell a running primary about a
 message as it arrives, add an `inbox.received` hook that runs `meridian inbox offer`:
 [Machine events](hooks.md#machine-events) has the config row.
-The files are under `~/.meridian/machine/inbox/`, one inbox per machine.
+The files are under `~/.meridian/machine/inbox/`, one inbox per machine; a
+[saved machine](#machines)'s is reached with `<machine>/inbox` and `--machine`
+([below](#another-machines-inbox)).
 
 | Command | Does |
 |---|---|
@@ -334,12 +336,12 @@ project and agent, or `terminal` when no session runs the command. The reply add
 the sender unless `--reply-to ADDRESS` names another. A program that passes on someone
 else's message says so with `--via-program NAME`, `--via-ref REF` and `--via-sender NAME`;
 the same program and ref filed twice is one inbox message, so a retried call is safe.
-`--project-id ID` sets the message's project and is accepted only when no session runs
-the command; without it such a message has no project, whatever directory the command
-ran in. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
+A filing from a session carries that session's project. A filing from a terminal has
+no project, whatever directory the command ran in, unless `--project-id ID` names one;
+the flag is refused when a session runs the command. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
 `--project-id` are each at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`. A project
-ID also has no `/`, and a session whose own project ID has one is refused. The text is at
-most 64 KiB.
+ID may have several parts joined by `/` (`team/app`), none of them empty or starting with `.`; a
+session whose own project ID is outside these rules is refused. The text is at most 64 KiB.
 
 **Who sees a message.** A session sees messages filed for its own project and messages
 with no project. A primary session may pass `--all` to see every project's. A person at a
@@ -361,6 +363,51 @@ a primary can take, so the refusal's kind is `refused`), a session that isn't ru
 whose prompt cache has gone cold (as `meridian message` without `--wake` does), and a
 session in another project than the message's. Repeating it sends the notice again.
 
+### Another machine's inbox
+
+`meridian message <machine>/inbox "text"` files in a saved machine's inbox, with the same
+flags, and each `meridian inbox` command takes `--machine <machine>` after the command
+words. There is no merged view: list each machine. A message ID is always bare (`m412`);
+the machine is named by `--machine`.
+
+```bash
+meridian message jimyao-raspberrypi/inbox "the nightly build is red"
+meridian inbox list --machine jimyao-raspberrypi
+meridian inbox take m412 --machine jimyao-raspberrypi
+```
+
+- **Who you are there** is who you are here: the message's sender, and the taker, is
+  your session's chat ID on your machine (`jimyao-pop-os/c20417`), with your session's
+  project; from a terminal, `terminal on jimyao-pop-os`. The role is checked on your
+  machine before anything connects, so a session that isn't a primary is refused
+  `take`, `release`, `offer` and `--all` there too.
+- **A message filed from another machine has a reply address only when a reply would
+  arrive:** the machine that holds it has saved the sender's machine, and the sending
+  session can be reached. Otherwise `inbox read` says it has no reply address, where a
+  command that fails would mislead. `--reply-to` still sets one by hand.
+- **A call that got no answer may have acted.** `take`, `release` and `offer` fail with
+  kind `maybe_delivered` ("m412 may have been taken") when the connection ended after
+  the request was sent, and so does a filing. Run the command again: the same taker
+  taking again succeeds, releasing a message that isn't taken succeeds, and a repeated
+  offer sends the notice again. A filing is only safe to repeat with `--via-program` and
+  `--via-ref`; without them the repeat may file a second message. A `release` from a
+  terminal is the other repeat to check first: a terminal may release any claim, so if
+  another session took the message after the first try, the repeat releases that
+  session's claim. A hook or daemon that releases should read the message again before
+  it repeats. An error whose kind this Meridian doesn't know also reads as
+  `maybe_delivered` for these three commands. `list` and `read` fail with
+  `unreachable`: nothing was changed.
+- **Offering to a session on another machine.** Run `offer` on the machine that holds
+  the message and name the session as `<machine>/<id>`. Typed on `jimyao-raspberrypi`,
+  which holds `m412`, for a session on `jimyao-minibox`:
+  `meridian inbox offer m412 jimyao-minibox/c2041`. The notice that session gets names
+  `m412 on jimyao-raspberrypi` and gives it the command
+  `meridian inbox take m412 --machine jimyao-raspberrypi`, on a line of its own. The same
+  refusals hold, from what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
+  refused, because a call can't reach a third machine.
+- **An older Meridian there** refuses with a kind: `version` when it can't take calls
+  at all, `refused` or `usage` when it takes calls and doesn't know the inbox.
+
 **Clearing.** A waiting message is never deleted; take it to clear it. A message taken
 more than 30 days ago is deleted. `list --taken` marks a claim whose session is no longer
 running, and `release` from a terminal puts that message back.
@@ -369,16 +416,23 @@ running, and `release` from a terminal puts that message back.
 is true:
 
 ```json
-{"ok": true, "messages": [{"id": "m412", "received": "2026-11-26T21:04:11Z", "from": {"kind": "terminal", "machine": "homebox"}, "project": "mellow-hollow-brood", "via": {"program": "meridian-comms", "ref": "C1/1731.0002", "sender": "alice"}, "size": 312, "preview": "…", "offered": [{"to": "c20417", "at": "…"}]}]}
-{"ok": true, "id": "m412", "received": "…", "from": {…}, "text": "…", "size": 312, "taken": {"by": {"kind": "session", "machine": "homebox", "id": "c20417"}, "at": "…"}, "offered": [], "reply_to": "homebox/c20417", "reply_command": "meridian message homebox/c20417 \"…\""}
+{"ok": true, "messages": [{"id": "m412", "received": "2026-11-26T21:04:11Z", "from": {"kind": "terminal", "machine": "homebox", "machine_id": "9f2c41d07a3e"}, "project": "mellow-hollow-brood", "via": {"program": "meridian-comms", "ref": "C1/1731.0002", "sender": "alice"}, "size": 312, "preview": "…", "offered": [{"to": "c20417", "at": "…"}]}]}
+{"ok": true, "id": "m412", "received": "…", "from": {…}, "text": "…", "size": 312, "taken": {"by": {"kind": "session", "machine": "homebox", "machine_id": "9f2c41d07a3e", "id": "c20417"}, "at": "…"}, "offered": [], "reply_to": "homebox/c20417", "reply_command": "meridian message homebox/c20417 \"…\""}
 {"ok": true, "id": "m412", "to": {"spawn_id": "p20417", "chat_id": "c20417"}, "delivery": "posted"}
 {"ok": false, "error": {"kind": "taken", "text": "m412 is taken by homebox/c20417 since …"}}
 ```
 
+With `--machine`, a failure also has `"machine"`, and an `offer` to a session on another
+machine has `"machine"` in `to`. `meridian message <machine>/inbox --json` prints
+`{"ok": true, "address": "jimyao-raspberrypi/inbox", "machine": "jimyao-raspberrypi",
+"delivery": "inbox", "message": "m412"}`.
+
 The first line is `list`, the second `read` and `take` (`taken` is `null` for a waiting
 message, `reply_command` is `null` when there is no reply address), the third `offer`;
 `release` prints `{"ok": true, "id": "m412"}`. With `--taken`, each message also has
-`taken` and `taker_running` (`true`, `false`, or `null` when it can't be told). These are
+`taken` and `taker_running` (`true`, `false`, or `null` when it can't be told). In `from`
+and `by`, `machine_id` is the machine and `machine` the name it had when the message was
+filed or taken; one filed or taken by an earlier build has only the name. These are
 the error kinds the inbox commands give: `not_found` (no such message or session),
 `ambiguous` (the session ID names more than one), `taken`, `refused` (the caller's role or
 project doesn't allow it), `not_running`, `cold` and `no_route` (an offer's session can't
@@ -453,10 +507,11 @@ in `~/.meridian/machine.json`.
 | `meridian machine name` | This machine's name. `--json` prints its identity, `{"name": ..., "id": ..., "was": [...]}`: the ID never changes and is the `machine_id` a message's sender carries, and `was` holds the former names. With `--machine NAME` it is that machine's identity. |
 | `meridian machine rename NEW` | Rename this machine: `[a-z][a-z0-9-]{0,62}`, not `inbox`, not shaped like `p123` or `c123`. Peers correct their saved name on their next call, and a reference written with the old name still resolves. `--json` prints the identity as `machine name --json` does. |
 
-**Reading and messaging cross; nothing else does.** `spawn list|show|status|children`,
-`spawn report show`, `session log|search`, `message` and `machine list|name` take
-`--machine NAME` (after the command words); those that take a reference also take `NAME/ID`,
-such as `jimyao-minibox/c2041`:
+**Reading, messaging and the inbox cross; nothing else does.**
+`spawn list|show|status|children`, `spawn report show`, `session log|search`, `message`,
+`machine list|name` and `inbox list|read|take|release|offer` take `--machine NAME` (after
+the command words); those that take a session reference also take `NAME/ID`, such as
+`jimyao-minibox/c2041`:
 
 ```bash
 meridian spawn list --global --machine jimyao-minibox

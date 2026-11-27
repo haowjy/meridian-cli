@@ -21,6 +21,8 @@ hook-log/m412.json    what the `inbox.received` rows did for it
 
 A message's ID is its file name. Readers take no lock: every file appears whole or not at
 all (`link(2)` or rename), and a file that doesn't parse is skipped and named on stderr.
+The count for a launch (`count.launch_line`) skips one without naming it: a launch must not
+print a warning.
 
 ## The sequences
 
@@ -56,21 +58,27 @@ pruned number.
 
 **Take**: check the message file exists, then `link(2)` a claim to `taken/<id>.json`. If
 the name exists, the same taker (`Claim.same_taker`: kind, machine, chat ID, and the `via`
-program and sender) succeeds and anyone else is refused. **Release** unlinks the claim; a
+program and sender) succeeds and anyone else is refused. The machine is compared by ID
+(`Party.same_as`, the one rule for whose a claim is): `machine` is the name at the time,
+kept as a label and for the reply address, and a rename must not lose a session its claim.
+A party written before `machine_id` was stored has only the name, and is this machine's
+when that is its current or a former name. **Release** unlinks the claim; a
 message with no claim is already released, which is a success so a cut-off call can be
 repeated.
 
-**Offer** (`offer.offer`): read the spawn store and refuse a session that is not a
-primary (an offer says "claim it", and only a primary may take), then under the lock check
-the message exists and is not taken; release the lock; send the notice; take the lock
-again, check once more, and append to `offered/<id>.json`. Send first, record second: a
-crash between the two leaves a session that was told and no record, and the repeat tells
-it again. The lock is never held across the send. The send is a function the caller
-passes in: the CLI passes `cli/message.py:send_message`, which refuses a cold or stopped
-session itself, and any other caller passes its own. The CLI only checks the caller's
-role, parses and prints. `offer.taker_running` holds the rule for whether a chat's run is
-live, which `list --taken` shows. `cli/message.py:_send_to_session` has a second copy of
-that rule: changing one does not change the other.
+**Offer** (`offer.offer`): under the lock check the message exists and is not taken;
+release the lock; find the session and refuse one that is not a primary (an offer says
+"claim it", and only a primary may take) or is in another project than the message's; send
+the notice; take the lock again, check once more, and append to `offered/<id>.json`. Send
+first, record second: a crash between the two leaves a session that was told and no
+record, and the repeat tells it again. The lock is never held across the lookup or the
+send: for a session on another machine each is a call there. Finding the session and
+sending are functions the caller passes in. The CLI passes `offer.local_target` (the spawn
+store) or, for `<machine>/<id>`, a lookup that asks that machine, and
+`cli/message.py:send_message`, which refuses a cold or stopped session itself, on this
+machine or through the other machine's own `message`. `ops/locate.run_is_live` is the one
+rule for whether a chat's run is live; `message` and `list --taken`
+(`offer.taker_running`) both use it.
 
 **Prune** (`prune.py`): scans without the lock and takes it for each deletion, checking
 again under it. A message taken more than 30 days ago is deleted in this order: message,
@@ -79,8 +87,8 @@ leaves records with no message, which the next pass removes, and never a message
 looks waiting again. A waiting message is never deleted. A claim that doesn't parse is
 skipped, and the models refuse a time with no zone, so no file can raise in the scan and
 stop the passes after it. It runs at most once a day (the
-`pruned` stamp), from the detached hook process and from every `meridian inbox` command;
-not at a primary launch, because the machine that runs a chat bot launches none.
+`pruned` stamp), from the detached hook process and from every `meridian inbox` command.
+A primary launch is not a trigger: a machine that only receives messages launches none.
 
 ## Who is calling
 
@@ -100,18 +108,19 @@ that launched a child.
 
 This stops a confused child, not one that forges its environment.
 
-`caller.project_of_root` is the one definition of a session's project: the path of the
-runtime root its record was found in, below `projects/`. The
+`caller.project_of_root` is the one definition of a session's project in the inbox: what
+`state/runtime_root.runtime_root_project_id` gives for the runtime root its record was
+found in, which is the root's whole path below `projects/` (`team/app`). The
 caller, `offer`'s check on the receiving session and the launch line all use it. An ad-hoc
 project (`adhoc.…`) counts as none. A session sees messages with its own project or with
 none.
 
 A root that gives no ID `fields.is_project_id` accepts refuses the command. An ID is in
-the safe set and is one path component, with no `/`. That is narrower than the form of a
-committed ID (`core/refs.is_project_id_form`, which `project_identity` and
-`lib/machines/caller.py` apply). Two things produce a root that fails: `meridian.toml` can
-set an ID with a `/` or a character outside the safe set, and `_MERIDIAN_RUNTIME_DIR` can
-put a root anywhere. The command is refused because the
+the safe set and has the form `core/refs.is_project_id_form` checks (parts joined by `/`,
+none empty or starting with `.`), the one predicate `project_identity` and
+`lib/machines/caller.py` also apply. Two things produce a
+root that fails: `meridian.toml` can set an ID with a character outside the safe set, and
+`_MERIDIAN_RUNTIME_DIR` can put a root anywhere. The command is refused because the
 alternative is to read such a session as having no project, and its messages would then
 be shown to every session.
 
@@ -121,17 +130,75 @@ about.
 
 ## Other machines
 
-The inbox is this machine's only; `<machine>/inbox` is not built. Three places refuse it,
-each with a kind, and building it means changing all three:
+Each machine has its own inbox, and a command reaches another machine's through the one
+machine call (`lib/machines/call.call_machine`, answered there by `meridian machine run`):
+the other machine's own `meridian` runs the same command on its own files. Nothing here reads or writes another machine's directory.
 
-- `core/refs.parse_ref` refuses `<machine>/inbox` (`REMOTE_INBOX_ERROR`), so
-  `machine_forward.other_machine` never resolves a machine for it.
-- `message/address.parse_address` refuses `inbox` with `--machine`, and `inbox` in a
-  command another machine sent (`is_machine_call`): filed here it would be recorded as
-  from a terminal on this machine.
-- The `inbox` commands are not on the crossing list (`CommandDescriptor.crosses`), so
-  `main` refuses `--machine` for them. `offer` hands its session to `locate_run` as
-  typed, which refuses another machine's `<machine>/<id>`.
+- **Filing.** `<machine>/inbox` is a reference `core/refs.parse_ref` knows (kind `inbox`),
+  so `machine_forward.other_machine` decides which machine it names, as for every
+  reference. `cli/message.py` sends `message inbox - --json` with the five flags; the
+  answer comes back as `Filed` with that machine's name.
+- **The five commands** are on the crossing list (`CommandDescriptor.crosses`) and take
+  `--machine <name>`. A message ID is always bare (`m412`): `<machine>/m412` is not a
+  reference, because `parse_ref`'s machine form is for session IDs. Each handler checks
+  the role, then calls `forward_if_remote`. `take`, `release` and `offer` pass `may_have`:
+  a call that was sent and got no whole answer fails with kind `maybe_delivered`, not
+  `unreachable`, because it may have acted.
+- **The role is checked on the calling side, before it connects.** The request carries
+  who is calling and no role. So `InboxCaller.may_change` is true for every caller from
+  another machine, and a build that crosses must keep `_require_changer` ahead of
+  `_cross` in every handler.
+- **Who is calling, on the receiving side,** is `machines/caller.MachineCaller`
+  (`caller._from_machine`): the session's chat ID (`reply_id`) and project
+  (`project_id`), or with no session a terminal of that machine. Its `machine_id` is the
+  request's, which is what tells its sessions from this machine's; the name beside it is
+  the one this machine saved it under, else the one it gives itself. Its reply address
+  is `message/reply.way_back`'s answer, the rule the reply line of a delivered message
+  uses: none when this machine hasn't saved the caller's, or the session can't be reached.
+  Three blocks never arrive, because `machine run` refuses the request: one whose
+  session ID is not an ID, and one with a `reply_id` and no `spawn_id` (a block with no
+  session is a terminal, which may do more, so a damaged session block must not read as
+  one); and one whose `machine_id` is this machine's own (a copied home), whose sessions
+  would pass for this machine's.
+- **What the calling side sends** is built from the `InboxCaller` it resolved and
+  checked (`cli/message.py:inbox_caller_block`, from the runtime root the record was
+  found under), through `session_caller_block`, which builds `meridian message`'s block
+  too. Don't build it from the
+  environment: that is a second resolver, and the two disagreed for a session whose
+  working directory was in another project. A session with no record or no usable
+  project is refused before anything connects.
+- **A repeat is safe**, which is what makes `maybe_delivered` recoverable: the taker is
+  (machine ID, chat ID), the same on every retry, so taking again succeeds; releasing a
+  message with no claim succeeds; a repeated offer sends the notice again; and a filing
+  with a `via` ref matches `by-origin`. Two repeats are not safe, both in `FUTURE`: a
+  filing without a `via` ref can be filed twice, and a terminal's repeated `release` can
+  drop a claim made in between.
+- **An error kind from the other machine.** `forward_if_remote` keeps the kind a read
+  gives when it is a short word. For `take`, `release` and `offer` (`may_have`), a
+  failure with no kind, or with one outside the message kinds and `taken`, is
+  `maybe_delivered`: a kind this build doesn't know doesn't say whether the command
+  acted. `meridian message` reads its answers from another machine the same way.
+- **`offer` runs where the message is.** Its session may be on another machine
+  (`<machine>/<id>`): the notice then goes out as an ordinary cross-machine `message`,
+  names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`
+  on a line of its own, unquoted (Claude's delivery drops backticks).
+  What that machine reports decides the refusals: `spawn show --json` gives the kind (it
+  leaves a child's out, so "no kind" is "not a primary"); `spawn list --global --json`
+  gives the project ID and is asked only when the message has a project, and a session
+  missing from it is not running; whether it runs and whether it is cold are that
+  machine's `message` to refuse. Those two reads go through
+  `machine_forward.ask_machine`, the one "ask another machine a read" beside
+  `forward_if_remote`; `_remote_target` only checks fields, and keeps a `kind` only when
+  this build knows it. A command another machine sent can't name a third
+  machine (`other_machine`), so `offer <id> <machine>/<id> --machine <holder>` is refused
+  there: run `offer` on the machine that holds the message.
+- **The hook process drops `_MERIDIAN_MACHINE_CALL`** (`session_free_env`: it is an
+  injected handle), so an `inbox.received` row started by a filing from another machine
+  runs as this machine, and its own `offer` may cross.
+- **Older peers** answer with a kind, never a traceback: a build with no `machine run`
+  is `version`; one whose crossing list lacks the inbox commands is `refused` ("doesn't
+  reach another machine"); for `message <machine>/inbox`, a build with the local inbox and
+  no crossing answers `refused`, and a build with no inbox `usage`.
 
 ## What a sender controls
 

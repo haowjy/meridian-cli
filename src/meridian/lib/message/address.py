@@ -1,9 +1,9 @@
 """The address grammar of ``meridian message``: which receiver a typed address names.
 
-``@…`` and ``inbox`` are tested here and everything else goes to ``parse_ref``, the one place
-that knows the reference forms. Only the form is checked here; whether a session or a person
-exists is the route's question. An address that fits no form is an error and is never guessed
-to be a person: a mistyped session ID must not end up in Slack.
+``@…`` is tested here and everything else goes to ``parse_ref``, the one place that knows the
+reference forms. Only the form is checked here; whether a session or a person exists is the
+route's question. An address that fits no form is an error and is never guessed to be a
+person: a mistyped session ID must not end up in Slack.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from meridian.lib.core.refs import REMOTE_INBOX_ERROR, SELECTORS, parse_ref
+from meridian.lib.core.refs import SELECTORS, parse_ref
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.saved_machines import SavedMachine
@@ -53,7 +53,10 @@ class PersonAddress:
 
 @dataclass(frozen=True)
 class InboxAddress:
-    """``inbox``: this machine's inbox, where a message waits for a session to take it."""
+    """``inbox`` or ``<machine>/inbox``: a machine's inbox, where a message waits for a session
+    to take it. ``machine`` is ``None`` for this machine's."""
+
+    machine: SavedMachine | None = None
 
 
 def local_machine_name() -> str | None:
@@ -108,22 +111,17 @@ def parse_address(
             raise AddressError("refused", "an @ address doesn't reach another machine")
         return _person_address(raw)
 
-    if raw == "inbox":
-        if machine is not None:
-            raise AddressError("usage", REMOTE_INBOX_ERROR)
-        if is_machine_call():
-            raise AddressError("refused", "the inbox doesn't take a message from another machine")
-        return InboxAddress()
-
     try:
         ref = parse_ref(raw)
     except ValueError as exc:
         raise AddressError("usage", str(exc)) from exc
+    if ref.kind == "inbox":
+        return InboxAddress(machine)
     if ref.kind not in _SESSION_KINDS:
         raise AddressError(
             "usage",
             f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
-            "`<machine>/<id>`, an @person or `inbox`",
+            "`<machine>/<id>`, an @person, `inbox` or `<machine>/inbox`",
         )
     return SessionAddress(ref.value) if machine is None else MachineAddress(machine, ref.value)
 

@@ -29,6 +29,7 @@ from meridian.lib.platform.atomic import (
 )
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.json_doc import mutate_model, write_model, write_model_once
+from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.user_paths import get_user_home
 
 FORMAT_VERSION: Final = "1"
@@ -67,7 +68,8 @@ class NoSuchMessage(InboxError):
     kind = "not_found"
 
     def __init__(self, message_id: str) -> None:
-        super().__init__(f"no message {message_id} in this machine's inbox")
+        # Not "this machine's": the command may have been sent here from another machine.
+        super().__init__(f"no message {message_id} in the inbox")
 
 
 class MessageTaken(InboxError):
@@ -101,7 +103,11 @@ def message_path(message_id: str) -> Path:
 
 def message_number(message_id: str) -> int:
     if MESSAGE_ID.fullmatch(message_id) is None:
-        raise InboxError(f"`{message_id}` is not a message ID: one looks like m412", kind="usage")
+        raise InboxError(
+            f"`{message_id}` is not a message ID: one looks like m412"
+            + ("; another machine's inbox is named with `--machine <name>`" * ("/" in message_id)),
+            kind="usage",
+        )
     return int(message_id[1:])
 
 
@@ -323,7 +329,7 @@ def take(message_id: str, by: Party, via: Via | None, now: datetime) -> Entry:
         claim = Claim(by=by, via=via, at=now)
         if not write_model_once(path, claim, exclude_none=True):
             held = read_doc(path, Claim)
-            if held is None or not held.same_taker(by, via):
+            if held is None or not held.same_taker(by, via, machine_identity_or_none()):
                 raise MessageTaken(message_id, held)
             claim = held
         offers = read_doc(root / "offered" / f"{message_id}.json", Offers)
@@ -343,7 +349,9 @@ def release(message_id: str, by: Party) -> bool:
             _require_message(root, message_id)
             return False
         held = read_doc(path, Claim)
-        if by.kind != "terminal" and (held is None or not held.by.same_as(by)):
+        if by.kind != "terminal" and (
+            held is None or not held.by.same_as(by, machine_identity_or_none())
+        ):
             raise MessageTaken(message_id, held)
         path.unlink()
         fsync_directory(path.parent)

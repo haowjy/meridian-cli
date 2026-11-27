@@ -26,7 +26,7 @@ from meridian.lib.machines.call import READY_MARKER, REQUEST_VERSION, RESULT_MAR
 from meridian.lib.machines.caller import MACHINE_CALL_ENV, parse_machine_caller
 from meridian.lib.machines.discover import CHECK_WORD
 from meridian.lib.machines.ssh import CappedReader
-from meridian.lib.platform.python_module import module_argv
+from meridian.lib.platform.python_module import module_argv, scripts_dir
 from meridian.lib.state.machine_identity import read_or_create_machine_identity
 from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES
 from meridian.lib.utils.json_shapes import json_list, json_object
@@ -73,6 +73,9 @@ def _child_env(caller: object) -> dict[str, str]:
     env = {
         key: value for key, value in os.environ.items() if key in _KEPT_ENV or key.startswith("LC_")
     }
+    # An SSH command's PATH is the system's, without the directory Meridian is installed in,
+    # and what the command starts (an `inbox.received` hook row) runs `meridian` by name.
+    env["PATH"] = os.pathsep.join(filter(None, [str(scripts_dir()), env.get("PATH")]))
     env[MACHINE_CALL_ENV] = json.dumps(caller if isinstance(caller, dict) else {})
     return env
 
@@ -174,8 +177,20 @@ def run_machine_call(*, check: bool) -> None:
         _emit(RESULT_MARKER, _refused(refusal))
         return
     caller = request.get("caller")
-    if parse_machine_caller(caller) is None:
-        _emit(RESULT_MARKER, _refused("the request names no calling machine"))
+    parsed_caller = parse_machine_caller(caller)
+    if parsed_caller is None:
+        _emit(RESULT_MARKER, _refused("the request names no usable caller"))
+        return
+    if parsed_caller.machine_id == identity.id:
+        # Two machines with one identity file (a cloned home, a restored backup): the caller's
+        # sessions would pass for this machine's own.
+        _emit(
+            RESULT_MARKER,
+            _refused(
+                "the calling machine has this machine's ID: one of the two is a copy. Remove "
+                "`machine.json` from the copy's Meridian home so it gets its own ID"
+            ),
+        )
         return
     _emit(RESULT_MARKER, _run_child(argv, stdin, limit, caller))
 

@@ -15,6 +15,9 @@ Calls to other machines over plain SSH.
 - Meridian stops only an `ssh` or child it started, through its handle. `machine run` ends its
   child's process group at `limit` and when its stdin reaches EOF: without a terminal, killing
   the caller's `ssh` leaves the remote command running.
+- A command that changes state on the other machine passes `forward_if_remote` a `may_have`
+  sentence: its `Unanswered` is kind `maybe_delivered`, and only a command whose repeat is
+  safe may cross that way.
 - `forward_if_remote` and `message` both ask `machine_forward.other_machine` which other
   machine a command names; it is the one place that refuses two machines, `-C` applied here,
   and a third machine from a call another machine started. Don't decide it elsewhere.

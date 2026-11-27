@@ -24,7 +24,7 @@ SELECTORS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 
-type RefKind = Literal["spawn", "chat", "selector", "native", "machine"]
+type RefKind = Literal["spawn", "chat", "selector", "native", "machine", "inbox"]
 
 
 _KIND_LABEL: dict[RefKind, str] = {
@@ -36,11 +36,11 @@ _KIND_LABEL: dict[RefKind, str] = {
 
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
+INBOX_IS_NO_SESSION = "`inbox` is an address for `meridian message`, not a session"
 PROJECT_ID_FORM = (
     "one or more components joined by `/`, each printable, none of them empty or starting "
     "with `.`, at most 255 characters in all"
 )
-REMOTE_INBOX_ERROR = "the inbox of another machine is not built yet: file the message there"
 
 
 class RefNotFound(ValueError):
@@ -112,7 +112,8 @@ class RefAmbiguous(ValueError):
 @dataclass(frozen=True)
 class Ref:
     """``kind`` ``machine`` is ``<machine>/<id>``: ``machine`` is the name typed and ``value``
-    the spawn or chat ID after it."""
+    the spawn or chat ID after it. ``kind`` ``inbox`` is ``inbox`` or ``<machine>/inbox``: an
+    address, which only ``meridian message`` takes."""
 
     kind: RefKind
     value: str
@@ -175,9 +176,9 @@ def parse_ref(raw: str) -> Ref:
         return Ref("selector", value)
     head, slash, tail = value.partition("/")
     if value == "inbox":
-        raise ValueError("`inbox` is an address for `meridian message`, not a session")
-    if slash and tail == "inbox":
-        raise ValueError(REMOTE_INBOX_ERROR)
+        return Ref("inbox", value)
+    if slash and tail == "inbox" and is_machine_name(head):
+        return Ref("inbox", tail, head)
     if slash and is_machine_name(head) and (is_spawn_id(tail) or is_chat_id(tail)):
         return Ref("machine", tail, head)
     if is_spawn_id(value):
@@ -188,8 +189,8 @@ def parse_ref(raw: str) -> Ref:
 
 
 __all__ = [
+    "INBOX_IS_NO_SESSION",
     "PROJECT_ID_FORM",
-    "REMOTE_INBOX_ERROR",
     "SELECTORS",
     "Ref",
     "RefAmbiguous",

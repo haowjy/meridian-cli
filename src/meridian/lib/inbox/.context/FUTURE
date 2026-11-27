@@ -1,7 +1,6 @@
 # Inbox: known limits left on purpose
 
-Each was seen in review or a probe and judged not worth a change yet. Revisit when the
-condition in it shows up.
+Each is judged not worth a change yet. Revisit when the condition in it shows up.
 
 - **Lock wait under load.** 17 processes at once (8 writers, 6 takers, 3 offers) gave
   two "the inbox is busy" errors after the 5 s wait. A write does about six fsyncs under
@@ -9,17 +8,22 @@ condition in it shows up.
   this. The error is safe to repeat.
 - **One interpreter per filed message.** The detached `inbox.received` process costs
   about 0.4 s of CPU with no rows, and nothing bounds how many run at once. A burst of
-  messages against a row that waits its full timeout stacks them; measure on a
-  Raspberry Pi before a router runs there.
-- **Every terminal is the same taker.** A terminal has no ID, so a second `take` from
-  any terminal succeeds and prints the message. `take` is exclusive between sessions,
-  not between two people or two daemons that pass no `--via-…`.
+  messages against a row that waits its full timeout stacks them. Measure before a
+  small machine (a Raspberry Pi) takes bursts of messages filed by a daemon.
+- **Every terminal of one machine is the same taker.** A terminal has no ID, only its
+  machine, so a second `take` from any terminal of that machine succeeds and prints the
+  message. `take` is exclusive between sessions and between machines' terminals, not
+  between two people or two daemons on one machine that pass no `--via-…`.
 - **`offer` doesn't check that the caller may see the message.** A primary in project A
   can offer project B's message to a B session without `--all`. The notice carries
   `from`, `via` and the project, never the text.
 - **A repeat filing looks like a new one.** A `meridian message inbox` that matches an
   existing message by `--via-program`/`--via-ref` prints the same result as the first;
   `--json` has no `repeat` field.
+- **A filing without `--via-ref` can be filed twice.** `meridian message <machine>/inbox`
+  whose call got no answer fails with `maybe_delivered`; only a filing with
+  `--via-program` and `--via-ref` matches the first on the repeat. Its error text says
+  "may have been delivered", the session route's words, not "filed".
 - **`visible` leaves U+2028 and U+2029 raw and doesn't escape a backslash.** A sender's
   literal `\x1b` prints like an escaped ESC, so text output can't be turned back into
   the text; `--json` is the exact form.
@@ -27,3 +31,22 @@ condition in it shows up.
   (`"taken": null`), though `take` reports it taken. Only a hand-edited file reaches it.
 - **Prune runs in the foreground** of the day's first `meridian inbox` command, after its
   output; a caller that reads to end of file waits for that pass.
+- **The notice names this machine by its own name.** An offer to a session on another
+  machine prints `meridian inbox take m412 --machine <this machine's name>`. A machine
+  that saved this one under another name, or not at all, can't run it as printed; the
+  caller block's sender frame is resolved by machine ID, the notice text is not.
+- **A sender on another machine has no `agent`.** The caller block of a machine call
+  carries no profile name, so `from` for a session there is its machine, chat ID and
+  project only.
+- **A terminal's repeated `release` can drop a claim made in between.** A terminal may
+  release any claim. If its `release` is cut off after it was sent and another session
+  takes the message before the repeat, the repeat ("Run it again: a repeat is safe")
+  releases that session's claim. The caller this can happen to is a daemon that calls
+  `release` from a terminal on behalf of people. A release that names the claim it means
+  to drop would close it.
+- **A session whose ID isn't machine-wide gets no reply address across machines.** Its
+  way back is `<id> --machine <name> -C <path>`, and a message's `reply_to` is one
+  address. `inbox read` says it has no reply address.
+- **The offer notice's command is only right where this build runs.** A session on a
+  machine that runs an older Meridian, or a harness whose `meridian` on `PATH` is older,
+  is told to run `meridian inbox take … --machine …` and has no such command.

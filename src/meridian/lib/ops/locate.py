@@ -26,6 +26,7 @@ from typing import NamedTuple
 
 from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.refs import (
+    INBOX_IS_NO_SESSION,
     SELECTORS,
     Ref,
     RefAmbiguous,
@@ -34,7 +35,7 @@ from meridian.lib.core.refs import (
     parse_ref,
     project_is_named,
 )
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
@@ -49,7 +50,7 @@ from meridian.lib.state.history_index import (
 from meridian.lib.state.machine_ids import claim_root, lowest_claim
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_status import overlay_derived
+from meridian.lib.state.spawn_status import overlay_derived, read_derived
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,8 @@ def local_ref(parsed: Ref) -> Ref:
     another machine it is an error here. A command that crosses has forwarded such a reference
     before it gets this far, so what arrives is a command that may not."""
 
+    if parsed.kind == "inbox":
+        raise ValueError(INBOX_IS_NO_SESSION)
     if parsed.kind != "machine":
         return parsed
     assert parsed.machine is not None
@@ -237,7 +240,7 @@ def _locate_in(
                 record.chat_id for record in reversed(generations) if record.chat_id != chat.chat_id
             )
             return ChatHit(parsed, root, chat, tuple(other_chats))
-        case "machine":
+        case "machine" | "inbox":
             raise AssertionError("a machine reference is made local before it is located")
 
 
@@ -313,6 +316,21 @@ def resolve_spawn_targets(
     return tuple({(target.runtime_root, target.spawn_id): target for target in targets}.values())
 
 
+def run_is_live(target: RunTarget) -> bool | None:
+    """Whether the run a reference names is running, and for a chat reference still in that
+    chat; ``None`` when its record is gone. A chat ID names the run live in it, so a run that
+    left the chat (a native ``/resume`` elsewhere) is not that chat's run any more."""
+
+    record = read_derived(target.runtime_root, target.spawn_id)
+    if record is None:
+        return None
+    return is_active_spawn_status(record.status) and (
+        target.chat_id is None
+        or target.occupant
+        or record.current_chat_id in (None, target.chat_id)
+    )
+
+
 __all__ = [
     "ChatHit",
     "Located",
@@ -326,4 +344,5 @@ __all__ = [
     "require_project_dir",
     "resolve_spawn_target",
     "resolve_spawn_targets",
+    "run_is_live",
 ]

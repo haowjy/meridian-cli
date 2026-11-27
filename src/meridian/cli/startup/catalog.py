@@ -27,8 +27,11 @@ class CommandDescriptor:
     default_output_mode: str
     root_source: RootSource = RootSource.CWD
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY
-    # May run on another machine (``--machine``, ``<machine>/<id>``): reading and messaging
-    # only, with no form that writes. ``machine run`` reads this on arrival too.
+    # May run on another machine (``--machine``, ``<machine>/<id>``, ``<machine>/inbox``):
+    # the reads, ``message`` (which delivers to a session or files in the inbox) and the
+    # five ``inbox`` commands, of which ``take``, ``release`` and ``offer`` change the inbox.
+    # Nothing that starts, stops or edits a session crosses. ``machine run`` reads this on
+    # arrival too.
     crosses: bool = False
 
 
@@ -140,6 +143,7 @@ def _write_rootless(
     *,
     default_output_mode: str = "text",
     startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     """Path- or user-level write commands that do not require a Meridian project."""
 
@@ -151,6 +155,7 @@ def _write_rootless(
         default_output_mode,
         summary,
         startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -493,20 +498,31 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("inbox", "list"),
         "List the machine inbox's waiting messages.",
         startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _read_rootless(
-        ("inbox", "read"), "Print one inbox message.", startup_error=StartupErrorShape.MESSAGE
+        ("inbox", "read"),
+        "Print one inbox message.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _write_rootless(
-        ("inbox", "take"), "Claim an inbox message.", startup_error=StartupErrorShape.MESSAGE
+        ("inbox", "take"),
+        "Claim an inbox message.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _write_rootless(
-        ("inbox", "release"), "Give an inbox claim back.", startup_error=StartupErrorShape.MESSAGE
+        ("inbox", "release"),
+        "Give an inbox claim back.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _write_rootless(
         ("inbox", "offer"),
         "Tell a running session an inbox message looks like its own.",
         startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
     ),
     _read_rootless(("machine",), "Machines this one can reach."),
     _write_rootless(("machine", "add"), "Save a machine."),

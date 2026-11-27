@@ -20,6 +20,8 @@ from meridian.lib.state.saved_machines import SavedMachine
         ("@alice", PersonAddress("@alice")),
         ("@T123/1731600123.000200", PersonAddress("@T123/1731600123.000200")),
         ("inbox", InboxAddress()),
+        # Which machine it names is `other_machine`'s answer, passed in as `machine`.
+        ("some-machine/inbox", InboxAddress()),
     ],
 )
 def test_address_that_names_a_receiver(
@@ -39,7 +41,6 @@ def test_address_that_names_a_receiver(
         ("@a b", "usage"),
         ("@a\x00b", "usage"),
         ("@" + "x" * 256, "usage"),
-        ("some-machine/inbox", "usage"),
         # Never guessed to be a person: a mistyped session ID must not end up in Slack.
         ("p12x", "usage"),
         ("native-session-uuid", "usage"),
@@ -83,16 +84,18 @@ def test_other_machine_refuses_an_unknown_name_and_a_third_machine(
     assert third.value.kind == "refused"
 
 
-def test_machine_caller_drops_fields_with_the_wrong_shape() -> None:
+def test_machine_caller_refuses_a_session_id_with_the_wrong_shape() -> None:
     from meridian.lib.machines.caller import parse_machine_caller
 
     good = {"machine": "far", "machine_id": "0123456789ab", "spawn_id": "p12", "reply_id": "c12"}
     caller = parse_machine_caller(good)
     assert caller is not None and caller.reply_id == "c12"
-    bad = {**good, "spawn_id": "p1; rm", "reply_id": "$(x)", "project_root": "rel"}
-    shaped = parse_machine_caller(bad)
-    assert shaped is not None
-    assert (shaped.spawn_id, shaped.reply_id, shaped.project_root) == (None, None, None)
+    # Dropping the ID would leave a terminal of that machine, which may do more.
+    assert parse_machine_caller({**good, "spawn_id": "p1; rm"}) is None
+    assert parse_machine_caller({**good, "reply_id": "$(x)"}) is None
+    assert parse_machine_caller({**good, "spawn_id": 12}) is None
+    shaped = parse_machine_caller({**good, "project_root": "rel"})
+    assert shaped is not None and shaped.project_root is None
     assert parse_machine_caller({**good, "machine_id": "xyz"}) is None
 
 

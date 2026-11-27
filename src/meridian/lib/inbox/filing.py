@@ -23,8 +23,8 @@ from meridian.lib.inbox.fields import (
 )
 from meridian.lib.inbox.models import Message, Via
 from meridian.lib.inbox.store import InboxError, file_message, message_path
-from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, Filed, MessageResult, Receiver
+from meridian.lib.state.machine_identity import machine_identity_or_none
 
 
 @dataclass(frozen=True)
@@ -37,9 +37,7 @@ class FilingOptions:
     via_ref: str | None = None
     via_sender: str | None = None
 
-    def given(self) -> list[str]:
-        """The flags that were passed, as typed."""
-
+    def _flags(self) -> dict[str, str]:
         names = {
             "--project-id": self.project_id,
             "--reply-to": self.reply_to,
@@ -47,7 +45,17 @@ class FilingOptions:
             "--via-ref": self.via_ref,
             "--via-sender": self.via_sender,
         }
-        return [name for name, value in names.items() if value is not None]
+        return {name: value for name, value in names.items() if value is not None}
+
+    def given(self) -> list[str]:
+        """The flags that were passed, as typed."""
+
+        return list(self._flags())
+
+    def argv(self) -> list[str]:
+        """The flags as the same command on another machine takes them."""
+
+        return [f"{name}={value}" for name, value in self._flags().items()]
 
 
 def via_from_flags(program: str | None, ref: str | None, sender: str | None) -> Via | None:
@@ -96,7 +104,7 @@ def _build(caller: InboxCaller, text: str, options: FilingOptions) -> Message:
         )
     via = via_from_flags(options.via_program, options.via_ref, options.via_sender)
     project = _project(caller, options.project_id)
-    machine = local_machine_name()
+    sender = caller.party(machine_identity_or_none())
     reply_to = options.reply_to
     if reply_to is not None and not is_reply_address(reply_to):
         raise InboxError(
@@ -104,9 +112,10 @@ def _build(caller: InboxCaller, text: str, options: FilingOptions) -> Message:
             f"`<machine>/<id>` or an @person), {SAFE_FIELD_RULE}",
             kind="usage",
         )
-    if reply_to is None and caller.chat_id is not None:
-        reply_to = f"{machine}/{caller.chat_id}" if machine is not None else caller.chat_id
-    sender = caller.party(machine)
+    if reply_to is None and caller.machine is not None:
+        reply_to = caller.reply_to
+    elif reply_to is None and caller.chat_id is not None:
+        reply_to = f"{sender.machine}/{caller.chat_id}" if sender.machine else caller.chat_id
     if not caller.is_terminal:
         sender = sender.model_copy(update={"project": project, "agent": caller.agent})
     return Message(

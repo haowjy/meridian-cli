@@ -57,7 +57,8 @@ class Delivered:
 
 @dataclass(frozen=True)
 class Filed:
-    """The message waits in the machine inbox as ``message`` (``m412``); no session has it.
+    """The message waits in a machine's inbox as ``message`` (``m412``); no session has it.
+    ``machine`` names the other machine whose inbox it is, ``None`` for this one's.
 
     Its own variant, so ``inbox`` stays out of ``DeliveryKind``, which the control socket
     and the harness adapters share.
@@ -65,6 +66,7 @@ class Filed:
 
     message: str
     receiver: Receiver = field(default_factory=Receiver)
+    machine: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,13 +143,21 @@ def print_result(result: MessageResult, *, json_mode: bool) -> int:
         if result.note is not None:
             print(result.note)
     elif isinstance(result, Filed):
-        print(f"Message {result.message} filed in this machine's inbox")
+        where = f"{result.machine}'s" if result.machine else "this machine's"
+        print(f"Message {result.message} filed in {where} inbox")
     else:
         print(f"Error: {result.text}", file=sys.stderr)
     return 1 if isinstance(result, Failed) else 0
 
 
+COLD_ADVICE: Final = (
+    "Send again with --wake to deliver anyway, or start a new session from its context with"
+)
+"""How a ``cold`` refusal's text goes on after what happened. It is ``meridian message``'s
+advice: a sender that has no ``--wake`` (an inbox offer) cuts the text here."""
+
 __all__ = [
+    "COLD_ADVICE",
     "ERROR_KINDS",
     "Delivered",
     "Failed",
