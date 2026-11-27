@@ -593,7 +593,8 @@ class SpawnListInput(BaseModel):
     profile: str | None = None
     primary: bool = False
     work: str | None = None
-    limit: int = 20
+    # ``None`` lists every row there is.
+    limit: int | None = 20
     failed: bool = False
     project_root: str | None = None
     # Running sessions in every project on this machine.

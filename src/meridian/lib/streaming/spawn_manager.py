@@ -23,6 +23,7 @@ from meridian.lib.harness.control_action import (
 )
 from meridian.lib.harness.registry import get_process_ports
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
+from meridian.lib.idle.delivery import end_stretch_on_delivery
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
 from meridian.lib.state import spawn_store
@@ -72,6 +73,7 @@ def _default_control_server_factory(
     return ControlSocketServer(
         socket_path,
         MessageRoute(lambda text, _: manager.deliver(spawn_id, text, source="control_socket")),
+        lambda delivery: end_stretch_on_delivery(manager.runtime_root, str(spawn_id), delivery),
     )
 
 

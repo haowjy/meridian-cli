@@ -857,7 +857,7 @@ def _spawn_list_all_projects(payload: SpawnListInput) -> SpawnListOutput:
             continue  # pruned or rebuilt while the list was being built: it reads as empty
         found.extend((root, row) for row in _filter_listed(payload, rows))
     found.sort(key=lambda item: item[1].started_at or "", reverse=True)
-    selected = found[: payload.limit] if payload.limit > 0 else found
+    selected = found[: payload.limit]
     entries_by_root = {
         root: {
             entry.spawn_id: entry
@@ -911,14 +911,13 @@ def spawn_list_sync(
     # always include all active spawns, pad with recent non-active up to limit.
     show_all = payload.statuses == ()
     total_count = len(spawns)
-    limit = payload.limit if payload.limit > 0 else 20
+    limit = payload.limit
 
     if show_all:
         # Always include all active spawns, fill remaining slots with recent non-active.
         active = [row for row in spawns if is_active_spawn_status(row.status)]
         non_active = [row for row in spawns if not is_active_spawn_status(row.status)]
-        effective_limit = max(len(active), limit)
-        remaining = effective_limit - len(active)
+        remaining = None if limit is None else max(len(active), limit) - len(active)
         selected = active + non_active[:remaining]
     else:
         selected = spawns[:limit]

@@ -917,6 +917,8 @@ def _spawn_list(
         ),
     ] = False,
 ) -> None:
+    if limit is not None and limit < 1:
+        raise ValueError("--limit must be at least 1")
     normalized_status: SpawnStatus | None = None
     normalized_statuses: tuple[SpawnStatus, ...] | None = None
     normalized_view = view.strip().lower() if view.strip() else "active"
@@ -956,9 +958,9 @@ def _spawn_list(
             profile=profile,
             primary=primary,
             work=work,
-            # 0 is no limit for `--global`: its list is bounded by what is running, and a
-            # silent cut would hide sessions from a caller that lists them all.
-            limit=limit if limit is not None else (0 if all_projects else 20),
+            # No limit for `--global`: its list is bounded by what is running, and a silent
+            # cut would hide sessions from a caller that lists them all.
+            limit=limit if limit is not None or all_projects else 20,
             failed=False,
             all_projects=all_projects,
         ),

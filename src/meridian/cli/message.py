@@ -13,7 +13,6 @@ import os
 import shlex
 import sys
 import time
-from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final
@@ -50,7 +49,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_and_config,
     resolve_runtime_root_for_read,
 )
-from meridian.lib.ops.spawn.idle import end_row_idle_stretch, row_idle
+from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -114,16 +113,6 @@ def _held_if_cold(runtime_root: Path, spawn_id: str, receiver: Receiver) -> Fail
         f"a new session from its context with `--from {chat}`.",
         receiver,
     )
-
-
-def _end_idle_stretch(runtime_root: Path, spawn_id: str) -> None:
-    """The delivered message starts a turn: end the idle stretch, so a second message during
-    that turn is not held as cold. Best effort; the message is already delivered."""
-
-    record = read_derived(runtime_root, spawn_id)
-    if record is not None:
-        with suppress(OSError, ValueError, TimeoutError):
-            end_row_idle_stretch(runtime_root, record)
 
 
 def _duration_text(seconds: float) -> str:
@@ -365,7 +354,6 @@ async def _send_to_session(
             # A server without ``delivery`` (an older build) does not say how far the
             # message got, so claim only that it was posted.
             note = parsed.get("note")
-            _end_idle_stretch(runtime_root, spawn_id)
             return Delivered(
                 delivery_kind(parsed.get("delivery")),
                 f"spawn {spawn_id}",

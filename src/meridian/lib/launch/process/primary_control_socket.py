@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager, contextmanager
 from meridian.lib.core.delivery import MessageRoute
 from meridian.lib.harness.bundle import PrimaryMessageRoute, PrimaryRouteContext
 from meridian.lib.harness.control_action import ControlActionCoordinator
+from meridian.lib.idle.delivery import end_stretch_on_delivery
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
 
@@ -31,6 +32,7 @@ async def serving_route(launch: LaunchPaths, route: MessageRoute) -> AsyncGenera
             ),
             route.note,
         ),
+        lambda delivery: end_stretch_on_delivery(launch.runtime_root, launch.spawn_id, delivery),
     )
     await server.start()
     try:

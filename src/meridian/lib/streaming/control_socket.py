@@ -4,20 +4,30 @@ import asyncio
 import errno
 import hashlib
 import json
+import logging
 import os
 import re
 import socket
 import stat
 import sys
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.core.delivery import DeliveryRefused, MessageRoute, MessageSender, TransportDead
+from meridian.lib.core.delivery import (
+    DeliveryKind,
+    DeliveryRefused,
+    MessageRoute,
+    MessageSender,
+    TransportDead,
+)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
+
+logger = logging.getLogger(__name__)
 
 # sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
 # callers can validate before asyncio reaches the less actionable bind error.
@@ -120,7 +130,13 @@ def _sweep_stale_sockets(own_path: Path) -> None:
 class ControlSocketServer:
     """Serve one control socket endpoint: each request is one message for the route."""
 
-    def __init__(self, socket_path: Path, route: MessageRoute):
+    def __init__(
+        self,
+        socket_path: Path,
+        route: MessageRoute,
+        on_delivered: Callable[[DeliveryKind], None] | None = None,
+    ):
+        self._on_delivered = on_delivered
         self._socket_path = socket_path
         self._port_file = socket_path.with_suffix(".port")
         self._route = route
@@ -238,6 +254,12 @@ class ControlSocketServer:
         if sender is False:
             return _refusal("user_message sender needs spawn_id and project_root")
         delivery = await self._route.deliver(text, sender)
+        if self._on_delivered is not None:
+            # The message is delivered: bookkeeping must not turn that into a failure reply.
+            try:
+                await asyncio.to_thread(self._on_delivered, delivery)
+            except Exception:
+                logger.warning("Delivery bookkeeping failed", exc_info=True)
         response: dict[str, object] = {"ok": True, "delivery": delivery.value}
         if self._route.note is not None:
             response["note"] = self._route.note
