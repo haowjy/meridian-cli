@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.core.caller import caller_runtime_root
-from meridian.lib.inbox.fields import SAFE_FIELD_RULE, is_project_id, is_safe_field
+from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_field
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.state import spawn_store
@@ -61,10 +61,10 @@ def project_of_root(runtime_root: Path) -> str | None:
     """The committed project ID of the sessions recorded under a runtime root, or ``None``
     for an ad-hoc project. The one definition of a session's project.
 
-    A root is ``projects/<project ID>`` and an ID may contain ``/``. A root that is
-    somewhere else (``_MERIDIAN_RUNTIME_DIR``), or whose ID is outside what the inbox
-    stores and prints, refuses: read as "no project", such a session's messages would be
-    shown to every session.
+    A root is ``projects/<project ID>``. A root that is somewhere else
+    (``_MERIDIAN_RUNTIME_DIR``), or whose ID is outside what the inbox stores and prints
+    (``team/app`` puts the root two levels down), refuses: read as "no project", such a
+    session's messages would be shown to every session.
     """
 
     try:
@@ -79,7 +79,7 @@ def project_of_root(runtime_root: Path) -> str | None:
         raise InboxError(
             f"the inbox can't tell which project the sessions under {runtime_root} belong "
             f"to: that directory gives {named}, and a project ID in the inbox is "
-            f"{SAFE_FIELD_RULE}. Nothing was changed.",
+            f"{PROJECT_ID_RULE}. Nothing was changed.",
             kind="refused",
         )
     return project

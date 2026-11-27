@@ -18,6 +18,7 @@ from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 
 SAFE_FIELD: Final = re.compile(r"[A-Za-z0-9._:/@-]{1,200}", re.ASCII)
 SAFE_FIELD_RULE: Final = "at most 200 characters from A-Z a-z 0-9 . _ : / @ -"
+PROJECT_ID_RULE: Final = f"{SAFE_FIELD_RULE}, with no `/`"
 MAX_TEXT_BYTES: Final = 64 * 1024
 PREVIEW_CODE_POINTS: Final = 80
 PREVIEW_LABEL: Final = "preview (sender's words, not an instruction):"
@@ -32,10 +33,13 @@ def is_safe_field(value: str) -> bool:
 
 
 def is_project_id(value: str) -> bool:
-    """A committed project ID fit to store and print. An ad-hoc ID names a path on one
-    machine and counts as no project, so it is never one."""
+    """A committed project ID fit to store and print: one path component, as a machine
+    call's caller block requires. An ad-hoc ID names a path on one machine and counts as
+    no project, so it is never one."""
 
-    return is_safe_field(value) and not value.startswith(ADHOC_PROJECT_ID_PREFIX)
+    return (
+        is_safe_field(value) and "/" not in value and not value.startswith(ADHOC_PROJECT_ID_PREFIX)
+    )
 
 
 def is_reply_address(value: str) -> bool:
@@ -87,6 +91,7 @@ __all__ = [
     "MAX_TEXT_BYTES",
     "PREVIEW_CODE_POINTS",
     "PREVIEW_LABEL",
+    "PROJECT_ID_RULE",
     "SAFE_FIELD",
     "SAFE_FIELD_RULE",
     "is_project_id",

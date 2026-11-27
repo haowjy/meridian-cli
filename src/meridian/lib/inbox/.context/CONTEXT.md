@@ -98,12 +98,13 @@ that launched a child.
 This stops a confused child, not one that forges its environment.
 
 `caller.project_of_root` is the one definition of a session's project: the path of the
-runtime root its record was found in, below `projects/` (an ID may contain `/`). The
+runtime root its record was found in, below `projects/`. The
 caller, `offer`'s check on the receiving session and the launch line all use it. An ad-hoc
 project (`adhoc.…`) counts as none. A session sees messages with its own project or with
 none. `meridian.toml` can set any string as a project ID, and `_MERIDIAN_RUNTIME_DIR` can
-put a root anywhere, so a root that gives no ID inside `fields.SAFE_FIELD` refuses the
-command: read as "no project", that session's messages would be shown to every session.
+put a root anywhere, so a root that gives no ID `fields.is_project_id` accepts (the safe
+set, and one path component: no `/`, as a machine call's caller block requires) refuses
+the command: read as "no project", that session's messages would be shown to every session.
 
 A process no session runs has a project only from `--project-id`, never from its working
 directory: a hook row runs in home, and a daemon's directory is not what its messages are

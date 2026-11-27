@@ -15,6 +15,7 @@ from meridian.lib.hooks.machine import launch_inbox_received
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import (
     MAX_TEXT_BYTES,
+    PROJECT_ID_RULE,
     SAFE_FIELD_RULE,
     is_project_id,
     is_reply_address,
@@ -81,7 +82,7 @@ def _project(caller: InboxCaller, flag: str | None) -> str | None:
         return None
     if not is_project_id(flag):
         raise InboxError(
-            f"--project-id takes a committed project ID, {SAFE_FIELD_RULE}", kind="usage"
+            f"--project-id takes a committed project ID, {PROJECT_ID_RULE}", kind="usage"
         )
     return flag
 

@@ -331,7 +331,8 @@ else's message says so with `--via-program NAME`, `--via-ref REF` and `--via-sen
 the same program and ref filed twice is one inbox message, so a retried call is safe.
 `--project-id ID` sets the message's project and is accepted only when no session runs
 the command; without it such a message has no project, whatever directory the command
-ran in. Each of these values is at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`.
+ran in. Each of these values is at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`,
+and a project ID has no `/`: a session whose project ID has one is refused.
 The text is at most 64 KiB.
 
 **Who sees a message.** A session sees messages filed for its own project and messages
