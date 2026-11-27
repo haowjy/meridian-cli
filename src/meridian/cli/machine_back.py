@@ -30,6 +30,7 @@ from meridian.lib.state.machine_identity import MachineIdentity
 from meridian.lib.utils.json_shapes import json_list, json_object
 
 _REACH_SECONDS: Final = 60.0
+_HASHED_MARKER: Final = "meridian-hashed"
 _TARGET_RE: Final = re.compile(r"[A-Za-z0-9._@:/-]+")
 _WORD_RE: Final = re.compile(r"[A-Za-z0-9._-]+")
 _KEY_RE: Final = re.compile(r"[A-Za-z0-9+/=]+")
@@ -46,12 +47,21 @@ try() {
     echo "meridian-reach $1"
   fi
 }
-if [ -r "$HOME/.ssh/known_hosts" ]; then
-  for k in $keys; do
-    awk -v k="$k" '$1 !~ /^[@|]/ && ($2 == k || $3 == k) { print $1 }' "$HOME/.ssh/known_hosts"
-  done | tr ',' '\\n' | sed -e 's/^\\[//' -e 's/\\]:[0-9]*$//' | sort -u | while read -r h; do
-    [ -n "$h" ] && try "$login@$h"
+kh="$HOME/.ssh/known_hosts"
+if [ -r "$kh" ]; then
+  hosts=$(for k in $keys; do
+    awk -v k="$k" '$1 !~ /^[@|]/ && ($2 == k || $3 == k) { print $1 }' "$kh"
+  done | tr ',' '\\n' | sed -e 's/^\\[//' -e 's/\\]:[0-9]*$//' | awk '!seen[$0]++')
+  for h in $hosts; do
+    case $h in *[*?!]*) ;; *[!0-9.:]*) try "$login@$h" ;; esac
   done
+  for h in $hosts; do
+    case $h in *[*?!]*|*[!0-9.:]*) ;; ?*) try "$login@$h" ;; esac
+  done
+  for k in $keys; do
+    awk -v k="$k" '$1 ~ /^[|]/ && ($2 == k || $3 == k) { f = 1 }
+      END { if (f) print "meridian-hashed" }' "$kh"
+  done | sort -u
 fi
 for c in $cands; do try "$c"; done
 """
@@ -111,17 +121,18 @@ def _host_keys() -> list[str]:
     return keys[:4]
 
 
-def answering_from_there(target: str, candidates: list[str]) -> list[str]:
+def answering_from_there(target: str, candidates: list[str]) -> tuple[list[str], bool]:
     """What the other machine can reach without a prompt and with a known host key, in order:
-    names its ``known_hosts`` holds for this machine's own key first (that is what finds a
-    name like ``homebox``), then *candidates*."""
+    names its ``known_hosts`` holds for this machine's own key (that is what finds a name like
+    ``homebox``) in file order, then addresses there, then *candidates*. The flag says its file
+    holds this machine's key only hashed, which no name can be read from."""
 
     try:
         login = getpass.getuser()
     except (KeyError, OSError):
-        return []
+        return [], False
     if not _WORD_RE.fullmatch(login) or not all(valid_target(c) for c in candidates):
-        return []
+        return [], False
     script = (
         _REACH_SCRIPT.replace("@LOGIN@", login)
         .replace("@KEYS@", " ".join(_host_keys()))
@@ -130,25 +141,28 @@ def answering_from_there(target: str, candidates: list[str]) -> list[str]:
     try:
         process = SshProcess(target, ("/bin/sh", "-s"))
     except OSError:
-        return []
+        return [], False
     with suppress(OSError):
         process.write(script.encode("utf-8"))
     process.close_stdin()
     deadline = time.monotonic() + _REACH_SECONDS
     reached: list[str] = []
+    hashed = False
     while True:
         line = process.read_line(deadline)
         if line is None:
             break
         if line is TIMED_OUT:
             process.kill()
-            return reached
+            return reached, hashed
         assert isinstance(line, bytes)
         marker, _, value = line.decode("utf-8", "replace").strip().partition(" ")
-        if marker == "meridian-reach" and valid_target(value) and value not in reached:
+        if marker == _HASHED_MARKER:
+            hashed = True
+        elif marker == "meridian-reach" and valid_target(value) and value not in reached:
             reached.append(value)
     process.finish()
-    return reached
+    return reached, hashed
 
 
 def _far_machines(target: str, path: str, ready_id: str) -> list[dict[str, object]] | None:
@@ -180,29 +194,42 @@ def _saved_there_as(entries: list[dict[str, object]] | None, here: MachineIdenti
     return None
 
 
-def _report(
-    saved_as: str | None,
+def _outcome(
+    before: list[dict[str, object]] | None,
+    after: list[dict[str, object]] | None,
     far: str,
     here: MachineIdentity,
-    entries: list[dict[str, object]] | None,
     back: str,
-) -> None:
-    """The three outcomes: saved there, saved under another name, or not saved."""
+    stopped: int,
+) -> str:
+    """One line for what the far side's list holds after its ``add``: this machine saved, saved
+    under another name, or not saved (with the entry that appeared instead, or that the list
+    could not be read)."""
 
+    run_there = f"meridian machine add {shlex.quote(back)}"
+    if after is None:
+        return (
+            f"Couldn't read `{far}`'s list to see whether it saved this machine. "
+            f"Check there with `meridian machine list`."
+        )
+    saved_as = _saved_there_as(after, here)
     if saved_as == here.name:
-        print(f"`{far}` has this machine saved. Replies will find their way back.")
-    elif saved_as is not None:
-        print(
+        return f"`{far}` has this machine saved. Replies will find their way back."
+    if saved_as is not None:
+        return (
             f"`{far}` has this machine saved as `{saved_as}`, not `{here.name}`; it corrects "
             "that on its next call here."
         )
-    else:
-        names = ", ".join(str(e.get("name")) for e in entries or []) or "none"
-        print(
-            f"`{far}` did not save this machine (it has: {names}). {back} may lead somewhere "
-            f"else from there. Run on {far}: meridian machine add <SSH target that reaches this "
-            "machine from there>"
+    known = {entry.get("id") for entry in before or []}
+    appeared = [str(e.get("name")) for e in after if e.get("id") not in known]
+    cause = f"`machine add` there stopped (exit {stopped}). " if stopped else ""
+    if appeared:
+        return (
+            f"{cause}`{far}` saved `{appeared[0]}` from `{back}`, which is not this machine: "
+            f"`{back}` leads somewhere else from there. Run on {far}: meridian machine add "
+            "<SSH target that reaches this machine from there>"
         )
+    return f"{cause}`{far}` did not save this machine. To finish, run on {far}: {run_there}"
 
 
 def offer_way_back(
@@ -211,9 +238,9 @@ def offer_way_back(
     entries = _far_machines(target, path, far_id)
     saved_as = _saved_there_as(entries, here)
     if saved_as is not None:
-        _report(saved_as, far, here, entries, "")
+        print(_outcome(entries, entries, far, here, "", 0))
         return
-    reached = answering_from_there(target, back_candidates())
+    reached, hashed = answering_from_there(target, back_candidates())
     suggestion = reached[0] if reached else None
     run_there = (
         f"meridian machine add {suggestion or '<SSH target that reaches this machine from there>'}"
@@ -226,6 +253,11 @@ def offer_way_back(
         return
     if suggestion is None:
         print(f"No target I tried reaches this machine from {far}.")
+    if hashed:
+        print(
+            f"{far}'s known_hosts file is hashed, so a host name for this machine can't be read "
+            "from it; type the name you use there."
+        )
     back = ask_text(f"SSH target that reaches this machine from {far}", suggestion)
     if not back or not valid_target(back):
         print(f"No target that can be sent. To do it, run on {far}: {run_there}")
@@ -233,13 +265,8 @@ def offer_way_back(
     status = subprocess.run(
         ["ssh", "-t", "--", target, path, "machine", "add", back], check=False
     ).returncode
-    if status != 0:
-        print(
-            f"`machine add` on {far} stopped (exit {status}). To finish, run on {far}: "
-            f"meridian machine add {shlex.quote(back)}"
-        )
     after = _far_machines(target, path, far_id)
-    _report(_saved_there_as(after, here), far, here, after, back)
+    print(_outcome(entries, after, far, here, back, status))
 
 
 __all__ = ["offer_way_back", "valid_target"]

@@ -39,6 +39,7 @@ from meridian.lib.state.saved_machines import (
     set_machine_name,
     update_saved_machines,
 )
+from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES
 from meridian.lib.utils.json_shapes import json_list, json_object
 
 logger = logging.getLogger(__name__)
@@ -255,12 +256,23 @@ def _exchange(
         "limit": limit,
         "caller": dict(caller) if caller is not None else None,
     }
+    # Whatever can't be sent fails here, before a byte is written: it is not "maybe delivered".
+    try:
+        data = (json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n").encode(
+            "utf-8"
+        )
+    except UnicodeEncodeError as exc:
+        return NotSent("usage", f"the text can't be sent as UTF-8: {exc.reason}")
+    if len(data) > MAX_REQUEST_BYTES:
+        return NotSent(
+            "too_large",
+            f"the request is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit",
+        )
     # One try from the first request byte to a parsed result: whatever goes wrong in it, the
     # command may have run, so a failure nobody listed must not read as "not sent".
     deadline = time.monotonic() + limit + CALLER_GRACE_SECONDS
     try:
-        line = json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n"
-        process.write(line.encode("utf-8"), deadline)
+        process.write(data, deadline)
         while True:
             line = process.read_line(deadline)
             if line is TIMED_OUT:

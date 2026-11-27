@@ -56,6 +56,13 @@ def _path(value: str | None) -> str | None:
     return value if value is not None and value.isprintable() and value.startswith("/") else None
 
 
+def _project_id(value: str | None) -> str | None:
+    """A project ID names a directory under ``projects/``: one printable path component."""
+
+    ok = value is not None and value.isprintable() and "/" not in value and value not in (".", "..")
+    return value if ok and len(value or "") <= 255 else None
+
+
 def parse_machine_caller(raw: object) -> MachineCaller | None:
     """The caller block of a request, ``None`` when it is absent or has no usable machine. A
     session field that has the wrong shape is dropped, not trusted."""
@@ -79,7 +86,7 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
         claimed=fields.get("claimed") is True,
         can_reply=fields.get("can_reply") is True,
         project_root=_path(_text(fields, "project_root")),
-        project_id=_text(fields, "project_id"),
+        project_id=_project_id(_text(fields, "project_id")),
     )
 
 

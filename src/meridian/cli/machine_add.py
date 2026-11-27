@@ -6,7 +6,6 @@ a step that would ask a question, run without a terminal, prints what to run and
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 import time
@@ -34,18 +33,8 @@ from meridian.lib.state.saved_machines import (
 )
 
 _INSTALL_SECONDS: Final = 300.0
-_REACH_SECONDS: Final = 60.0
-_BACK_TARGET_RE: Final = re.compile(r"[A-Za-z0-9._@:/-]+")
 _UV_COMMAND: Final = "tool install --upgrade meridian-cli"
 _UV_INSTALL_DOCS: Final = "docs.astral.sh/uv"
-_REACH_SCRIPT: Final = """set -f
-for cand in "$@"; do
-  if ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o NumberOfPasswordPrompts=0 \\
-      -o ConnectTimeout=5 -o LogLevel=ERROR -- "$cand" true </dev/null >/dev/null 2>&1; then
-    echo "meridian-reach $cand"
-  fi
-done
-"""
 
 
 def _install(target: str, uv: str) -> None:

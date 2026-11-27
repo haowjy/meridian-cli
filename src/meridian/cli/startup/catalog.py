@@ -343,7 +343,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
     _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
-    _write_runtime(
+    _read_runtime(
         ("spawn", "message"),
         "Deprecated: use `meridian message`.",
         startup_error=StartupErrorShape.MESSAGE,
