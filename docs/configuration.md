@@ -67,8 +67,8 @@ when `meridian.toml` is committed. A `mars.toml`-only project is committed but
 unminted; its next Meridian write adds the ID to `meridian.toml`.
 
 An ID you set by hand is one or more components joined by `/` (`team/proj`), each
-printable and none of them empty, `.` or `..`, at most 255 characters in all, and not
-starting with `adhoc.`. Every command in a project whose ID is outside that form fails
+printable, none of them empty or starting with `.`, at most 255 characters in all, and
+not starting with `adhoc.`. Every command in a project whose ID is outside that form fails
 with an error naming `meridian.toml` and the value.
 
 A directory with neither marker uses **ad-hoc identity**, derived from its

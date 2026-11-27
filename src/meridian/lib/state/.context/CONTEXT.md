@@ -112,7 +112,8 @@ seam atomically writes init scaffolds with their committed identity. A root
 containing `meridian.toml` or `mars.toml` uses committed identity, whose ID may
 be absent until a write. A committed ID outside `core/refs.is_project_id_form` is
 refused when read, because `runtime_root_project_id` reads the ID back from the root's
-path and `a//b` would come back as `a/b`. A marker-less root gets a stable `adhoc.<slug>.<hash>` ID
+path and `a//b` would come back as `a/b`, and because Meridian's own entries under
+`projects/` are dot-names (`.locks`), which no ID component may start with. A marker-less root gets a stable `adhoc.<slug>.<hash>` ID
 derived from its canonical path. Ad-hoc
 state is materialized only on writes, under `~/.meridian/projects/<id>/`, and
 nothing is written into the source directory. Projects with a committed ID can move without

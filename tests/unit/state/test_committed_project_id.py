@@ -22,7 +22,20 @@ def test_id_in_the_form_is_accepted(tmp_path: Path, project_id: str) -> None:
 
 @pytest.mark.parametrize(
     "project_id",
-    ["a//b", "team/", "/team", "/", ".", "..", "../escape", "team/./proj", "a\x1bb", "a" * 256],
+    [
+        "a//b",
+        "team/",
+        "/team",
+        "/",
+        ".",
+        "..",
+        "../escape",
+        "team/./proj",
+        ".locks",
+        "team/.locks",
+        "a\x1bb",
+        "a" * 256,
+    ],
 )
 def test_id_outside_the_form_is_refused(tmp_path: Path, project_id: str) -> None:
     root = _project(tmp_path, project_id)
