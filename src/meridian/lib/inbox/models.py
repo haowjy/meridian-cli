@@ -57,7 +57,8 @@ class Party(_Doc):
 
     def label(self) -> str:
         if self.kind == "terminal":
-            return "terminal"
+            # An inbox holds messages from other machines too: say whose terminal.
+            return f"terminal on {self.machine}" if self.machine else "terminal"
         where = f"{self.machine}/{self.id}" if self.machine else str(self.id)
         return f"{where} ({shown(self.agent)})" if self.agent else where
 

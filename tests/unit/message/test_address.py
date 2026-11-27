@@ -20,6 +20,8 @@ from meridian.lib.state.saved_machines import SavedMachine
         ("@alice", PersonAddress("@alice")),
         ("@T123/1731600123.000200", PersonAddress("@T123/1731600123.000200")),
         ("inbox", InboxAddress()),
+        # Which machine it names is `other_machine`'s answer, passed in as `machine`.
+        ("some-machine/inbox", InboxAddress()),
     ],
 )
 def test_address_that_names_a_receiver(
@@ -39,7 +41,6 @@ def test_address_that_names_a_receiver(
         ("@a b", "usage"),
         ("@a\x00b", "usage"),
         ("@" + "x" * 256, "usage"),
-        ("some-machine/inbox", "usage"),
         # Never guessed to be a person: a mistyped session ID must not end up in Slack.
         ("p12x", "usage"),
         ("native-session-uuid", "usage"),

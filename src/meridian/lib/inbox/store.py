@@ -29,6 +29,7 @@ from meridian.lib.platform.atomic import (
 )
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.json_doc import mutate_model, write_model, write_model_once
+from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.user_paths import get_user_home
 
 FORMAT_VERSION: Final = "1"
@@ -67,7 +68,10 @@ class NoSuchMessage(InboxError):
     kind = "not_found"
 
     def __init__(self, message_id: str) -> None:
-        super().__init__(f"no message {message_id} in this machine's inbox")
+        # Named, because the command may have been sent here from another machine.
+        here = machine_identity_or_none()
+        where = f"the inbox of {here.name}" if here is not None else "this machine's inbox"
+        super().__init__(f"no message {message_id} in {where}")
 
 
 class MessageTaken(InboxError):
@@ -101,7 +105,11 @@ def message_path(message_id: str) -> Path:
 
 def message_number(message_id: str) -> int:
     if MESSAGE_ID.fullmatch(message_id) is None:
-        raise InboxError(f"`{message_id}` is not a message ID: one looks like m412", kind="usage")
+        raise InboxError(
+            f"`{message_id}` is not a message ID: one looks like m412"
+            + ("; another machine's inbox is named with `--machine <name>`" * ("/" in message_id)),
+            kind="usage",
+        )
     return int(message_id[1:])
 
 

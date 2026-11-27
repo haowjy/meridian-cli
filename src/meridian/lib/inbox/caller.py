@@ -3,6 +3,8 @@ visibility all come from.
 
 The check shows that the session ID in the caller's environment has a record, not that
 the caller is that session: it stops a confused child, not one that forges its identity.
+A command another machine sent has no record here: its caller is what the request says,
+and the machine that sent it has checked the role.
 """
 
 from __future__ import annotations
@@ -14,6 +16,9 @@ from meridian.lib.core.caller import caller_runtime_root
 from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_field
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
+from meridian.lib.machines.caller import MachineCaller, is_machine_call, machine_call_caller
+from meridian.lib.message.address import local_machine_name
+from meridian.lib.message.reply import saved_machine_by_id
 from meridian.lib.state import spawn_store
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
@@ -35,6 +40,9 @@ class InboxCaller:
     project: str | None = None
     """The session's committed project ID (``project_of_root``). An ad-hoc project is none."""
     agent: str | None = None
+    machine: str | None = None
+    """The other machine the caller is on, by the name this machine knows it by; ``None``
+    for a caller on this machine."""
 
     @property
     def is_terminal(self) -> bool:
@@ -42,16 +50,18 @@ class InboxCaller:
 
     @property
     def may_change(self) -> bool:
-        """``take``, ``release``, ``offer`` and ``--all``: a primary or a terminal."""
+        """``take``, ``release``, ``offer`` and ``--all``: a primary or a terminal. A request
+        from another machine carries no role: that machine refused a child before it called."""
 
-        return self.is_terminal or self.kind == "primary"
+        return self.is_terminal or self.kind == "primary" or self.machine is not None
 
     def may_see(self, project: str | None, *, all_projects: bool = False) -> bool:
         """Whether a message filed under ``project`` is this caller's to list, read or take."""
 
         return self.is_terminal or project is None or project == self.project or all_projects
 
-    def party(self, machine: str | None) -> Party:
+    def party(self, this_machine: str | None) -> Party:
+        machine = self.machine or this_machine
         if self.is_terminal:
             return Party(kind="terminal", machine=machine)
         return Party(kind="session", machine=machine, id=self.chat_id)
@@ -85,12 +95,52 @@ def project_of_root(runtime_root: Path) -> str | None:
     return project
 
 
+def _from_machine(caller: MachineCaller | None) -> InboxCaller:
+    """The caller of a command another machine sent: the session in the request's caller
+    block, or with none a terminal of that machine."""
+
+    if caller is None:
+        raise InboxError(
+            "the request from another machine names no usable caller. Nothing was changed.",
+            kind="refused",
+        )
+    saved = saved_machine_by_id(caller.machine_id)
+    machine = saved.name if saved is not None else caller.machine
+    if machine == local_machine_name():
+        # Its sessions would be recorded as this machine's, and one could take as another.
+        raise InboxError(
+            f"the calling machine is also named `{machine}` and is not saved here: save it "
+            "with `meridian machine add`, or rename one of the two. Nothing was changed.",
+            kind="refused",
+        )
+    if caller.spawn_id is None:
+        return InboxCaller(machine=machine)
+    project = caller.project_id
+    if project is not None and project.startswith(ADHOC_PROJECT_ID_PREFIX):
+        project = None
+    if project is not None and not is_project_id(project):
+        raise InboxError(
+            f"the calling session's project ID {project!r} can't be used in the inbox: one "
+            f"is {PROJECT_ID_RULE}. Nothing was changed.",
+            kind="refused",
+        )
+    return InboxCaller(
+        spawn_id=caller.spawn_id,
+        chat_id=caller.reply_id or caller.spawn_id,
+        project=project,
+        machine=machine,
+    )
+
+
 def resolve_caller(spawn_id: str | None, project_root: Path | None) -> InboxCaller:
     """The caller named by the invocation's ``Caller`` (``get_global_options().caller``),
     which survives ``-C``: *project_root* is the caller's project when ``-C`` named
-    another. An ID with no record refuses; it never falls back to a terminal.
+    another. An ID with no record refuses; it never falls back to a terminal. In a command
+    another machine sent, the caller is the one its request names.
     """
 
+    if is_machine_call():
+        return _from_machine(machine_call_caller())
     if spawn_id is None:
         return InboxCaller()
     own = (

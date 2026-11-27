@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Sequence
-from typing import Never
+from collections.abc import Callable, Mapping, Sequence
+from typing import Final, Never
 
 from meridian.cli.invocation import GlobalOptions, get_global_options
 from meridian.lib.core.refs import parse_ref
@@ -19,8 +19,12 @@ from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
+from meridian.lib.message.result import ERROR_KINDS
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_object
+
+# ``taken`` is `meridian inbox`'s one kind beyond the message list.
+_KINDS: Final = ERROR_KINDS | {"taken"}
 
 
 def base_caller() -> dict[str, object]:
@@ -59,7 +63,8 @@ def other_machine(
     """The one other machine this command names, or ``None`` when it all runs here.
 
     The one place that turns a reference into another machine, for every crossing command and
-    for ``message``. Raises ``MachineError`` for: an unknown machine, two machines in one
+    for ``message`` (whose ``<machine>/inbox`` is one more reference that names a machine).
+    Raises ``MachineError`` for: an unknown machine, two machines in one
     command, a machine beside a bare ID, ``-C`` applied here beside ``<name>/<id>``, and any
     other machine named by a command that another machine asked for (no third machine).
     """
@@ -72,10 +77,9 @@ def other_machine(
             parsed = parse_ref(raw)
         except ValueError as exc:
             raise MachineError("usage", str(exc)) from exc
-        if parsed.kind != "machine":
+        if parsed.machine is None:
             bare = True
             continue
-        assert parsed.machine is not None
         resolved = resolve_machine(parsed.machine)
         if isinstance(resolved, SavedMachine):
             remote[resolved.id] = resolved
@@ -100,7 +104,18 @@ def other_machine(
     return target
 
 
-def forward_if_remote(refs: Sequence[str] = ()) -> None:
+def forward_if_remote(
+    refs: Sequence[str] = (),
+    *,
+    caller: Callable[[], Mapping[str, object]] = base_caller,
+    limit: int = READ_LIMIT_SECONDS,
+    may_have: str | None = None,
+) -> None:
+    """*caller* builds the request's caller block, asked only when the command crosses.
+    *may_have* is set by a command that changes state there, and says what a call that was
+    sent and got no whole answer may have done (``m412 may have been taken``): such a call
+    fails with kind ``maybe_delivered``, where a read's is ``unreachable``."""
+
     options = get_global_options()
     try:
         target = other_machine(
@@ -108,50 +123,68 @@ def forward_if_remote(refs: Sequence[str] = ()) -> None:
         )
         if target is None:
             return
-        base = base_caller()
+        block = caller()
     except MachineError as exc:
         fail(None, exc.kind, exc.text)
     result = call_machine(
         target.ssh,
         request_argv(options),
         None,
-        READ_LIMIT_SECONDS,
+        limit,
         target.id,
-        caller=base,
+        caller=block,
         label=target.name,
     )
+
+    def unanswered(why: str) -> Never:
+        if may_have is None:
+            # A read is safe to run again.
+            fail(target.name, "unreachable", why)
+        fail(target.name, "maybe_delivered", f"{why}; {may_have}. Run it again: a repeat is safe.")
+
     match result:
         case NotSent(kind, text):
             fail(target.name, kind, text)
         case Unanswered(text):
-            # A read is safe to run again.
-            fail(target.name, "unreachable", f"{target.name} did not answer: {text}")
+            unanswered(f"{target.name} did not answer: {text}")
         case Answered():
-            _finish(target, result)
+            if result.truncated and may_have is None:
+                fail(
+                    target.name,
+                    "too_large",
+                    "the answer is over the size limit: narrow the read (`--tail`, `--limit`)",
+                )
+            if result.truncated:
+                unanswered(f"the answer from {target.name} is over the size limit")
+            if result.timed_out:
+                unanswered(f"timed out after {limit} s on {target.name}")
+            if result.exit != 0 and options.output.format == "json":
+                # A newer build's kind says nothing about whether the command acted.
+                kind, text = _error(result, "failed" if may_have is None else "maybe_delivered")
+                fail(target.name, kind, text)
+            sys.stdout.write(result.stdout)
+            sys.stdout.flush()
+            sys.stderr.write(result.stderr)
+            raise SystemExit(result.exit)
 
 
-def _finish(target: SavedMachine, answer: Answered) -> Never:
-    if answer.truncated:
-        fail(
-            target.name,
-            "too_large",
-            "the answer is over the size limit: narrow the read (`--tail`, `--limit`)",
-        )
-    if answer.timed_out:
-        fail(
-            target.name,
-            "unreachable",
-            f"timed out after {READ_LIMIT_SECONDS} s on {target.name}",
-        )
-    if answer.exit != 0 and get_global_options().output.format == "json":
-        fail(target.name, "failed", _error_text(answer))
-    sys.stdout.write(answer.stdout)
-    sys.stdout.flush()
-    sys.stderr.write(answer.stderr)
-    raise SystemExit(answer.exit)
+def _error(answer: Answered, unknown: str) -> tuple[str, str]:
+    """The other side's error as a kind and a text: the ``error`` object a command with
+    ``meridian message``'s JSON shape printed, else its legacy text. *unknown* is the kind
+    of an error that names none this build knows."""
+
+    lines = answer.stdout.strip().splitlines()
+    try:
+        error = json_object((json_object(json.loads(lines[-1])) or {}).get("error"))
+    except (ValueError, IndexError):
+        error = None
+    if error is not None and isinstance(error.get("text"), str):
+        kind = error.get("kind")
+        return (kind if isinstance(kind, str) and kind in _KINDS else unknown), str(error["text"])
+    return unknown, error_text(answer)
 
 
-def _error_text(answer: Answered) -> str:
+def error_text(answer: Answered) -> str:
     """The other side's error: the ``error`` of its legacy JSON object, else its stderr."""
 
     for line in reversed(answer.stderr.strip().splitlines()):
@@ -165,4 +198,11 @@ def _error_text(answer: Answered) -> str:
     return answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 
 
-__all__ = ["base_caller", "fail", "forward_if_remote", "other_machine", "request_argv"]
+__all__ = [
+    "base_caller",
+    "error_text",
+    "fail",
+    "forward_if_remote",
+    "other_machine",
+    "request_argv",
+]
