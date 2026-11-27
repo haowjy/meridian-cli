@@ -103,8 +103,8 @@ def _refuse(text: str) -> Never:
 def _require_changer(caller: InboxCaller, what: str) -> None:
     if not caller.may_change:
         _refuse(
-            f"{what} is for a primary session or a terminal; this is session "
-            f"{caller.spawn_id}, a {caller.kind}. It may run `meridian inbox list` and `read`."
+            f"{what} is for a primary session or a terminal; this is {caller.kind} session "
+            f"{caller.spawn_id}. It may run `meridian inbox list` and `read`."
         )
 
 
