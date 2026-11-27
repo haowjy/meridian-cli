@@ -26,7 +26,7 @@ from meridian.lib.machines.call import READY_MARKER, REQUEST_VERSION, RESULT_MAR
 from meridian.lib.machines.caller import MACHINE_CALL_ENV, parse_machine_caller
 from meridian.lib.machines.discover import CHECK_WORD
 from meridian.lib.machines.ssh import CappedReader
-from meridian.lib.platform.python_module import module_argv
+from meridian.lib.platform.python_module import module_argv, scripts_dir
 from meridian.lib.state.machine_identity import read_or_create_machine_identity
 from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES
 from meridian.lib.utils.json_shapes import json_list, json_object
@@ -73,6 +73,9 @@ def _child_env(caller: object) -> dict[str, str]:
     env = {
         key: value for key, value in os.environ.items() if key in _KEPT_ENV or key.startswith("LC_")
     }
+    # An SSH command's PATH is the system's, without the directory Meridian is installed in,
+    # and what the command starts (an `inbox.received` hook row) runs `meridian` by name.
+    env["PATH"] = os.pathsep.join(filter(None, [str(scripts_dir()), env.get("PATH")]))
     env[MACHINE_CALL_ENV] = json.dumps(caller if isinstance(caller, dict) else {})
     return env
 

@@ -78,7 +78,9 @@ every other event's in four ways:
   Meridian injects into a session (`MERIDIAN_SPAWN_ID`, `MERIDIAN_CHAT_ID`,
   `MERIDIAN_PROJECT_DIR` and the rest). `MERIDIAN_HOME`, `MERIDIAN_CONFIG` and
   other config inputs stay. `PATH` is the filing command's, so a program the row
-  runs must be on it.
+  runs must be on it. For a message filed from another machine that is the `PATH` of
+  an SSH command, which leaves out what your shell profile adds; Meridian puts its own
+  directory first, so `meridian` is always found.
 - **No `interval`.** A row with one is invalid: the event has no project state to
   record the last run in.
 
