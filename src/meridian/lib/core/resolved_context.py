@@ -105,10 +105,7 @@ class ResolvedContext:
 
         import os
 
-        from meridian.lib.state.runtime_root import (
-            derive_runtime_root_from_project,
-            runtime_override_root,
-        )
+        from meridian.lib.state.runtime_root import environment_runtime_root
 
         env = os.environ if environ is None else environ
         backend_impl = backend or LocalFilesystemBackend()
@@ -140,12 +137,8 @@ class ResolvedContext:
         )
         if explicit_runtime_root is not None:
             runtime_root = explicit_runtime_root
-        elif (override_root := runtime_override_root(project_root, env)) is not None:
-            runtime_root = override_root
-        elif project_root is not None:
-            runtime_root = derive_runtime_root_from_project(project_root)
         else:
-            runtime_root = None
+            runtime_root = environment_runtime_root(project_root, env)
 
         # MERIDIAN_CHAT_ID and MERIDIAN_ACTIVE_WORK_ID are a launch snapshot naming the
         # conversation that launched this run (a primary's own chat; a spawn's

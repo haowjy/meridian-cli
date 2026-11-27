@@ -43,7 +43,7 @@ from meridian.lib.state.history_index import (
     HistoryIndexIncomplete,
     indexed_spawn_scan,
 )
-from meridian.lib.state.machine_ids import claim_root
+from meridian.lib.state.machine_ids import claim_root, lowest_claim
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
@@ -164,18 +164,24 @@ def locate(
         if parsed.kind == "native":
             return Untracked(parsed.value)
         raise RefNotFound(parsed.value, parsed.kind, legacy=_is_legacy(parsed, claimed))
-    located = _locate_in(parsed, own, harness=harness, legacy=_is_legacy(parsed, claimed))
+    located = _locate_in(parsed, own, harness=harness, claimed=claimed)
     if isinstance(located, Untracked):
         return located
     return replace(located, project_root=project_root)
 
 
 def _is_legacy(ref: Ref, claimed: Path | None) -> bool:
-    return ref.kind in ("spawn", "chat") and claimed is None
+    """An ID with no claim was issued before claims only when its number is below the
+    lowest claim of its kind; above it, it was never issued."""
+
+    if ref.kind not in ("spawn", "chat") or claimed is not None:
+        return False
+    lowest = lowest_claim("p" if ref.kind == "spawn" else "c")
+    return lowest is None or int(ref.value[1:]) < lowest
 
 
 def _locate_in(
-    parsed: Ref, root: Path, *, harness: str | None, legacy: bool
+    parsed: Ref, root: Path, *, harness: str | None, claimed: Path | None
 ) -> Located | Untracked:
     match parsed.kind:
         case "selector":
@@ -187,7 +193,7 @@ def _locate_in(
         case "spawn" | "chat":
             found = _read_id(parsed, root)
             if found is None:
-                raise RefNotFound(parsed.value, parsed.kind, legacy=legacy)
+                raise RefNotFound(parsed.value, parsed.kind, legacy=_is_legacy(parsed, claimed))
             return _hit(parsed, root, found)
         case "native":
             generations = session_store.native_generations(root, parsed.value, harness=harness)

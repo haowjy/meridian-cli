@@ -3,7 +3,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.caller import same_runtime_root
+from meridian.lib.core.caller import CallerIdentity
 from meridian.lib.core.depth import is_nested_meridian_depth
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
@@ -27,9 +27,9 @@ class RuntimeContext(BaseModel):
         its own root. Anything keyed by "the caller" in another root has no caller.
         """
 
-        if self.runtime_root is None or runtime_root is None:
+        if self.spawn_id is None or self.runtime_root is None:
             return None
-        return self.spawn_id if same_runtime_root(self.runtime_root, runtime_root) else None
+        return CallerIdentity(self.runtime_root, self.spawn_id).in_root(runtime_root)
 
     @property
     def is_nested(self) -> bool:

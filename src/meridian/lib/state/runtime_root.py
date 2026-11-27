@@ -58,4 +58,22 @@ def runtime_override_root(
     return project_root / candidate if project_root is not None else None
 
 
-__all__ = ["derive_runtime_root_from_project", "root_has_runtime_state", "runtime_override_root"]
+def environment_runtime_root(
+    project_root: Path | None, environ: Mapping[str, str] | None = None
+) -> Path | None:
+    """The runtime root an environment names: the ``_MERIDIAN_RUNTIME_DIR`` override, else the
+    root derived from its project. The one rule for ``ResolvedContext`` and the caller's
+    identity."""
+
+    override = runtime_override_root(project_root, environ)
+    if override is not None:
+        return override
+    return derive_runtime_root_from_project(project_root) if project_root is not None else None
+
+
+__all__ = [
+    "derive_runtime_root_from_project",
+    "environment_runtime_root",
+    "root_has_runtime_state",
+    "runtime_override_root",
+]

@@ -126,6 +126,25 @@ def _highest(root: Path, kind: IdKind) -> int | None:
     return None
 
 
+def lowest_claim(kind: IdKind) -> int | None:
+    """The lowest number of ``kind`` that has a claim, ``None`` when there is none.
+
+    Every ID of ``kind`` below it was issued before claims; one above it with no claim
+    was never issued.
+    """
+
+    kind_dir = ids_dir() / kind
+    try:
+        buckets = sorted(int(n) for n in os.listdir(kind_dir) if n.isdecimal())
+    except (FileNotFoundError, PermissionError):
+        return None
+    for bucket in buckets:
+        numbers = numbered_names(kind_dir / str(bucket), kind)
+        if numbers:
+            return numbers[-1]
+    return None
+
+
 def _create_claim(root: Path, kind: IdKind, number: int, runtime_root: Path) -> None:
     link = _claim_path(root, kind, number)
     bucket = link.parent
@@ -179,4 +198,11 @@ def _used_in_root(kind: IdKind, root: Path) -> int:
     return max(max(numbered_names(directory, kind), default=0), _counter_in_root(kind, root))
 
 
-__all__ = ["MachineIdError", "allocate", "claim_root", "ids_dir", "numbered_names"]
+__all__ = [
+    "MachineIdError",
+    "allocate",
+    "claim_root",
+    "ids_dir",
+    "lowest_claim",
+    "numbered_names",
+]

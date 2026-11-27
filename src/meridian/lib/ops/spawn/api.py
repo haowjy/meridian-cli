@@ -2036,7 +2036,7 @@ def spawn_wait_sync(
     if prepared is not None:
         project_root = _project_root_from_prepared(prepared)
         config = _config_from_prepared(prepared)
-        runtime_root = _runtime_root_from_prepared_for_read(prepared, project_root=project_root)
+        runtime_root = prepared.runtime_root or resolve_runtime_root_for_read(project_root)
     else:
         project_root, config = resolve_runtime_root_and_config_for_read(payload.project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)

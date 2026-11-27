@@ -5,8 +5,12 @@ command that acts on a session in another root must not record the caller's ID t
 a legacy ``p41`` in project A is a different session from ``p41`` in project B. Code that
 keys state by "the caller" asks ``caller_in(root)`` and gets nothing for any other root.
 
-This module is the only reader of ``MERIDIAN_SPAWN_ID`` from the process environment
-(``meridian.dev.lints`` enforces it).
+Reading ``MERIDIAN_SPAWN_ID`` from ``os.environ`` outside this module is a lint error
+(``meridian.dev.lints``), but only the literal forms: ``os.environ.get("MERIDIAN_SPAWN_ID")``,
+``os.environ[...]`` and ``os.getenv(...)``. ``ResolvedContext`` and the notify and depth code
+read it from an ``env`` mapping they were handed, always together with a root from the same
+environment, and none writes into another root. ``RuntimeContext.caller_in`` is this module's
+``CallerIdentity.in_root`` over the context's own (ID, root).
 """
 
 import os
@@ -42,30 +46,14 @@ def caller_spawn_id(environ: Mapping[str, str] | None = None) -> SpawnId | None:
 
 
 def caller_runtime_root(environ: Mapping[str, str] | None = None) -> Path | None:
-    """The runtime root of the project the calling environment names, if it names one.
+    """The runtime root of the project the calling environment names, if it names one:
+    ``ResolvedContext``'s rule, through the same function."""
 
-    The ``_MERIDIAN_RUNTIME_DIR`` override, else the root of ``MERIDIAN_PROJECT_DIR``'s
-    project: the rule ``ResolvedContext`` uses. For this process's own environment a
-    session with no ``MERIDIAN_PROJECT_DIR`` is in the project it runs from.
-    """
-
-    from meridian.lib.config.project_root import resolve_project_root_resolution
-    from meridian.lib.state.runtime_root import (
-        derive_runtime_root_from_project,
-        runtime_override_root,
-    )
+    from meridian.lib.state.runtime_root import environment_runtime_root
 
     env = os.environ if environ is None else environ
     project = env.get("MERIDIAN_PROJECT_DIR", "").strip()
-    if project:
-        project_root = Path(project)
-    elif environ is None:
-        project_root = resolve_project_root_resolution().project_root
-    else:
-        return None
-    return runtime_override_root(project_root, env) or derive_runtime_root_from_project(
-        project_root
-    )
+    return environment_runtime_root(Path(project) if project else None, env)
 
 
 def caller_identity(environ: Mapping[str, str] | None = None) -> CallerIdentity | None:
