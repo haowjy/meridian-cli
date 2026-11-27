@@ -72,7 +72,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
-from meridian.lib.state.spawn_store import SpawnScan, read_spawn_counter
+from meridian.lib.state.spawn_store import SpawnScan
 
 logger = logging.getLogger(__name__)
 
@@ -215,11 +215,11 @@ CURSORS = Table(
     Column("unsupported", Text),
 )
 
-# The ``spawns`` cursor records how far into the shared spawn-ID counter this index has looked,
-# so IDs an older build reserved after the build are found.
-# Reserved-but-unpublished IDs (primaries, restores) retried on later catch-ups; the newest
-# survive, so an ID whose start failed for good cannot grow the set without bound.
-MAX_UNPUBLISHED_SPAWN_IDS = 128
+# Cursor row holding the modification time (ns) of ``spawns/`` at the last complete discovery.
+SPAWNS_DIR_CURSOR = "spawns-dir"
+# A directory time this close to when it was read may share a timestamp tick with a later
+# change (FAT-style 2 s); it is never remembered, so the next catch-up lists again.
+_TIMESTAMP_RESOLUTION_NS = 2_000_000_000
 
 
 def _metadata_match(
@@ -928,43 +928,62 @@ class HistoryIndex:
         return active
 
     def _discover_new_spawns(self, db: Connection, marked: set[str]) -> list[str]:
-        # Older builds reserve from this counter without marking this schema's queue.
-        row = db.exec_driver_sql("SELECT extent, tail FROM cursors WHERE source = 'spawns'").first()
-        counter = read_spawn_counter(self.root)
-        if row is None or (counter == row[0] and not row[1]):
+        # Spawns written by builds on another schema never mark this queue. Publishing a
+        # spawn directory renames it into ``spawns/``, which changes that directory's time.
+        spawns_dir = self.root / "spawns"
+        stamp = self._spawns_dir_stamp()  # Before listing: a later publish re-lists.
+        remembered = db.exec_driver_sql(
+            "SELECT extent FROM cursors WHERE source = ?", (SPAWNS_DIR_CURSOR,)
+        ).first()
+        if stamp is not None and remembered is not None and remembered[0] == stamp:
             return []
-        seen = row[0] or 0
-        stored: list[int] = json.loads(row[1] or "[]")
-        candidates = {*stored, *range(seen + 1, counter + 1)}
+        try:
+            names = os.listdir(spawns_dir)
+        except FileNotFoundError:
+            return []
+        held = {
+            source_id.removeprefix("spawn:")
+            for (source_id,) in db.exec_driver_sql(
+                "SELECT source_id FROM locations WHERE source_id LIKE 'spawn:%'"
+            )
+        }
         active: list[str] = []
-        unpublished: list[int] = []
-        for number in sorted(candidates):
-            key = f"p{number}"
-            if not (self.root / "spawns" / key / "state.json").is_file():
-                unpublished.append(number)
+        skipped = False
+        for key in sorted(names):
+            if not is_spawn_id(key) or key in held:
                 continue
-            if HistorySource(kind="spawn", key=key).name in marked:
-                continue  # The marker drain projects it.
+            if not (spawns_dir / key / "state.json").is_file():
+                continue
+            source = HistorySource(kind="spawn", key=key)
+            if source.name in marked:  # The marker drain projects it.
+                continue
             try:
-                with lock_file(
-                    HistorySource(kind="spawn", key=key).lock_path(self.root), timeout=0
-                ):
+                with lock_file(source.lock_path(self.root), timeout=0):
                     if self._spawn(db, key):
                         active.append(key)
             except FileLockTimeout:
-                unpublished.append(number)
-        if counter > seen or unpublished[-MAX_UNPUBLISHED_SPAWN_IDS:] != stored:
-            self._write_spawn_cursor(db, max(counter, seen), unpublished)
+                skipped = True
+        if stamp is not None and not skipped:
+            self._write_spawns_dir_cursor(db, stamp)
         db.commit()
         return active
 
+    def _spawns_dir_stamp(self) -> int | None:
+        """The directory's time in ns, or None when it is missing or too recent to remember."""
+        try:
+            changed_at = (self.root / "spawns").stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
+        if time.time_ns() - changed_at < _TIMESTAMP_RESOLUTION_NS:
+            return None
+        return changed_at
+
     @staticmethod
-    def _write_spawn_cursor(db: Connection, counter: int, unpublished: list[int]) -> None:
-        retry = json.dumps(unpublished[-MAX_UNPUBLISHED_SPAWN_IDS:]) if unpublished else None
+    def _write_spawns_dir_cursor(db: Connection, changed_at: int) -> None:
         db.exec_driver_sql(
             "INSERT OR REPLACE INTO cursors (source, inode, extent, tail, unsupported) "
-            "VALUES ('spawns', NULL, ?, ?, NULL)",
-            (counter, retry),
+            "VALUES (?, NULL, ?, NULL, NULL)",
+            (SPAWNS_DIR_CURSOR, changed_at),
         )
 
     def _rebuild_locked(
@@ -992,19 +1011,15 @@ class HistoryIndex:
                 db.execute(
                     insert(META).values(version=SCHEMA_VERSION, generation=generation, build=build)
                 )
-                counter = read_spawn_counter(self.root)  # Before the scan: later IDs are rechecked.
+                stamp = self._spawns_dir_stamp()  # Before the scan: later publishes re-list.
                 scanned = scan_spawn_ids(self.root / "spawns")
                 for key in scanned:
                     with _source_lock(
                         HistorySource(kind="spawn", key=key).lock_path(self.root), deadline
                     ):
                         self._spawn(db, key)
-                numbers = {int(key[1:]) for key in scanned if is_spawn_id(key)}
-                self._write_spawn_cursor(
-                    db,
-                    counter,
-                    list(range(max(numbers, default=0) + 1, counter + 1)),
-                )
+                if stamp is not None:
+                    self._write_spawns_dir_cursor(db, stamp)
                 for kind in ("sessions", "catalog"):
                     source = HistorySource(kind=kind)
                     with _source_lock(source.lock_path(self.root), deadline):
