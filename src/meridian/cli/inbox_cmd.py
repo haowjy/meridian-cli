@@ -119,6 +119,9 @@ def _require_changer(caller: InboxCaller, what: str) -> None:
         )
 
 
+_REPEAT_IS_SAFE: Final = "Run it again: a repeat is safe."
+
+
 def _cross(
     caller: InboxCaller, *, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS
 ) -> None:
@@ -323,7 +326,7 @@ def cmd_inbox_take(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox take`")
-        _cross(caller, may_have=f"{message_id} may have been taken")
+        _cross(caller, may_have=f"{message_id} may have been taken. {_REPEAT_IS_SAFE}")
         via = via_from_flags(via_program, None, via_sender)
         _require_visible(caller, entry(message_id), all_projects=all_projects)
         _print_message(
@@ -337,7 +340,14 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox release`")
-        _cross(caller, may_have=f"{message_id} may have been released")
+        # A session releases only its own claim; a terminal releases anyone's.
+        repeat = (
+            "Read the message before you run this again: from a terminal, a repeat also "
+            "releases a claim another session has made since."
+            if caller.is_terminal
+            else _REPEAT_IS_SAFE
+        )
+        _cross(caller, may_have=f"{message_id} may have been released. {repeat}")
         released = release(message_id, caller.party(machine_identity_or_none()))
         _print(
             {"id": message_id},
@@ -433,7 +443,11 @@ def cmd_inbox_offer(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
-        _cross(caller, may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
+        _cross(
+            caller,
+            may_have=f"{message_id} may have been offered. {_REPEAT_IS_SAFE}",
+            limit=MESSAGE_LIMIT_SECONDS,
+        )
         offered = offer(message_id, session, find=find, send=send, now=_now_to_the_second())
         receiver = offered.delivered.receiver
         to: dict[str, object] = {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id}

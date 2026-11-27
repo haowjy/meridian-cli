@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 from contextlib import suppress
+from pathlib import Path
 from typing import Final
 
 from meridian import __version__
@@ -26,8 +27,9 @@ from meridian.lib.machines.call import READY_MARKER, REQUEST_VERSION, RESULT_MAR
 from meridian.lib.machines.caller import MACHINE_CALL_ENV, parse_machine_caller
 from meridian.lib.machines.discover import CHECK_WORD
 from meridian.lib.machines.ssh import CappedReader
-from meridian.lib.platform.python_module import module_argv, scripts_dir
+from meridian.lib.platform.python_module import installed_executable, module_argv, scripts_dir
 from meridian.lib.state.machine_identity import read_or_create_machine_identity
+from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.streaming.control_socket import MAX_REQUEST_BYTES
 from meridian.lib.utils.json_shapes import json_list, json_object
 
@@ -69,24 +71,62 @@ def _refusal(argv: list[str]) -> str | None:
     return None
 
 
-def _child_env(caller: object) -> dict[str, str]:
+def _meridian_only_dir() -> Path:
+    """A directory holding one entry, ``meridian``, a link to this build's script. Raises
+    ``OSError`` when it can't be made."""
+
+    script = installed_executable("meridian")
+    if script is None:
+        raise FileNotFoundError(f"no `meridian` script in {scripts_dir()}")
+    link = get_user_home() / "machine" / "bin" / "meridian"
+    with suppress(OSError):
+        if os.readlink(link) == script:
+            return link.parent
+    link.parent.mkdir(parents=True, exist_ok=True)
+    staged = link.with_name(f".meridian.{os.getpid()}.tmp")
+    with suppress(FileNotFoundError):
+        staged.unlink()
+    os.symlink(script, staged)
+    try:
+        os.replace(staged, link)
+    except OSError:
+        with suppress(OSError):
+            staged.unlink()
+        raise
+    return link.parent
+
+
+def _child_env(caller: object) -> tuple[dict[str, str], str]:
+    """The child's environment, and a warning for the caller when ``PATH`` had to fall back."""
+
     env = {
         key: value for key, value in os.environ.items() if key in _KEPT_ENV or key.startswith("LC_")
     }
     # An SSH command's PATH is the system's, without the directory Meridian is installed in,
-    # and what the command starts (an `inbox.received` hook row) runs `meridian` by name.
-    env["PATH"] = os.pathsep.join(filter(None, [str(scripts_dir()), env.get("PATH")]))
+    # and what the command starts (an `inbox.received` hook row) runs `meridian` by name. The
+    # install's own script directory also holds `python3`, which must not shadow the system's.
+    warning = ""
+    try:
+        first = _meridian_only_dir()
+    except OSError as exc:
+        first = scripts_dir()
+        warning = (
+            f"warning: can't link `meridian` under the Meridian home ({exc}); PATH for this "
+            f"command starts with {first}, so its `python3` comes first too\n"
+        )
+    env["PATH"] = os.pathsep.join(filter(None, [str(first), env.get("PATH")]))
     env[MACHINE_CALL_ENV] = json.dumps(caller if isinstance(caller, dict) else {})
-    return env
+    return env, warning
 
 
 def _run_child(argv: list[str], stdin: str | None, limit: int, caller: object) -> dict[str, object]:
+    env, warning = _child_env(caller)
     child = subprocess.Popen(
         module_argv("meridian", *argv),
         stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_child_env(caller),
+        env=env,
         # Its own process group, so stopping it stops what it started too: the group of the
         # child this process started, never a process it didn't.
         start_new_session=True,
@@ -107,7 +147,7 @@ def _run_child(argv: list[str], stdin: str | None, limit: int, caller: object) -
     return {
         "exit": child.returncode,
         "stdout": out.collect(_PIPE_WAIT_SECONDS).decode("utf-8", "replace"),
-        "stderr": err.collect(_PIPE_WAIT_SECONDS).decode("utf-8", "replace"),
+        "stderr": warning + err.collect(_PIPE_WAIT_SECONDS).decode("utf-8", "replace"),
         "timed_out": timed_out,
         "truncated": out.truncated,
     }

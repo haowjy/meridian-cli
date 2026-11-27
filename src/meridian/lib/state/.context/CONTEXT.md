@@ -193,6 +193,15 @@ the second never fails the call. `cache/machines/<machine id>.json` holds the ab
 `meridian` on that machine; it is rediscovered when missing or wrong and never needed for
 correctness.
 
+`~/.meridian/machine/bin/meridian` (`cli/machine_run.py`) is a symlink to the `meridian`
+script of the build that last answered a call from another machine. The directory holds
+nothing else and goes first on the `PATH` of the command that call runs, so an
+`inbox.received` hook row finds `meridian` without the install's `python3` shadowing the
+system's. `machine run` rewrites the link when it points elsewhere, as a temp name in the
+same directory and a `rename`; a call that can't write it puts the install's whole script
+directory first and warns. With two installs sharing a home the link names whichever
+answered last, so a row started by one build's call can run the other's `meridian`.
+
 ### Native chat identity
 
 

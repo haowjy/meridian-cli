@@ -155,11 +155,12 @@ the other machine's own `meridian` runs the same command on its own files. Nothi
   the one this machine saved it under, else the one it gives itself. Its reply address
   is `message/reply.way_back`'s answer, the rule the reply line of a delivered message
   uses: none when this machine hasn't saved the caller's, or the session can't be reached.
-  Three blocks never arrive, because `machine run` refuses the request: one whose
+  Four blocks never arrive, because `machine run` refuses the request: one whose
   session ID is not an ID, and one with a `reply_id` and no `spawn_id` (a block with no
   session is a terminal, which may do more, so a damaged session block must not read as
-  one); and one whose `machine_id` is this machine's own (a copied home), whose sessions
-  would pass for this machine's.
+  one); one whose `project_id` is not a project ID (a session with no project sees
+  every project's messages); and one whose `machine_id` is this machine's own (a copied
+  home), whose sessions would pass for this machine's.
 - **What the calling side sends** is built from the `InboxCaller` it resolved and
   checked (`cli/message.py:inbox_caller_block`, from the runtime root the record was
   found under), through `session_caller_block`, which builds `meridian message`'s block
@@ -172,7 +173,9 @@ the other machine's own `meridian` runs the same command on its own files. Nothi
   message with no claim succeeds; a repeated offer sends the notice again; and a filing
   with a `via` ref matches `by-origin`. Two repeats are not safe, both in `FUTURE`: a
   filing without a `via` ref can be filed twice, and a terminal's repeated `release` can
-  drop a claim made in between.
+  drop a claim made in between. The handler's `may_have` sentence carries the advice, so
+  `release` from a terminal says to read the message first where the others say "a
+  repeat is safe".
 - **An error kind from the other machine.** `forward_if_remote` keeps the kind a read
   gives when it is a short word. For `take`, `release` and `offer` (`may_have`), a
   failure with no kind, or with one outside the message kinds and `taken`, is

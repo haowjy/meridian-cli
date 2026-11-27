@@ -17,10 +17,14 @@ Calls to other machines over plain SSH.
   the caller's `ssh` leaves the remote command running.
 - A command that changes state on the other machine passes `forward_if_remote` a `may_have`
   sentence: its `Unanswered` is kind `maybe_delivered`, and only a command whose repeat is
-  safe may cross that way.
+  safe may cross that way. The sentence ends with whether to run it again; where a repeat
+  isn't safe for some caller, it says what to check first.
+- `machine run` puts a directory holding only `meridian` first on its child's `PATH`, never
+  the install's script directory, whose `python3` would shadow the system's in hook rows.
 - `forward_if_remote` and `message` both ask `machine_forward.other_machine` which other
   machine a command names; it is the one place that refuses two machines, `-C` applied here,
   and a third machine from a call another machine started. Don't decide it elsewhere.
+  Only `message` sends `<machine>/inbox` on: `forward_if_remote` refuses it as `usage`.
 - Way back (`cli/machine_back.py`): candidate targets are tested from the other machine over
   `/bin/sh -s` (script and candidates on stdin, none on the command line), then the other side
   runs `<path> machine add <target>` and the saved list is read again to say what happened.

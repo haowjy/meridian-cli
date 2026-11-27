@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Never
 
 from meridian.cli.invocation import GlobalOptions, get_global_options
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import INBOX_IS_NO_SESSION, parse_ref
 from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
@@ -117,8 +117,9 @@ def forward_if_remote(
 ) -> None:
     """*caller* builds the request's caller block, asked only when the command crosses.
     *may_have* is set by a command that changes state there, and says what a call that was
-    sent and got no whole answer may have done (``m412 may have been taken``): such a call
-    fails with kind ``maybe_delivered``, where a read's is ``unreachable``."""
+    sent and got no whole answer may have done and whether to run it again (``m412 may have
+    been taken. Run it again: a repeat is safe.``): such a call fails with kind
+    ``maybe_delivered``, where a read's is ``unreachable``."""
 
     options = get_global_options()
     try:
@@ -127,6 +128,8 @@ def forward_if_remote(
         )
         if target is None:
             return
+        if any(parse_ref(raw).kind == "inbox" for raw in refs):
+            raise MachineError("usage", INBOX_IS_NO_SESSION)
         block = caller()
     except MachineError as exc:
         fail(None, exc.kind, exc.text)
@@ -199,7 +202,7 @@ def _failure(
         if may_have is None:
             # A read is safe to run again.
             return "unreachable", why
-        return "maybe_delivered", f"{why}; {may_have}. Run it again: a repeat is safe."
+        return "maybe_delivered", f"{why}; {may_have}"
 
     match result:
         case NotSent(kind, text):

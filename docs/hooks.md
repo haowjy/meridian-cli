@@ -81,8 +81,10 @@ every other event's in four ways:
   `MERIDIAN_PROJECT_DIR` and the rest). `MERIDIAN_HOME`, `MERIDIAN_CONFIG` and
   other config inputs stay. `PATH` is the filing command's, so a program the row
   runs must be on it. For a message filed from another machine that is the `PATH` of
-  an SSH command, which leaves out what your shell profile adds; Meridian puts its own
-  directory first, so `meridian` is always found.
+  an SSH command, which leaves out what your shell profile adds. Meridian puts
+  `~/.meridian/machine/bin/` first, which holds only a link to `meridian`: `meridian`
+  is always found, and every other program, `python3` included, is the one that
+  `PATH` already had.
 - **No `interval`.** A row with one is invalid: the event has no project state to
   record the last run in.
 

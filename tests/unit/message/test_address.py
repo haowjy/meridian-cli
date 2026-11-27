@@ -113,10 +113,12 @@ def test_machine_caller_refuses_a_session_id_with_the_wrong_shape() -> None:
         ("a" * 256, False),
     ],
 )
-def test_machine_caller_keeps_a_project_id_only_in_the_shape_of_one(given: str, kept: bool) -> None:
-    from meridian.lib.machines.caller import parse_machine_caller
+def test_machine_caller_refuses_a_project_id_not_shaped_like_one(given: str, kept: bool) -> None:
+    """Dropping it would file a session's message under no project, which every session sees."""
+
+    from meridian.lib.machines.caller import MachineCaller, parse_machine_caller
 
     caller = parse_machine_caller(
         {"machine": "far", "machine_id": "0123456789ab", "project_id": given}
     )
-    assert caller is not None and caller.project_id == (given if kept else None)
+    assert caller == (MachineCaller("far", "0123456789ab", project_id=given) if kept else None)
