@@ -23,8 +23,8 @@ from meridian.lib.inbox.fields import (
 )
 from meridian.lib.inbox.models import Message, Via
 from meridian.lib.inbox.store import InboxError, file_message, message_path
-from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, Filed, MessageResult, Receiver
+from meridian.lib.state.machine_identity import machine_identity_or_none
 
 
 @dataclass(frozen=True)
@@ -104,7 +104,7 @@ def _build(caller: InboxCaller, text: str, options: FilingOptions) -> Message:
         )
     via = via_from_flags(options.via_program, options.via_ref, options.via_sender)
     project = _project(caller, options.project_id)
-    sender = caller.party(local_machine_name())
+    sender = caller.party(machine_identity_or_none())
     reply_to = options.reply_to
     if reply_to is not None and not is_reply_address(reply_to):
         raise InboxError(

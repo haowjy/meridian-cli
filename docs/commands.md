@@ -90,7 +90,7 @@ environment `meridian` was started with, and reads one line of JSON back
 `meridian.local.toml` or a file named by `--config` or `MERIDIAN_CONFIG` it is ignored
 with a warning, because a message runs outside the sandbox and a repository file must not
 choose the program. `@latest`, `@last-failed` and `@last-completed` are references, not
-addresses, and fail. `inbox` is reserved.
+addresses, and fail.
 
 `meridian message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
@@ -406,8 +406,8 @@ running, and `release` from a terminal puts that message back.
 is true:
 
 ```json
-{"ok": true, "messages": [{"id": "m412", "received": "2026-11-26T21:04:11Z", "from": {"kind": "terminal", "machine": "homebox"}, "project": "mellow-hollow-brood", "via": {"program": "meridian-comms", "ref": "C1/1731.0002", "sender": "alice"}, "size": 312, "preview": "…", "offered": [{"to": "c20417", "at": "…"}]}]}
-{"ok": true, "id": "m412", "received": "…", "from": {…}, "text": "…", "size": 312, "taken": {"by": {"kind": "session", "machine": "homebox", "id": "c20417"}, "at": "…"}, "offered": [], "reply_to": "homebox/c20417", "reply_command": "meridian message homebox/c20417 \"…\""}
+{"ok": true, "messages": [{"id": "m412", "received": "2026-11-26T21:04:11Z", "from": {"kind": "terminal", "machine": "homebox", "machine_id": "9f2c41d07a3e"}, "project": "mellow-hollow-brood", "via": {"program": "meridian-comms", "ref": "C1/1731.0002", "sender": "alice"}, "size": 312, "preview": "…", "offered": [{"to": "c20417", "at": "…"}]}]}
+{"ok": true, "id": "m412", "received": "…", "from": {…}, "text": "…", "size": 312, "taken": {"by": {"kind": "session", "machine": "homebox", "machine_id": "9f2c41d07a3e", "id": "c20417"}, "at": "…"}, "offered": [], "reply_to": "homebox/c20417", "reply_command": "meridian message homebox/c20417 \"…\""}
 {"ok": true, "id": "m412", "to": {"spawn_id": "p20417", "chat_id": "c20417"}, "delivery": "posted"}
 {"ok": false, "error": {"kind": "taken", "text": "m412 is taken by homebox/c20417 since …"}}
 ```
@@ -420,7 +420,9 @@ machine has `"machine"` in `to`. `meridian message <machine>/inbox --json` print
 The first line is `list`, the second `read` and `take` (`taken` is `null` for a waiting
 message, `reply_command` is `null` when there is no reply address), the third `offer`;
 `release` prints `{"ok": true, "id": "m412"}`. With `--taken`, each message also has
-`taken` and `taker_running` (`true`, `false`, or `null` when it can't be told). These are
+`taken` and `taker_running` (`true`, `false`, or `null` when it can't be told). In `from`
+and `by`, `machine_id` is the machine and `machine` the name it had when the message was
+filed or taken; one filed or taken by an earlier build has only the name. These are
 the error kinds the inbox commands give: `not_found` (no such message or session),
 `ambiguous` (the session ID names more than one), `taken`, `refused` (the caller's role or
 project doesn't allow it), `not_running`, `cold` and `no_route` (an offer's session can't

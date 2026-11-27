@@ -21,6 +21,7 @@ from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Delivered, Failed, MessageResult
 from meridian.lib.ops.locate import locate_run, run_is_live
 from meridian.lib.state import spawn_store
+from meridian.lib.state.machine_identity import MachineIdentity
 
 type Send = Callable[[str, str], MessageResult]
 """Deliver a notice (second argument) to a session's address (first) without waking a cold
@@ -56,14 +57,17 @@ class Offered:
     """Why the offer record wasn't written though the notice went out."""
 
 
-def taker_running(claim: Claim, machine: str | None, project_root: Path) -> bool | None:
+def taker_running(claim: Claim, here: MachineIdentity | None, project_root: Path) -> bool | None:
     """Whether the session that holds a claim is still running; ``None`` when that can't be
     told from here (a terminal, another machine, a record that is gone)."""
 
-    if claim.by.kind != "session" or claim.by.id is None or claim.by.machine != machine:
+    by = claim.by
+    if by.kind != "session" or by.id is None or here is None:
+        return None
+    if by.machine_id_from(here) != here.id:
         return None
     try:
-        return run_is_live(locate_run(project_root, claim.by.id))
+        return run_is_live(locate_run(project_root, by.id))
     except (RefAmbiguous, RefNotFound, ValueError):
         return None
 

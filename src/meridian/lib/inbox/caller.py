@@ -17,9 +17,9 @@ from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_fi
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.machines.caller import MachineCaller, is_machine_call, machine_call_caller
-from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.reply import saved_machine_by_id
 from meridian.lib.state import spawn_store
+from meridian.lib.state.machine_identity import MachineIdentity
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 from meridian.lib.state.runtime_root import (
@@ -46,6 +46,8 @@ class InboxCaller:
     machine: str | None = None
     """The other machine the caller is on, by the name this machine knows it by; ``None``
     for a caller on this machine."""
+    machine_id: str | None = None
+    """That machine's ID, from its request."""
 
     @property
     def is_terminal(self) -> bool:
@@ -63,11 +65,16 @@ class InboxCaller:
 
         return self.is_terminal or project is None or project == self.project or all_projects
 
-    def party(self, this_machine: str | None) -> Party:
-        machine = self.machine or this_machine
+    def party(self, here: MachineIdentity | None) -> Party:
+        """The caller as the inbox records it, *here* being this machine."""
+
+        if self.machine is not None:
+            name, machine_id = self.machine, self.machine_id
+        else:
+            name, machine_id = (here.name, here.id) if here is not None else (None, None)
         if self.is_terminal:
-            return Party(kind="terminal", machine=machine)
-        return Party(kind="session", machine=machine, id=self.chat_id)
+            return Party(kind="terminal", machine=name, machine_id=machine_id)
+        return Party(kind="session", machine=name, machine_id=machine_id, id=self.chat_id)
 
 
 def project_of_root(runtime_root: Path) -> str | None:
@@ -108,15 +115,8 @@ def _from_machine(caller: MachineCaller | None) -> InboxCaller:
         )
     saved = saved_machine_by_id(caller.machine_id)
     machine = saved.name if saved is not None else caller.machine
-    if machine == local_machine_name():
-        # Its sessions would be recorded as this machine's, and one could take as another.
-        raise InboxError(
-            f"the calling machine is also named `{machine}` and is not saved here: save it "
-            "with `meridian machine add`, or rename one of the two. Nothing was changed.",
-            kind="refused",
-        )
     if caller.spawn_id is None:
-        return InboxCaller(machine=machine)
+        return InboxCaller(machine=machine, machine_id=caller.machine_id)
     project = caller.project_id
     if project is not None and project.startswith(ADHOC_PROJECT_ID_PREFIX):
         project = None
@@ -131,6 +131,7 @@ def _from_machine(caller: MachineCaller | None) -> InboxCaller:
         chat_id=caller.reply_id or caller.spawn_id,
         project=project,
         machine=machine,
+        machine_id=caller.machine_id,
     )
 
 

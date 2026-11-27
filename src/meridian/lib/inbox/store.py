@@ -331,7 +331,7 @@ def take(message_id: str, by: Party, via: Via | None, now: datetime) -> Entry:
         claim = Claim(by=by, via=via, at=now)
         if not write_model_once(path, claim, exclude_none=True):
             held = read_doc(path, Claim)
-            if held is None or not held.same_taker(by, via):
+            if held is None or not held.same_taker(by, via, machine_identity_or_none()):
                 raise MessageTaken(message_id, held)
             claim = held
         offers = read_doc(root / "offered" / f"{message_id}.json", Offers)
@@ -351,7 +351,9 @@ def release(message_id: str, by: Party) -> bool:
             _require_message(root, message_id)
             return False
         held = read_doc(path, Claim)
-        if by.kind != "terminal" and (held is None or not held.by.same_as(by)):
+        if by.kind != "terminal" and (
+            held is None or not held.by.same_as(by, machine_identity_or_none())
+        ):
             raise MessageTaken(message_id, held)
         path.unlink()
         fsync_directory(path.parent)

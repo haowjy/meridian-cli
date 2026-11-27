@@ -51,6 +51,7 @@ from meridian.lib.machines.resolve import MachineError
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, MessageResult, print_result
+from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_list, json_object
 
@@ -280,7 +281,7 @@ def cmd_inbox_list(
             _require_changer(caller, "--all")
         _cross()
         now = datetime.now(UTC)
-        machine = local_machine_name()
+        machine = machine_identity_or_none()
         here = resolve_project_root_resolution().project_root
         found = [
             (item, taker_running(item.claim, machine, here) if item.claim is not None else None)
@@ -329,7 +330,7 @@ def cmd_inbox_take(
         via = via_from_flags(via_program, None, via_sender)
         _require_visible(caller, entry(message_id), all_projects=all_projects)
         _print_message(
-            take(message_id, caller.party(local_machine_name()), via, _now_to_the_second())
+            take(message_id, caller.party(machine_identity_or_none()), via, _now_to_the_second())
         )
 
 
@@ -340,7 +341,7 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox release`")
         _cross(may_have=f"{message_id} may have been released")
-        released = release(message_id, caller.party(local_machine_name()))
+        released = release(message_id, caller.party(machine_identity_or_none()))
         _print(
             {"id": message_id},
             f"{message_id} released: it is waiting again"

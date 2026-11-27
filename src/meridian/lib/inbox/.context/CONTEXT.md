@@ -56,7 +56,11 @@ pruned number.
 
 **Take**: check the message file exists, then `link(2)` a claim to `taken/<id>.json`. If
 the name exists, the same taker (`Claim.same_taker`: kind, machine, chat ID, and the `via`
-program and sender) succeeds and anyone else is refused. **Release** unlinks the claim; a
+program and sender) succeeds and anyone else is refused. The machine is compared by ID
+(`Party.same_as`, the one rule for whose a claim is): `machine` is the name at the time,
+kept as a label and for the reply address, and a rename must not lose a session its claim.
+A party written before `machine_id` was stored has only the name, and is this machine's
+when that is its current or a former name. **Release** unlinks the claim; a
 message with no claim is already released, which is a success so a cut-off call can be
 repeated.
 
@@ -144,10 +148,9 @@ own files. Nothing here reads or writes another machine's directory.
   `_cross` in every handler.
 - **Who is calling, on the receiving side,** is `machines/caller.MachineCaller`
   (`caller._from_machine`): the session's chat ID (`reply_id`) and project
-  (`project_id`), or with no session a terminal of that machine. The machine is named as
-  this machine saved it (by its ID), else as it names itself; one that is not saved and
-  has this machine's own name is refused, since its sessions would be recorded as this
-  machine's. The calling side sends step 4's block
+  (`project_id`), or with no session a terminal of that machine. Its `machine_id` is the
+  request's, which is what tells its sessions from this machine's; the name beside it is
+  the one this machine saved it under, else the one it gives itself. The calling side sends step 4's block
   (`cli/message.py:machine_caller_block`), whose project ID comes from the same
   `runtime_root_project_id`; it resolves its own `InboxCaller` first, so a session with
   no record or no usable project is refused before anything connects.
