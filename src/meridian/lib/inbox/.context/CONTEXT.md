@@ -59,7 +59,8 @@ program and sender) succeeds and anyone else is refused. **Release** unlinks the
 message with no claim is already released, which is a success so a cut-off call can be
 repeated.
 
-**Offer** (`cli/inbox_cmd.py`): read the spawn store, then under the lock check the message
+**Offer** (`cli/inbox_cmd.py`): read the spawn store and refuse a session that is not a
+primary (an offer says "claim it", and only a primary may take), then under the lock check the message
 exists and is not taken; release the lock; send the notice with `send_message`; take the
 lock again, check once more, and append to `offered/<id>.json`. Send first, record second:
 a crash between the two leaves a session that was told and no record, and the repeat

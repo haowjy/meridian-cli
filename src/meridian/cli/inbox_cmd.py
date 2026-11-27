@@ -271,7 +271,7 @@ Commands:
   meridian inbox read <id>                Print one message; changes nothing
   meridian inbox take <id>                Claim a message, then print it
   meridian inbox release <id>             Give a claim back
-  meridian inbox offer <id> <session>     Tell a running session a message looks like its own
+  meridian inbox offer <id> <session>     Tell a running primary a message looks like its own
 
 File a message with: meridian message inbox "…\""""
     )
@@ -381,14 +381,15 @@ def cmd_inbox_offer(
     message_id: Annotated[str, Parameter(help=_ID_HELP)],
     session: Annotated[
         str,
-        Parameter(help="The session to tell: the spawn ID or chat ID of one running here."),
+        Parameter(help="The primary session to tell: the spawn ID or chat ID of one running here."),
     ],
 ) -> None:
-    """Send a running session the fixed notice that a message looks like its own.
+    """Send a running primary session the fixed notice that a message looks like its own.
 
-    Refuses a message that is taken, a session that isn't running or whose prompt cache
-    has gone cold, and a session in another project than the message's. The session
-    claims the message itself; repeating the offer sends the notice again.
+    Refuses a message that is taken, a session that isn't a primary (only a primary can
+    take), one that isn't running or whose prompt cache has gone cold, and one in another
+    project than the message's. The session claims the message itself; repeating the
+    offer sends the notice again.
     """
 
     from meridian.cli.message import send_message
@@ -396,6 +397,7 @@ def cmd_inbox_offer(
     from meridian.lib.core.refs import RefAmbiguous, RefNotFound
     from meridian.lib.message.address import AddressError, SessionAddress, parse_address
     from meridian.lib.ops.locate import locate_run
+    from meridian.lib.state import spawn_store
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
@@ -415,6 +417,15 @@ def cmd_inbox_offer(
             raise InboxError(str(exc), kind="ambiguous") from exc
         except (RefNotFound, ValueError) as exc:
             raise InboxError(str(exc), kind="not_found") from exc
+        # An offer says "claim it", so it goes only to a session that may.
+        record = spawn_store.get_spawn(target.runtime_root, target.spawn_id)
+        if record is None or record.kind != "primary":
+            _refuse(
+                f"session {address.id} is "
+                f"{'a ' + record.kind + ' session' if record is not None else 'unrecorded'}, "
+                "not a primary: only a primary session can take a message, so only a "
+                "primary is offered one. Nothing was sent."
+            )
         session_project = project_of_root(target.runtime_root)
 
         message = waiting_message(message_id)

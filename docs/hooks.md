@@ -94,6 +94,9 @@ event   = "inbox.received"
 command = "meridian inbox offer \"$MERIDIAN_INBOX_MESSAGE_ID\" c20417"
 ```
 
+`c20417` is a running primary session: `offer` refuses any other, and the refusal
+is in the hook log.
+
 Hook failures always log and continue to the next hook; they never undo or stop
 the event that fired them.
 

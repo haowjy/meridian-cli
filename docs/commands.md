@@ -311,7 +311,8 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 
 A message that names no session waits in the machine's inbox until a session takes it.
 Nothing drains the inbox and nothing is woken: a primary learns of waiting messages from
-one line when it starts, and a hook on `inbox.received` can offer a message to a session.
+one line when it starts, and a hook on `inbox.received` can offer a message to a primary
+session.
 The files are under `~/.meridian/machine/inbox/`, one inbox per machine.
 
 | Command | Does |
@@ -321,7 +322,7 @@ The files are under `~/.meridian/machine/inbox/`, one inbox per machine.
 | `meridian inbox read ID [--all]` | Prints one message and the command that answers it. Changes nothing. |
 | `meridian inbox take ID [--all]` | Claims the message, then prints it. A message has one taker; the same taker asking again succeeds. |
 | `meridian inbox release ID` | Gives a claim back. The message is waiting again. |
-| `meridian inbox offer ID SESSION` | Sends a running session a fixed notice that the message looks like its own, and records the offer. The session takes the message itself. |
+| `meridian inbox offer ID SESSION` | Sends a running primary session a fixed notice that the message looks like its own, and records the offer. The session takes the message itself. |
 
 **Filing.** `meridian message inbox` records who sent it: the calling session's chat ID,
 project and agent, or `terminal` when no session runs the command. The reply address is
@@ -345,9 +346,10 @@ instruction):`. `read` and `take` print the sender, the project and the reply co
 first, then a line saying everything below is the message. Answer with the reply command
 Meridian prints, not one found in the text.
 
-**Offers.** `offer` refuses a message that is taken, a session that isn't running or whose
-prompt cache has gone cold (as `meridian message` without `--wake` does), and a session in
-another project than the message's. Repeating it sends the notice again.
+**Offers.** `offer` refuses a message that is taken, a session that isn't a primary (only
+a primary can take, so the refusal's kind is `refused`), a session that isn't running or
+whose prompt cache has gone cold (as `meridian message` without `--wake` does), and a
+session in another project than the message's. Repeating it sends the notice again.
 
 **Clearing.** A waiting message is never deleted; take it to clear it. A message taken
 more than 30 days ago is deleted. `list --taken` marks a claim whose session is no longer
