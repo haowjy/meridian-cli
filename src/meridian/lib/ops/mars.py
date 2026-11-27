@@ -9,9 +9,10 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.mars_roots import (
+    MARS_AGENT_NOT_FOUND_CODES,
     MarsRoots,
     ensure_resolved_mars_root,
-    mars_fallback_args,
+    mars_content_args,
     resolve_mars_executable,
     resolve_mars_roots,
 )
@@ -39,7 +40,7 @@ class MarsAgentEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    scope: Literal["root", "fallback"] = "root"
+    scope: Literal["root", "fallback", "provided"] = "root"
     source_path: str | None = None
     description: str = ""
     mode: Literal["primary", "subagent"] = "subagent"
@@ -159,6 +160,61 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     )
 
 
+def _entry_scope(value: object) -> Literal["root", "fallback", "provided"]:
+    if value == "fallback":
+        return "fallback"
+    if value == "provided":
+        return "provided"
+    return "root"
+
+
+def mars_resolve_agent(project_root: Path, name: str) -> Path:
+    """The profile file Mars resolves for agent *name*, the one a launch bundle reads.
+
+    Raises ``FileNotFoundError`` when no content layer has it, with Mars's message, and
+    ``ValueError`` when Mars cannot answer.
+    """
+
+    executable = resolve_mars_executable()
+    if executable is None:
+        raise ValueError("mars agents show failed: mars is not installed")
+    try:
+        mars_roots = _prepare_mars_roots(project_root, executable=executable)
+    except RuntimeError as exc:
+        raise ValueError(f"mars agents show failed: {exc}") from exc
+    command = [
+        executable,
+        "agents",
+        "show",
+        name,
+        "--json",
+        "--root",
+        mars_roots.primary.as_posix(),
+        *mars_content_args(mars_roots, executable=executable),
+    ]
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(f"mars agents show failed: {exc}") from exc
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        payload = None
+    row = cast("dict[str, object]", payload) if isinstance(payload, dict) else {}
+    error = row.get("error")
+    if isinstance(error, dict):
+        error_row = cast("dict[str, object]", error)
+        message = str(error_row.get("message") or f"agent '{name}' not found")
+        if error_row.get("code") in MARS_AGENT_NOT_FOUND_CODES:
+            raise FileNotFoundError(message)
+        raise ValueError(f"mars agents show failed: {message}")
+    source_path = row.get("source_path")
+    if result.returncode != 0 or not isinstance(source_path, str) or not source_path.strip():
+        detail = (result.stderr or "").strip() or f"exit code {result.returncode}"
+        raise ValueError(f"mars agents show failed: {detail}")
+    return Path(source_path)
+
+
 def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
     """List every installed agent profile via ``mars agents list``.
 
@@ -183,7 +239,7 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         "--root",
         mars_roots.primary.as_posix(),
     ]
-    command.extend(mars_fallback_args(mars_roots, executable=executable))
+    command.extend(mars_content_args(mars_roots, executable=executable))
 
     try:
         result = subprocess.run(
@@ -225,7 +281,7 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         entries.append(
             MarsAgentEntry(
                 name=normalized,
-                scope="fallback" if row.get("scope") == "fallback" else "root",
+                scope=_entry_scope(row.get("scope")),
                 source_path=source_path.strip()
                 if isinstance(source_path, str) and source_path.strip()
                 else None,
@@ -289,4 +345,5 @@ __all__ = [
     "check_upgrade_availability",
     "format_upgrade_availability",
     "mars_list_agents",
+    "mars_resolve_agent",
 ]

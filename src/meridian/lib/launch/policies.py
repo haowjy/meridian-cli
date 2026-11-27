@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
+from meridian.lib.catalog.agent import AgentProfile, parse_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
@@ -52,7 +52,6 @@ from .request import (
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
-    load_agent_profile_with_fallback,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -370,52 +369,65 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     project_root = surface.catalog.project_root
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
     explicit_user_overrides = resolve(*surface.layers)
-    requested_agent = explicit_user_overrides.agent
+    requested_agent = (explicit_user_overrides.agent or "").strip() or None
     configured_default_agent = (
-        pre_profile_resolved.agent if requested_agent is None and not surface.agent_opt_out else ""
+        None
+        if requested_agent is not None or surface.agent_opt_out
+        else (pre_profile_resolved.agent or "").strip() or None
     )
+    agent = None if surface.agent_opt_out else requested_agent or configured_default_agent
+    requested_skill_names = dedupe_skill_names(surface.requested_skills)
 
-    profile, profile_warning = load_agent_profile_with_fallback(
-        project_root=project_root,
-        requested_agent=requested_agent,
-        configured_default=configured_default_agent,
-        agent_opt_out=surface.agent_opt_out,
+    def ask_for_bundle(
+        agent: str | None,
+    ) -> tuple[_BundleRouting, dict[str, AliasEntry], bundle_adapter.BundleResult]:
+        routing = _resolve_bundle_routing(
+            surface=surface, agent_routing=configured_agent_routing(agent)
+        )
+        alias_catalog: dict[str, AliasEntry] = {}
+        if routing.model:
+            alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
+        bundle_request = bundle_adapter.BundleRequest(
+            agent=agent,
+            project_root=project_root,
+            model_override=routing.model,
+            harness_override=routing.harness,
+            excluded_harnesses=_excluded_harnesses_for_surface(surface),
+            effort_override=routing.effort,
+            config_effort=surface.config_overrides.effort,
+            approval_override=explicit_user_overrides.approval,
+            sandbox_override=explicit_user_overrides.sandbox,
+            network_overrides=surface.network_overrides,
+            extra_skills=requested_skill_names,
+            no_refresh_models=surface.models_readonly,
+        )
+        bundle = bundle_adapter.request_and_resolve(
+            bundle_request,
+            harness_registry=surface.harness_registry,
+        )
+        return routing, alias_catalog, bundle
+
+    # Mars resolves the agent by name and the profile read here is the file it chose, so the
+    # two never disagree about which profile runs.
+    profile_warning: str | None = None
+    try:
+        routing, alias_catalog, bundle_result = ask_for_bundle(agent)
+    except bundle_adapter.MarsAgentNotFoundError:
+        if configured_default_agent is None:
+            raise
+        profile_warning = (
+            f"Configured agent profile '{agent}' is unavailable; running without an agent profile."
+        )
+        routing, alias_catalog, bundle_result = ask_for_bundle(None)
+    profile = (
+        parse_agent_profile(Path(bundle_result.agent_source_path).expanduser())
+        if bundle_result.agent_source_path is not None
+        else None
     )
 
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
     full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
-    agent_routing = configured_agent_routing(profile.name if profile is not None else None)
-    routing = _resolve_bundle_routing(surface=surface, agent_routing=agent_routing)
-
-    alias_catalog: dict[str, AliasEntry] = {}
-    if routing.model:
-        alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
-
-    requested_skill_names = dedupe_skill_names(surface.requested_skills)
-    bundle_request = bundle_adapter.BundleRequest(
-        agent=profile.name if profile is not None else requested_agent,
-        project_root=project_root,
-        agent_path=profile.path if profile is not None else None,
-        model_override=routing.model,
-        harness_override=routing.harness,
-        excluded_harnesses=_excluded_harnesses_for_surface(surface),
-        effort_override=routing.effort,
-        config_effort=surface.config_overrides.effort,
-        approval_override=explicit_user_overrides.approval,
-        sandbox_override=explicit_user_overrides.sandbox,
-        network_overrides=surface.network_overrides,
-        extra_skills=requested_skill_names,
-        no_refresh_models=surface.models_readonly,
-    )
-    bundle_result = bundle_adapter.request_and_resolve(
-        bundle_request,
-        harness_registry=surface.harness_registry,
-    )
-    if profile is not None and bundle_result.agent_source_path is not None:
-        profile = profile.model_copy(
-            update={"path": Path(bundle_result.agent_source_path).expanduser().resolve()}
-        )
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
@@ -615,15 +627,14 @@ def _ask_mars(
     surface: SurfacePolicyInput,
     *,
     harness: str,
-    agent: AgentProfile | None = None,
+    agent: str | None = None,
     model: str | None = None,
     agent_rules: tuple[ToolRule, ...] | None = None,
     effort: str | None = None,
 ) -> bundle_adapter.BundleResult:
     return bundle_adapter.request_and_resolve(
         bundle_adapter.BundleRequest(
-            agent=agent.name if agent is not None else None,
-            agent_path=agent.path if agent is not None else None,
+            agent=agent,
             project_root=surface.catalog.project_root,
             model_override=model,
             literal_model=model is not None,
@@ -693,7 +704,7 @@ def _with_current_bundle_rules(
                 bundle = _ask_mars(
                     surface,
                     harness=harness,
-                    agent=load_agent_profile(agent, project_root=surface.catalog.project_root),
+                    agent=agent,
                     model=policy.model,
                     agent_rules=agent_rules,
                     effort=effort,

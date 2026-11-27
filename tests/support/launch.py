@@ -277,6 +277,13 @@ def stub_bundle_request_and_resolve(
     ) -> FakeBundleResult:
         _ = harness_registry
         captured_requests.append(request)
+        # Mars's agent lookup, primary root only: tests install profiles under `.mars/agents/`.
+        agent_source_path: str | None = None
+        if request.agent:
+            agent_file = request.project_root / ".mars" / "agents" / f"{request.agent}.md"
+            if not agent_file.is_file():
+                raise bundle_adapter.MarsAgentNotFoundError(f"Agent '{request.agent}' not found.")
+            agent_source_path = agent_file.as_posix()
         resolved_policy = execution_policy or ResolvedExecutionPolicy()
         resolved_provenance = provenance or {"model_source": "cli", "harness_source": "provider"}
         resolved_model_token = (
@@ -295,6 +302,7 @@ def stub_bundle_request_and_resolve(
                 if bundle_network is not None
                 else resolved_policy.network or SandboxDerivedNetwork()
             ),
+            agent_source_path=agent_source_path,
             warnings=warnings,
             tool_rules=tool_rules,
             platform_tool_rules=platform_tool_rules,

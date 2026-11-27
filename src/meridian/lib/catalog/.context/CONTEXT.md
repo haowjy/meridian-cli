@@ -28,20 +28,19 @@ matches can legitimately lack a harness.
 ## Agent profiles
 
 `model-invocable` controls default subagent visibility, not whether a profile
-can be loaded. Keep catalog scanning neutral: explicit agent selection and other
-consumers need every profile. Missing or non-boolean values default to true for
-compatibility. See the [agent catalog](../../launch/.context/CONTEXT.md).
+can be loaded. Missing or non-boolean values default to true for compatibility.
+See the [agent catalog](../../launch/.context/CONTEXT.md).
 
-Mars reads profile skills when building the launch bundle. A separate Meridian
-parse would diverge from the skills actually loaded.
+Meridian has no agent lookup of its own: Mars resolves every name, and Meridian parses
+the file Mars chose (`parse_agent_profile` on the bundle's `agent_source_path`, or
+`mars agents show` through `ops/mars.py` where no bundle is built). A second lookup could
+pick a different file than the one that runs. Mars reads profile skills when building the
+launch bundle for the same reason. Every by-name call to Mars sends `mars_content_args`
+(`mars_roots.py`): the user root as `--fallback-root`, then this build's bundle directory
+as `--provided-root`.
 
-Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) are read from the
-installed wheel only when the Mars lookup would otherwise end in "not found", never
-installed into a Mars root. The collision-rename and user-packages errors run first, so a
-user's own copy is never silently replaced by the built-in (the built-in directory is not
-one more Mars root, and `_agent_search_dirs` must not list it). Never installed because an
-installed copy could go missing whenever another sync held the lock or another Meridian
-version provided a different bundle. A launch sends the resolved profile's path to Mars as
-`--agent-file`, so Meridian's lookup and Mars's always read the same file; overlays stay
-keyed by the name. `mars agents list` and `spawn subagents --all` list `mars.lock` items
-and so don't show built-in profiles.
+Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) come from that provided
+layer, which answers a name only when no installed agent claims it; a name Mars renamed on
+a collision stays its `agent_renamed` error. They are read in place, never installed
+through `mars provide`: an installed copy could go missing whenever another sync held the
+lock or another Meridian version provided a different bundle.

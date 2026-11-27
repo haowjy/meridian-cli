@@ -1406,7 +1406,7 @@ class SpawnSubagentEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    scope: Literal["root", "fallback"] = "root"
+    scope: Literal["root", "fallback", "provided"] = "root"
     description: str = ""
     mode: Literal["primary", "subagent"] = "subagent"
     model_invocable: bool = True

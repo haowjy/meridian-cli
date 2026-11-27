@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.catalog.agent import load_agent_profile
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.ops.mars import mars_resolve_agent
 from meridian.lib.state import spawn_store
 from meridian.lib.state.session_identity import chat_owner_spawn
 
@@ -31,9 +31,10 @@ def require_replayed_agent(
     """Refuse a fork whose session's agent profile is gone, naming the fork that works.
 
     ``--fork`` replays the session's agent; ``--fork-fresh`` with ``-a`` picks another.
+    Raises ``ValueError`` when Mars cannot answer.
     """
     try:
-        load_agent_profile(agent, project_root=project_root)
+        mars_resolve_agent(project_root, agent)
     except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"Session '{source_ref}' ran as agent '{agent}', which no longer exists, "

@@ -11,9 +11,9 @@ from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
 from typing import TextIO, cast
 
-import meridian
 from meridian import __version__
 from meridian.lib.catalog.agent import AgentMode
+from meridian.lib.catalog.mars_roots import provided_dir
 from meridian.lib.core.domain import SkillContent
 
 
@@ -86,12 +86,6 @@ def _skills_root() -> Traversable:
     return files("meridian.mars.skills")
 
 
-def _provided_dir() -> Path:
-    """The directory handed to ``mars provide``: its ``skills/``, ``hooks/`` and ``mcp/``."""
-
-    return Path(meridian.__file__).resolve().parent / "mars"
-
-
 @lru_cache(maxsize=1)
 def list_bundled_skills() -> tuple[BundledSkill, ...]:
     """Return packaged skills in stable name order."""
@@ -130,7 +124,7 @@ def provide_bundled_skills(
     command = [
         executable,
         "provide",
-        f"meridian@{__version__}={_provided_dir()}",
+        f"meridian@{__version__}={provided_dir()}",
         "--root",
         primary_root.as_posix(),
         "--json",

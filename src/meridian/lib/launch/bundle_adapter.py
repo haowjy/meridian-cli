@@ -31,9 +31,10 @@ from meridian.lib.bundled_skills import (
     report_provide_refusal,
 )
 from meridian.lib.catalog.mars_roots import (
+    MARS_AGENT_NOT_FOUND_CODES,
     MarsRoots,
     ensure_resolved_mars_root,
-    mars_fallback_args,
+    mars_content_args,
     resolve_mars_executable,
     resolve_mars_roots,
 )
@@ -66,9 +67,8 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release whose launch bundle takes ``--agent-file``: every request that has a profile
-# sends Meridian's resolved path, so a profile from the wheel resolves and Mars can't pick a
-# different file of the same name.
+# First Mars release whose launch bundle takes ``--provided-root`` (every request sends it, so an
+# agent shipped in the wheel resolves) and reports ``agent_not_found`` and ``agent_renamed``.
 _MARS_BUNDLE_MIN_VERSION = "0.40.1"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
@@ -81,7 +81,6 @@ class BundleRequest:
 
     agent: str | None
     project_root: Path
-    agent_path: Path | None = None
     model_override: str | None = None
     literal_model: bool = False
     harness_override: str | None = None
@@ -397,14 +396,12 @@ def _build_bundle_command(
         "--root",
         resolved_roots.primary.as_posix(),
     ]
-    command.extend(mars_fallback_args(resolved_roots, executable=mars_binary))
+    command.extend(mars_content_args(resolved_roots, executable=mars_binary))
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
     if request.agent:
         command.extend(["--agent", request.agent])
-    if request.agent_path is not None:
-        command.extend(["--agent-file", request.agent_path.as_posix()])
     if request.model_override is not None:
         command.extend(["--model", request.model_override])
     if request.literal_model:
@@ -559,6 +556,10 @@ class MarsTooOldError(RuntimeError):
     """The installed Mars predates a launch-bundle flag Meridian sends."""
 
 
+class MarsAgentNotFoundError(FileNotFoundError):
+    """No content layer Mars reads has the requested agent, or only its renamed copies."""
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
@@ -602,6 +603,7 @@ def _raise_bundle_error(
     stderr: str,
     returncode: int | None = None,
     note: str | None = None,
+    not_found_message: str | None = None,
     models_readonly: bool = False,
 ) -> None:
     try:
@@ -611,6 +613,12 @@ def _raise_bundle_error(
     payload = json_object(raw_payload)
     if payload is not None and json_object(payload.get("error")) is not None:
         envelope = _MarsErrorEnvelope.model_validate(payload)
+        if envelope.error.code in MARS_AGENT_NOT_FOUND_CODES:
+            raise MarsAgentNotFoundError(
+                str(envelope.error.message)
+                if envelope.error.code == "agent_renamed" or not_found_message is None
+                else not_found_message
+            )
         raise MarsSelectionError(
             str(envelope.error.code),
             _describe_read_only_model_resolution(
@@ -649,13 +657,38 @@ def _raise_bundle_error(
     raise RuntimeError(_append_error_note(f"{prefix}: {message}", note))
 
 
+def _agent_not_found_message(request: BundleRequest, roots: MarsRoots) -> str | None:
+    agent = (request.agent or "").strip()
+    if not agent:
+        return None
+    if roots.scope == "user":
+        return (
+            f"Agent '{agent}' not found in user packages ({roots.primary}). "
+            "Run 'meridian mars --user add <source>'."
+        )
+    expected_path = (Path(".mars") / "agents" / f"{agent}.md").as_posix()
+    return "\n".join(
+        (
+            f"Agent '{agent}' not found.",
+            "",
+            f"Expected: {expected_path}",
+            "",
+            "Run `meridian mars sync` to populate your agents directory, "
+            "or see README.md for manual setup.",
+        )
+    )
+
+
 def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str | None:
     agent = (request.agent or "").strip()
+    # Only a hint on a failed bundle, which names no agent file: the agent came from user
+    # packages when the project has no copy and the user root has one.
+    relative = Path(".mars") / "agents" / f"{agent}.md"
     if (
-        request.agent_path is None
-        or not agent
+        not agent
         or roots.user is None
-        or not request.agent_path.is_relative_to(roots.user)
+        or (roots.primary / relative).is_file()
+        or not (roots.user / relative).is_file()
     ):
         return None
     return (
@@ -797,6 +830,7 @@ def request_and_resolve(
             stderr=result.stderr,
             returncode=result.returncode,
             note=_fallback_agent_error_note(request, roots),
+            not_found_message=_agent_not_found_message(request, roots),
             models_readonly=request.no_refresh_models,
         )
 
@@ -965,6 +999,7 @@ __all__ = [
     "BundleRequest",
     "BundleResult",
     "LoadedSkillEntry",
+    "MarsAgentNotFoundError",
     "MarsTooOldError",
     "bundle_to_resolved_policy",
     "request_and_resolve",

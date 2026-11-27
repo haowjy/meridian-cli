@@ -23,16 +23,16 @@ meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
-Meridian looks a name up in the project's Mars root, then in user packages
-(`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian. A
-package or project agent with a built-in profile's name replaces it, and so does a name
-collision Mars renamed (`inbox-router__a`, `inbox-router__b`) or a user-package copy the
-project can't see: those fail with their usual error instead of falling back. The one built-in
-profile today is `inbox-router`, which the
+Mars looks a name up in the project's Mars root, then in user packages
+(`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian, which
+Meridian hands it on every lookup. A package or project agent with a built-in profile's
+name replaces it. A name collision Mars renamed (`inbox-router__a`, `inbox-router__b`)
+fails with the error that lists the renamed names instead of falling back to the built-in.
+The one built-in profile today is `inbox-router`, which the
 [meridian-comms](https://github.com/haowjy/meridian-comms) router starts to decide where
 an inbox message goes. It cannot spawn and is not offered to other agents
-(`model-invocable: false`), so `meridian mars list` and `meridian spawn subagents --all`
-don't show it. Its model, harness and effort are set in
+(`model-invocable: false`): `meridian spawn subagents --all` lists it with scope
+`provided`, and `meridian mars list` doesn't show it. Its model, harness and effort are set in
 [`[inbox.router]`](configuration.md#the-inbox-router).
 
 ## Format

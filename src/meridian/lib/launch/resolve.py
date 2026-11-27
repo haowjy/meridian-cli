@@ -7,7 +7,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
+from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId
@@ -41,46 +41,6 @@ def resolve_agent_launch_input(raw_agent: str | None) -> AgentLaunchInput:
     if not stripped:
         return AgentLaunchInput(agent_opt_out=True)
     return AgentLaunchInput(agent=stripped)
-
-
-def load_agent_profile_with_fallback(
-    *,
-    project_root: Path,
-    requested_agent: str | None = None,
-    configured_default: str | None = None,
-    agent_opt_out: bool = False,
-) -> tuple[AgentProfile | None, str | None]:
-    if agent_opt_out:
-        return None, None
-
-    requested_profile = requested_agent.strip() if requested_agent is not None else ""
-    if requested_profile:
-        return (
-            load_agent_profile(
-                requested_profile,
-                project_root=project_root,
-            ),
-            None,
-        )
-
-    configured_profile = configured_default.strip() if configured_default is not None else ""
-    if configured_profile:
-        try:
-            return (
-                load_agent_profile(
-                    configured_profile,
-                    project_root=project_root,
-                ),
-                None,
-            )
-        except FileNotFoundError:
-            return (
-                None,
-                "Configured agent profile "
-                f"'{configured_profile}' is unavailable; running without an agent profile.",
-            )
-
-    return None, None
 
 
 class ResolvedSkills(BaseModel):
@@ -329,7 +289,6 @@ __all__ = [
     "ResolvedSkills",
     "dedupe_skill_names",
     "format_missing_skills_warning",
-    "load_agent_profile_with_fallback",
     "parse_duration_seconds",
     "resolve_agent_launch_input",
     "resolve_pi_child_wave_timeout_seconds",
