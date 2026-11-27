@@ -76,7 +76,9 @@ copy until the machine-wide-IDs rewrite of that file lands.
 again under it. A message taken more than 30 days ago is deleted in this order: message,
 `by-origin` link, offer record, hook log, claim. The claim goes last so a kill part way
 leaves records with no message, which the next pass removes, and never a message that
-looks waiting again. A waiting message is never deleted. It runs at most once a day (the
+looks waiting again. A waiting message is never deleted. A claim that doesn't parse is
+skipped, and the models refuse a time with no zone, so no file can raise in the scan and
+stop the passes after it. It runs at most once a day (the
 `pruned` stamp), from the detached hook process and from every `meridian inbox` command;
 not at a primary launch, because the machine that runs a chat bot launches none.
 

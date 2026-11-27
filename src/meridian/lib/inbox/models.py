@@ -1,12 +1,14 @@
 """What the inbox's files hold. A file that fails a check here reads as unparseable and is
-skipped, so a file written by hand can't put an unchecked field in front of a reader."""
+skipped, so a file written by hand can't put an unchecked field in front of a reader.
+That includes a time with no zone: one compared with the clock would raise in the middle
+of a listing or a prune pass."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field
 
 from meridian.lib.inbox.fields import is_project_id, is_reply_address, is_safe_field, shown
 
@@ -74,7 +76,7 @@ class Via(_Doc):
 
 
 class Message(_Doc):
-    received: datetime
+    received: AwareDatetime
     sender: Party = Field(validation_alias="from", serialization_alias="from")
     project: ProjectId | None = None
     reply_to: Annotated[str, AfterValidator(_reply_address)] | None = None
@@ -85,7 +87,7 @@ class Message(_Doc):
 class Claim(_Doc):
     by: Party
     via: Via | None = None
-    at: datetime
+    at: AwareDatetime
 
     def same_taker(self, by: Party, via: Via | None) -> bool:
         mine = (via.program, via.sender) if via is not None else None
@@ -95,7 +97,7 @@ class Claim(_Doc):
 
 class Offer(_Doc):
     to: SafeField
-    at: datetime
+    at: AwareDatetime
 
 
 class Offers(_Doc):
