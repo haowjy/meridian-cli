@@ -8,7 +8,11 @@ from pathlib import Path
 
 from meridian.lib.harness.codex_rollout import resolve_codex_home
 from meridian.lib.launch.launch_types import CodexRuntimeResolution
-from meridian.lib.launch.permissions import MESSAGE_PLATFORM_COMMAND, SPAWN_PLATFORM_COMMAND
+from meridian.lib.launch.permissions import (
+    INBOX_PLATFORM_COMMAND,
+    MESSAGE_PLATFORM_COMMAND,
+    SPAWN_PLATFORM_COMMAND,
+)
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError, atomic_write_text
 
 
@@ -36,7 +40,12 @@ MERIDIAN_RULES_FILE_CONTENT = _rules_content(SPAWN_PLATFORM_COMMAND.command)
 RULES_FILES: tuple[RulesFile, ...] = (
     RulesFile("meridian.rules", MERIDIAN_RULES_FILE_CONTENT),
     RulesFile("meridian-message.rules", _rules_content(MESSAGE_PLATFORM_COMMAND.command)),
+    RulesFile("meridian-inbox.rules", _rules_content(INBOX_PLATFORM_COMMAND.command)),
 )
+
+# For the lines that tell a user what the files do.
+ESCAPING_COMMANDS_TEXT = "`meridian spawn`, `meridian message` and `meridian inbox`"
+SIBLING_RULES_FILES_TEXT = " and ".join(file.name for file in RULES_FILES[1:])
 
 
 def _ensure_rules_file(rules_dir: Path, file: RulesFile) -> str | None:
