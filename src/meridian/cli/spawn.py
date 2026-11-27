@@ -15,6 +15,7 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
+from meridian.cli.machine_forward import forward_if_remote
 from meridian.cli.message import (
     MESSAGE_ADDRESS_HELP,
     MESSAGE_TEXT_HELP,
@@ -42,6 +43,7 @@ from meridian.lib.harness.pi_private_state import hold_pi_bash
 from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.launch.resolve import resolve_agent_launch_input
+from meridian.lib.machines.caller import require_own_session, require_project_or_global
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
     SpawnCancelAllInput,
@@ -917,6 +919,9 @@ def _spawn_list(
         ),
     ] = False,
 ) -> None:
+    forward_if_remote()
+    if not all_projects:
+        require_project_or_global("`spawn list`")
     if limit is not None and limit < 1:
         raise ValueError("--limit must be at least 1")
     normalized_status: SpawnStatus | None = None
@@ -980,6 +985,9 @@ def _spawn_children(
         ),
     ] = None,
 ) -> None:
+    forward_if_remote([spawn_id] if spawn_id else [])
+    if spawn_id is None:
+        require_own_session("`spawn children`")
     emit(
         spawn_children_sync(
             SpawnChildrenInput(spawn_id=spawn_id),
@@ -1082,6 +1090,7 @@ def _spawn_show_like(
     handler: Callable[..., Any],
     observe: bool,
 ) -> None:
+    forward_if_remote(spawn_ids)
     sink = current_output_sink()
     prepared = _prepare_spawn_runtime_read()
     observer = resolve_cli_observer_context(observe=observe)
@@ -1469,14 +1478,13 @@ def _spawn_message(
     ref: Annotated[str, Parameter(show_default=False, help=MESSAGE_ADDRESS_HELP)] = "",
     message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
     *,
-    machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
     wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
 ) -> None:
     print(
         'meridian: `spawn message` is deprecated; use `meridian message <address> "..."`.',
         file=sys.stderr,
     )
-    run_message(ref, message, machine, wake)
+    run_message(ref, message, wake)
 
 
 def _spawn_log_removed(

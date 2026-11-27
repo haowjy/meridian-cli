@@ -29,6 +29,12 @@ from meridian.cli.app_tree import (
 )
 from meridian.cli.argv_normalization import canonicalize_argv
 from meridian.cli.bootstrap import (
+    ParsedGlobalOptions,
+    maybe_bootstrap_runtime_state,
+    meridian_managed_env_default,
+    temporary_config_env,
+)
+from meridian.cli.bootstrap import (
     extract_global_options as _bootstrap_extract_global_options,
 )
 from meridian.cli.bootstrap import (
@@ -36,11 +42,6 @@ from meridian.cli.bootstrap import (
 )
 from meridian.cli.bootstrap import (
     is_root_help_request as _bootstrap_is_root_help_request,
-)
-from meridian.cli.bootstrap import (
-    maybe_bootstrap_runtime_state,
-    meridian_managed_env_default,
-    temporary_config_env,
 )
 from meridian.cli.bootstrap import (
     split_passthrough_args as _bootstrap_split_passthrough_args,
@@ -91,7 +92,9 @@ from meridian.lib.core.refs import project_named_scope
 from meridian.lib.core.types import harness_choices_text
 from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
+from meridian.lib.machines.resolve import MachineError, resolve_machine
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
+from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -100,6 +103,41 @@ if TYPE_CHECKING:
 
 _registered_command_groups: set[str] = set()
 _group_commands_registered = False
+
+
+def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> SavedMachine | None:
+    """The saved machine ``--machine`` names, or ``None`` for this machine (the option is then
+    dropped and the command runs here, ``-C`` and all).
+
+    Raises ``MachineError`` for an unknown machine and for a command or a global option that
+    doesn't cross, before anything connects.
+    """
+
+    if parsed.machine is None:
+        return None
+    target = resolve_machine(parsed.machine)
+    if not isinstance(target, SavedMachine):
+        return None
+    descriptor = classify_invocation(cleaned, COMMAND_CATALOG)
+    if descriptor is None or not descriptor.crosses:
+        command = " ".join(descriptor.command_path) if descriptor is not None else "this command"
+        raise MachineError("refused", f"`{command or 'meridian'}` doesn't reach another machine")
+    refused = [
+        flag
+        for flag, given in (
+            ("--config", parsed.config_file),
+            ("--harness", parsed.harness),
+            ("--yes", parsed.yes),
+            ("--no-input", parsed.no_input),
+            ("--mode", parsed.forced_render_mode),
+        )
+        if given
+    ]
+    if refused:
+        raise MachineError(
+            "refused", f"{', '.join(refused)} doesn't reach another machine: drop it"
+        )
+    return target
 
 
 def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptions]:
@@ -114,8 +152,9 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
     if parsed.output_explicit:
         explicit_format = cast("OutputFormat", parsed.output_format)
 
+    machine = _remote_machine(cleaned, parsed)
     project_root: Path | None = None
-    if parsed.directory is not None:
+    if parsed.directory is not None and machine is None:
         project_root = Path(parsed.directory).expanduser().resolve()
 
     render_mode = resolve_render_mode(
@@ -133,7 +172,9 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         render_mode=render_mode,
         explicit_format=explicit_format,
         project_root=project_root,
-        directory_explicit=parsed.directory_explicit,
+        directory_explicit=parsed.directory_explicit and machine is None,
+        machine=machine,
+        remote_directory=parsed.directory if machine is not None else None,
     )
 
 
@@ -233,6 +274,17 @@ def root(
         Parameter(
             name=["-C", "--directory"],
             help="Resolve project root from this path instead of CWD.",
+        ),
+    ] = None,
+    machine: Annotated[
+        str | None,
+        Parameter(
+            name="--machine",
+            help=(
+                "Run a reading or messaging command on a saved machine (`meridian machine "
+                "list`). Put it after the command words. With --machine, -C names a path "
+                "on that machine."
+            ),
         ),
     ] = None,
     yes: Annotated[
@@ -780,6 +832,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _message_cmd
 
+        def _register_machine() -> None:
+            import meridian.cli.machine_cmd as _machine_cmd
+
+            _ = _machine_cmd
+
         def _register_idle() -> None:
             import meridian.cli.idle_cmd as _idle_cmd
 
@@ -816,6 +873,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "artifact": _register_artifact,
             "notify": _register_notify,
             "message": _register_message,
+            "machine": _register_machine,
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
@@ -871,7 +929,9 @@ def _prints_startup_error(shape: StartupErrorShape, *, json_mode: bool) -> bool:
     return shape is StartupErrorShape.IDLE or (shape is StartupErrorShape.MESSAGE and json_mode)
 
 
-def _emit_startup_error(shape: StartupErrorShape, message: str, *, json_mode: bool) -> bool:
+def _emit_startup_error(
+    shape: StartupErrorShape, message: str, *, json_mode: bool, kind: str = "usage"
+) -> bool:
     """Print *message* in the command's own error shape; False leaves it to the caller."""
 
     if not _prints_startup_error(shape, json_mode=json_mode):
@@ -881,7 +941,7 @@ def _emit_startup_error(shape: StartupErrorShape, message: str, *, json_mode: bo
     else:
         from meridian.lib.message.result import print_startup_error
 
-        print_startup_error(message)
+        print_startup_error(message, kind)
     return True
 
 
@@ -1231,17 +1291,31 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     early_descriptor = classify_invocation(args, COMMAND_CATALOG)
     try:
         cleaned_args, options = _extract_global_options(args)
-    except SystemExit as exc:
+    except (SystemExit, MachineError) as exc:
+        text, kind = (exc.text, exc.kind) if isinstance(exc, MachineError) else (exc.code, "usage")
         if (
             early_descriptor is not None
-            and isinstance(exc.code, str)
-            and _emit_startup_error(early_descriptor.startup_error, exc.code, json_mode=json_mode)
+            and isinstance(text, str)
+            and _emit_startup_error(
+                early_descriptor.startup_error, text, json_mode=json_mode, kind=kind
+            )
         ):
+            raise SystemExit(1) from None
+        if isinstance(exc, MachineError):
+            if json_mode:
+                # A failure to name the machine is a failure of the call: the object a crossing
+                # command prints for every failure under --json.
+                from meridian.lib.message.result import print_startup_error
+
+                print_startup_error(exc.text, exc.kind)
+            else:
+                print(f"error: {exc.text}", file=sys.stderr)
             raise SystemExit(1) from None
         raise
     if not (cleaned_args and cleaned_args[0] == "mars"):
         cleaned_args, passthrough_args = _split_passthrough_args(cleaned_args)
         options = options.model_copy(update={"passthrough_args": passthrough_args})
+    options = options.model_copy(update={"argv": tuple(cleaned_args)})
     help_advanced = False
     if _is_help_request(cleaned_args) and "--advanced" in cleaned_args:
         first_token = _first_command_token(cleaned_args)
@@ -1299,7 +1373,8 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         descriptor.startup_class if descriptor is not None else StartupClass.PRIMARY_LAUNCH
     )
     help_request = _is_help_request(cleaned_args)
-    bootstrap_skipped = help_request
+    # A command that runs on another machine prepares nothing here.
+    bootstrap_skipped = help_request or options.machine is not None
     bootstrap_plan = descriptor.bootstrap_plan if descriptor is not None else None
     launch_dry_run = _is_launch_dry_run(
         cleaned_args,
@@ -1317,6 +1392,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     prints_launch = False
     with (
         invocation_scope(options),
+        project_named_scope(options.directory_explicit),
         manual_hook_authority_scope(
             suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
         ),

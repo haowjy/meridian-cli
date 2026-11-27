@@ -848,7 +848,12 @@ def _spawn_list_all_projects(payload: SpawnListInput) -> SpawnListOutput:
     found: list[tuple[Path, SpawnRecord]] = []
     # A spawn reports running before its runner takes the lifetime lock, so the roots of
     # claims from the last two minutes are opened too.
-    for root in sorted({*_live_project_roots(), *recent_claim_roots(_NEW_CLAIM_WINDOW_SECONDS)}):
+    # The lock scan and a claim can spell one root two ways (``/tmp`` and ``/private/tmp``).
+    roots = {
+        root.resolve(): root
+        for root in (*_live_project_roots(), *recent_claim_roots(_NEW_CLAIM_WINDOW_SECONDS))
+    }
+    for root in sorted(roots.values()):
         if not root.is_dir():  # a claim's root that was pruned
             continue
         try:

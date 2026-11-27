@@ -8,11 +8,13 @@ from cyclopts import Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
+from meridian.cli.machine_forward import forward_if_remote
 from meridian.cli.utils import (
     resolve_cli_observer_context,
     resolve_cli_project_root,
 )
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.machines.caller import require_own_session
 from meridian.lib.ops.report import (
     ReportSearchInput,
     ReportShowInput,
@@ -35,6 +37,9 @@ def _report_show(
         ),
     ] = True,
 ) -> None:
+    forward_if_remote([spawn] if spawn else [])
+    if spawn is None:
+        require_own_session("`spawn report show`")
     project_root = resolve_cli_project_root()
     result = report_show_sync(
         ReportShowInput(

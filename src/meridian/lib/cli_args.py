@@ -36,6 +36,7 @@ TOP_LEVEL_VALUE_FLAGS = frozenset(
         "-C",
         "--directory",
         "--mode",
+        "--machine",
     }
 )
 

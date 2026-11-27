@@ -55,10 +55,18 @@ Deliver = Callable[[str], Awaitable[DeliveryKind]]
 
 @dataclass(frozen=True)
 class MessageSender:
-    """The session that sent a message: its spawn and the project that spawn lives in."""
+    """The session that sent a message: its spawn and the project that spawn lives in.
+
+    A sender on another machine also names that machine by ID, and the ID to answer
+    (``reply_id``; ``claimed`` when it is machine-wide): ``spawn_id`` and ``project_root`` are
+    then paths on that machine.
+    """
 
     spawn_id: str
     project_root: str
+    machine_id: str | None = None
+    reply_id: str | None = None
+    claimed: bool = False
 
 
 RouteDeliver = Callable[[str, MessageSender | None], Awaitable[DeliveryKind]]

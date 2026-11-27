@@ -15,14 +15,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from meridian.lib.platform.atomic import fsync_directory
+from meridian.lib.core.refs import is_machine_name
+from meridian.lib.platform.atomic import atomic_write_text, fsync_directory
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.user_paths import get_user_home
 
 logger = logging.getLogger(__name__)
 
 FORMAT_VERSION: Final = 1  # the `v` of `_MachineFile`
+_ID_RE: Final = re.compile(r"[0-9a-f]{12}")
 
 
 class MachineIdentityError(RuntimeError):
@@ -38,6 +41,12 @@ class MachineIdentity:
 
 def machine_file() -> Path:
     return get_user_home() / "machine.json"
+
+
+def machine_lock_file() -> Path:
+    """Guards a rename only: creating the file is ``link(2)``, which needs no lock."""
+
+    return get_user_home() / "locks" / "machine.lock"
 
 
 def default_machine_name(login: str, host: str) -> str:
@@ -83,8 +92,30 @@ class _MachineFile(BaseModel):
 
     v: Literal[1]
     id: str
-    name: str = Field(min_length=1)
+    name: str
     was: tuple[str, ...] = ()
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_12_hex(cls, value: str) -> str:
+        if _ID_RE.fullmatch(value) is None:
+            raise ValueError("`id` must be 12 hex characters")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def _name_fits_rule(cls, value: str) -> str:
+        if not is_machine_name(value):
+            raise ValueError(f"`name` {value!r} breaks the machine name rule")
+        return value
+
+    @field_validator("was")
+    @classmethod
+    def _was_fit_rule(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for name in value:
+            if not is_machine_name(name):
+                raise ValueError(f"`was` entry {name!r} breaks the machine name rule")
+        return value
 
 
 def _parse(path: Path) -> MachineIdentity:
@@ -102,6 +133,32 @@ def _parse(path: Path) -> MachineIdentity:
             "because a new machine ID makes every machine that saved this one refuse it."
         ) from exc
     return MachineIdentity(data.id, data.name, data.was)
+
+
+def rename_machine(new_name: str) -> MachineIdentity:
+    """Give this machine *new_name*; the old name goes to the front of ``was`` and the new one
+    leaves it (renaming back). The file is read again under the lock, then replaced whole.
+
+    Raises ``MachineIdentityError`` for a name that breaks the rule or a file that can't be used.
+    """
+
+    if not is_machine_name(new_name):
+        raise MachineIdentityError(
+            f"`{new_name}` can't be a machine name: it must match [a-z][a-z0-9-]{{0,62}}, "
+            "and not be `inbox` or look like a spawn or chat ID (p123, c123)"
+        )
+    path = machine_file()
+    try:
+        with lock_file(machine_lock_file()):
+            current = read_or_create_machine_identity()
+            if current.name == new_name:
+                return current
+            was = (current.name, *(name for name in current.was if name != new_name))
+            document = _MachineFile(v=FORMAT_VERSION, id=current.id, name=new_name, was=was)
+            atomic_write_text(path, document.model_dump_json() + "\n")
+    except OSError as exc:
+        raise MachineIdentityError(f"can't write {path}: {exc}") from exc
+    return MachineIdentity(document.id, document.name, document.was)
 
 
 def _create(path: Path) -> None:
@@ -142,4 +199,5 @@ __all__ = [
     "machine_file",
     "machine_identity_or_none",
     "read_or_create_machine_identity",
+    "rename_machine",
 ]

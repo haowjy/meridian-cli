@@ -103,10 +103,10 @@ def result_json(result: MessageResult) -> dict[str, object]:
     return payload
 
 
-def print_startup_error(text: str) -> None:
-    """Print an error raised before the handler ran (a bad option, a missing value)."""
+def print_startup_error(text: str, kind: str = "usage") -> None:
+    """Print an error raised before the handler ran (a bad option, an unknown machine)."""
 
-    payload = {"ok": False, "error": {"kind": "usage", "text": text}}
+    payload = {"ok": False, "error": {"kind": kind, "text": text}}
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
 
 

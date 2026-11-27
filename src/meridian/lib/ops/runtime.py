@@ -17,6 +17,7 @@ from meridian.lib.config.project_root import (
 )
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
+from meridian.lib.machines.caller import is_machine_call_without_project
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
@@ -171,7 +172,10 @@ def inspect_runtime_authority_for_read(
     override_root = runtime_override_root(authority.project_root)
     identity = resolve_project_identity(authority.project_root)
     project_id = state_id(identity)
-    if override_root is not None:
+    if is_machine_call_without_project():
+        # ssh starts the command in the home directory, whose project is not the caller's.
+        runtime_root = None
+    elif override_root is not None:
         runtime_root = override_root
     elif project_id is not None:
         runtime_root = get_project_home(project_id)

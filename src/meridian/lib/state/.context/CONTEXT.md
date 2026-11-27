@@ -169,7 +169,22 @@ authorize signals, even when replaying a cleanup claim.
 `~/.meridian/machine.json` (`machine_identity.py`) holds this machine's `id` and `name`, written
 once on first need through a temp file and `link(2)`: of two racing first calls the loser
 reads the winner's file. A file that can't be parsed is an error naming it, never rewritten:
-a new `id` would make every machine that saved this one refuse it.
+a new `id` would make every machine that saved this one refuse it. Only `machine rename`
+changes the file afterwards: under `locks/machine.lock` it reads the file again and replaces it
+whole, moving the old name to the front of `was`. `name` and every `was` entry must pass
+`is_machine_name` (`lib/core/refs.py`) on read.
+
+`~/.meridian/machines.json` (`saved_machines.py`) lists the machines this one can reach:
+`name`, `ssh` target, `id`, `was`. It is read as a JSON document and each entry is checked on
+its own, so a bad entry is skipped with a warning and a write keeps skipped entries and keys
+this build doesn't know. A file that can't be used (not JSON, not an object, `machines` not a
+list, a `v` this build doesn't know) is an error naming it and is never overwritten. Every
+write goes through `update_saved_machines`: `locks/machines.lock`, read again, edit, replace
+whole; the lock is never held across an SSH call or a question. Writers are `machine add` /
+`remove` and the rename correction inside an ordinary call to a machine that renamed itself;
+the second never fails the call. `cache/machines/<machine id>.json` holds the absolute path of
+`meridian` on that machine; it is rediscovered when missing or wrong and never needed for
+correctness.
 
 ### Native chat identity
 

@@ -263,13 +263,24 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "message": GroupHelp(
         summary="Send a message to a running session or a person.",
-        long_help="Send one message to a running session by its spawn ID or chat ID, or to a person by `@name`. A new ID works from any directory; `-C <repo>` is only for an ID issued before machine-wide IDs, and goes after the address so the command begins `meridian message` (a harness lets only such a command out of its sandbox). The receiver sees who sent it and how to reply. Don't use it to nudge your own running subagents to hurry or check in. Text `-` reads stdin (`message c123 -`, `--message -` and `--message=-` all work). A session that is idle with its prompt cache expired is held: nothing is sent and the error kind is `cold`, because waking it re-reads the whole conversation; send again with `--wake`, or start a new session from it with `--from <session>`. This is best effort: a session that reports no idle state is never held. With `--json` every outcome prints one object `{ok, address, machine, spawn_id, chat_id, delivery, note}` or `{ok: false, error: {kind, text}}`; only `maybe_delivered` means the message may have arrived.",
+        long_help='Send one message to a running session by its spawn ID or chat ID, to a session on another machine by `<machine>/<id>` (`meridian message jimyao-minibox/c2041 "…"`; see `meridian machine -h`), or to a person by `@name`. A new ID works from any directory; `-C <repo>` is only for an ID issued before machine-wide IDs, and goes after the address so the command begins `meridian message` (a harness lets only such a command out of its sandbox). The receiver sees who sent it and how to reply. Don\'t use it to nudge your own running subagents to hurry or check in. Text `-` reads stdin (`message c123 -`, `--message -` and `--message=-` all work). A session that is idle with its prompt cache expired is held: nothing is sent and the error kind is `cold`, because waking it re-reads the whole conversation; send again with `--wake`, or start a new session from it with `--from <session>`. This is best effort: a session that reports no idle state is never held. With `--json` every outcome prints one object `{ok, address, machine, spawn_id, chat_id, delivery, note}` or `{ok: false, error: {kind, text}}`; only `maybe_delivered` means the message may have arrived.',
         examples=(
             ('meridian message c123 "The API change is merged"', ""),
             ('meridian message p456 --json "Rebase onto main"', ""),
             ('meridian message @alice "PR #412 is ready"', ""),
         ),
         agent_notes="Read `meridian skills messaging__meridian` for when to message. An error's `kind` says whether to resend: only `maybe_delivered` may have arrived.",
+    ),
+    "machine": GroupHelp(
+        summary="Machines this one can reach over SSH.",
+        long_help='Save other machines (`machine add`), then run reading and messaging commands on them: `spawn list|show|status|children|report show`, `session log|search` and `message` take `--machine <name>` or a `<machine>/<id>` reference (`meridian message jimyao-minibox/c2041 "…"`). Calls go over plain SSH with your own keys; nothing listens, nothing stays connected. A machine\'s name is what it calls itself (`machine name`, `machine rename`); the ID behind it never changes. Put `--machine` after the command words.',
+        examples=(
+            ("meridian machine add j-mini48", "save the machine at that SSH target"),
+            ("meridian spawn list --global --machine jimyao-minibox", "what is running there"),
+            ('meridian message jimyao-minibox/c2041 "the PR is up"', "message a session there"),
+        ),
+        agent_notes="Only reading and messaging cross: starting, continuing or cancelling a session on another machine is not available. A claimed ID (`c2041`) needs no `-C` on its own machine; an older one needs `--machine <name> -C <path on that machine>`. Error `kind`s tell whether to retry: only `maybe_delivered` may have arrived.",
+        agent_subcommands=("list", "add", "remove", "status", "name", "rename"),
     ),
     "idle": GroupHelp(
         summary="Manage harness idle schedules.",
@@ -456,6 +467,14 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         agent_root=True,
         human_root_order=20,
         registration_bucket="message",
+        has_group_app=True,
+    ),
+    "machine": CommandGroupSpec(
+        help=_GROUP_HELP["machine"],
+        agent_root_description="Machines this one can reach; run reads and messages on them.",
+        agent_root=True,
+        human_root_order=22,
+        registration_bucket="machine",
         has_group_app=True,
     ),
     "idle": CommandGroupSpec(
