@@ -51,7 +51,6 @@ from meridian.lib.machines.resolve import MachineError
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, MessageResult, print_result
-from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_list, json_object
 
@@ -124,16 +123,14 @@ def _require_changer(caller: InboxCaller, what: str) -> None:
         )
 
 
-def _cross(
-    caller: InboxCaller, *, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS
-) -> None:
+def _cross(*, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS) -> None:
     """Run the command on the machine `--machine` names and exit with its answer; return
     when it runs here. Called once the caller's role has been checked: the request carries
     who is calling, not what it may do."""
 
-    from meridian.cli.message import inbox_caller_block
+    from meridian.cli.message import machine_caller_block
 
-    forward_if_remote(caller=lambda: inbox_caller_block(caller), limit=limit, may_have=may_have)
+    forward_if_remote(caller=machine_caller_block, limit=limit, may_have=may_have)
 
 
 def _require_visible(caller: InboxCaller, found: Entry, *, all_projects: bool) -> None:
@@ -281,7 +278,7 @@ def cmd_inbox_list(
     with _inbox_command() as caller:
         if all_projects:
             _require_changer(caller, "--all")
-        _cross(caller)
+        _cross()
         now = datetime.now(UTC)
         machine = local_machine_name()
         here = resolve_project_root_resolution().project_root
@@ -308,7 +305,7 @@ def cmd_inbox_read(
     with _inbox_command() as caller:
         if all_projects:
             _require_changer(caller, "--all")
-        _cross(caller)
+        _cross()
         found = entry(message_id)
         _require_visible(caller, found, all_projects=all_projects)
         _print_message(found)
@@ -328,7 +325,7 @@ def cmd_inbox_take(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox take`")
-        _cross(caller, may_have=f"{message_id} may have been taken")
+        _cross(may_have=f"{message_id} may have been taken")
         via = via_from_flags(via_program, None, via_sender)
         _require_visible(caller, entry(message_id), all_projects=all_projects)
         _print_message(
@@ -342,7 +339,7 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox release`")
-        _cross(caller, may_have=f"{message_id} may have been released")
+        _cross(may_have=f"{message_id} may have been released")
         released = release(message_id, caller.party(local_machine_name()))
         _print(
             {"id": message_id},
@@ -427,7 +424,7 @@ def _remote_target(machine: SavedMachine, session_id: str, message: Message) -> 
                 kind="not_running",
             )
         found = row.get("project_id")
-        if isinstance(found, str) and not found.startswith(ADHOC_PROJECT_ID_PREFIX):
+        if isinstance(found, str):
             project = found
     return Target(
         address=f"{machine.name}/{session_id}",
@@ -487,7 +484,7 @@ def cmd_inbox_offer(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
-        _cross(caller, may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
+        _cross(may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
         offered = offer(message_id, session, find=find, send=send, now=_now_to_the_second())
         receiver = offered.delivered.receiver
         to: dict[str, object] = {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id}

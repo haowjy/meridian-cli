@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from meridian.lib.core.refs import is_chat_id, is_machine_name, is_spawn_id, project_is_named
+from meridian.lib.core.refs import (
+    is_chat_id,
+    is_machine_id,
+    is_machine_name,
+    is_project_id_form,
+    is_spawn_id,
+    project_is_named,
+)
 from meridian.lib.utils.json_shapes import json_object
 
 MACHINE_CALL_ENV: Final = "_MERIDIAN_MACHINE_CALL"
@@ -32,9 +38,6 @@ class MachineCaller:
     can_reply: bool = False
     project_root: str | None = None
     project_id: str | None = None
-
-
-_ID_RE = re.compile(r"[0-9a-f]{12}")
 
 
 def _text(fields: Mapping[str, object], key: str) -> str | None:
@@ -57,10 +60,7 @@ def _path(value: str | None) -> str | None:
 
 
 def _project_id(value: str | None) -> str | None:
-    """A project ID names a directory under ``projects/``: one printable path component."""
-
-    ok = value is not None and value.isprintable() and "/" not in value and value not in (".", "..")
-    return value if ok and len(value or "") <= 255 else None
+    return value if value is not None and is_project_id_form(value) else None
 
 
 def parse_machine_caller(raw: object) -> MachineCaller | None:
@@ -75,7 +75,7 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
         machine is None
         or machine_id is None
         or not is_machine_name(machine)
-        or _ID_RE.fullmatch(machine_id) is None
+        or not is_machine_id(machine_id)
     ):
         return None
     return MachineCaller(

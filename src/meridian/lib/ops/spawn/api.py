@@ -84,6 +84,7 @@ from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
+from meridian.lib.state.runtime_root import runtime_root_project_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_observations import LaunchKey, WaitPin, live_wait_pins
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
@@ -758,6 +759,7 @@ def _list_entries(
     runtime_root: Path, rows: Sequence[SpawnRecord], *, machine: str | None
 ) -> list[SpawnListEntry]:
     chat_work = _chat_work_ids(runtime_root, rows)
+    project_id = runtime_root_project_id(runtime_root)
     entries: list[SpawnListEntry] = []
     for row in rows:
         kind = "primary" if (row.kind or "").strip() == "primary" else None
@@ -789,7 +791,7 @@ def _list_entries(
                 cost_usd=row.total_usage.total_cost_usd,
                 located=SpawnLocation(
                     project_root=row.control_root,
-                    project_id=runtime_root.name,
+                    project_id=project_id,
                     machine=machine,
                 ),
             )

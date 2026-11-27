@@ -142,7 +142,7 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
 - Renders those sections together into `CHANGELOG.md` as `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
 - Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
-- Lets the tag push trigger `.github/workflows/release.yml` for PyPI publish
+- Dispatches `.github/workflows/release.yml` with the tag (`gh workflow run release.yml --ref main -f tag=vX.Y.Z`) for PyPI publish. The workflow's own token pushes the commit and tag, and GitHub starts no workflow from such a push, so there is no personal access token or `RELEASE_TOKEN` secret to expire
 
 If a `## Changelog` section is missing or malformed, the release fails before
 committing: the error names the PR, so edit that merged PR body and re-run the
@@ -151,6 +151,13 @@ entry), move that text into the merged PR body, remove it from `CHANGELOG.md`
 with a direct push to `main` (direct pushes release nothing), then re-run the
 failed job. Re-running the failed job stays idempotent through the
 `Release-Trigger` guard and the script's duplicate-version check.
+
+A re-run that finds the commit and tag already there dispatches nothing. If the tag
+was pushed but `release.yml` never started (the dispatch step failed), start it by hand:
+
+```bash
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
 
 A range above the 200-commit cap fails in the collect step. An intermediate
 auto-release re-enters the same range, so cut it with a manual release that
@@ -163,8 +170,12 @@ scripts/manually-release.sh patch --no-collect --notes-file notes.md --push
 `release.yml` builds the `meridian-sync` wheels (Linux x86_64 and arm64, macOS arm64 and
 x86_64) and sdist, validates meridian-cli's wheel and sdist with `--find-links` at the
 `meridian-sync` wheel (the exact pin is not on PyPI yet), and publishes `meridian-sync` before
-meridian-cli. `release.yml` is the only PyPI trusted publishing workflow identity. Manual or
-backfill `v*` tag pushes use the same workflow and provenance checks. It also
+meridian-cli. `release.yml` is the only PyPI trusted publishing workflow identity. It runs on
+`workflow_dispatch` with a `tag` input (what `release-on-merge.yml` uses) and on a
+`v*` tag push (a manual or backfill tag), with the same provenance checks, including
+that the tag's commit is reachable from `main`. Runs for one tag share a concurrency
+group, so a dispatch and a tag push for the same tag run one after the other; the
+second finds the files on PyPI and skips them. It also
 creates the GitHub Release for the tag, using the released `## [X.Y.Z]` section
 as the release body. Re-running the failed job skips artifacts PyPI already has
 (`skip-existing`) and edits the existing release.
@@ -242,5 +253,5 @@ git push --no-verify origin vX.Y.Z           # push the tag (bypasses local v* g
 
 - Do not edit the version in any `meridian.dev.versions.LOCATIONS` file — CI owns version bumps
 - Do not edit `CHANGELOG.md` in a PR — the release job renders it from the merged PR body
-- Do not create or push `v*` tags manually — CI owns tags
+- Do not create or push `v*` tags manually — CI owns tags. Do not add a personal token to the release workflows to make a push start `release.yml`; dispatch it
 - The pre-push hook blocks direct `v*` tag pushes

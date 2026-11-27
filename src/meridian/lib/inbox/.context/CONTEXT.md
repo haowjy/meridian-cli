@@ -102,15 +102,17 @@ that launched a child.
 
 This stops a confused child, not one that forges its environment.
 
-`caller.project_of_root` is the one definition of a session's project: the path of the
-runtime root its record was found in, below `projects/`. The
+`caller.project_of_root` is the one definition of a session's project in the inbox: what
+`state/runtime_root.runtime_root_project_id` gives for the runtime root its record was
+found in, which is the root's whole path below `projects/` (`team/app`). The
 caller, `offer`'s check on the receiving session and the launch line all use it. An ad-hoc
 project (`adhoc.…`) counts as none. A session sees messages with its own project or with
 none.
 
 A root that gives no ID `fields.is_project_id` accepts refuses the command. An ID is in
-the safe set and is one path component, with no `/`: `lib/machines/caller.py` holds the
-project ID a call from another machine carries to the same rule. Two things produce a
+the safe set and has the form `core/refs.is_project_id_form` checks (parts joined by `/`,
+none empty, `.` or `..`), the one predicate `lib/machines/caller.py` also holds a caller
+block's project ID to. Two things produce a
 root that fails: `meridian.toml` can set any string as a project ID, and
 `_MERIDIAN_RUNTIME_DIR` can put a root anywhere. The command is refused because the
 alternative is to read such a session as having no project, and its messages would then
@@ -145,9 +147,10 @@ own files. Nothing here reads or writes another machine's directory.
   (`project_id`), or with no session a terminal of that machine. The machine is named as
   this machine saved it (by its ID), else as it names itself; one that is not saved and
   has this machine's own name is refused, since its sessions would be recorded as this
-  machine's. The calling side builds that block from its own `InboxCaller`
-  (`cli/message.py:inbox_caller_block`), so the project is `project_of_root`'s and never
-  the last component of a deeper root.
+  machine's. The calling side sends step 4's block
+  (`cli/message.py:machine_caller_block`), whose project ID comes from the same
+  `runtime_root_project_id`; it resolves its own `InboxCaller` first, so a session with
+  no record or no usable project is refused before anything connects.
 - **A repeat is safe**, which is what makes `maybe_delivered` recoverable: the taker is
   (machine, chat ID), the same on every retry, so taking again succeeds; releasing a
   message with no claim succeeds; a repeated offer sends the notice again; and a filing

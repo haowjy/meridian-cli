@@ -37,7 +37,8 @@ from meridian.lib.core.refs import (
 )
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.types import SpawnId
-from meridian.lib.machines.resolve import MachineError, resolve_machine
+from meridian.lib.machines.caller import is_machine_call
+from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryCoordinationError
@@ -136,7 +137,7 @@ def _hit(ref: Ref, root: Path, found: SpawnRecord | session_store.SessionRecord)
     return ChatHit(ref, root, found)
 
 
-def _local_ref(parsed: Ref) -> Ref:
+def local_ref(parsed: Ref) -> Ref:
     """``<machine>/<id>`` for this machine is the bare ID, whichever command it reaches; for
     another machine it is an error here. A command that crosses has forwarded such a reference
     before it gets this far, so what arrives is a command that may not."""
@@ -171,7 +172,7 @@ def locate(
     project and the user did not name a project with ``-C``.
     """
 
-    parsed = _local_ref(parse_ref(ref))
+    parsed = local_ref(parse_ref(ref))
     own = runtime_root or resolve_runtime_root_for_read(project_root)
     claimed = claim_root(parsed.value) if parsed.kind in ("spawn", "chat") else None
     if claimed is not None and (own is None or not same_runtime_root(claimed, own)):
@@ -189,21 +190,28 @@ def locate(
     if own is None:
         if parsed.kind == "native":
             return Untracked(parsed.value)
-        raise RefNotFound(parsed.value, parsed.kind, legacy=_is_legacy(parsed, claimed))
+        raise RefNotFound(parsed.value, parsed.kind, legacy_hint=_legacy_hint(parsed, claimed))
     located = _locate_in(parsed, own, harness=harness, claimed=claimed)
     if isinstance(located, Untracked):
         return located
     return replace(located, project_root=project_root)
 
 
-def _is_legacy(ref: Ref, claimed: Path | None) -> bool:
-    """An ID with no claim was issued before claims only when its number is below the
-    lowest claim of its kind; above it, it was never issued."""
+def _legacy_hint(ref: Ref, claimed: Path | None) -> str | None:
+    """How to name the project of an ID that was issued before claims, or ``None`` when the ID
+    isn't one: it has a claim, the user already named the project, no claim of its kind
+    exists on this machine (nothing says which numbers are old), or its number is above the
+    lowest claim (it was never issued). The reader of a machine call's error is on the other
+    machine, where ``-C`` alone would name a path there."""
 
-    if ref.kind not in ("spawn", "chat") or claimed is not None:
-        return False
+    if ref.kind not in ("spawn", "chat") or claimed is not None or project_is_named():
+        return None
     lowest = lowest_claim("p" if ref.kind == "spawn" else "c")
-    return lowest is None or int(ref.value[1:]) < lowest
+    if lowest is None or int(ref.value[1:]) >= lowest:
+        return None
+    if is_machine_call():
+        return f"`--machine {this_machine().name} -C <path on that machine>`"
+    return "-C"
 
 
 def _locate_in(
@@ -219,7 +227,9 @@ def _locate_in(
         case "spawn" | "chat":
             found = _read_id(parsed, root)
             if found is None:
-                raise RefNotFound(parsed.value, parsed.kind, legacy=_is_legacy(parsed, claimed))
+                raise RefNotFound(
+                    parsed.value, parsed.kind, legacy_hint=_legacy_hint(parsed, claimed)
+                )
             return _hit(parsed, root, found)
         case "native":
             generations = session_store.native_generations(root, parsed.value, harness=harness)
@@ -328,6 +338,7 @@ __all__ = [
     "SpawnHit",
     "Untracked",
     "chat_spawn",
+    "local_ref",
     "locate",
     "locate_run",
     "require_project_dir",

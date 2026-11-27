@@ -22,7 +22,10 @@ from meridian.lib.message.reply import saved_machine_by_id
 from meridian.lib.state import spawn_store
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
-from meridian.lib.state.runtime_root import derive_runtime_root_from_project
+from meridian.lib.state.runtime_root import (
+    derive_runtime_root_from_project,
+    runtime_root_project_id,
+)
 from meridian.lib.state.user_paths import get_user_home
 from meridian.plugin_api.types import SpawnKind
 
@@ -68,31 +71,30 @@ class InboxCaller:
 
 
 def project_of_root(runtime_root: Path) -> str | None:
-    """The committed project ID of the sessions recorded under a runtime root, or ``None``
-    for an ad-hoc project. The one definition of a session's project.
+    """The committed project ID of the sessions recorded under a runtime root
+    (``runtime_root_project_id``), or ``None`` for an ad-hoc project.
 
-    A root is ``projects/<project ID>``. A root that is somewhere else
-    (``_MERIDIAN_RUNTIME_DIR``), or whose ID is outside what the inbox stores and prints
-    (``team/app`` puts the root two levels down), refuses: read as "no project", such a
-    session's messages would be shown to every session.
+    A root outside ``projects/`` (``_MERIDIAN_RUNTIME_DIR``), or whose ID is outside what
+    the inbox stores and prints, refuses: read as "no project", such a session's messages
+    would be shown to every session.
     """
 
-    try:
-        relative = runtime_root.resolve().relative_to((get_user_home() / "projects").resolve())
-    except ValueError:
-        relative = None
-    project = relative.as_posix() if relative is not None and relative.parts else None
-    if project is not None and project.startswith(ADHOC_PROJECT_ID_PREFIX):
-        return None
-    if project is None or not is_project_id(project):
-        named = f"project ID {project!r}" if project is not None else "no project ID"
-        raise InboxError(
-            f"the inbox can't tell which project the sessions under {runtime_root} belong "
-            f"to: that directory gives {named}, and a project ID in the inbox is "
-            f"{PROJECT_ID_RULE}. Nothing was changed.",
-            kind="refused",
-        )
-    return project
+    project = runtime_root_project_id(runtime_root)
+    if project is None:
+        projects = (get_user_home() / "projects").resolve()
+        if projects in runtime_root.resolve().parents:
+            return None  # ad hoc
+        named = "no project ID"
+    elif is_project_id(project):
+        return project
+    else:
+        named = f"project ID {project!r}"
+    raise InboxError(
+        f"the inbox can't tell which project the sessions under {runtime_root} belong "
+        f"to: that directory gives {named}, and a project ID in the inbox is "
+        f"{PROJECT_ID_RULE}. Nothing was changed.",
+        kind="refused",
+    )
 
 
 def _from_machine(caller: MachineCaller | None) -> InboxCaller:

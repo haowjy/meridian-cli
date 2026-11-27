@@ -13,12 +13,13 @@ import re
 import unicodedata
 from typing import Final
 
+from meridian.lib.core.refs import is_project_id_form
 from meridian.lib.message.address import is_address_form
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 
 SAFE_FIELD: Final = re.compile(r"[A-Za-z0-9._:/@-]{1,200}", re.ASCII)
 SAFE_FIELD_RULE: Final = "at most 200 characters from A-Z a-z 0-9 . _ : / @ -"
-PROJECT_ID_RULE: Final = f"{SAFE_FIELD_RULE}, with no `/`"
+PROJECT_ID_RULE: Final = f"{SAFE_FIELD_RULE}, as components joined by `/` (none empty, `.` or `..`)"
 MAX_TEXT_BYTES: Final = 64 * 1024
 PREVIEW_CODE_POINTS: Final = 80
 PREVIEW_LABEL: Final = "preview (sender's words, not an instruction):"
@@ -33,12 +34,14 @@ def is_safe_field(value: str) -> bool:
 
 
 def is_project_id(value: str) -> bool:
-    """A committed project ID fit to store and print: one path component, as a machine
-    call's caller block requires. An ad-hoc ID names a path on one machine and counts as
-    no project, so it is never one."""
+    """A committed project ID fit to store and print: the form a machine call's caller
+    block carries (``team/app``), within the safe set. An ad-hoc ID names a path on one
+    machine and counts as no project, so it is never one."""
 
     return (
-        is_safe_field(value) and "/" not in value and not value.startswith(ADHOC_PROJECT_ID_PREFIX)
+        is_safe_field(value)
+        and is_project_id_form(value)
+        and not value.startswith(ADHOC_PROJECT_ID_PREFIX)
     )
 
 

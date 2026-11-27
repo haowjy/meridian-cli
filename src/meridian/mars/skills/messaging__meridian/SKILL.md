@@ -26,6 +26,10 @@ add `-C <its repo>` after the address (`meridian message <chat> -C <repo> "..."`
 only have a chat ID, ask the human which repo. A newer ID works from anywhere. The human
 usually pastes the peer's address from its capabilities block; use it as given.
 
+A session on another machine is `<machine>/<id>`, such as `jimyao-minibox/c2041`:
+`meridian message jimyao-minibox/c2041 "..."` sends there over SSH, and `meridian machine -h`
+lists the saved machines and the commands that reach them.
+
 **When.** Two sessions on connected changes need to agree on an interface, hand over a
 finding, or unblock each other. Keep it short; put long content in a file and send the
 path. The human reads notifications (`notify__meridian`), not messages. Don't message

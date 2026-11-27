@@ -35,6 +35,7 @@ _KIND_LABEL: dict[RefKind, str] = {
 }
 
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
+_MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
 INBOX_IS_NO_SESSION = "`inbox` is an address for `meridian message`, not a session"
 
 
@@ -49,7 +50,7 @@ class RefNotFound(ValueError):
         ref: str,
         kind: RefKind,
         *,
-        legacy: bool = False,
+        legacy_hint: str | None = None,
         claimed_root: Path | None = None,
     ) -> None:
         self.ref = ref
@@ -62,8 +63,10 @@ class RefNotFound(ValueError):
             if kind == "selector"
             else f"{_KIND_LABEL[kind]} '{ref}' not found"
         )
-        if legacy:
-            text += f". '{ref}' was issued before machine-wide IDs; name its project with -C"
+        if legacy_hint is not None:
+            text += (
+                f". '{ref}' was issued before machine-wide IDs; name its project with {legacy_hint}"
+            )
         super().__init__(text)
 
 
@@ -136,6 +139,24 @@ def is_machine_name(value: str) -> bool:
     )
 
 
+def is_machine_id(value: str) -> bool:
+    """The shape of a machine's ID (``machine.json``): 12 hex characters."""
+
+    return _MACHINE_ID_RE.fullmatch(value) is not None
+
+
+def is_project_id_form(value: str) -> bool:
+    """The form of a committed project ID, which names a directory under ``projects/``: a
+    relative path of printable components (``team/proj``), none of them empty, ``.`` or
+    ``..``, at most 255 characters."""
+
+    return (
+        value.isprintable()
+        and len(value) <= 255
+        and all(part not in ("", ".", "..") for part in value.split("/"))
+    )
+
+
 def parse_ref(raw: str) -> Ref:
     value = raw.strip()
     if not value:
@@ -169,7 +190,9 @@ __all__ = [
     "RefKind",
     "RefNotFound",
     "is_chat_id",
+    "is_machine_id",
     "is_machine_name",
+    "is_project_id_form",
     "is_spawn_id",
     "parse_ref",
     "project_is_named",

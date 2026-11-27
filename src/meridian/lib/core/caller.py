@@ -45,26 +45,30 @@ def caller_spawn_id(environ: Mapping[str, str] | None = None) -> SpawnId | None:
     return SpawnId(raw) if raw else None
 
 
-def caller_runtime_root(environ: Mapping[str, str] | None = None) -> Path | None:
-    """The runtime root of the project the calling environment names, if it names one:
-    ``ResolvedContext``'s rule, through the same function.
+def caller_project_root(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The project the calling environment names, if it names one.
 
     The process's own environment may name no project (a session started outside Meridian
     startup, as in tests): the caller is then in the project this process runs from.
     """
 
     from meridian.lib.config.project_root import resolve_project_root_resolution
+
+    project = (os.environ if environ is None else environ).get("MERIDIAN_PROJECT_DIR", "").strip()
+    if project:
+        return Path(project)
+    return resolve_project_root_resolution().project_root if environ is None else None
+
+
+def caller_runtime_root(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The runtime root of the caller's project: ``ResolvedContext``'s rule, through the
+    same function."""
+
     from meridian.lib.state.runtime_root import environment_runtime_root
 
-    env = os.environ if environ is None else environ
-    project = env.get("MERIDIAN_PROJECT_DIR", "").strip()
-    if project:
-        project_root = Path(project)
-    elif environ is None:
-        project_root = resolve_project_root_resolution().project_root
-    else:
-        project_root = None
-    return environment_runtime_root(project_root, env)
+    return environment_runtime_root(
+        caller_project_root(environ), os.environ if environ is None else environ
+    )
 
 
 def caller_identity(environ: Mapping[str, str] | None = None) -> CallerIdentity | None:
@@ -92,6 +96,7 @@ __all__ = [
     "CallerIdentity",
     "caller_identity",
     "caller_in",
+    "caller_project_root",
     "caller_runtime_root",
     "caller_spawn_id",
     "same_runtime_root",

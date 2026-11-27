@@ -122,17 +122,7 @@ def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> Save
     if descriptor is None or not descriptor.crosses:
         command = " ".join(descriptor.command_path) if descriptor is not None else "this command"
         raise MachineError("refused", f"`{command or 'meridian'}` doesn't reach another machine")
-    refused = [
-        flag
-        for flag, given in (
-            ("--config", parsed.config_file),
-            ("--harness", parsed.harness),
-            ("--yes", parsed.yes),
-            ("--no-input", parsed.no_input),
-            ("--mode", parsed.forced_render_mode),
-        )
-        if given
-    ]
+    refused = parsed.options_that_dont_cross()
     if refused:
         raise MachineError(
             "refused", f"{', '.join(refused)} doesn't reach another machine: drop it"

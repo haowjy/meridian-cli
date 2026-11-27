@@ -168,11 +168,15 @@ authorize signals, even when replaying a cleanup claim.
 
 `~/.meridian/machine.json` (`machine_identity.py`) holds this machine's `id` and `name`, written
 once on first need through a temp file and `link(2)`: of two racing first calls the loser
-reads the winner's file. A file that can't be parsed is an error naming it, never rewritten:
-a new `id` would make every machine that saved this one refuse it. Only `machine rename`
-changes the file afterwards: under `locks/machine.lock` it reads the file again and replaces it
-whole, moving the old name to the front of `was`. `name` and every `was` entry must pass
-`is_machine_name` (`lib/core/refs.py`) on read.
+reads the winner's file. A file that can't be used is an error naming it, never rewritten:
+a new `id` would make every machine that saved this one refuse it. It is read as a JSON
+document, like `machines.json`: a `v` above 1 gets "written by a newer Meridian; upgrade this
+one" and never advice to remove the file. Only `machine rename` changes the file afterwards:
+under `locks/machine.lock` it reads the document again, sets `name` and `was` (the old name
+at the front) and writes the same document back, so keys a newer build added survive. `id`
+must pass `is_machine_id`, and `name` and every `was` entry `is_machine_name`
+(`lib/core/refs.py`), on read. 0.28.0 shipped this reader, so a later build may add keys to
+format 1 but must bump `v` for anything a 0.28.0 reader would misread.
 
 `~/.meridian/machines.json` (`saved_machines.py`) lists the machines this one can reach:
 `name`, `ssh` target, `id`, `was`. It is read as a JSON document and each entry is checked on

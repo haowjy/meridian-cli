@@ -340,8 +340,8 @@ the same program and ref filed twice is one inbox message, so a retried call is 
 the command; without it such a message has no project, whatever directory the command
 ran in. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
 `--project-id` are each at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`. A project
-ID also has no `/`, and a session whose own project ID has one is refused. The text is at
-most 64 KiB.
+ID may have several parts joined by `/` (`team/app`), none of them empty, `.` or `..`; a
+session whose own project ID is outside these rules is refused. The text is at most 64 KiB.
 
 **Who sees a message.** A session sees messages filed for its own project and messages
 with no project. A primary session may pass `--all` to see every project's. A person at a
@@ -491,14 +491,14 @@ in `~/.meridian/machine.json`.
 | `meridian machine add TARGET` | Save the machine at an SSH target (a `Host` from `~/.ssh/config`, `user@host`, `ssh://user@host:port`). It saves the name the machine gives itself. In a terminal it asks: to install Meridian there with `uv` if there is none (default Yes), to upgrade an old one (default No), and to save this machine there too so its sessions can reply (default Yes). Without a terminal it asks nothing and prints the command to run. `--yes` answers each question with its default. |
 | `meridian machine list` | The saved machines: name, target, ID, former names. |
 | `meridian machine remove NAME` | Forget one. Nothing changes on that machine. |
-| `meridian machine status [NAME]` | One call to each machine; prints its Meridian version or what failed. |
+| `meridian machine status [NAME]` | One call to each machine; prints its Meridian version or what failed, and exits 1 if any call failed. `--json` prints `{"machines": [{"name": ..., "ok": true, "version": ...}, {"name": ..., "ok": false, "error": {"kind": ..., "text": ...}}]}`. |
 | `meridian machine name` | This machine's name. |
 | `meridian machine rename NEW` | Rename this machine: `[a-z][a-z0-9-]{0,62}`, not `inbox`, not shaped like `p123` or `c123`. Peers correct their saved name on their next call, and a reference written with the old name still resolves. |
 
 **Reading, messaging and the inbox cross; nothing else does.**
-`spawn list|show|status|children`, `spawn report show`, `session log|search`, `message`
-and `inbox list|read|take|release|offer` take `--machine NAME` (after the command words);
-all but the `inbox` commands also take a `NAME/ID` reference such as
+`spawn list|show|status|children`, `spawn report show`, `session log|search`, `message`,
+`machine list|name` and `inbox list|read|take|release|offer` take `--machine NAME` (after
+the command words); those that take a session reference also take `NAME/ID`, such as
 `jimyao-minibox/c2041`:
 
 ```bash
@@ -523,6 +523,15 @@ run again), `auth`, `host_key` (background calls accept only host keys already k
 `refused`, `too_large`. For `message`, a connection that ends after the request was written is
 `maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
 there, as here (`--wake` crosses).
+
+**Inside a harness sandbox, only `meridian spawn …` and `meridian message` reach another
+machine.** A harness lets a command out of its sandbox by its first words, and only for a
+session whose profile may spawn. `meridian session …` and `meridian machine …` stay inside
+the sandbox, where `ssh` is blocked: a call to another machine then fails with kind
+`sandboxed`, and its text says so. On macOS Meridian can't tell whether a command left the
+sandbox, so the call keeps the kind `ssh` gave it (usually `unreachable`) and the same
+sentence is added to its text. From a sandboxed session, read another machine with
+`meridian spawn show NAME/ID` or `meridian spawn list --global --machine NAME`.
 
 ## Work Items
 
