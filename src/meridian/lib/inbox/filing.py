@@ -1,4 +1,5 @@
-"""``meridian message inbox``: build the message from who is calling and file it.
+"""``meridian message inbox``: build the message from who is calling, file it and start
+the ``inbox.received`` rows.
 
 ``from``, the project and the default reply address are Meridian's, never a flag's; what
 a caller does supply is checked here, so a message can't carry a command to a reader.
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from meridian.lib.hooks.machine import launch_inbox_received
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import (
     MAX_TEXT_BYTES,
@@ -19,7 +21,7 @@ from meridian.lib.inbox.fields import (
     is_safe_field,
 )
 from meridian.lib.inbox.models import Message, Via
-from meridian.lib.inbox.store import InboxError, file_message
+from meridian.lib.inbox.store import InboxError, file_message, message_path
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, Filed, MessageResult, Receiver
 
@@ -133,6 +135,8 @@ def file_from_command(
         message_id, _ = file_message(_build(caller, text, options))
     except InboxError as exc:
         return Failed(exc.kind, str(exc), receiver)
+    # Also for a repeat of a message already filed: the first call may have died here.
+    launch_inbox_received(message_id, message_path(message_id))
     return Filed(message_id, receiver)
 
 

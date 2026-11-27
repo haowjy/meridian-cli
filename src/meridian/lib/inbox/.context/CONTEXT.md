@@ -36,8 +36,9 @@ of the steps is the design. Each runs under `inbox.lock`.
 3. With a `via` ref, point `by-origin/<hash>` at the new message (staged link, rename).
 4. Write the message: staged file, fsync, `link(2)`, directory fsync.
 
-Then, outside the lock, call `launch_inbox_received`, also on a step 1 match: the first
-call may have died before it got there.
+When the store has returned, `filing.file_from_command` calls `launch_inbox_received`,
+also on a step 1 match: the first call may have died before it got there. The store
+starts nothing itself, so it can be exercised with hooks configured.
 
 What a kill leaves, and what the next call does:
 
@@ -131,6 +132,7 @@ leaves the line out. A continue omits it (`lib/launch/.context/CONTEXT.md`).
 
 ## The seam with hooks
 
-`lib/hooks/machine.py:launch_inbox_received` starts the detached process that fires
-`inbox.received`. That process calls `write_hook_log` and `prune_if_due` here; both never
+`filing.file_from_command` calls `lib/hooks/machine.py:launch_inbox_received`, which
+starts the detached process that fires `inbox.received`; the rest of `lib/inbox` imports
+nothing from `lib/hooks`. That process calls `write_hook_log` and `prune_if_due` here; both never
 raise.

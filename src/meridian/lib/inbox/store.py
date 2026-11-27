@@ -229,9 +229,8 @@ def _origin_match(root: Path, via: Via) -> str | None:
 
 
 def file_message(message: Message) -> tuple[str, bool]:
-    """Write ``message`` and fire ``inbox.received``. Returns its ID and whether this call
-    wrote it: the same outside message (``via`` program and ref) filed twice is one
-    message, and the event fires again, since the first call may have died before it did.
+    """Write ``message``. Returns its ID and whether this call wrote it: the same outside
+    message (``via`` program and ref) filed twice is one message.
     """
 
     root = inbox_dir()
@@ -260,9 +259,6 @@ def file_message(message: Message) -> tuple[str, bool]:
                     f"{path} already exists though {root / 'issued'} had not reached its "
                     "number. Nothing was written; set `issued` above every message ID."
                 )
-    from meridian.lib.hooks.machine import launch_inbox_received
-
-    launch_inbox_received(message_id, message_path(message_id))
     return message_id, created
 
 
