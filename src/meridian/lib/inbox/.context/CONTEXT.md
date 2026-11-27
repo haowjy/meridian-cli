@@ -146,7 +146,7 @@ own files. Nothing here reads or writes another machine's directory.
   with a `via` ref matches `by-origin`. A filing without one can be filed twice.
 - **`offer` runs where the message is.** Its session may be on another machine
   (`<machine>/<id>`): the notice then goes out as an ordinary cross-machine `message`,
-  names `<this machine>/m412` and gives `meridian inbox take m412 --machine <this machine>`.
+  names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`.
   What that machine reports decides the refusals: `spawn show --json` gives the kind (it
   leaves a child's out, so "no kind" is "not a primary"); `spawn list --global --json`
   gives the project ID and is asked only when the message has a project, and a session

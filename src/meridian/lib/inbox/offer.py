@@ -73,7 +73,7 @@ def notice(message_id: str, message: Message, holder: str | None = None) -> str:
     *holder* is this machine's name when the session is on another one, which then has to
     name the machine to take the message."""
 
-    name = f"{holder}/{message_id}" if holder else message_id
+    name = f"{message_id} on {holder}" if holder else message_id
     about = [name, f"from {shown(message.sender.label())}"]
     if message.via is not None:
         about.append(shown(message.via.label()))

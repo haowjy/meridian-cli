@@ -388,7 +388,7 @@ meridian inbox take m412 --machine jimyao-raspberrypi
 - **Offering to a session on another machine.** Run `offer` on the machine that holds
   the message and name the session as `<machine>/<id>`:
   `meridian inbox offer m412 jimyao-minibox/c2041`. The notice names
-  `jimyao-raspberrypi/m412` and gives the session the command
+  `m412 on jimyao-raspberrypi` and gives the session the command
   `meridian inbox take m412 --machine jimyao-raspberrypi`. The same refusals hold, from
   what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
   refused, because a call can't reach a third machine.
