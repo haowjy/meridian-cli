@@ -86,10 +86,13 @@ not at a primary launch, because the machine that runs a chat bot launches none.
 
 ## Who is calling
 
-`caller.resolve_caller` is the one answer for all six commands. It takes the invocation's
-`Caller` (`get_global_options().caller`), which survives `-C`; `MERIDIAN_SPAWN_ID` read
-from the environment does not, and a child running `meridian -C ../other inbox take`
-would pass for a terminal. An ID with no spawn record is refused, never treated as a
+`caller.resolve_caller` is the one answer for `meridian message inbox` and `meridian inbox
+list`, `read`, `take`, `release` and `offer`. It takes the invocation's `Caller`
+(`get_global_options().caller`): the spawn ID, and the caller's project root when `-C`
+named another project. It does not read `MERIDIAN_SPAWN_ID` itself, because `-C` into
+another project removes the session's names from the environment before a command runs
+(`cli/main.py`, `project_scoped_env_names`): a child running `meridian -C ../other inbox
+take` would then find no session and pass for a terminal. An ID with no spawn record is refused, never treated as a
 terminal. The session's chat ID comes from its record: `MERIDIAN_CHAT_ID` names the chat
 that launched a child.
 
@@ -103,10 +106,15 @@ This stops a confused child, not one that forges its environment.
 runtime root its record was found in, below `projects/`. The
 caller, `offer`'s check on the receiving session and the launch line all use it. An ad-hoc
 project (`adhoc.…`) counts as none. A session sees messages with its own project or with
-none. `meridian.toml` can set any string as a project ID, and `_MERIDIAN_RUNTIME_DIR` can
-put a root anywhere, so a root that gives no ID `fields.is_project_id` accepts (the safe
-set, and one path component: no `/`, as a machine call's caller block requires) refuses
-the command: read as "no project", that session's messages would be shown to every session.
+none.
+
+A root that gives no ID `fields.is_project_id` accepts refuses the command. An ID is in
+the safe set and is one path component, with no `/`: `lib/machines/caller.py` holds the
+project ID a call from another machine carries to the same rule. Two things produce a
+root that fails: `meridian.toml` can set any string as a project ID, and
+`_MERIDIAN_RUNTIME_DIR` can put a root anywhere. The command is refused because the
+alternative is to read such a session as having no project, and its messages would then
+be shown to every session.
 
 A process no session runs has a project only from `--project-id`, never from its working
 directory: a hook row runs in home, and a daemon's directory is not what its messages are

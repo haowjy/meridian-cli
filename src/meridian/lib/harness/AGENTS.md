@@ -163,7 +163,8 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   `agy`. It holds one row per primary conversation through `launch/primary_hold.py`, with
   no runner PID, so the launch lock is the row's liveness. Its stdout is the MCP transport:
   logging goes to stderr, and each command runs with piped stdio and the identity of
-  the calling conversation's row, never the identity the server inherited.
+  the calling conversation's row, never the `MERIDIAN_*` session names the server inherited
+  from the shell that started `agy` (`call_env`, below).
   Each hold also runs the idle sidecar (`lib/launch/hold_idle.py`: closes the conversation's
   old stretch, then `sidecar.run`) with `AgyIdleSensor` (`lib/harness/agy/idle.py`). The
   sensor asks `TurnState.running()` (same file) whether the turn is live: the `busy` file, plus
@@ -202,7 +203,8 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   waking it for pings no one sees.
   Config reaches the sidecar through `holds._idle_env`: `call_env(row)`, which is the server's
   environment through `env_registry.session_free_env` (injected handles and hook payload
-  dropped, config inputs kept) plus the row's identity, and `_MERIDIAN_HARNESS=agy`; the result is
+  dropped, config inputs kept) plus the row's identity (its spawn ID, chat ID, project root
+  and runtime root), and `_MERIDIAN_HARNESS=agy`; the result is
   `SidecarContext.env`, which `IdleService` and notice delivery read. agy has a built-in TTL of 1800 s (`harness_models.py` `idle_defaults`, `idle/deadline.py`; Google publishes no window; the cache was observed to hold across 25-minute idle gaps, seen 23 Nov 2026), so the warning lands 20 min after a turn at the global lead. `holds._run_loop`
   runs each hold's coroutine on its own `new_event_loop()` and closes it without joining the
   default executor (`asyncio.run` would): a notice mid-send in a `to_thread` worker lasts up to
