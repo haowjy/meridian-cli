@@ -228,16 +228,15 @@ def _origin_match(root: Path, via: Via) -> str | None:
     return match[1] if (found.via.program, found.via.ref) == (via.program, via.ref) else None
 
 
-def file_message(message: Message) -> tuple[str, bool]:
-    """Write ``message``. Returns its ID and whether this call wrote it: the same outside
-    message (``via`` program and ref) filed twice is one message.
-    """
+def file_message(message: Message) -> str:
+    """Write ``message`` and return its ID. The same outside message (``via`` program and
+    ref) filed twice is one message: the second call writes nothing and returns the first
+    one's ID."""
 
     root = inbox_dir()
     via = message.via if message.via is not None and message.via.ref is not None else None
     with locked(root):
         message_id = _origin_match(root, via) if via is not None else None
-        created = message_id is None
         if message_id is None:
             message_id = f"m{_issue_number(root)}"
             path = root / "messages" / f"{message_id}.json"
@@ -259,7 +258,7 @@ def file_message(message: Message) -> tuple[str, bool]:
                     f"{path} already exists though {root / 'issued'} had not reached its "
                     "number. Nothing was written; set `issued` above every message ID."
                 )
-    return message_id, created
+    return message_id
 
 
 def read_message(message_id: str) -> Message:

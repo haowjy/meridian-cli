@@ -132,7 +132,7 @@ def file_from_command(
 
     try:
         caller = resolve_caller(sender_spawn_id, sender_project_root)
-        message_id, _ = file_message(_build(caller, text, options))
+        message_id = file_message(_build(caller, text, options))
     except InboxError as exc:
         return Failed(exc.kind, str(exc), receiver)
     # Also for a repeat of a message already filed: the first call may have died here.
