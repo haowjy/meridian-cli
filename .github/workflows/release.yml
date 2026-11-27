@@ -1,8 +1,25 @@
 name: Release
 
+# A tag pushed with the workflow token starts no workflow, so release-on-merge.yml
+# dispatches this one with the tag; a tag pushed by hand starts it directly.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z or vX.Y.Z-rc.N)"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+# One run per tag: a dispatch and a tag push for the same tag queue instead of
+# publishing side by side, and the second finds the files on PyPI (skip-existing).
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   verify-provenance:
@@ -11,13 +28,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Verify tag provenance
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}^{commit}" >/dev/null; then
+            echo "::error::${RELEASE_TAG} is not a tag in this repository"
+            exit 1
+          fi
+
           TAG_VERSION="${RELEASE_TAG#v}"
           INIT_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' src/meridian/__init__.py)
 
@@ -87,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
@@ -121,7 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1
@@ -146,7 +166,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -255,12 +275,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
 

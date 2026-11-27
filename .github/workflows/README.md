@@ -66,7 +66,9 @@ When release is enabled, the workflow:
    `## [X.Y.Z] - YYYY-MM-DD` (or the RC heading).
 4. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
 5. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
-6. Lets the tag push trigger `release.yml`.
+6. Dispatches `release.yml` with the tag. Pushes made with the workflow token start
+   no workflow, so the dispatch (not the tag push) starts the publish; no
+   `RELEASE_TOKEN` secret is involved.
 
 `release-on-merge.yml` only creates release commits/tags. `release.yml` is the
 only publish workflow identity, for both auto-release tags and manual backfill
@@ -74,11 +76,13 @@ tags. PyPI trusted publishing should be configured for `.github/workflows/releas
 
 Reruns are idempotent by trigger marker:
 - If the release tag already exists for the trigger, rerun does not recreate it.
-- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag so `release.yml` can publish it.
+- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag and dispatches `release.yml` for it.
 
 ## Manual Backfill
 
-`release.yml` also runs on manual `v*` tag pushes.
+`release.yml` also runs on manual `v*` tag pushes, and on `workflow_dispatch` with a `tag` input.
+Runs for one tag are serialized by a concurrency group, and PyPI uploads use `skip-existing`,
+so a dispatch plus a tag push for the same tag publishes once.
 
 Manual tags must point at a valid release commit (stable or RC):
 
