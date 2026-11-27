@@ -181,8 +181,8 @@ class ContextOutput(BaseModel):
             ]
 
         user_root = self.mars_user_root or "(same as primary)"
-        lines.append(f"mars_root: {self.mars_root or '(mars unavailable)'}")
-        lines.append(f"mars_scope: {self.mars_scope or '(mars unavailable)'}")
+        lines.append(f"mars_root: {self.mars_root or '(unknown: Mars did not answer)'}")
+        lines.append(f"mars_scope: {self.mars_scope or '(unknown: Mars did not answer)'}")
         lines.append(f"mars_user_root: {user_root}")
         lines.append(f"mars_fallback: {self.mars_fallback}")
 

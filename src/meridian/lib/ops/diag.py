@@ -125,15 +125,15 @@ class DoctorOutput(BaseModel):
             ("project_root_source", self.project_root_source),
             ("identity_tier", self.identity_tier),
             ("project_id", self.project_id or "(unminted)"),
-            ("mars_roots.primary", self.mars_roots.primary or "(mars unavailable)"),
-            ("mars_roots.scope", self.mars_roots.scope or "(mars unavailable)"),
+            ("mars_roots.primary", self.mars_roots.primary or "(unknown: Mars did not answer)"),
+            ("mars_roots.scope", self.mars_roots.scope or "(unknown: Mars did not answer)"),
             ("mars_roots.user", self.mars_roots.user),
             ("project_state", "available" if self.runtime_root is not None else "no state here"),
             ("runtime_root", self.runtime_root or "(unmaterialized)"),
             ("runtime_root_source", self.runtime_root_source),
             ("runs_checked", str(self.runs_checked)),
-            ("agents_dir", self.agents_dir or "(mars unavailable)"),
-            ("skills_dir", self.skills_dir or "(mars unavailable)"),
+            ("agents_dir", self.agents_dir or "(unknown: Mars did not answer)"),
+            ("skills_dir", self.skills_dir or "(unknown: Mars did not answer)"),
             ("orphan_project_dirs", str(len(self.orphan_project_dirs))),
             ("adhoc_project_dirs", str(len(self.adhoc_project_dirs))),
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
@@ -752,6 +752,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
             )
         )
     warnings.extend(_legacy_user_root_warnings())
+    if mars.error is not None:
+        warnings.append(DoctorWarning(code="mars_unavailable", message=mars.error))
     if mars.root is not None and mars.root.kind == "project":
         availability = check_upgrade_availability(project_root)
         if availability is None:
@@ -827,25 +829,11 @@ def _legacy_user_root_warnings() -> list[DoctorWarning]:
     legacy = legacy_user_root()
     if legacy is None:
         return []
-    path = legacy.path.as_posix()
-    if not legacy.active:
-        return [
-            DoctorWarning(
-                code="legacy_user_mars_root",
-                message=f"{path} holds no items and Meridian no longer uses it; delete it.",
-            )
-        ]
-    moves = "; ".join(f"meridian mars --user add {source}" for source in legacy.sources)
     return [
         DoctorWarning(
             code="legacy_user_mars_root",
-            message=(
-                f"{path} is Meridian's old user Mars root; this release still reads it, the "
-                f"next one does not. Move it to your Mars user level"
-                + (f" ({moves})" if moves else "")
-                + f", then delete {path}."
-            ),
-            payload={"path": path, "sources": list(legacy.sources)},
+            message=legacy.migration_message(),
+            payload={"path": legacy.path.as_posix(), "steps": list(legacy.steps)},
         )
     ]
 

@@ -6,7 +6,8 @@ Mars reads this directory in place; nothing copies it into a project's `.mars/`.
   directory>`, the last layer of every by-name lookup (`mars_content_args` in
   `lib/catalog/mars_cli.py`). `meridian skills` reads `skills/` from the wheel itself
   (`lib/bundled_skills.py`).
-- `meridian mars sync` gives it to the sync as `--provided-root meridian@<version>=<this
+- Every `meridian mars` command that syncs (`MARS_SYNCING_COMMANDS`, `meridian init`'s `add`
+  and `link` included) gives it to the sync as `--provided-root meridian@<version>=<this
   directory>` (`provided_sync_args`): `skills/`, `agents/`, `hooks/` and `mcp/` become the host
   layer, installed only into targets whose harness Meridian does not launch, today `.agy`.
 

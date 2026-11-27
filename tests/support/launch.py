@@ -171,6 +171,7 @@ def _direct_prepared_surface(
         primary_mode=False,
         has_spawn_capability=False,
         model_selection=None,
+        native_agent_copy=False,
         launch_request=resolved_request,
     )
 

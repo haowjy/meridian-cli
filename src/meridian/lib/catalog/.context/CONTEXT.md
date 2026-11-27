@@ -6,22 +6,34 @@ Mars chooses the root; Meridian never does. Every Mars call, launch bundle and p
 included, gets its place from `mars_location`: it runs in the caller's working directory, so a
 relative path the caller typed (`meridian mars add ./x`) means what they meant, and a project
 Meridian was told about (an explicit path or `MERIDIAN_PROJECT_DIR`) that the working directory
-is not inside goes as `--root`. For Mars `--root` is only where its walk-up starts: Mars still
-skips home and picks the nearest `mars.toml`, else the user level for a lookup, and resolves a
-relative path from the working directory when it exists there. Meridian does no walk-up of its
-own. A write with no project fails in Mars with `project_not_found` (`is_project_not_found`;
+is not inside goes as `--root`. For Mars `--root` is only where its walk-up starts: Mars picks
+the nearest `mars.toml`, else the user level for a lookup, and resolves a relative path from the
+working directory when it exists there. Home is never a project, so a project named as exactly
+home names none and gets no `--root` (Mars would otherwise open a leftover `~/mars.toml`, and
+refuses `--root ~` from its next minor). Meridian does no walk-up of its own. A write with no project fails in Mars with `project_not_found` (`is_project_not_found`;
 the passthrough's `add`/`link` gate keys on it). Where Meridian must know the root
 (`config show`, `context`, `doctor`, the bootstrap store), it reads the `root` of Mars's
-`--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`.
+`--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`. A launch lists
+agents once (`try_mars_agent_inventory`, passed to `prepare_launch_surface`), for the bootstrap
+store and for whether the harness has native agent copies. When Mars can't answer,
+`MarsRootReport.error` carries why (no binary, or Mars's own message) and `doctor` and
+`config show` warn with it.
 Meridian reads installed files only where Mars points (an agent's `source_path`, the store
 `root` names; a project's store is its documented `.mars/`), and never Mars's state files
 (`native-agents.json`, `models-merged.json`, locks): ask Mars instead. The user level's location
-follows XDG and `MARS_*_DIR` rules that belong to Mars. Bootstrap docs are the one store scan
-left: Mars reports no path for them.
+follows XDG and `MARS_*_DIR` rules that belong to Mars. Launch bootstrap docs are read from
+the store `root` names (`BootstrapRegistry`), since Mars reports no path for them; `meridian
+init` reports content from `mars list --json` and runs `mars init`, a no-op on an existing
+project, instead of checking for `mars.toml` itself.
 
 `~/.meridian/mars` (`LegacyUserRoot`) is the one exception for one minor release: Meridian
 reads its `mars.toml` only to decide whether it still holds items, and if so passes it as
-`--fallback-root` and warns once per process. Removal is in `TODO`.
+`--fallback-root` and warns once per process with the steps to move it
+(`LegacyUserRoot.migration_message`): each dependency as the `meridian mars --user add` that
+recreates it with its version and filters, or, for a key `add` can't set, the entry to copy;
+`[settings]`/`[models]`/`[agents]`/`[skills]` to Mars's user `config.toml`. A `mars.toml` it
+can't read stays active so Mars reports it, and the warning says it can't be read. Removal is
+in `TODO`.
 
 ## Models
 
@@ -59,5 +71,6 @@ layer, which answers a name only when no installed agent claims it; a name Mars 
 a collision stays its `agent_renamed` error. They are read in place, never installed
 into a store: an installed copy could go missing whenever another sync held the lock, or be a
 stale one from another Meridian version. Meridian's skills likewise: `meridian skills` reads the
-wheel only, launches read the bundle through `--provided-root`, and only `meridian mars sync`
-hands the bundle to Mars as a sync's host layer, for `.agy`.
+wheel only, launches read the bundle through `--provided-root`, and every passthrough command
+in `MARS_SYNCING_COMMANDS` (Mars's list of commands that sync) hands the bundle to Mars as a
+sync's host layer, for `.agy`.

@@ -18,7 +18,7 @@ def _empty_content() -> dict[str, list[str]]:
 
 @dataclass(frozen=True)
 class InitAddResult:
-    """What we extracted from mars add --json + post-sync filesystem."""
+    """What ``mars add --json`` declared, and what the project then has installed."""
 
     declared_targets: list[str]
     declared_primary_agent: str | None
@@ -108,28 +108,25 @@ def _run_mars_json(
     return payload, lines
 
 
-def _scan_mars_content(project_root: Path) -> dict[str, list[str]]:
-    """Scan .mars/ for materialized content by type.
+def _installed_content(project_root: Path, *, executable: str) -> dict[str, list[str]]:
+    """What the project has installed, by kind, as ``mars list --json`` reports it."""
 
-    Returns a dict like {"agents": ["coder", "reviewer"], "skills": ["spawn", ...]}.
-    Discovers content types dynamically from subdirectory names.
-    """
-    mars_dir = project_root / ".mars"
-    if not mars_dir.is_dir():
-        return {}
-    # Dirs that are internal implementation state, not user-visible content.
-    _SKIP_DIRS = {"cache"}
+    payload, _ = _run_mars_json(project_root, "list", [], executable=executable)
     content: dict[str, list[str]] = {}
-    for subdir in sorted(mars_dir.iterdir()):
-        if not subdir.is_dir():
+    for kind in ("agents", "skills", "bootstrap"):
+        rows: object = payload.get(kind)
+        if not isinstance(rows, list):
             continue
-        if subdir.name in _SKIP_DIRS:
-            continue
-        # Skills and bootstrap are stored as directories; agents are stored as files.
-        # Include both so all content types are counted correctly.
-        items = sorted(f.stem for f in subdir.iterdir() if f.is_file() or f.is_dir())
-        if items:
-            content[subdir.name] = items
+        names = sorted(
+            {
+                name
+                for row in cast("list[object]", rows)
+                if isinstance(row, dict)
+                and isinstance(name := cast("dict[str, object]", row).get("name"), str)
+            }
+        )
+        if names:
+            content[kind] = names
     return content
 
 
@@ -141,7 +138,7 @@ def run_mars_add_json(
 ) -> InitAddResult:
 
     parsed, diagnostics = _run_mars_json(project_root, "add", sources, executable=executable)
-    content = _scan_mars_content(project_root)
+    content = _installed_content(project_root, executable=executable)
     declared_targets: list[str] = parsed.get("declared_targets", [])
     declared_primary_agent: str | None = parsed.get("declared_primary_agent")
     return InitAddResult(
@@ -281,10 +278,9 @@ def run_init_flow(
         raise SystemExit(1)
 
     diagnostics: list[str] = []
-    mars_toml = project_root / "mars.toml"
-    if not mars_toml.is_file():
-        _, init_diagnostics = _run_mars_json(project_root, "init", [], executable=executable)
-        diagnostics.extend(init_diagnostics)
+    # `mars init` is a no-op where the project already exists.
+    _, init_diagnostics = _run_mars_json(project_root, "init", [], executable=executable)
+    diagnostics.extend(init_diagnostics)
 
     add_result: InitAddResult | None = None
     if add_sources:

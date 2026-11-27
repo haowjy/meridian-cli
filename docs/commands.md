@@ -915,7 +915,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
 | `meridian mars remove NAME` | Remove a dependency and prune its installed items |
-| `meridian mars sync` | Compile packages and your user-level items into `.mars/`; materialize configured harness targets. Passes Meridian's bundle as `--provided-root meridian@<version>=<dir>`, so `.agy` gets Meridian's skills. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
+| `meridian mars sync` | Compile packages and your user-level items into `.mars/`; materialize configured harness targets. Passes Meridian's bundle as `--provided-root meridian@<version>=<dir>`, so `.agy` gets Meridian's skills; every other command that syncs (`add`, `link`, `upgrade`, …) passes it too. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
 | `meridian mars unlink DIR` | Remove a link target |
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |

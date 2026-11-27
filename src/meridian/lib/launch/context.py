@@ -68,7 +68,7 @@ from meridian.lib.launch.session_links import (
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
-from meridian.lib.ops.mars import mars_installs_agents_natively
+from meridian.lib.ops.mars import MarsAgentInventory
 from meridian.lib.platform import IS_POSIX
 from meridian.lib.safety.policy import (
     EnforcementReport,
@@ -287,6 +287,8 @@ class PreparedLaunchSurface:
     primary_mode: bool
     has_spawn_capability: bool
     model_selection: ModelSelectionContext | None
+    # The last sync installed agents natively into this harness: its own agent tool stays usable.
+    native_agent_copy: bool
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
@@ -1178,7 +1180,10 @@ def prepare_launch_surface(
     request: SpawnRequest,
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
+    mars_agents: MarsAgentInventory | None,
 ) -> PreparedLaunchSurface:
+    """``mars_agents``: the launch's one ``mars agents list``, None when Mars cannot answer."""
+
     project_paths = prepared_policy.project_paths
     policies = prepared_policy.resolved_policy
     if request.agent_opt_out:
@@ -1407,6 +1412,9 @@ def prepare_launch_surface(
         primary_mode=profile is not None and profile.mode == "primary",
         has_spawn_capability=has_spawn_capability(profile),
         model_selection=model_selection,
+        native_agent_copy=(
+            mars_agents is not None and mars_agents.installs_natively(harness.id.value)
+        ),
         alias_catalog=policies.alias_catalog,
         launch_request=request,
     )
@@ -1576,7 +1584,6 @@ def bind_launch_context(
         config_snapshot=runtime.config_snapshot,
         project_root=project_paths.project_root,
     )
-    native_agent_copy = mars_installs_agents_natively(project_paths.project_root, harness.id.value)
     platform_tool_rules, platform_rules = launch_permission_rules(
         tool_rules=resolved_request.tool_rules,
         profile_tool_rules=profile_tool_rules,
@@ -1584,7 +1591,7 @@ def bind_launch_context(
         spawn=runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE,
         primary=runtime.composition_surface == LaunchCompositionSurface.PRIMARY,
         has_spawn_capability=prepared.has_spawn_capability,
-        native_agent_copy=native_agent_copy,
+        native_agent_copy=prepared.native_agent_copy,
         allow_builtin_agents=allow_builtin_agents,
     )
     network = resolved_request.execution_policy.network

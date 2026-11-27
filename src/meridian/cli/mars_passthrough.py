@@ -13,6 +13,7 @@ from typing import TextIO
 
 from meridian import __version__
 from meridian.lib.catalog.mars_cli import (
+    MARS_SYNCING_COMMANDS,
     MARS_UPGRADE_HINT,
     is_project_not_found,
     mars_content_args,
@@ -103,7 +104,7 @@ def parse_mars_passthrough(
     if not user_scope and not wants_help:
         if subcommand in {"agents", "skills"}:
             mars_args.extend(mars_content_args())
-        if subcommand == "sync" and not any(
+        if subcommand in MARS_SYNCING_COMMANDS and not any(
             token == "--provided-root" or token.startswith("--provided-root=")
             for token in mars_args
         ):

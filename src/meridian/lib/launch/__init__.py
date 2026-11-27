@@ -156,20 +156,20 @@ def launch_primary(
         execution_cwd=resolved_project_root,
         dry_run=request.dry_run,
     )
-    if request.include_bootstrap_documents:
-        from meridian.lib.catalog.bootstrap import BootstrapRegistry
-        from meridian.lib.ops.mars import mars_root
+    from meridian.lib.ops.mars import try_mars_agent_inventory
 
-        root = mars_root(resolved_project_root)
-        if root is not None:
-            request = request.model_copy(
-                update={
-                    "supplemental_prompt_documents": (
-                        *request.supplemental_prompt_documents,
-                        *BootstrapRegistry(root.store).load_all(),
-                    )
-                }
-            )
+    mars_agents = try_mars_agent_inventory(resolved_project_root)
+    if request.include_bootstrap_documents and mars_agents is not None and mars_agents.root:
+        from meridian.lib.catalog.bootstrap import BootstrapRegistry
+
+        request = request.model_copy(
+            update={
+                "supplemental_prompt_documents": (
+                    *request.supplemental_prompt_documents,
+                    *BootstrapRegistry(mars_agents.root.store).load_all(),
+                )
+            }
+        )
     resolved_work_id = (
         preview_work_id
         if request.dry_run
@@ -205,6 +205,7 @@ def launch_primary(
         request=spawn_request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        mars_agents=mars_agents,
     )
     preview_context = bind_launch_context(
         prepared=prepared,

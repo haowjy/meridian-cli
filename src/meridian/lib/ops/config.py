@@ -106,6 +106,8 @@ class ConfigShowOutput(BaseModel):
     mars_scope: Literal["project", "user"] | None
     # Deprecated: whether lookups still read ~/.meridian/mars. Goes in the next minor release.
     mars_fallback: Literal["active", "n/a"]
+    # Why Mars could not say which root it uses: no binary, or Mars's own error.
+    mars_error: str | None = None
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -124,8 +126,8 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"project_root.source = {self.project_root_source}")
         lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
         lines.append(f"project_identity_source: {self.project_identity_source}")
-        lines.append(f"mars_root: {self.mars_root or '(mars unavailable)'}")
-        lines.append(f"mars_scope: {self.mars_scope or '(mars unavailable)'}")
+        lines.append(f"mars_root: {self.mars_root or '(unknown: Mars did not answer)'}")
+        lines.append(f"mars_scope: {self.mars_scope or '(unknown: Mars did not answer)'}")
         lines.append(f"mars_fallback: {self.mars_fallback}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
@@ -149,6 +151,8 @@ class ConfigShowOutput(BaseModel):
                 lines.append(f"workspace.roots[{index}].status = {root.status}")
         if self.warning is not None:
             lines.append(f"warning: {self.warning}")
+        if self.mars_error is not None:
+            lines.append(f"warning: mars_unavailable: {self.mars_error}")
         for finding in self.workspace_findings:
             lines.append(f"warning: {finding.code}: {finding.message}")
         for item in self.values:
@@ -601,6 +605,7 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         mars_root=mars.root.path.as_posix() if mars.root is not None else None,
         mars_scope=mars.root.kind if mars.root is not None else None,
         mars_fallback=mars.fallback_label,
+        mars_error=mars.error,
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None

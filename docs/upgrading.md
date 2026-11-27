@@ -22,14 +22,15 @@ says how to move it.
 - **Move what `~/.meridian/mars` holds.** Meridian never deletes it. While its `mars.toml`
   declares a dependency or it has a `.mars-src/`, this release still reads it (as Mars's
   deprecated `--fallback-root`) and every command warns once, listing
-  `meridian mars --user add <source>` for each dependency. Run those, move `.mars-src/` into
-  your user level's `.mars-src/`, run `meridian mars --user sync`, then delete
+  `meridian mars --user add <source>` for each dependency with its version and filters. Run
+  those, move `.mars-src/` into your user level's `.mars-src/` and any `[settings]`, `[models]`
+  or `[agents]` into Mars's user `config.toml`, run `meridian mars --user sync`, then delete
   `~/.meridian/mars`. When it holds nothing, `meridian doctor` says it can be deleted. The next
   minor release stops reading it.
 - **Meridian's skills are read in place.** `meridian skills` reads the installed Meridian
   package only and no longer asks Mars to copy skills into `.mars/skills/`; launches read the
-  bundle directly. `meridian mars sync` hands the bundle to the sync for `.agy`, and other
-  passthrough commands (`add`, `upgrade`, …) no longer run `mars provide`. Old copies Mars made
+  bundle directly. Every passthrough command that syncs (`sync`, `add`, `link`, `upgrade`, …)
+  hands the bundle to the sync for `.agy`, and none runs `mars provide` any more. Old copies Mars made
   are no longer read; the next Mars minor removes them.
 - **JSON.** `meridian config show`, `meridian context` and `meridian doctor` add `mars`, the
   root Mars chose (`kind`, `path`, and for the user level `config_dir` and `store_dir`).
@@ -37,7 +38,9 @@ says how to move it.
   only `~/.meridian/mars` now and go in the next minor release. `mars_root` and `mars_scope`
   stay; with Mars unavailable they, `mars`, and doctor's `agents_dir`/`skills_dir` are `null`.
   Doctor no longer reports `missing_skills_directories` or
-  `missing_agent_profile_directories`; it reports `legacy_user_mars_root`.
+  `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path` and
+  `steps`), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
+  (`config show` adds that error as `mars_error`).
 - **Rollback.** An older Meridian runs its own older Mars, which ignores the user level and
   goes back to `~/.meridian/mars`, so keep that folder until you no longer need to roll back.
   Its first sync in a project removes the user-level items the new Mars installed there

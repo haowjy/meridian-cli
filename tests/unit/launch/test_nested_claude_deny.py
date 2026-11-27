@@ -196,8 +196,11 @@ def test_agent_copy_exception_keeps_generic_agent_only(
     )
     monkeypatch.setattr(
         mars_ops,
-        "mars_list_agents",
-        lambda _root: (mars_ops.MarsAgentEntry(name="scratch", native_harnesses=("claude",)),),
+        "mars_agent_inventory",
+        lambda _root: mars_ops.MarsAgentInventory(
+            root=None,
+            agents=(mars_ops.MarsAgentEntry(name="scratch", native_harnesses=("claude",)),),
+        ),
     )
     context = build_launch_context(
         spawn_id="p-agent-copy",

@@ -25,7 +25,8 @@ relative path you type resolves from there. When Meridian's project (`-C` or
 worktree, Meridian passes it as `--root`, which only starts Mars's walk-up; a `--root` or
 `--user` you type is forwarded instead. Lookups (launches, `mars agents`, `mars skills`, `mars models`)
 use the nearest project `mars.toml`, and the user level when there is none. The user level has
-no `targets`, so it permits every harness. Your home directory's `mars.toml` is never a project.
+no `targets`, so it permits every harness. Your home directory's `mars.toml` is never a project,
+and a Meridian project that is exactly your home directory is not passed as `--root`.
 
 Inside a project, user-level items are installed by the project's own `meridian mars sync`,
 beside its packages and kept out of its commits; an item of the same name from the project's
@@ -39,9 +40,15 @@ other write Mars refuses itself, with a message naming `--user`. `meridian mars 
 only `mars.toml`; the next Meridian runtime write mints the committed `[project] id` in
 `meridian.toml`.
 
-`meridian mars sync` passes Meridian's own bundle to the sync as
-`--provided-root meridian@<version>=<dir>`, so targets no harness Meridian launches (`.agy`)
-get Meridian's skills; Mars keeps that layer on later syncs. Launches read the bundle in place.
+Every `meridian mars` command that syncs (`sync`, `add`, `remove`, `upgrade`, `repair`,
+`rename`, `override`, `adopt`, `link`), and `meridian init`'s `add` and `link`, passes
+Meridian's own bundle to the sync as `--provided-root meridian@<version>=<dir>`, so targets no
+harness Meridian launches (`.agy`) get Meridian's skills; Mars keeps that layer on later syncs.
+Launches read the bundle in place.
+
+Mars runs in your working directory and takes the nearest `mars.toml` above it. Inside a
+project with a nested `mars.toml` (a package checkout under it), that nested one is the Mars
+root, while Meridian's state and work items stay with the outer project.
 
 ### `~/.meridian/mars`
 
@@ -49,8 +56,12 @@ Before the Mars user level, Meridian kept user packages in its own Mars project 
 `~/.meridian/mars`. Meridian never deletes or writes it. For one minor release, when its
 `mars.toml` declares a dependency or it has a `.mars-src/`, lookups still read it (as Mars's
 deprecated `--fallback-root`) and each command warns once with the `meridian mars --user add`
-line for each dependency; then delete the folder. When it holds nothing, Meridian ignores it and
-`meridian doctor` says it can be deleted. The next minor release stops reading it.
+line for each dependency, with its version and filters (an entry `add` can't reproduce, such as
+one with `rename`, is to be copied into the user level's `mars.toml`); then delete the folder.
+Its `[settings]`, `[models]` and `[agents]` sections move to Mars's user `config.toml`, which
+every root reads. When it holds nothing, Meridian ignores it and `meridian doctor` says what to
+move before deleting it. A `mars.toml` there that can't be read is reported as such. The next
+minor release stops reading it.
 
 ## What a package installs
 

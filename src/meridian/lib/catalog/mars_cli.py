@@ -9,6 +9,7 @@ prints says which root it used (``MarsRoot``).
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import sys
 import tomllib
@@ -22,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 import meridian
 from meridian import __version__
 from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.platform import get_home_path
 from meridian.lib.platform.python_module import installed_executable
 from meridian.lib.state.user_paths import get_user_home
 
@@ -50,13 +52,19 @@ def mars_location(project_root: Path | None = None) -> MarsLocation:
 
     A project named by the caller or ``MERIDIAN_PROJECT_DIR`` that the working directory is not
     inside (an agent in a worktree) becomes ``--root``, which Mars treats only as the start of
-    its walk-up: Mars still skips home and chooses the root. A relative path Mars reads resolves
-    from the working directory when it exists there.
+    its walk-up and then chooses the root. Home is never a project, so a project named as
+    exactly home names none and Mars walks up from the working directory. A relative path Mars
+    reads resolves from the working directory when it exists there.
     """
 
     resolution = resolve_project_root_resolution(project_root)
     cwd = resolution.execution_cwd
-    if resolution.source == "cwd" or cwd.is_relative_to(resolution.project_root):
+    named = resolution.project_root
+    if (
+        resolution.source == "cwd"
+        or cwd.is_relative_to(named)
+        or named == get_home_path().expanduser().resolve()
+    ):
         return MarsLocation(cwd=cwd)
     return MarsLocation(cwd=cwd, root_args=("--root", resolution.project_root.as_posix()))
 
@@ -131,8 +139,15 @@ def provided_dir() -> Path:
     return Path(meridian.__file__).resolve().parent / "mars"
 
 
+# The Mars commands that run a project sync, each taking the host layer
+# (``--provided-root HOST@VERSION=DIR``), as Mars's ``docs/cli/commands.md`` lists them.
+MARS_SYNCING_COMMANDS = frozenset(
+    {"sync", "add", "remove", "upgrade", "repair", "rename", "override", "adopt", "link"}
+)
+
+
 def provided_sync_args() -> tuple[str, str]:
-    """``mars sync``'s host layer: this build's bundle, for the targets no harness launches."""
+    """A project sync's host layer: this build's bundle, for the targets no harness launches."""
 
     return ("--provided-root", f"meridian@{__version__}={provided_dir().as_posix()}")
 
@@ -141,55 +156,118 @@ def provided_sync_args() -> tuple[str, str]:
 class LegacyUserRoot:
     """``~/.meridian/mars``, the user root of Meridian before the Mars user level.
 
-    ``active``: its ``mars.toml`` declares an item source or it has a ``.mars-src/``, so lookups
-    still read it as ``--fallback-root`` for one minor release. ``sources``: what to give
-    ``meridian mars --user add`` to move it.
+    ``active``: it holds items (a dependency or a ``.mars-src/``), or its ``mars.toml`` cannot be
+    read, so lookups still pass it as ``--fallback-root`` for one minor release and let Mars
+    report what is wrong. ``steps``: how to move each thing it holds to the Mars user level.
     """
 
     path: Path
     active: bool
-    sources: tuple[str, ...] = ()
+    steps: tuple[str, ...] = ()
+    # Why its ``mars.toml`` cannot be read; None when it can or there is none.
+    unreadable: str | None = None
+
+    def migration_message(self) -> str:
+        path = self.path.as_posix()
+        if self.unreadable is not None:
+            return (
+                f"{path}/mars.toml, Meridian's old user Mars root, cannot be read "
+                f"({self.unreadable}). Fix it or move what it held to your Mars user level "
+                f"(meridian mars --user add <source>), then delete {path}."
+            )
+        if not self.steps:
+            return f"{path} holds nothing Meridian or Mars reads; delete it."
+        lead = (
+            f"{path} is Meridian's old user Mars root; this release still reads it, the next "
+            "one does not. Move it to your Mars user level:"
+            if self.active
+            else f"{path} holds no items and Meridian no longer reads it. Before deleting it:"
+        )
+        return "\n".join((lead, *(f"  {step}" for step in self.steps), f"then delete {path}"))
+
+
+# What a dependency entry can say that ``mars add`` reproduces, and the flag that says it.
+_ADD_LIST_FLAGS = {"agents": "--agents", "skills": "--skills", "exclude": "--exclude"}
+_ADD_VALUE_FLAGS = {"subpath": "--subpath", "plugin": "--plugin"}
+_ADD_BOOL_FLAGS = {"only_skills": "--only-skills", "only_agents": "--only-agents"}
+_ADD_KEYS = {"url", "path", "version", *_ADD_LIST_FLAGS, *_ADD_VALUE_FLAGS, *_ADD_BOOL_FLAGS}
+# Sections of the old root that every root now reads from Mars's user ``config.toml``.
+_CONFIG_SECTIONS = ("settings", "models", "agents", "skills")
 
 
 def legacy_user_root() -> LegacyUserRoot | None:
     """``~/.meridian/mars`` when it exists. Meridian never deletes or writes it."""
 
     root = get_user_home() / "mars"
-    has_own_items = (root / ".mars-src").is_dir()
-    try:
-        text = (root / "mars.toml").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return LegacyUserRoot(path=root, active=True) if has_own_items else None
-    except OSError:
-        return LegacyUserRoot(path=root, active=True)
-    try:
-        manifest = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        # Let Mars read it and report what is wrong.
-        return LegacyUserRoot(path=root, active=True)
-    sources = tuple(
-        source
-        for table in ("dependencies", "local-dependencies")
-        for source in _declared_sources(manifest.get(table), base=root)
+    own_items = root / ".mars-src"
+    has_own_items = own_items.is_dir()
+    own_items_step = (
+        f"move {own_items.as_posix()} into your Mars user level's .mars-src/ "
+        "(root.path of meridian mars --user list --json)"
     )
-    return LegacyUserRoot(path=root, active=has_own_items or bool(sources), sources=sources)
+    try:
+        manifest = tomllib.loads((root / "mars.toml").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if not has_own_items:
+            return LegacyUserRoot(path=root, active=False) if root.is_dir() else None
+        return LegacyUserRoot(path=root, active=True, steps=(own_items_step,))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        return LegacyUserRoot(path=root, active=True, unreadable=str(exc))
+    dependency_steps = [
+        _dependency_step(name, spec, table=table, base=root)
+        for table in ("dependencies", "local-dependencies")
+        if isinstance(entries := manifest.get(table), dict)
+        for name, spec in cast("dict[str, object]", entries).items()
+    ]
+    sections = [f"[{name}]" for name in _CONFIG_SECTIONS if name in manifest]
+    steps = [*dependency_steps]
+    if has_own_items:
+        steps.append(own_items_step)
+    if sections:
+        steps.append(
+            f"move {', '.join(sections)} from {(root / 'mars.toml').as_posix()} into your Mars "
+            "user config.toml (in root.config_dir of meridian mars --user list --json), which "
+            "every root reads"
+        )
+    return LegacyUserRoot(
+        path=root, active=has_own_items or bool(dependency_steps), steps=tuple(steps)
+    )
 
 
-def _declared_sources(table: object, *, base: Path) -> list[str]:
-    if not isinstance(table, dict):
-        return []
-    sources: list[str] = []
-    for name, spec in cast("dict[str, object]", table).items():
-        entry = cast("dict[str, object]", spec) if isinstance(spec, dict) else {}
-        url = entry.get("url")
-        path = entry.get("path")
-        if isinstance(url, str) and url.strip():
-            sources.append(url.strip())
-        elif isinstance(path, str) and path.strip():
-            sources.append((base / Path(path.strip()).expanduser()).resolve().as_posix())
-        else:
-            sources.append(name)
-    return sources
+def _dependency_step(name: str, spec: object, *, table: str, base: Path) -> str:
+    """The ``meridian mars --user add`` that recreates one dependency, options included.
+
+    An entry with a key ``mars add`` cannot set (``rename``, say) is copied instead.
+    """
+
+    entry = cast("dict[str, object]", spec) if isinstance(spec, dict) else {}
+    url = entry.get("url")
+    path = entry.get("path")
+    if isinstance(url, str) and url.strip():
+        source = url.strip()
+    elif isinstance(path, str) and path.strip():
+        source = (base / Path(path.strip()).expanduser()).resolve().as_posix()
+    else:
+        source = None
+    if source is None or not set(entry) <= _ADD_KEYS:
+        return (
+            f"copy [{table}.{name}] from {(base / 'mars.toml').as_posix()} into your Mars user "
+            "level's mars.toml (in root.path of meridian mars --user list --json), with any "
+            "relative path made absolute"
+        )
+    version = entry.get("version")
+    if isinstance(url, str) and isinstance(version, str) and version.strip():
+        source = f"{source}#{version.strip()}"
+    words = ["meridian mars --user add", shlex.quote(source)]
+    for key, flag in _ADD_VALUE_FLAGS.items():
+        if isinstance(value := entry.get(key), str):
+            words += [flag, shlex.quote(value)]
+    for key, flag in _ADD_LIST_FLAGS.items():
+        if isinstance(value := entry.get(key), list):
+            items = [str(item) for item in cast("list[object]", value)]
+            words += [flag, shlex.quote(",".join(items))]
+    words += [flag for key, flag in _ADD_BOOL_FLAGS.items() if entry.get(key) is True]
+    return " ".join(words)
 
 
 @cache
@@ -199,19 +277,7 @@ def _active_legacy_user_root() -> LegacyUserRoot | None:
     legacy = legacy_user_root()
     if legacy is None or not legacy.active:
         return None
-    steps = [f"  meridian mars --user add {source}" for source in legacy.sources]
-    if (legacy.path / ".mars-src").is_dir():
-        steps.append(
-            f"  move {(legacy.path / '.mars-src').as_posix()} into your Mars user level's "
-            ".mars-src/ (its folder: meridian mars --user list --json)"
-        )
-    print(
-        f"warning: {legacy.path.as_posix()} is Meridian's old user Mars root; this release "
-        "still reads it, the next one does not. Move it to your Mars user level:\n"
-        + "\n".join(steps)
-        + f"\nthen delete {legacy.path.as_posix()}",
-        file=sys.stderr,
-    )
+    print(f"warning: {legacy.migration_message()}", file=sys.stderr)
     return legacy
 
 
@@ -235,6 +301,7 @@ def resolve_mars_executable() -> str | None:
 __all__ = [
     "MARS_AGENT_NOT_FOUND_CODES",
     "MARS_MIN_VERSION",
+    "MARS_SYNCING_COMMANDS",
     "MARS_UPGRADE_HINT",
     "LegacyUserRoot",
     "MarsAgentNotFoundError",

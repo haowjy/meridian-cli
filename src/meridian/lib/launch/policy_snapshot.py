@@ -288,13 +288,23 @@ def _snapshot_profile(
         return None
 
     profile = AgentProfile.model_validate(snapshot.agent_profile)
-    # Direct-launch fallback may persist a relative profile path (no project
-    # root at build time); resolve it against the project root on replay so
-    # downstream consumers (e.g. session_agent_path) keep absolute-path parity.
+    # Direct-launch fallback may persist a relative profile path, `.mars/agents/<name>.md`
+    # (no root at build time); resolve it in the store of the root Mars uses now so downstream
+    # consumers (e.g. session_agent_path) keep absolute-path parity.
     if profile.path.is_absolute():
         return profile
-    path = (project_root / profile.path).resolve()
-    return profile.model_copy(update={"path": path})
+    from meridian.lib.ops.mars import mars_root_report
+
+    root = mars_root_report(project_root).root
+    relative = profile.path
+    if root is None:
+        # Mars cannot answer: a resume replays its stored contract without it.
+        base = project_root
+    elif relative.parts[:1] == (".mars",):
+        base, relative = root.store, Path(*relative.parts[1:])
+    else:
+        base = root.path
+    return profile.model_copy(update={"path": (base / relative).resolve()})
 
 
 __all__ = [
