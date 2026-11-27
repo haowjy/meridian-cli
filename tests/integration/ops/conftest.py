@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.machine_ids import plant_id_claims
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ops_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -23,3 +25,4 @@ def _isolate_ops_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.delenv("_MERIDIAN_RUNTIME_DIR", raising=False)
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())
+    plant_id_claims(tmp_path / "user-home")

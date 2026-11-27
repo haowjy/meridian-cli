@@ -13,6 +13,8 @@ The one statement of cross-store lock order; other docs link here. Outer to inne
 2. `spawns_flock`, only for spawn ID allocation, initial row publication, and staging GC
 3. `locks/spawns/<id>.lock` (`write_state_locked()`)
 4. `locks/process-scopes/<id>.lock` (process-scope projection)
+5. `machine/ids/ids.lock` (`machine_ids.allocate()`): innermost, under any of the above,
+   held only while an ID number is chosen; take nothing while holding it
 
 Sessions take gate shared, then `sessions.jsonl.flock`, only through
 `session_store.session_writes()`; never take `sessions_flock` alone. `work-store.flock`

@@ -76,8 +76,6 @@ class RuntimePaths(BaseModel):
     sessions_flock: Path
     hooks_last_run_dir: Path
     hook_locks_dir: Path
-    session_id_counter: Path
-    session_id_counter_flock: Path
     sessions_dir: Path
     kb_dir: Path
     work_dir: Path
@@ -106,8 +104,6 @@ class RuntimePaths(BaseModel):
             sessions_flock=root_dir / "sessions.jsonl.flock",
             hooks_last_run_dir=root_dir / "hooks" / "last-run",
             hook_locks_dir=root_dir / "locks" / "hooks",
-            session_id_counter=root_dir / "session-id-counter",
-            session_id_counter_flock=root_dir / "session-id-counter.flock",
             sessions_dir=root_dir / "sessions",
             kb_dir=root_dir / "kb",
             work_dir=root_dir / "work",

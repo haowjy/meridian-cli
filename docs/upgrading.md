@@ -1,5 +1,23 @@
 # Upgrade notes
 
+## Spawn and chat IDs are unique on the machine
+
+New in this release. Meridian now issues `pN` and `cN` from one list kept in
+`~/.meridian/machine/ids/` instead of one counter per project.
+
+- **IDs jump.** The first new ID is above every ID your projects have used, rounded up to
+  the next thousand plus one thousand: on a machine whose highest spawn is `p19220` the next
+  one is `p21000`. IDs stop being consecutive within a project; they still rise with time.
+- **Old IDs keep their numbers** and mean something only inside their own project, as
+  before: from another project, name it with `-C`.
+- **Restart sessions started before the previous patch release.** A session still running
+  older code allocates from its project's old counter, so a project's newest ID is not
+  always its highest until those sessions end.
+- Each project's `spawn-id-counter` and `session-id-counter` stop moving. A project that
+  had spawns but no `spawn-id-counter` gets one.
+- Meridian creates a symlink per ID under `machine/ids/` and never deletes one, so the
+  directory grows with every spawn and chat.
+
 ## `meridian agy` prints an Antigravity launch
 
 New in this release; needs the Mars release that routes a `--harness agy` pin to `agy` (Mars

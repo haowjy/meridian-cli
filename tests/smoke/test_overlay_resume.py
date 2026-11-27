@@ -35,6 +35,8 @@ def test_claude_resumes_meridian_session(tmp_path: Path) -> None:
     }
     # The test suite isolates HOME; the real login lives in the real one.
     env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    # Meridian's own state (projects, issued IDs) stays out of the real ~/.meridian.
+    env["MERIDIAN_HOME"] = str(tmp_path / "meridian-home")
     meridian = str(Path(__file__).resolve().parents[2] / ".venv/bin/meridian")
     token = "word" + secrets.token_hex(12)
     start = subprocess.run(

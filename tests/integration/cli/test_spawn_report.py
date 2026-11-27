@@ -13,6 +13,7 @@ import pytest
 
 from meridian.lib.streaming.control_socket import socket_directory
 from tests.conftest import posix_only
+from tests.support.machine_ids import plant_id_claims
 
 _CLI_TIMEOUT_SECONDS = 20
 
@@ -55,6 +56,7 @@ def _run_fake_claude_spawn(tmp_path: Path, *, explicit_report: str | None) -> di
     )
     fake_claude.chmod(0o755)
 
+    plant_id_claims(tmp_path / "meridian-home")
     env = {
         "HOME": str(tmp_path / "home"),
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
