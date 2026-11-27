@@ -94,3 +94,26 @@ def test_machine_caller_drops_fields_with_the_wrong_shape() -> None:
     assert shaped is not None
     assert (shaped.spawn_id, shaped.reply_id, shaped.project_root) == (None, None, None)
     assert parse_machine_caller({**good, "machine_id": "xyz"}) is None
+
+
+@pytest.mark.parametrize(
+    ("given", "kept"),
+    [
+        ("mellow-hollow-brood", True),
+        ("team/proj", True),
+        ("/team/proj", False),
+        ("team/proj/", False),
+        ("team//proj", False),
+        ("team/../proj", False),
+        ("./proj", False),
+        ("team/pr\noj", False),
+        ("a" * 256, False),
+    ],
+)
+def test_machine_caller_keeps_a_project_id_only_in_the_shape_of_one(given: str, kept: bool) -> None:
+    from meridian.lib.machines.caller import parse_machine_caller
+
+    caller = parse_machine_caller(
+        {"machine": "far", "machine_id": "0123456789ab", "project_id": given}
+    )
+    assert caller is not None and caller.project_id == (given if kept else None)

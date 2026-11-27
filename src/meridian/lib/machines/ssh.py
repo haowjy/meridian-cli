@@ -14,6 +14,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import IO, Final
 
+from meridian.lib.core.caller_boundary import SANDBOX_BLOCKED_SENTENCE, inside_launcher_sandbox
+from meridian.lib.machines.results import NotSent
+
 # herdr's set, plus -T and LogLevel=ERROR: -T overrides a user's `RequestTTY force`, and
 # LogLevel=ERROR overrides `LogLevel QUIET`, which would hide whether a sign-in or a host key
 # failed.
@@ -178,34 +181,39 @@ class SshProcess:
             self.kill()
 
 
-def failure_text(kind: str, label: str, target: str, last_line: str) -> str:
-    """What to tell the user when no ready line came: *label* is the machine's name (or the
-    target, before it has one)."""
+def not_connected(exited: SshExit, label: str, target: str) -> NotSent:
+    """The result for an ``ssh`` that exited 255, so nothing reached a command on the other
+    side. The one place that names why: from what ``ssh`` printed, a host key before a refused
+    sign-in, anything else unreachable; and all of them ``sandboxed`` when this process is
+    inside its session's sandbox, which is then what blocked ``ssh``. *label* is the machine's
+    name (or the target, before it has one)."""
 
-    if kind == "host_key":
-        return (
+    last_line = exited.last_line or "ssh exited 255"
+    sandbox = inside_launcher_sandbox()
+    if sandbox is True:
+        return NotSent("sandboxed", f"{SANDBOX_BLOCKED_SENTENCE} ({last_line})")
+    stderr = exited.stderr.lower()
+    changed = "remote host identification has changed" in stderr
+    if changed or "host key verification failed" in stderr:
+        kind = "host_key"
+        text = (
             f"background calls accept only known host keys. If {label} is new to this machine, "
             f"run `meridian machine add {target}` in a terminal. If its key changed, fix "
             f"~/.ssh/known_hosts yourself; Meridian never does. ({last_line})"
         )
-    if kind == "auth":
-        return (
+    elif "permission denied" in stderr:
+        kind = "auth"
+        text = (
             f"sign-in to {label} failed; run `ssh {target}` once in a terminal, or load the key "
             f"with `ssh-add`. ({last_line})"
         )
-    return f"{label} can't be reached over SSH: {last_line or 'no answer'}"
-
-
-def failure_kind(stderr: str) -> str:
-    """The error kind for a call that never reached a ready line, from what ``ssh`` printed:
-    a host key before a refused sign-in, anything else unreachable."""
-
-    text = stderr.lower()
-    if "host key verification failed" in text or "remote host identification has changed" in text:
-        return "host_key"
-    if "permission denied" in text:
-        return "auth"
-    return "unreachable"
+    else:
+        kind = "unreachable"
+        text = f"{label} can't be reached over SSH: {last_line}"
+    if sandbox is None:
+        # A constrained sandbox was recorded and nothing says whether this command left it (macOS).
+        text += f"; {SANDBOX_BLOCKED_SENTENCE}"
+    return NotSent(kind, text)
 
 
 __all__ = [
@@ -215,6 +223,5 @@ __all__ = [
     "SshExit",
     "SshProcess",
     "SshUnavailable",
-    "failure_kind",
-    "failure_text",
+    "not_connected",
 ]

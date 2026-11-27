@@ -10,6 +10,7 @@ jobs:
     if: "${{ !startsWith(github.event.head_commit.message, 'release: v') && !contains(github.event.head_commit.message, 'release:skip') }}"
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: read
     outputs:
@@ -23,7 +24,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          token: ${{ github.token }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -301,7 +302,7 @@ jobs:
           MISSING_TAG: ${{ steps.release_guard.outputs.missing_tag }}
           MISSING_TAG_COMMIT: ${{ steps.release_guard.outputs.missing_tag_commit }}
           REPOSITORY: ${{ github.repository }}
-          TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
         run: |
           git fetch --tags --force
           release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
@@ -577,7 +578,7 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
           REPOSITORY: ${{ github.repository }}
-          TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
           release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
@@ -702,3 +703,11 @@ jobs:
 
           push_tag_with_retry "v${NEXT_VERSION}" "${release_commit_sha}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      # A push made with the workflow token starts no workflow, so start release.yml by hand.
+      - name: Start release workflow
+        if: steps.push_release.outputs.tag != '' || steps.push_missing_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag }}
+        run: gh workflow run release.yml --ref main -f "tag=${RELEASE_TAG}"

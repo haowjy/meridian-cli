@@ -1,11 +1,14 @@
 # Machines
 
-Calls to other machines over plain SSH. Design: `machines.md` in the machine-wide-ids work item.
+Calls to other machines over plain SSH.
 
 - `call.call_machine` is the only way to call: it prints nothing and returns `NotSent`,
   `Unanswered` or `Answered`. The split is the `meridian-ready` line: before it nothing was
   sent (safe to run again); after the first request byte, any outcome without a whole
   `meridian-result` line is `Unanswered`, one `try` with no exception let out.
+- An `ssh` that exits 255 before the ready line gets its kind and text from
+  `ssh.not_connected`, for the call and for discovery. It is the one place that reports a
+  caller inside its session's sandbox as `sandboxed`; don't name the kind elsewhere.
 - Nothing the user typed goes on the remote command line: it is always the cached absolute
   path, `machine`, `run`, matching `SAFE_PATH_RE`. The request and the discovery script go on
   stdin. A user-typed target goes to `ssh` only after `ssh_target_problem`, behind `--`.
@@ -22,5 +25,6 @@ Calls to other machines over plain SSH. Design: `machines.md` in the machine-wid
 - A write under the home that the call doesn't need (the path cache, a rename correction) goes
   through `home_write.best_effort`: a failure is a warning.
 - The ready line is data from the other machine: check name, ID and `v` before using them.
-- The time limits in `call.py` are placeholders until probe G sets them; keep them together.
+- Keep the time limits together in `call.py`. Measured, none is tight: a new connection
+  takes about 0.2 s and a read about 0.6 s.
 - No connection is reused (no `ControlMaster`): a user may set it in `~/.ssh/config`.

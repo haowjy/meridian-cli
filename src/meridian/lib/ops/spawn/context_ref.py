@@ -6,7 +6,7 @@ from meridian.lib.core.context_ref import (
     SessionContextRef,
     SpawnContextRef,
 )
-from meridian.lib.core.refs import RefNotFound
+from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.ops.locate import SpawnHit, Untracked, chat_spawn, locate
 from meridian.lib.ops.work_attachment import resolve_active_work_id
 from meridian.lib.state import session_store, spawn_store, work_store
@@ -18,10 +18,17 @@ from .query import read_report, read_spawn_row
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
+def _is_machine_ref(value: str) -> bool:
+    try:
+        return parse_ref(value).kind == "machine"
+    except ValueError:
+        return False
+
+
 def _is_filesystem_path_ref(value: str) -> bool:
 
     normalized = value.strip()
-    if not normalized or normalized.startswith("@"):
+    if not normalized or normalized.startswith("@") or _is_machine_ref(normalized):
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -37,7 +44,7 @@ def _reject_filesystem_path_context_ref(value: str) -> None:
         return
     raise ValueError(
         f"--from does not accept filesystem paths ({value!r}). "
-        "Use a spawn id (p123), chat id (c123), or harness session id. "
+        "Use a spawn id (p123), chat id (c123), `<this machine>/<id>`, or harness session id. "
         "To include file contents in the prompt, use --file/-f instead."
     )
 

@@ -3,9 +3,14 @@
 ``id`` is what identifies the machine and never changes; ``name`` is how other machines
 write it. The default name is computed once and stored, because a hostname can change
 by itself (macOS) and a recomputed name would rename the machine under every peer.
+
+The file is read as a JSON document, and a rename edits the document it read and writes
+that back, so keys a newer build added survive it. A file with a higher ``v`` is refused
+with "upgrade", never "remove": a removed file gives the machine a new ID.
 """
 
 import getpass
+import json
 import logging
 import os
 import re
@@ -13,19 +18,17 @@ import secrets
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final
 
-from pydantic import BaseModel, ConfigDict, field_validator
-
-from meridian.lib.core.refs import is_machine_name
+from meridian.lib.core.refs import is_machine_id, is_machine_name
 from meridian.lib.platform.atomic import atomic_write_text, fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.utils.json_shapes import is_json_object, json_list
 
 logger = logging.getLogger(__name__)
 
-FORMAT_VERSION: Final = 1  # the `v` of `_MachineFile`
-_ID_RE: Final = re.compile(r"[0-9a-f]{12}")
+FORMAT_VERSION: Final = 1
 
 
 class MachineIdentityError(RuntimeError):
@@ -87,57 +90,66 @@ def machine_identity_or_none() -> MachineIdentity | None:
         return None
 
 
-class _MachineFile(BaseModel):
-    model_config = ConfigDict(frozen=True)
+def _load(path: Path) -> dict[str, object]:
+    """The file as a JSON document of this format. ``FileNotFoundError`` when there is none."""
 
-    v: Literal[1]
-    id: str
-    name: str
-    was: tuple[str, ...] = ()
-
-    @field_validator("id")
-    @classmethod
-    def _id_is_12_hex(cls, value: str) -> str:
-        if _ID_RE.fullmatch(value) is None:
-            raise ValueError("`id` must be 12 hex characters")
-        return value
-
-    @field_validator("name")
-    @classmethod
-    def _name_fits_rule(cls, value: str) -> str:
-        if not is_machine_name(value):
-            raise ValueError(f"`name` {value!r} breaks the machine name rule")
-        return value
-
-    @field_validator("was")
-    @classmethod
-    def _was_fit_rule(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for name in value:
-            if not is_machine_name(name):
-                raise ValueError(f"`was` entry {name!r} breaks the machine name rule")
-        return value
-
-
-def _parse(path: Path) -> MachineIdentity:
     try:
         text = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, MachineIdentityError):
+    except FileNotFoundError:
         raise
     except (OSError, UnicodeDecodeError) as exc:
         raise MachineIdentityError(f"{path} can't be read ({exc})") from exc
     try:
-        data = _MachineFile.model_validate_json(text)
+        document = json.loads(text)
     except ValueError as exc:
+        raise _damaged(path, f"is not JSON ({exc})") from exc
+    if not is_json_object(document):
+        raise _damaged(path, "is not a JSON object")
+    version = document.get("v")
+    if isinstance(version, bool) or not isinstance(version, int) or version < FORMAT_VERSION:
+        raise _damaged(path, f"has no usable `v` (expected {FORMAT_VERSION})")
+    if version > FORMAT_VERSION:
         raise MachineIdentityError(
-            f"{path} can't be read ({exc}). Fix or remove it; Meridian never rewrites it, "
-            "because a new machine ID makes every machine that saved this one refuse it."
-        ) from exc
-    return MachineIdentity(data.id, data.name, data.was)
+            f"{path} was written by a newer Meridian (format {version}); upgrade this one."
+        )
+    return document
+
+
+def _damaged(path: Path, why: str) -> MachineIdentityError:
+    return MachineIdentityError(
+        f"{path} {why}. Fix it by hand: Meridian never rewrites it. Removing it gives this "
+        "machine a new ID, and every machine that saved this one then refuses it until it "
+        "removes and adds this machine again."
+    )
+
+
+def _identity(path: Path, document: dict[str, object]) -> MachineIdentity:
+    ident, name = document.get("id"), document.get("name")
+    if not isinstance(ident, str) or not is_machine_id(ident):
+        raise _damaged(path, "has an `id` that is not 12 hex characters")
+    if not isinstance(name, str) or not is_machine_name(name):
+        raise _damaged(path, "has a `name` that breaks the machine name rule")
+    was = json_list(document["was"]) if "was" in document else []
+    if was is None:
+        raise _damaged(path, "has a `was` that is not a list of machine names")
+    former = tuple(item for item in was if isinstance(item, str) and is_machine_name(item))
+    if len(former) != len(was):
+        raise _damaged(path, "has a `was` that is not a list of machine names")
+    return MachineIdentity(ident, name, former)
+
+
+def _parse(path: Path) -> MachineIdentity:
+    return _identity(path, _load(path))
+
+
+def _dump(document: dict[str, object]) -> str:
+    return json.dumps(document, separators=(",", ":")) + "\n"
 
 
 def rename_machine(new_name: str) -> MachineIdentity:
     """Give this machine *new_name*; the old name goes to the front of ``was`` and the new one
-    leaves it (renaming back). The file is read again under the lock, then replaced whole.
+    leaves it (renaming back). The file is read again under the lock, and the document that
+    was read is written back with the two keys changed.
 
     Raises ``MachineIdentityError`` for a name that breaks the rule or a file that can't be used.
     """
@@ -150,15 +162,18 @@ def rename_machine(new_name: str) -> MachineIdentity:
     path = machine_file()
     try:
         with lock_file(machine_lock_file()):
-            current = read_or_create_machine_identity()
+            read_or_create_machine_identity()
+            document = _load(path)
+            current = _identity(path, document)
             if current.name == new_name:
                 return current
             was = (current.name, *(name for name in current.was if name != new_name))
-            document = _MachineFile(v=FORMAT_VERSION, id=current.id, name=new_name, was=was)
-            atomic_write_text(path, document.model_dump_json() + "\n")
+            document["name"] = new_name
+            document["was"] = list(was)
+            atomic_write_text(path, _dump(document))
     except OSError as exc:
         raise MachineIdentityError(f"can't write {path}: {exc}") from exc
-    return MachineIdentity(document.id, document.name, document.was)
+    return MachineIdentity(current.id, new_name, was)
 
 
 def _create(path: Path) -> None:
@@ -168,17 +183,18 @@ def _create(path: Path) -> None:
         login = getpass.getuser()
     except (KeyError, OSError):
         login = "user"
-    document = _MachineFile(
-        v=FORMAT_VERSION,
-        id=secrets.token_hex(6),
-        name=default_machine_name(login, socket.gethostname().split(".")[0]),
-    )
+    document: dict[str, object] = {
+        "v": FORMAT_VERSION,
+        "id": secrets.token_hex(6),
+        "name": default_machine_name(login, socket.gethostname().split(".")[0]),
+        "was": [],
+    }
     temp = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(document.model_dump_json() + "\n")
+            handle.write(_dump(document))
             handle.flush()
             os.fsync(handle.fileno())
         try:

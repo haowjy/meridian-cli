@@ -35,6 +35,7 @@ _KIND_LABEL: dict[RefKind, str] = {
 }
 
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
+_MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
 REMOTE_INBOX_ERROR = "the inbox of another machine is not built yet: file the message there"
 
 
@@ -49,7 +50,7 @@ class RefNotFound(ValueError):
         ref: str,
         kind: RefKind,
         *,
-        legacy: bool = False,
+        legacy_hint: str | None = None,
         claimed_root: Path | None = None,
     ) -> None:
         self.ref = ref
@@ -62,8 +63,10 @@ class RefNotFound(ValueError):
             if kind == "selector"
             else f"{_KIND_LABEL[kind]} '{ref}' not found"
         )
-        if legacy:
-            text += f". '{ref}' was issued before machine-wide IDs; name its project with -C"
+        if legacy_hint is not None:
+            text += (
+                f". '{ref}' was issued before machine-wide IDs; name its project with {legacy_hint}"
+            )
         super().__init__(text)
 
 
@@ -135,6 +138,12 @@ def is_machine_name(value: str) -> bool:
     )
 
 
+def is_machine_id(value: str) -> bool:
+    """The shape of a machine's ID (``machine.json``): 12 hex characters."""
+
+    return _MACHINE_ID_RE.fullmatch(value) is not None
+
+
 def parse_ref(raw: str) -> Ref:
     value = raw.strip()
     if not value:
@@ -168,6 +177,7 @@ __all__ = [
     "RefKind",
     "RefNotFound",
     "is_chat_id",
+    "is_machine_id",
     "is_machine_name",
     "is_spawn_id",
     "parse_ref",
