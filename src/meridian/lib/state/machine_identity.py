@@ -6,6 +6,7 @@ by itself (macOS) and a recomputed name would rename the machine under every pee
 """
 
 import getpass
+import logging
 import os
 import re
 import secrets
@@ -18,6 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.state.user_paths import get_user_home
+
+logger = logging.getLogger(__name__)
 
 FORMAT_VERSION: Final = 1  # the `v` of `_MachineFile`
 
@@ -62,6 +65,17 @@ def read_or_create_machine_identity() -> MachineIdentity:
         pass
     _create(path)
     return _parse(path)
+
+
+def machine_identity_or_none() -> MachineIdentity | None:
+    """``read_or_create_machine_identity``, or ``None`` when the file can't be used (a
+    read-only home, a damaged file). A caller that only labels output goes on without it."""
+
+    try:
+        return read_or_create_machine_identity()
+    except MachineIdentityError as exc:
+        logger.warning("machine identity unavailable: %s", exc)
+        return None
 
 
 class _MachineFile(BaseModel):
@@ -121,5 +135,6 @@ __all__ = [
     "MachineIdentityError",
     "default_machine_name",
     "machine_file",
+    "machine_identity_or_none",
     "read_or_create_machine_identity",
 ]

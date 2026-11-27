@@ -13,6 +13,13 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
   when `ok` is true. Only the kind `maybe_delivered` means the message may have arrived, so a
   script resends on any other kind. An error raised before the command runs prints the same
   object with kind `usage`. Plain text output is unchanged.
+- **A new ID needs no `-C`.** `meridian message c20417 "..."` reaches the session from any
+  project, by spawn ID or chat ID; see [IDs are unique on the machine](#spawn-and-chat-ids-are-unique-on-the-machine).
+  A `--json` result also carries `machine`, this machine's name, and the address may be
+  written `<this machine's name>/<id>`. Any other machine name fails as `not_found`
+  ("unknown machine") until Meridian can reach other machines. An ID that names a session in
+  two projects fails as `ambiguous`; one issued before machine-wide IDs that is not in the
+  current project fails as `not_found`, with its text saying so.
 - **A text of `-` reads stdin.** Without it the text is the second argument, as before.
 - **`@person` addresses go to a program you name.** Set `[message] people = ["meridian-comms",
   "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it

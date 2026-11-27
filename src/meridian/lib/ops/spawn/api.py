@@ -79,10 +79,7 @@ from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.idle_store import IdleStore
-from meridian.lib.state.machine_identity import (
-    MachineIdentityError,
-    read_or_create_machine_identity,
-)
+from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -821,13 +818,8 @@ def _list_entries(
 
 
 def _machine_name() -> str | None:
-    """This machine's name, or ``None`` when its identity file can't be read or created."""
-
-    try:
-        return read_or_create_machine_identity().name
-    except MachineIdentityError as exc:
-        logger.warning("machine_identity_unavailable", error=str(exc))
-        return None
+    identity = machine_identity_or_none()
+    return identity.name if identity is not None else None
 
 
 def _live_project_roots() -> list[Path]:

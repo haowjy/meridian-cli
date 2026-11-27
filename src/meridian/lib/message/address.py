@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from meridian.lib.core.refs import SELECTORS, is_chat_id, is_spawn_id
+from meridian.lib.state.machine_identity import machine_identity_or_none
 
 _MACHINE_NAME_RE: Final = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MAX_PERSON_ADDRESS_BYTES: Final = 256
@@ -42,23 +43,22 @@ class PersonAddress:
 
 
 def local_machine_name() -> str | None:
-    """This machine's name, for ``machine`` in the JSON and for ``<name>/<id>`` addresses.
+    """This machine's name, for ``machine`` in the JSON; ``None`` when its identity file
+    can't be created."""
 
-    The seam for saved machines: with ``~/.meridian/machine.json`` this returns the name
-    stored there (and its ``was`` names count as local), and ``resolve_machine`` below
-    returns the SSH route to a saved one instead of refusing.
-    """
-
-    return None
+    identity = machine_identity_or_none()
+    return identity.name if identity is not None else None
 
 
 def resolve_machine(name: str) -> None:
-    """Accept a machine part that names this machine; refuse every other.
+    """Accept a machine part that names this machine, by its name or a former one (``was``).
 
-    Raises ``AddressError`` ``not_found`` ("unknown machine") until saved machines exist.
+    Raises ``AddressError`` ``not_found`` ("unknown machine") for any other, until saved
+    machines exist.
     """
 
-    if name != local_machine_name():
+    identity = machine_identity_or_none()
+    if identity is None or name not in (identity.name, *identity.was):
         raise AddressError("not_found", f"unknown machine `{name}`")
 
 

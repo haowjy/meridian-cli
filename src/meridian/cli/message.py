@@ -22,7 +22,7 @@ from meridian.cli.invocation import get_global_options
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
 from meridian.lib.core.process_start import starting_cwd, starting_env
-from meridian.lib.core.refs import RefNotFound
+from meridian.lib.core.refs import RefAmbiguous, RefNotFound
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.message.address import (
@@ -41,7 +41,7 @@ from meridian.lib.message.result import (
     error_kind,
     print_result,
 )
-from meridian.lib.ops.locate import Untracked, locate, locate_run
+from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
@@ -174,15 +174,14 @@ async def _send_to_session(
     project_root, _ = resolve_runtime_root_and_config(None)
     current_root = resolve_runtime_root(project_root)
     try:
-        located = locate(project_root, session_id)
-        if isinstance(located, Untracked):
-            raise RefNotFound(located.native_id, "native")
-        runtime_root = located.runtime_root
-        target = locate_run(project_root, session_id, runtime_root=runtime_root)
+        target = locate_run(project_root, session_id)
+    except RefAmbiguous as exc:
+        return Failed("ambiguous", str(exc), receiver)
     except RefNotFound as exc:
         return Failed("not_found", str(exc), receiver)
     except ValueError as exc:
         return Failed("usage", str(exc), receiver)
+    runtime_root = target.runtime_root
     spawn_id = str(target.spawn_id)
     if target.chat_id is not None and not target.occupant:
         owner = read_derived(runtime_root, target.spawn_id)
