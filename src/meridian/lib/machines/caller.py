@@ -45,14 +45,15 @@ def _text(fields: Mapping[str, object], key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _shaped(value: str | None, *, spawn: bool = False, chat: bool = False) -> str | None:
-    """*value* when it has the shape of a spawn or chat ID: the request comes from the far side
-    of a trust boundary and these go into a prompt and an argv."""
+def _session_id(value: object, *, chat: bool = False) -> str | None:
+    """A spawn ID, or with *chat* a chat ID too; ``None`` when the field is absent. The request
+    comes from the far side of a trust boundary and these go into a prompt and an argv."""
 
     if value is None:
         return None
-    ok = (spawn and is_spawn_id(value)) or (chat and is_chat_id(value))
-    return value if ok else None
+    if isinstance(value, str) and (is_spawn_id(value) or (chat and is_chat_id(value))):
+        return value
+    raise ValueError("not a session ID")
 
 
 def _path(value: str | None) -> str | None:
@@ -64,8 +65,9 @@ def _project_id(value: str | None) -> str | None:
 
 
 def parse_machine_caller(raw: object) -> MachineCaller | None:
-    """The caller block of a request, ``None`` when it is absent or has no usable machine. A
-    session field that has the wrong shape is dropped, not trusted."""
+    """The caller block of a request, ``None`` when it is absent, has no usable machine, or
+    names a session by something that is not an ID. Dropping that ID instead would turn a
+    session into a terminal of its machine, which may do more."""
 
     fields = json_object(raw)
     if fields is None:
@@ -78,11 +80,16 @@ def parse_machine_caller(raw: object) -> MachineCaller | None:
         or not is_machine_id(machine_id)
     ):
         return None
+    try:
+        spawn_id = _session_id(fields.get("spawn_id"))
+        reply_id = _session_id(fields.get("reply_id"), chat=True)
+    except ValueError:
+        return None
     return MachineCaller(
         machine=machine,
         machine_id=machine_id,
-        spawn_id=_shaped(_text(fields, "spawn_id"), spawn=True),
-        reply_id=_shaped(_text(fields, "reply_id"), spawn=True, chat=True),
+        spawn_id=spawn_id,
+        reply_id=reply_id,
         claimed=fields.get("claimed") is True,
         can_reply=fields.get("can_reply") is True,
         project_root=_path(_text(fields, "project_root")),

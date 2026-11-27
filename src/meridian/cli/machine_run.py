@@ -178,7 +178,7 @@ def run_machine_call(*, check: bool) -> None:
         return
     caller = request.get("caller")
     if parse_machine_caller(caller) is None:
-        _emit(RESULT_MARKER, _refused("the request names no calling machine"))
+        _emit(RESULT_MARKER, _refused("the request names no usable caller"))
         return
     _emit(RESULT_MARKER, _run_child(argv, stdin, limit, caller))
 
