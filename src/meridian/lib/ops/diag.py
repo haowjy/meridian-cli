@@ -7,7 +7,7 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_roots import MarsRoots, mars_content_roots
+from meridian.lib.catalog.mars_cli import MarsRoot, legacy_user_root
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chats
@@ -15,7 +15,11 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.ops.config_surface import build_config_surface
-from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
+from meridian.lib.ops.mars import (
+    check_upgrade_availability,
+    format_upgrade_availability,
+    mars_root_report,
+)
 from meridian.lib.ops.pruning import (
     AdHocProjectDir,
     OrphanProjectDir,
@@ -70,6 +74,16 @@ class TelemetryCleanupStats(BaseModel):
     deleted_bytes: int = 0
 
 
+class DoctorMarsRoots(BaseModel):
+    """Deprecated (``mars`` replaces it); goes in the next minor release."""
+
+    model_config = ConfigDict(frozen=True)
+
+    primary: str | None
+    scope: Literal["project", "user"] | None
+    user: str | None = None
+
+
 class DoctorOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -78,12 +92,14 @@ class DoctorOutput(BaseModel):
     project_root_source: str
     identity_tier: Literal["committed", "adhoc"]
     project_id: str | None
-    mars_roots: MarsRoots
+    # The root Mars chooses here, as Mars reports it; None when Mars cannot answer.
+    mars: MarsRoot | None
+    mars_roots: DoctorMarsRoots
     runtime_root: str | None
     runtime_root_source: str
     runs_checked: int
-    agents_dir: str
-    skills_dir: str
+    agents_dir: str | None
+    skills_dir: str | None
     orphan_project_dirs: tuple[OrphanProjectDir, ...] = ()
     adhoc_project_dirs: tuple[AdHocProjectDir, ...] = ()
     stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
@@ -109,18 +125,15 @@ class DoctorOutput(BaseModel):
             ("project_root_source", self.project_root_source),
             ("identity_tier", self.identity_tier),
             ("project_id", self.project_id or "(unminted)"),
-            ("mars_roots.primary", self.mars_roots.primary.as_posix()),
-            ("mars_roots.scope", self.mars_roots.scope),
-            (
-                "mars_roots.user",
-                self.mars_roots.user.as_posix() if self.mars_roots.user is not None else None,
-            ),
+            ("mars_roots.primary", self.mars_roots.primary or "(mars unavailable)"),
+            ("mars_roots.scope", self.mars_roots.scope or "(mars unavailable)"),
+            ("mars_roots.user", self.mars_roots.user),
             ("project_state", "available" if self.runtime_root is not None else "no state here"),
             ("runtime_root", self.runtime_root or "(unmaterialized)"),
             ("runtime_root_source", self.runtime_root_source),
             ("runs_checked", str(self.runs_checked)),
-            ("agents_dir", self.agents_dir),
-            ("skills_dir", self.skills_dir),
+            ("agents_dir", self.agents_dir or "(mars unavailable)"),
+            ("skills_dir", self.skills_dir or "(mars unavailable)"),
             ("orphan_project_dirs", str(len(self.orphan_project_dirs))),
             ("adhoc_project_dirs", str(len(self.adhoc_project_dirs))),
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
@@ -719,19 +732,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         else GlobalReport()
     )
 
-    mars_roots = authority.mars_roots
-    agents_dir = mars_roots.primary / ".mars" / "agents"
-    skills_dir = mars_roots.primary / ".mars" / "skills"
-    agents_dirs = [
-        root / ".mars" / "agents"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "agents").is_dir()
-    ]
-    skills_dirs = [
-        root / ".mars" / "skills"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "skills").is_dir()
-    ]
+    mars = mars_root_report(project_root)
+    store = mars.root.store if mars.root is not None else None
 
     warnings = [*local_report.warnings, *global_report.warnings]
     if surface.warning is not None:
@@ -749,22 +751,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload=finding.payload,
             )
         )
-    mars_marker_exists = (mars_roots.primary / "mars.toml").is_file()
-    if mars_marker_exists and not skills_dirs:
-        warnings.append(
-            DoctorWarning(
-                code="missing_skills_directories",
-                message="No configured skills directories were found.",
-            )
-        )
-    if mars_marker_exists and not agents_dirs:
-        warnings.append(
-            DoctorWarning(
-                code="missing_agent_profile_directories",
-                message="No configured agent profile directories were found.",
-            )
-        )
-    if mars_marker_exists:
+    warnings.extend(_legacy_user_root_warnings())
+    if mars.root is not None and mars.root.kind == "project":
         availability = check_upgrade_availability(project_root)
         if availability is None:
             warnings.append(
@@ -808,12 +796,17 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         project_root_source=surface.authority.project_root_source,
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
-        mars_roots=authority.mars_roots,
+        mars=mars.root,
+        mars_roots=DoctorMarsRoots(
+            primary=mars.root.path.as_posix() if mars.root is not None else None,
+            scope=mars.root.kind if mars.root is not None else None,
+            user=mars.user_root.as_posix() if mars.user_root is not None else None,
+        ),
         runtime_root=runtime_root.as_posix() if runtime_root is not None else None,
         runtime_root_source=authority.runtime_root_source or "unresolved",
         runs_checked=len(local_report.spawns),
-        agents_dir=agents_dir.as_posix(),
-        skills_dir=skills_dir.as_posix(),
+        agents_dir=(store / "agents").as_posix() if store is not None else None,
+        skills_dir=(store / "skills").as_posix() if store is not None else None,
         orphan_project_dirs=global_report.orphan_project_dirs,
         adhoc_project_dirs=global_report.adhoc_project_dirs,
         stale_spawn_artifacts=local_report.stale_spawn_artifacts,
@@ -828,6 +821,33 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         killed_orphan_spawns=local_report.killed_orphan_spawns,
         autosync=autosync_status,
     )
+
+
+def _legacy_user_root_warnings() -> list[DoctorWarning]:
+    legacy = legacy_user_root()
+    if legacy is None:
+        return []
+    path = legacy.path.as_posix()
+    if not legacy.active:
+        return [
+            DoctorWarning(
+                code="legacy_user_mars_root",
+                message=f"{path} holds no items and Meridian no longer uses it; delete it.",
+            )
+        ]
+    moves = "; ".join(f"meridian mars --user add {source}" for source in legacy.sources)
+    return [
+        DoctorWarning(
+            code="legacy_user_mars_root",
+            message=(
+                f"{path} is Meridian's old user Mars root; this release still reads it, the "
+                f"next one does not. Move it to your Mars user level"
+                + (f" ({moves})" if moves else "")
+                + f", then delete {path}."
+            ),
+            payload={"path": path, "sources": list(legacy.sources)},
+        )
+    ]
 
 
 async def doctor(payload: DoctorInput) -> DoctorOutput:

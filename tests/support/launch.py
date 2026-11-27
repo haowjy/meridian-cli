@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
+from meridian.lib.catalog.mars_cli import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.native_identity import PrecreatedSession

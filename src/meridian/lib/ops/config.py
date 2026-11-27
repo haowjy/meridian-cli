@@ -6,7 +6,7 @@ from typing import Literal, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
-from meridian.lib.catalog.mars_roots import mars_fallback_label
+from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.config.context_config import ContextSourceType
 from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
 from meridian.lib.config.loader import OPTION_CATALOG
@@ -100,8 +100,11 @@ class ConfigShowOutput(BaseModel):
     project_root_source: str
     project_identity: str | None
     project_identity_source: Literal["meridian.toml", "path", "unminted"]
-    mars_root: str
-    mars_scope: Literal["project", "user"]
+    # The root Mars chooses here, as Mars reports it; None when Mars cannot answer.
+    mars: MarsRoot | None
+    mars_root: str | None
+    mars_scope: Literal["project", "user"] | None
+    # Deprecated: whether lookups still read ~/.meridian/mars. Goes in the next minor release.
     mars_fallback: Literal["active", "n/a"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
@@ -121,8 +124,8 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"project_root.source = {self.project_root_source}")
         lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
         lines.append(f"project_identity_source: {self.project_identity_source}")
-        lines.append(f"mars_root: {self.mars_root}")
-        lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_root: {self.mars_root or '(mars unavailable)'}")
+        lines.append(f"mars_scope: {self.mars_scope or '(mars unavailable)'}")
         lines.append(f"mars_fallback: {self.mars_fallback}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
@@ -585,15 +588,19 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
 
     values.extend(_dynamic_config_values(surface))
 
+    from meridian.lib.ops.mars import mars_root_report
+
+    mars = mars_root_report(surface.project_root)
     return ConfigShowOutput(
         path=surface.project_config.write_path.as_posix(),
         project_root=surface.project_root.as_posix(),
         project_root_source=surface.authority.project_root_source,
         project_identity=surface.authority.project_id,
         project_identity_source=surface.authority.project_identity_source,
-        mars_root=surface.authority.mars_roots.primary.as_posix(),
-        mars_scope=surface.authority.mars_roots.scope,
-        mars_fallback=mars_fallback_label(surface.authority.mars_roots),
+        mars=mars.root,
+        mars_root=mars.root.path.as_posix() if mars.root is not None else None,
+        mars_scope=mars.root.kind if mars.root is not None else None,
+        mars_fallback=mars.fallback_label,
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None

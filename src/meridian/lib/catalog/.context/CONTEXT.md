@@ -2,18 +2,27 @@
 
 ## Mars roots
 
-Mars resolves package content from the nearest `mars.toml`, or the user Mars
-root when none exists. Project content can fall back to user packages when the
-installed Mars supports fallback roots; other Mars configuration comes from the
-primary root. Read-pure inspection may report an absent user root but must not
-initialize it or launch Mars: bare-directory `doctor` depends on this distinction.
+Mars chooses the root; Meridian never does. Every Mars call runs in the project directory
+(`resolve_project_root_resolution`: an explicit path, `MERIDIAN_PROJECT_DIR`, else the working
+directory) with no `--root` of Meridian's own, so a launch and `meridian mars …` typed there
+address the same root. Mars uses the nearest `mars.toml`, else the user level for a lookup; a
+write with no project fails in Mars. Where Meridian must know the root (`config show`,
+`context`, `doctor`, the bootstrap store, the passthrough's `add`/`link` gate), it reads the
+`root` of Mars's `--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`.
+Meridian reads installed files only where Mars points (an agent's `source_path`, the store
+`root` names; a project's store is its documented `.mars/`), and never Mars's state files
+(`native-agents.json`, `models-merged.json`, locks): ask Mars instead. The user level's location
+follows XDG and `MARS_*_DIR` rules that belong to Mars. Bootstrap docs are the one store scan
+left: Mars reports no path for them.
+
+`~/.meridian/mars` (`LegacyUserRoot`) is the one exception for one minor release: Meridian
+reads its `mars.toml` only to decide whether it still holds items, and if so passes it as
+`--fallback-root` and warns once per process. Removal is in `TODO`.
 
 ## Models
 
 Meridian defines no builtin model aliases. Mars resolution fails loudly when
-Mars cannot run, while alias inventory can fall back to `.mars/models-merged.json` under the primary Mars root. That
-file contains pinned aliases only; auto-resolve aliases need Mars to expand them.
-Inventory is static, not live routing availability. Mars subprocesses allow 60
+Mars cannot run; alias inventory is then empty. Inventory is static, not live routing availability. Mars subprocesses allow 60
 seconds because a cold models.dev refresh can be slow.
 
 Cache-only and normal alias lookups have separate cache keys so a dry run cannot
@@ -36,13 +45,15 @@ the file Mars chose (`parse_agent_profile` on the bundle's `agent_source_path`, 
 `mars agents show` through `ops/mars.py` where no bundle is built). A second lookup could
 pick a different file than the one that runs. Mars reads profile skills when building the
 launch bundle for the same reason. Every by-name call to Mars sends `mars_content_args`
-(`mars_roots.py`): the user root as `--fallback-root`, then this build's bundle directory
-as `--provided-root`. A missing agent is `MarsAgentNotFoundError` on every path (spawn,
+(`mars_cli.py`): the legacy `~/.meridian/mars` as `--fallback-root` while it holds items, then
+this build's bundle directory as `--provided-root`. A missing agent is `MarsAgentNotFoundError` on every path (spawn,
 `--fork`, configured default) and carries Mars's message; Meridian adds only a hint that
 holds for every layer. Meridian never words its own guess at which layer was searched.
 
 Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) come from that provided
 layer, which answers a name only when no installed agent claims it; a name Mars renamed on
 a collision stays its `agent_renamed` error. They are read in place, never installed
-through `mars provide`: an installed copy could go missing whenever another sync held the
-lock or another Meridian version provided a different bundle.
+into a store: an installed copy could go missing whenever another sync held the lock, or be a
+stale one from another Meridian version. Meridian's skills likewise: `meridian skills` reads the
+wheel only, launches read the bundle through `--provided-root`, and only `meridian mars sync`
+hands the bundle to Mars as a sync's host layer, for `.agy`.

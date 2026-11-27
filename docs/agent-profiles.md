@@ -23,9 +23,10 @@ meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
-Mars looks a name up in the project's Mars root, then in user packages
-(`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian, which
-Meridian hands it on every lookup. A package or project agent with a built-in profile's
+Mars looks a name up in the project's `.mars/agents/` (which a sync fills from the project's
+packages and your user-level ones), or outside a project in the Mars user level's store, then
+among the profiles built into Meridian, which Meridian hands it on every lookup. A user-level
+agent is installed with `meridian mars --user add <source>`. A package or project agent with a built-in profile's
 name replaces it. A name collision Mars renamed (`inbox-router__a`, `inbox-router__b`)
 fails with the error that lists the renamed names instead of falling back to the built-in.
 The one built-in profile today is `inbox-router`, which the

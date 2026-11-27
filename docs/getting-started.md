@@ -72,7 +72,7 @@ If `meridian` is not found after install, run `uv tool update-shell` and restart
 ## Initialize a Project
 
 Initialization is optional for running Meridian. To install an agent once for
-use from any bare directory:
+yourself, for every bare directory and every project you sync:
 
 ```bash
 meridian mars --user add /path/to/local/package
@@ -81,7 +81,8 @@ mkdir scratch && cd scratch
 meridian opencode -a reviewer
 ```
 
-User packages live under `~/.meridian/mars`. A bare directory stays untouched;
+User packages live at the Mars user level (`~/.config/mars/`); each project's
+`meridian mars sync` installs them there too. A bare directory stays untouched;
 its runtime and context state use a path-derived `adhoc.*` name under
 `~/.meridian/`.
 

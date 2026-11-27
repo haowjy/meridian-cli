@@ -158,17 +158,18 @@ def launch_primary(
     )
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
-        from meridian.lib.catalog.mars_roots import resolve_mars_roots
+        from meridian.lib.ops.mars import mars_root
 
-        mars_root = resolve_mars_roots(resolved_project_root).primary
-        request = request.model_copy(
-            update={
-                "supplemental_prompt_documents": (
-                    *request.supplemental_prompt_documents,
-                    *BootstrapRegistry(mars_root / ".mars").load_all(),
-                )
-            }
-        )
+        root = mars_root(resolved_project_root)
+        if root is not None:
+            request = request.model_copy(
+                update={
+                    "supplemental_prompt_documents": (
+                        *request.supplemental_prompt_documents,
+                        *BootstrapRegistry(root.store).load_all(),
+                    )
+                }
+            )
     resolved_work_id = (
         preview_work_id
         if request.dry_run

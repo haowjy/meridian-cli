@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Protocol
 
 from meridian.lib.catalog.agent import AgentProfile
-from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -294,7 +293,7 @@ def _snapshot_profile(
     # downstream consumers (e.g. session_agent_path) keep absolute-path parity.
     if profile.path.is_absolute():
         return profile
-    path = (resolve_mars_roots(project_root).primary / profile.path).resolve()
+    path = (project_root / profile.path).resolve()
     return profile.model_copy(update={"path": path})
 
 

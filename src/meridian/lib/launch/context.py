@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.catalog.agent_copy import agent_copy_enabled
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
@@ -69,6 +68,7 @@ from meridian.lib.launch.session_links import (
 from meridian.lib.launch.workspace_projection import (
     project_workspace_roots,
 )
+from meridian.lib.ops.mars import mars_installs_agents_natively
 from meridian.lib.platform import IS_POSIX
 from meridian.lib.safety.policy import (
     EnforcementReport,
@@ -1576,7 +1576,7 @@ def bind_launch_context(
         config_snapshot=runtime.config_snapshot,
         project_root=project_paths.project_root,
     )
-    native_agent_copy = agent_copy_enabled(project_paths.project_root, harness.id)
+    native_agent_copy = mars_installs_agents_natively(project_paths.project_root, harness.id.value)
     platform_tool_rules, platform_rules = launch_permission_rules(
         tool_rules=resolved_request.tool_rules,
         profile_tool_rules=profile_tool_rules,

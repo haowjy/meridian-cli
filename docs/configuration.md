@@ -10,9 +10,11 @@ Meridian now has two configuration surfaces:
   state retention, work/context/workspace roots, hooks, harness defaults, and
   primary-session defaults.
 
-Meridian reads agents and skills from project packages first, then user packages
-under `~/.meridian/mars/.mars/`, then the copies built into Meridian. Project routing config,
-targets, aliases, and the models cache still come from the active Mars root.
+Mars chooses the root: the nearest project `mars.toml`, else your Mars user level
+(`~/.config/mars/`). A project's sync installs your user-level packages beside its own, the
+project's winning a name both have; outside a project, Mars reads the user level's store. The
+copies built into Meridian answer only names neither holds. Project routing config, targets,
+aliases, and the models cache come from the root Mars chose.
 Harness-specific directories such as `.claude/`, `.codex/`, `.opencode/`, and
 `.pi/` are Mars targets, not Meridian discovery roots.
 
@@ -191,8 +193,8 @@ before the mode was recorded replays as `inline`. A fork is a new launch and use
 the current setting.
 
 The pointer paths are absolute. Run the comparison in a project with its own
-`mars.toml`: skills that come from the user Mars root (`~/.meridian/mars`) sit
-outside the directories a harness is granted, and a strict permission mode may
+`mars.toml`: outside one, skills come from the Mars user level's store
+(`~/.local/share/mars/`), which sits outside the directories a harness is granted, and a strict permission mode may
 refuse to read them.
 
 ## Ignoring direnv during harness launches

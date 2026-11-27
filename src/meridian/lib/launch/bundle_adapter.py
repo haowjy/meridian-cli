@@ -24,14 +24,12 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from meridian.lib.catalog.mars_roots import (
+from meridian.lib.catalog.mars_cli import (
     MARS_AGENT_NOT_FOUND_CODES,
+    MARS_MIN_VERSION,
     MarsAgentNotFoundError,
-    MarsRoots,
-    ensure_resolved_mars_root,
     mars_content_args,
     resolve_mars_executable,
-    resolve_mars_roots,
 )
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
 from meridian.lib.core.route_report import AssessmentReport, RouteDecisionReport
@@ -62,9 +60,6 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release whose launch bundle takes ``--provided-root`` (every request sends it, so an
-# agent shipped in the wheel resolves) and reports ``agent_not_found`` and ``agent_renamed``.
-_MARS_BUNDLE_MIN_VERSION = "0.41.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -99,7 +94,7 @@ class LoadedSkillEntry:
     name: str
     skill_type: str
     body: str
-    source_path: str | None = None
+    source_path: str
 
 
 @dataclass(frozen=True)
@@ -168,7 +163,9 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
             if name:
                 skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
                 body = _normalize_str(item_dict.get("body"))
-                source_path = _normalize_str(item_dict.get("source_path")) or None
+                source_path = _normalize_str(item_dict.get("source_path"))
+                if not source_path:
+                    raise _bundle_schema_error(f"skills.loaded entry {name!r} has no source_path")
                 entries.append(
                     LoadedSkillEntry(
                         name=name,
@@ -356,7 +353,7 @@ def _parse_harness_id(
         raise ValueError(
             "Mars launch-bundle returned unsupported routing.harness "
             f"'{harness_token}'. Available harnesses: {supported}. "
-            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            f"Meridian requires mars >= {MARS_MIN_VERSION}."
         ) from exc
     # Only a pin routes to a harness Meridian may not exec, and only a printed launch pins
     # one (startup decides that; ``run_primary_launch`` refuses any other).
@@ -365,33 +362,20 @@ def _parse_harness_id(
         raise ValueError(
             "Mars launch-bundle returned unavailable routing.harness "
             f"'{harness_token}'. Available harnesses: {supported}. "
-            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            f"Meridian requires mars >= {MARS_MIN_VERSION}."
         )
     return harness_id
 
 
-def _build_bundle_command(
-    request: BundleRequest,
-    *,
-    roots: MarsRoots | None = None,
-) -> list[str]:
+def _build_bundle_command(request: BundleRequest) -> list[str]:
     mars_binary = _resolve_mars_binary()
     if mars_binary is None:
         raise RuntimeError(
             "Mars launch-bundle adapter requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}, but no mars binary was found."
+            f"{MARS_MIN_VERSION}, but no mars binary was found."
         )
 
-    resolved_roots = roots or resolve_mars_roots(request.project_root)
-    command = [
-        mars_binary,
-        "build",
-        "launch-bundle",
-        "--json",
-        "--root",
-        resolved_roots.primary.as_posix(),
-    ]
-    command.extend(mars_content_args(resolved_roots))
+    command = [mars_binary, "build", "launch-bundle", "--json", *mars_content_args()]
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -617,14 +601,14 @@ def _raise_bundle_error(
     ):
         raise RuntimeError(
             "Mars launch-bundle command is unavailable. Meridian requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
+            f"{MARS_MIN_VERSION}. Error: {message}"
         )
     # clap's wording for a flag this Mars predates: "unexpected argument '--agent-file' found".
     unknown_flag = re.search(r"unexpected argument '(--[a-z-]+)'", message)
     if unknown_flag is not None:
         raise MarsTooOldError(
             f"The installed Mars does not accept {unknown_flag.group(1)}. Meridian requires "
-            f"mars >= {_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
+            f"mars >= {MARS_MIN_VERSION}. Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
@@ -731,12 +715,12 @@ def request_and_resolve(
     harness_registry: HarnessRegistry,
 ) -> BundleResult:
 
-    roots = resolve_mars_roots(request.project_root)
-    command = _build_bundle_command(request, roots=roots)
-    ensure_resolved_mars_root(roots, executable=command[0])
+    command = _build_bundle_command(request)
     try:
+        # Mars chooses the root from where it runs: the nearest project, else the user level.
         result = subprocess.run(
             command,
+            cwd=request.project_root,
             input=_agent_tool_rules_json(request.agent_tool_rules),
             capture_output=True,
             text=True,
@@ -747,12 +731,12 @@ def request_and_resolve(
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Mars launch-bundle adapter requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}, but the mars binary was not found."
+            f"{MARS_MIN_VERSION}, but the mars binary was not found."
         ) from exc
     except (subprocess.TimeoutExpired, OSError) as exc:
         raise RuntimeError(
             "Mars launch-bundle command failed to execute. Meridian requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}."
+            f"{MARS_MIN_VERSION}."
         ) from exc
 
     if result.returncode != 0:
@@ -768,7 +752,7 @@ def request_and_resolve(
     except (json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(
             "Mars launch-bundle returned invalid JSON output. "
-            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            f"Meridian requires mars >= {MARS_MIN_VERSION}."
         ) from exc
     if not isinstance(payload_obj, dict):
         raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")

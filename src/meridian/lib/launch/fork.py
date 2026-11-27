@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
+from meridian.lib.catalog.mars_cli import MarsAgentNotFoundError
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.mars import mars_resolve_agent
 from meridian.lib.state import spawn_store
