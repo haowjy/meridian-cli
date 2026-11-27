@@ -3,6 +3,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+import meridian
 from meridian.lib.catalog.mars_roots import (
     mars_content_roots,
     resolve_mars_roots,
@@ -125,20 +126,27 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     )
 
 
+def builtin_agents_dir() -> Path:
+    """Profiles shipped in the wheel; Meridian reads them in place and hands Mars the path."""
+
+    return Path(meridian.__file__).resolve().parent / "mars" / "agents"
+
+
 def _agent_search_dirs(project_root: Path) -> list[Path]:
+    # Built-in profiles come last, so a package or project agent of the same name wins.
     roots = resolve_mars_roots(project_root)
-    return [root / ".mars" / "agents" for root in mars_content_roots(roots)]
+    return [
+        *(root / ".mars" / "agents" for root in mars_content_roots(roots)),
+        builtin_agents_dir(),
+    ]
 
 
 def scan_agent_profiles(
     project_root: Path | None = None,
     search_dirs: list[Path] | None = None,
-    *,
-    search_paths: object | None = None,
 ) -> list[AgentProfile]:
 
     root = resolve_project_root_resolution(project_root).project_root
-    _ = search_paths
     directories = search_dirs if search_dirs is not None else _agent_search_dirs(root)
     profiles: list[AgentProfile] = []
     selected_by_name: dict[str, AgentProfile] = {}
@@ -161,8 +169,6 @@ def scan_agent_profiles(
 def load_agent_profile(
     name: str,
     project_root: Path | None = None,
-    *,
-    search_paths: object | None = None,
 ) -> AgentProfile:
 
     normalized = name.strip()
@@ -172,7 +178,7 @@ def load_agent_profile(
     root = resolve_project_root_resolution(project_root).project_root
 
     roots = resolve_mars_roots(root)
-    profiles = scan_agent_profiles(project_root=root, search_paths=search_paths)
+    profiles = scan_agent_profiles(project_root=root)
     for profile in profiles:
         if profile.path.stem == normalized or profile.name == normalized:
             return profile

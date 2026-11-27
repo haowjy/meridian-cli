@@ -1,8 +1,12 @@
-# Content Mars installs for Meridian
+# Content Meridian ships for Mars
 
 `meridian mars sync` runs `mars provide meridian@<version>=<this directory>`. Mars reads
 three subdirectories: `skills/` (Meridian's own skills, for every harness), `hooks/` and
 `mcp/` (copied only into targets whose harness Meridian does not launch, today `.agy`).
+
+`agents/` is not provided: Meridian reads it in place as its last agent search directory
+(`lib/catalog/agent.py`) and hands Mars the file with `--agent-file`. It holds profiles
+only; any other `*.md` there, an `AGENTS.md` included, would be read as an agent.
 
 - Provide this directory, never its parent. A provided directory with none of the three
   subdirectories retracts everything Meridian provided, so moving or emptying one is one

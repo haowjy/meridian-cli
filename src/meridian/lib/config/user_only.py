@@ -13,7 +13,7 @@ from typing import Final
 
 from meridian.lib.state.user_paths import get_user_home
 
-USER_ONLY_SECTIONS: Final = frozenset({"message"})
+USER_ONLY_SECTIONS: Final = frozenset({"message", "inbox"})
 
 
 def user_config_path() -> Path:

@@ -34,3 +34,11 @@ compatibility. See the [agent catalog](../../launch/.context/CONTEXT.md).
 
 Mars reads profile skills when building the launch bundle. A separate Meridian
 parse would diverge from the skills actually loaded.
+
+Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) are read from the
+installed wheel as the last search directory, never installed into a Mars root: an
+installed copy could go missing whenever another sync held the lock or another Meridian
+version provided a different bundle. A launch sends the resolved profile's path to Mars as
+`--agent-file`, so Meridian's lookup and Mars's always read the same file; overlays stay
+keyed by the name. `mars agents list` and `spawn subagents --all` list `mars.lock` items
+and so don't show built-in profiles.

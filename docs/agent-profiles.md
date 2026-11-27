@@ -23,6 +23,16 @@ meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
+Meridian looks a name up in the project's Mars root, then in user packages
+(`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian. A
+package or project agent with a built-in profile's name replaces it. The one built-in
+profile today is `inbox-router`, which the
+[meridian-comms](https://github.com/haowjy/meridian-comms) router starts to decide where
+an inbox message goes. It cannot spawn and is not offered to other agents
+(`model-invocable: false`), so `meridian mars list` and `meridian spawn subagents --all`
+don't show it. Its model, harness and effort are set in
+[`[inbox.router]`](configuration.md#the-inbox-router).
+
 ## Format
 
 Each profile is a markdown file with YAML frontmatter:

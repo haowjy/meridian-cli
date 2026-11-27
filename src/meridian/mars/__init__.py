@@ -1,1 +1,1 @@
-"""Content Mars installs for Meridian: skills, hooks and MCP servers (see AGENTS.md)."""
+"""Content Meridian ships for Mars: provided skills, hooks and MCP, built-in agents (AGENTS.md)."""

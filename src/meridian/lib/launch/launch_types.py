@@ -40,6 +40,8 @@ class TerminalSurfaceMode(StrEnum):
 class ProvenanceLevel(Enum):
     CLI = "cli"
     ENV = "env"
+    # A per-agent section of the user's config.toml (``lib/config/agent_routing.py``).
+    AGENT_CONFIG = "agent-config"
     OVERLAY_MODEL_POLICY = "overlay-model-policy"
     OVERLAY = "overlay"
     SETTINGS_MODEL_POLICY = "settings-model-policy"

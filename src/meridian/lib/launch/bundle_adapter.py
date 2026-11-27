@@ -16,6 +16,7 @@ stay there; provenance keys without launch semantics remain diagnostic.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -65,10 +66,10 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release that resolves effort to a level the model and harness take
-# (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
-# project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.39.0"
+# First Mars release whose launch bundle takes ``--agent-file``: every request that has a profile
+# sends Meridian's resolved path, so a profile from the wheel resolves and Mars can't pick a
+# different file of the same name.
+_MARS_BUNDLE_MIN_VERSION = "0.40.1"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -402,6 +403,8 @@ def _build_bundle_command(
         command.append("--no-refresh-models")
     if request.agent:
         command.extend(["--agent", request.agent])
+    if request.agent_path is not None:
+        command.extend(["--agent-file", request.agent_path.as_posix()])
     if request.model_override is not None:
         command.extend(["--model", request.model_override])
     if request.literal_model:
@@ -552,8 +555,8 @@ def _selection_error_message(message: str, report: RouteDecisionReport | None) -
     return "; ".join([message, *details])
 
 
-class MarsAgentToolRulesUnsupportedError(RuntimeError):
-    """The installed Mars does not know ``--agent-tool-rules``."""
+class MarsTooOldError(RuntimeError):
+    """The installed Mars predates a launch-bundle flag Meridian sends."""
 
 
 class MarsSelectionError(RuntimeError):
@@ -633,13 +636,12 @@ def _raise_bundle_error(
                 note,
             )
         )
-    if "--agent-tool-rules" in normalized and (
-        "unexpected argument" in normalized or "unrecognized" in normalized
-    ):
-        raise MarsAgentToolRulesUnsupportedError(
-            "The installed Mars does not accept --agent-tool-rules, which continuing or forking "
-            f"a session needs. Install mars >= {_MARS_BUNDLE_MIN_VERSION}. "
-            f"Error: {message}"
+    # clap's wording for a flag this Mars predates: "unexpected argument '--agent-file' found".
+    unknown_flag = re.search(r"unexpected argument '(--[a-z-]+)'", message)
+    if unknown_flag is not None:
+        raise MarsTooOldError(
+            f"The installed Mars does not accept {unknown_flag.group(1)}. Meridian requires "
+            f"mars >= {_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
@@ -831,6 +833,7 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     mapping = {
         "cli": ProvenanceLevel.CLI,
         "env": ProvenanceLevel.ENV,
+        "agent-config": ProvenanceLevel.AGENT_CONFIG,
         "overlay-model-policy": ProvenanceLevel.OVERLAY_MODEL_POLICY,
         "overlay": ProvenanceLevel.OVERLAY,
         "settings-model-policy": ProvenanceLevel.SETTINGS_MODEL_POLICY,
@@ -962,6 +965,7 @@ __all__ = [
     "BundleRequest",
     "BundleResult",
     "LoadedSkillEntry",
+    "MarsTooOldError",
     "bundle_to_resolved_policy",
     "request_and_resolve",
     "warnings_to_print",

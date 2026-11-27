@@ -4,10 +4,11 @@ import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from meridian.lib.catalog.agent import AgentProfile
+from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
+from meridian.lib.config.agent_routing import configured_agent_routing
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.overrides import (
@@ -264,13 +265,14 @@ _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
     "resident_rearm_budget": "resident_rearm_budget_source",
 }
 
-# Routing precedence for the bundle path. Only explicit user overrides are
-# forwarded into the bundle request.
+# Routing tiers Meridian forwards to Mars, highest first. Each rides Mars's command-line tier
+# (``--model``/``--harness``/``--effort``): Mars has no caller slot between that and its
+# ``[agents.<name>]`` overlay, so ``agent-config`` ranks above the overlay and the profile.
 _BUNDLE_ROUTING_PRECEDENCE: tuple[str, ...] = (
     "cli",
     "env",
+    ProvenanceLevel.AGENT_CONFIG.value,
 )
-_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset({"cli", "env"})
 
 
 def _first_routing_candidate(
@@ -282,51 +284,37 @@ def _first_routing_candidate(
     return None
 
 
-def _routing_rank(source: str) -> int:
-    try:
-        return _BUNDLE_ROUTING_PRECEDENCE.index(source)
-    except ValueError:
-        return len(_BUNDLE_ROUTING_PRECEDENCE)
-
-
 def _resolve_bundle_routing(
     *,
     surface: SurfacePolicyInput,
-) -> tuple[str | None, str | None, str | None, dict[str, str]]:
+    agent_routing: RuntimeOverrides,
+) -> tuple[str | None, str | None, dict[str, str]]:
+    tiers = (surface.cli_overrides, surface.env_overrides, agent_routing)
     model_candidate = _first_routing_candidate(
-        (
-            ("cli", surface.cli_overrides.model),
-            ("env", surface.env_overrides.model),
-        )
+        tuple(zip(_BUNDLE_ROUTING_PRECEDENCE, (tier.model for tier in tiers), strict=True))
     )
     harness_candidate = _first_routing_candidate(
-        (
-            ("cli", surface.cli_overrides.harness),
-            ("env", surface.env_overrides.harness),
-        )
+        tuple(zip(_BUNDLE_ROUTING_PRECEDENCE, (tier.harness for tier in tiers), strict=True))
     )
 
+    # A model named above the harness's tier drops that harness: it was chosen for another model.
     if (
         model_candidate is not None
         and harness_candidate is not None
-        and _routing_rank(model_candidate[0]) < _routing_rank(harness_candidate[0])
+        and _BUNDLE_ROUTING_PRECEDENCE.index(model_candidate[0])
+        < _BUNDLE_ROUTING_PRECEDENCE.index(harness_candidate[0])
     ):
         harness_candidate = None
 
     provenance_overrides: dict[str, str] = {}
-    if model_candidate is not None and model_candidate[0] in _BUNDLE_ROUTING_SOURCES:
+    if model_candidate is not None:
         provenance_overrides["model_source"] = model_candidate[0]
-    if harness_candidate is not None and harness_candidate[0] in _BUNDLE_ROUTING_SOURCES:
+    if harness_candidate is not None:
         provenance_overrides["harness_source"] = harness_candidate[0]
 
     return (
-        model_candidate[1]
-        if model_candidate is not None and model_candidate[0] in _BUNDLE_ROUTING_SOURCES
-        else None,
-        harness_candidate[1]
-        if harness_candidate is not None and harness_candidate[0] in _BUNDLE_ROUTING_SOURCES
-        else None,
         model_candidate[1] if model_candidate is not None else None,
+        harness_candidate[1] if harness_candidate is not None else None,
         provenance_overrides,
     )
 
@@ -382,17 +370,22 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
     full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
+    agent_routing = configured_agent_routing(profile.name if profile is not None else None)
     (
         bundle_model_override,
         bundle_harness_override,
-        requested_model_token,
         routing_provenance_overrides,
     ) = _resolve_bundle_routing(
         surface=surface,
+        agent_routing=agent_routing,
     )
+    # The agent's configured effort was not typed now, so a level Mars moves stays silent.
+    agent_config_effort = agent_routing.effort if explicit_user_overrides.effort is None else None
+    if agent_config_effort is not None:
+        routing_provenance_overrides["effort_source"] = ProvenanceLevel.AGENT_CONFIG.value
 
     alias_catalog: dict[str, AliasEntry] = {}
-    if requested_model_token:
+    if bundle_model_override:
         alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
 
     requested_skill_names = dedupe_skill_names(surface.requested_skills)
@@ -403,7 +396,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
-        effort_override=explicit_user_overrides.effort,
+        effort_override=explicit_user_overrides.effort or agent_config_effort,
         config_effort=surface.config_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
@@ -423,7 +416,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
     selected_model_token = bundle_result.model_token or resolved_model
-    requested_token = requested_model_token or selected_model_token or resolved_model
+    requested_token = bundle_model_override or selected_model_token or resolved_model
     harness_provenance = routing_provenance_overrides.get(
         "harness_source",
         bundle_result.provenance.get("harness_source", ""),
@@ -478,7 +471,12 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     )
 
     bundle_model_warning = (
-        "\n".join(bundle_adapter.warnings_to_print(bundle_result)).strip() or None
+        "\n".join(
+            bundle_adapter.warnings_to_print(
+                bundle_result, effort_typed=False if agent_config_effort is not None else None
+            )
+        ).strip()
+        or None
     )
     policy_warnings = list(
         _policy_warnings(
@@ -615,14 +613,15 @@ def _ask_mars(
     surface: SurfacePolicyInput,
     *,
     harness: str,
-    agent: str | None = None,
+    agent: AgentProfile | None = None,
     model: str | None = None,
     agent_rules: tuple[ToolRule, ...] | None = None,
     effort: str | None = None,
 ) -> bundle_adapter.BundleResult:
     return bundle_adapter.request_and_resolve(
         bundle_adapter.BundleRequest(
-            agent=agent,
+            agent=agent.name if agent is not None else None,
+            agent_path=agent.path if agent is not None else None,
             project_root=surface.catalog.project_root,
             model_override=model,
             literal_model=model is not None,
@@ -692,21 +691,21 @@ def _with_current_bundle_rules(
                 bundle = _ask_mars(
                     surface,
                     harness=harness,
-                    agent=agent,
+                    agent=load_agent_profile(agent, project_root=surface.catalog.project_root),
                     model=policy.model,
                     agent_rules=agent_rules,
                     effort=effort,
                 )
-            except bundle_adapter.MarsAgentToolRulesUnsupportedError:
+            except bundle_adapter.MarsTooOldError:
                 raise
-            except RuntimeError as exc:
+            except (FileNotFoundError, RuntimeError) as exc:
                 lost = (
                     "without the agent's own rules, which were not recorded"
                     if agent_rules is None
                     else "without its per-agent exemptions"
                 )
                 warning = (
-                    f"Mars could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
+                    f"Could not resolve agent '{agent}' ({_first_line(exc)}); applied the "
                     f"project-wide tool rules {lost}."
                 )
         bundle = bundle or _ask_mars(
