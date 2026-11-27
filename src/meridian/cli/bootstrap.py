@@ -13,7 +13,6 @@ from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mod
 from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
 from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
 from meridian.lib.core.types import HarnessId
-from meridian.lib.machines.caller import is_machine_call_without_project
 
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
     {
@@ -310,7 +309,7 @@ def maybe_bootstrap_runtime_state(
     downstream startup work instead of resolving it again.
     """
 
-    if is_agent_render_mode(render_mode) or is_machine_call_without_project():
+    if is_agent_render_mode(render_mode):
         return None
 
     requirement = plan.state_requirement if plan is not None else None

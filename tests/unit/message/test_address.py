@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from meridian.lib.message.address import (
@@ -40,8 +42,6 @@ def test_address_that_names_a_receiver(raw: str, expected: SessionAddress | Pers
         ("native-session-uuid", "usage"),
         ("a/b/c", "usage"),
         ("some-machine/native-id", "usage"),
-        # A machine name that is not this machine and not saved.
-        ("some-machine/c204", "not_found"),
     ],
 )
 def test_address_that_is_refused_has_a_kind(raw: str, kind: str) -> None:
@@ -54,3 +54,40 @@ def test_person_address_does_not_cross_machines() -> None:
     with pytest.raises(AddressError) as refused:
         parse_address("@alice", machine=SavedMachine("some-machine", "host", "0" * 12))
     assert refused.value.kind == "usage"
+
+
+def test_other_machine_refuses_an_unknown_name_and_a_third_machine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from meridian.cli.machine_forward import other_machine
+    from meridian.lib.machines.resolve import MachineError
+
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path))
+    with pytest.raises(MachineError) as unknown:
+        other_machine(["some-machine/c204"], option_machine=None, directory_explicit=False)
+    assert unknown.value.kind == "not_found"
+
+    (tmp_path / "machines.json").write_text(
+        '{"v":1,"machines":[{"name":"x","ssh":"host","id":"111111111111"}]}', encoding="utf-8"
+    )
+    monkeypatch.setenv("_MERIDIAN_MACHINE_CALL", '{"machine":"far","machine_id":"0123456789ab"}')
+    with pytest.raises(MachineError) as third:
+        other_machine(
+            ["x/c1"],
+            option_machine=SavedMachine("x", "host", "1" * 12),
+            directory_explicit=False,
+        )
+    assert third.value.kind == "refused"
+
+
+def test_machine_caller_drops_fields_with_the_wrong_shape() -> None:
+    from meridian.lib.machines.caller import parse_machine_caller
+
+    good = {"machine": "far", "machine_id": "0123456789ab", "spawn_id": "p12", "reply_id": "c12"}
+    caller = parse_machine_caller(good)
+    assert caller is not None and caller.reply_id == "c12"
+    bad = {**good, "spawn_id": "p1; rm", "reply_id": "$(x)", "project_root": "rel"}
+    shaped = parse_machine_caller(bad)
+    assert shaped is not None
+    assert (shaped.spawn_id, shaped.reply_id, shaped.project_root) == (None, None, None)
+    assert parse_machine_caller({**good, "machine_id": "xyz"}) is None

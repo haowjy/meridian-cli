@@ -19,12 +19,18 @@ from meridian.lib.core.refs import is_machine_name
 from meridian.lib.machines.discover import (
     Discovery,
     discover,
-    forget_cache,
     read_cached_path,
     write_cache,
 )
+from meridian.lib.machines.home_write import best_effort
 from meridian.lib.machines.results import Answered, CallResult, NotSent, Unanswered
-from meridian.lib.machines.ssh import TIMED_OUT, SshProcess, failure_kind, failure_text
+from meridian.lib.machines.ssh import (
+    TIMED_OUT,
+    SshProcess,
+    SshUnavailable,
+    failure_kind,
+    failure_text,
+)
 from meridian.lib.state.saved_machines import (
     NameTaken,
     SavedMachine,
@@ -95,7 +101,10 @@ class _Stale:
 def _connect(
     target: str, label: str, path: str
 ) -> tuple[SshProcess, dict[str, object]] | NotSent | _Stale:
-    process = SshProcess(target, (path, "machine", "run"))
+    try:
+        process = SshProcess(target, (path, "machine", "run"))
+    except SshUnavailable as exc:
+        return NotSent("failed", str(exc))
     deadline = time.monotonic() + CONNECT_SECONDS
     while True:
         line = process.read_line(deadline)
@@ -111,6 +120,9 @@ def _connect(
                 kind = failure_kind(exited.stderr)
                 last = exited.last_line or "ssh exited 255"
                 return NotSent(kind, failure_text(kind, label, target, last))
+            if exited.status < 0:
+                # Our own ssh was stopped by a signal: nothing says the path is stale.
+                return NotSent("unreachable", f"the ssh call to {label} was interrupted")
             return _Stale(exited.last_line or f"exited {exited.status}")
         assert isinstance(line, bytes)
         ready = _ready(line.rstrip(b"\r\n"))
@@ -124,23 +136,21 @@ def _failed(process: SshProcess, text: str, kind: str = "failed") -> NotSent:
 
 
 def _correct_name(saved: SavedMachine, new_name: str, own_name: str) -> None:
-    """The saved machine says it has a new name: record it. An edit that fails never fails the
-    call; the next call tries again."""
+    """The saved machine says it has a new name: record it. Never fails the call."""
 
-    try:
+    def record() -> None:
         outcome = update_saved_machines(
             lambda entries, raw: set_machine_name(entries, raw, saved.id, new_name, own_name)
         )
-    except (OSError, SavedMachinesError) as exc:
-        logger.warning("can't record that %s is now called %s: %s", saved.name, new_name, exc)
-        return
-    if isinstance(outcome, NameTaken):
-        logger.warning(
-            "%s now calls itself `%s`, which is %s; keeping the saved name",
-            saved.name,
-            new_name,
-            outcome.holder,
-        )
+        if isinstance(outcome, NameTaken):
+            logger.warning(
+                "%s now calls itself `%s`, which is %s; keeping the saved name",
+                saved.name,
+                new_name,
+                outcome.holder,
+            )
+
+    best_effort(f"record that {saved.name} is now called {new_name}", record)
 
 
 def call_machine(
@@ -180,14 +190,31 @@ def call_machine(
                 return NotSent(
                     "failed", f"`{path} machine run` fails on {target}: {connected.last_line}"
                 )
-            if expect_id:
-                forget_cache(expect_id)
             path = None
             continue
         break
     if isinstance(connected, NotSent):
         return connected
     process, ready = connected
+    try:
+        return _exchange(process, ready, target, label, path, argv, stdin, limit, expect_id, caller)
+    finally:
+        process.reap()
+
+
+def _exchange(
+    process: SshProcess,
+    ready: dict[str, object],
+    target: str,
+    label: str,
+    path: str,
+    argv: list[str],
+    stdin: str | None,
+    limit: int,
+    expect_id: str | None,
+    caller: Mapping[str, object] | None,
+) -> CallResult:
+    """From a ready line to a result: the ID check, then the request."""
 
     checked = _check_ready(ready)
     if isinstance(checked, str):
@@ -216,7 +243,10 @@ def call_machine(
             from meridian.lib.machines.resolve import this_machine
 
             _correct_name(saved, name, this_machine().name)
-        write_cache(ident, path=path, version=version)
+        best_effort(
+            "cache the path of Meridian there",
+            lambda: write_cache(ident, path=path, version=version),
+        )
 
     request = {
         "v": REQUEST_VERSION,
@@ -229,7 +259,8 @@ def call_machine(
     # command may have run, so a failure nobody listed must not read as "not sent".
     deadline = time.monotonic() + limit + CALLER_GRACE_SECONDS
     try:
-        process.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        line = json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n"
+        process.write(line.encode("utf-8"), deadline)
         while True:
             line = process.read_line(deadline)
             if line is TIMED_OUT:

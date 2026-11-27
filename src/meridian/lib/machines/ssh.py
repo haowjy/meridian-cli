@@ -5,6 +5,7 @@ Meridian stops only the ``ssh`` it started, through the handle of that unreaped 
 
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import threading
@@ -64,7 +65,10 @@ class CappedReader:
         self._thread.start()
 
     def _run(self) -> None:
-        while chunk := self._stream.read(65536):
+        # os.read: whatever has arrived, so a grandchild that keeps the pipe open after the
+        # child exits can't hold the bytes already written inside a read that waits for 64 KiB.
+        fd = self._stream.fileno()
+        while chunk := os.read(fd, 65536):
             room = self._cap - len(self._kept)
             if room > 0:
                 self._kept.extend(chunk[:room])
@@ -79,14 +83,23 @@ class CappedReader:
         return bytes(self._kept)
 
 
+class SshUnavailable(OSError):
+    """``ssh`` itself can't be started."""
+
+
 class SshProcess:
     def __init__(self, target: str, remote_words: tuple[str, ...]) -> None:
-        self._process = subprocess.Popen(
-            ["ssh", *BACKGROUND_OPTIONS, "--", target, *remote_words],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        try:
+            self._process = subprocess.Popen(
+                ["ssh", *BACKGROUND_OPTIONS, "--", target, *remote_words],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise SshUnavailable(
+                "`ssh` is not installed or not on PATH; Meridian reaches other machines through it"
+            ) from exc
         assert self._process.stdout is not None and self._process.stderr is not None
         self._lines: queue.Queue[object] = queue.Queue()
         stdout, stderr = self._process.stdout, self._process.stderr
@@ -113,11 +126,29 @@ class SshProcess:
         assert isinstance(item, bytes)
         return item
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes, deadline: float | None = None) -> None:
+        """Write *data* to the other side's stdin; with *deadline*, a far side that is alive and
+        not reading ends the call there (``TimeoutError``), not at the keepalive."""
+
         stdin = self._process.stdin
         assert stdin is not None
-        stdin.write(data)
-        stdin.flush()
+        failure: list[BaseException] = []
+
+        def push() -> None:
+            try:
+                stdin.write(data)
+                stdin.flush()
+            except BaseException as exc:
+                failure.append(exc)
+
+        writer = threading.Thread(target=push, daemon=True)
+        writer.start()
+        writer.join(None if deadline is None else max(deadline - time.monotonic(), 0.0))
+        if writer.is_alive():
+            self._process.kill()
+            raise TimeoutError("the other side stopped reading the request")
+        if failure:
+            raise failure[0]
 
     def close_stdin(self) -> None:
         stdin = self._process.stdin
@@ -139,6 +170,12 @@ class SshProcess:
     def kill(self) -> SshExit:
         self._process.kill()
         return self.finish(grace=2.0)
+
+    def reap(self) -> None:
+        """Stop and collect the ``ssh`` this started if it is still running."""
+
+        if self._process.poll() is None:
+            self.kill()
 
 
 def failure_text(kind: str, label: str, target: str, last_line: str) -> str:
@@ -177,6 +214,7 @@ __all__ = [
     "CappedReader",
     "SshExit",
     "SshProcess",
+    "SshUnavailable",
     "failure_kind",
     "failure_text",
 ]

@@ -109,8 +109,8 @@ def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> Save
     """The saved machine ``--machine`` names, or ``None`` for this machine (the option is then
     dropped and the command runs here, ``-C`` and all).
 
-    Raises ``MachineError`` for an unknown machine and ``SystemExit`` for a command or a global
-    option that doesn't cross, before anything connects.
+    Raises ``MachineError`` for an unknown machine and for a command or a global option that
+    doesn't cross, before anything connects.
     """
 
     if parsed.machine is None:
@@ -121,7 +121,7 @@ def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> Save
     descriptor = classify_invocation(cleaned, COMMAND_CATALOG)
     if descriptor is None or not descriptor.crosses:
         command = " ".join(descriptor.command_path) if descriptor is not None else "this command"
-        raise SystemExit(f"`{command or 'meridian'}` doesn't reach another machine")
+        raise MachineError("refused", f"`{command or 'meridian'}` doesn't reach another machine")
     refused = [
         flag
         for flag, given in (
@@ -134,7 +134,9 @@ def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> Save
         if given
     ]
     if refused:
-        raise SystemExit(f"{', '.join(refused)} doesn't reach another machine: drop it")
+        raise MachineError(
+            "refused", f"{', '.join(refused)} doesn't reach another machine: drop it"
+        )
     return target
 
 
@@ -1300,7 +1302,14 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         ):
             raise SystemExit(1) from None
         if isinstance(exc, MachineError):
-            print(f"error: {exc.text}", file=sys.stderr)
+            if json_mode:
+                # A failure to name the machine is a failure of the call: the object a crossing
+                # command prints for every failure under --json.
+                from meridian.lib.message.result import print_startup_error
+
+                print_startup_error(exc.text, exc.kind)
+            else:
+                print(f"error: {exc.text}", file=sys.stderr)
             raise SystemExit(1) from None
         raise
     if not (cleaned_args and cleaned_args[0] == "mars"):

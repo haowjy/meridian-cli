@@ -16,6 +16,7 @@ from typing import Never
 from meridian.cli.invocation import GlobalOptions, get_global_options
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
+from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.state.saved_machines import SavedMachine
@@ -48,42 +49,50 @@ def fail(machine: str | None, kind: str, text: str) -> Never:
         payload["error"] = {"kind": kind, "text": text}
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     else:
-        print(f"Error: {text}", file=sys.stderr)
+        print(f"error: {text}", file=sys.stderr)
     raise SystemExit(1)
 
 
-def _target(options: GlobalOptions, refs: Sequence[str]) -> SavedMachine | None:
-    """The one other machine this command names, or ``None`` when it all runs here."""
+def other_machine(
+    refs: Sequence[str], *, option_machine: SavedMachine | None, directory_explicit: bool
+) -> SavedMachine | None:
+    """The one other machine this command names, or ``None`` when it all runs here.
 
-    remote = {options.machine.id: options.machine} if options.machine is not None else {}
+    The one place that turns a reference into another machine, for every crossing command and
+    for ``message``. Raises ``MachineError`` for: an unknown machine, two machines in one
+    command, a machine beside a bare ID, ``-C`` applied here beside ``<name>/<id>``, and any
+    other machine named by a command that another machine asked for (no third machine).
+    """
+
+    remote = {option_machine.id: option_machine} if option_machine is not None else {}
     bare = False
     own_named = False
     for raw in refs:
-        parsed = parse_ref(raw)
+        try:
+            parsed = parse_ref(raw)
+        except ValueError as exc:
+            raise MachineError("usage", str(exc)) from exc
         if parsed.kind != "machine":
             bare = True
             continue
         assert parsed.machine is not None
-        try:
-            resolved = resolve_machine(parsed.machine)
-        except MachineError as exc:
-            fail(None, exc.kind, exc.text)
+        resolved = resolve_machine(parsed.machine)
         if isinstance(resolved, SavedMachine):
             remote[resolved.id] = resolved
         else:
             own_named = True
     if not remote:
         return None
-    if len(remote) > 1 or own_named or (bare and options.machine is None):
-        fail(
-            None,
+    target = next(iter(remote.values()))
+    if is_machine_call():
+        raise MachineError("refused", "a call from another machine can't reach a third machine")
+    if len(remote) > 1 or own_named or (bare and option_machine is None):
+        raise MachineError(
             "usage",
             "two machines in one command: name one machine, in `--machine` or in the references",
         )
-    target = next(iter(remote.values()))
-    if options.directory_explicit and options.machine is None:
-        fail(
-            target.name,
+    if directory_explicit and option_machine is None:
+        raise MachineError(
             "usage",
             f"-C was applied on this machine: to name a path on {target.name}, use "
             f"`--machine {target.name} -C <path on {target.name}>` with a bare ID",
@@ -93,13 +102,15 @@ def _target(options: GlobalOptions, refs: Sequence[str]) -> SavedMachine | None:
 
 def forward_if_remote(refs: Sequence[str] = ()) -> None:
     options = get_global_options()
-    target = _target(options, refs)
-    if target is None:
-        return
     try:
+        target = other_machine(
+            refs, option_machine=options.machine, directory_explicit=options.directory_explicit
+        )
+        if target is None:
+            return
         base = base_caller()
     except MachineError as exc:
-        fail(target.name, exc.kind, exc.text)
+        fail(None, exc.kind, exc.text)
     result = call_machine(
         target.ssh,
         request_argv(options),
@@ -154,4 +165,4 @@ def _error_text(answer: Answered) -> str:
     return answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 
 
-__all__ = ["base_caller", "fail", "forward_if_remote", "request_argv"]
+__all__ = ["base_caller", "fail", "forward_if_remote", "other_machine", "request_argv"]

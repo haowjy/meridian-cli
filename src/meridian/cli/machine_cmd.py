@@ -29,7 +29,7 @@ from meridian.lib.state.saved_machines import (
 
 
 def _fail(text: str) -> Never:
-    print(f"Error: {text}", file=sys.stderr)
+    print(f"error: {text}", file=sys.stderr)
     raise SystemExit(1)
 
 

@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Final
 
 from meridian.lib.machines.results import NotSent
-from meridian.lib.machines.ssh import TIMED_OUT, SshProcess, failure_kind, failure_text
+from meridian.lib.machines.ssh import (
+    TIMED_OUT,
+    SshProcess,
+    SshUnavailable,
+    failure_kind,
+    failure_text,
+)
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.utils.json_shapes import json_object
@@ -71,7 +77,10 @@ def discover(target: str, label: str | None = None) -> Discovery | NotSent:
     """Run the discovery script on *target* with background SSH options."""
 
     label = label or target
-    process = SshProcess(target, ("/bin/sh", "-s"))
+    try:
+        process = SshProcess(target, ("/bin/sh", "-s"))
+    except SshUnavailable as exc:
+        return NotSent("failed", str(exc))
     with suppress(OSError):
         process.write(_SCRIPT.encode("utf-8"))
     process.close_stdin()
@@ -90,6 +99,9 @@ def discover(target: str, label: str | None = None) -> Discovery | NotSent:
         lines.append(line.decode("utf-8", "replace").rstrip("\r\n"))
     exited = process.finish()
     if exited.status != 0:
+        if exited.status < 0:
+            # Our own ssh was stopped by a signal: not an answer from the other side.
+            return NotSent("unreachable", f"the ssh call to {label} was interrupted")
         kind = failure_kind(exited.stderr) if exited.status == 255 else "failed"
         last = exited.last_line or f"ssh exited {exited.status}"
         return NotSent(kind, failure_text(kind, label, target, last))

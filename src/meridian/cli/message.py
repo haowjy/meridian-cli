@@ -19,17 +19,18 @@ from typing import Annotated, Final
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import message_app
-from meridian.cli.invocation import GlobalOptions, get_global_options
+from meridian.cli.invocation import get_global_options
+from meridian.cli.machine_forward import base_caller, other_machine
 from meridian.lib.core.caller import caller_identity
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
 from meridian.lib.core.process_start import starting_cwd, starting_env
-from meridian.lib.core.refs import RefAmbiguous, RefNotFound, parse_ref
+from meridian.lib.core.refs import RefAmbiguous, RefNotFound
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import machine_call_caller
-from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
+from meridian.lib.machines.resolve import MachineError
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import (
     AddressError,
@@ -402,8 +403,7 @@ def _machine_caller_block() -> dict[str, object]:
     the caller is a person at a terminal.
     """
 
-    here = this_machine()
-    block: dict[str, object] = {"machine": here.name, "machine_id": here.id}
+    block = base_caller()
     identity = caller_identity()
     if identity is None:
         return block
@@ -517,12 +517,14 @@ async def send_message(
     sender_project_root: Path | None = None,
     machine: SavedMachine | None = None,
     remote_directory: str | None = None,
+    directory_explicit: bool = False,
     wake: bool = False,
 ) -> MessageResult:
     """Send *message* to the receiver *ref* names and return what happened.
 
     *ref* is a spawn ID, a chat ID, ``<machine>/<id>`` or an ``@person``. *machine* is the
-    other machine ``--machine`` named, *remote_directory* the ``-C`` that goes with it.
+    other machine ``--machine`` named, *remote_directory* the ``-C`` that goes with it, and
+    *directory_explicit* that ``-C`` was applied here.
     *sender_project_root* is the sender's project when it differs from this one; the sender's
     record is read from there. Nothing is printed.
     """
@@ -537,7 +539,14 @@ async def send_message(
     if not text:
         return Failed("usage", "message is required", receiver)
     try:
-        parsed = parse_address(address, machine=machine)
+        target = (
+            machine
+            if address.startswith("@")
+            else other_machine(
+                [address], option_machine=machine, directory_explicit=directory_explicit
+            )
+        )
+        parsed = parse_address(address, machine=target)
         if isinstance(parsed, PersonAddress):
             if wake:
                 raise AddressError("usage", "--wake belongs to a session address, not an @ address")
@@ -556,25 +565,11 @@ async def send_message(
             sender_project_root=sender_project_root,
             wake=wake,
         )
-    except AddressError as exc:
+    except (AddressError, MachineError) as exc:
         return Failed(exc.kind, exc.text, receiver)
     except Exception as exc:
         # Only what happens before a route writes: each route answers its own failures after.
         return Failed("failed", str(exc) or type(exc).__name__, receiver)
-
-
-def _other_machine_with_directory(ref: str, options: GlobalOptions) -> str | None:
-    """The machine *ref* names when ``-C`` was applied here beside it, which is an error: a path
-    on another machine goes with ``--machine``."""
-
-    if not options.directory_explicit or options.machine is not None:
-        return None
-    try:
-        parsed = parse_ref(ref.strip())
-        named = resolve_machine(parsed.machine) if parsed.machine is not None else None
-    except (ValueError, MachineError):
-        return None
-    return named.name if isinstance(named, SavedMachine) else None
 
 
 def run_message(ref: str, message: str, wake: bool = False) -> None:
@@ -589,26 +584,18 @@ def run_message(ref: str, message: str, wake: bool = False) -> None:
         result = Failed("usage", f"stdin is not UTF-8 text: {exc}", Receiver(address=ref.strip()))
     else:
         caller = options.caller
-        named = _other_machine_with_directory(ref, options)
-        if named is not None:
-            result = Failed(
-                "usage",
-                f"-C was applied on this machine: to name a path on {named}, use "
-                f"`--machine {named} -C <path on {named}>` with a bare ID",
-                Receiver(address=ref.strip()),
+        result = asyncio.run(
+            send_message(
+                ref,
+                text,
+                sender_spawn_id=caller.spawn_id if caller is not None else None,
+                sender_project_root=caller.project_root if caller is not None else None,
+                machine=options.machine,
+                remote_directory=options.remote_directory,
+                directory_explicit=options.directory_explicit,
+                wake=wake,
             )
-        else:
-            result = asyncio.run(
-                send_message(
-                    ref,
-                    text,
-                    sender_spawn_id=caller.spawn_id if caller is not None else None,
-                    sender_project_root=caller.project_root if caller is not None else None,
-                    machine=options.machine,
-                    remote_directory=options.remote_directory,
-                    wake=wake,
-                )
-            )
+        )
     raise SystemExit(print_result(result, json_mode=json_mode))
 
 

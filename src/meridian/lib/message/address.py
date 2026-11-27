@@ -14,7 +14,6 @@ from typing import Final
 
 from meridian.lib.core.refs import SELECTORS, parse_ref
 from meridian.lib.machines.caller import is_machine_call
-from meridian.lib.machines.resolve import MachineError, resolve_machine
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.saved_machines import SavedMachine
 
@@ -73,8 +72,8 @@ def _person_address(address: str) -> PersonAddress:
 def parse_address(
     raw: str, *, machine: SavedMachine | None = None
 ) -> SessionAddress | MachineAddress | PersonAddress:
-    """Classify *raw* (already trimmed). *machine* is the other machine ``--machine`` named, or
-    ``None`` (``main`` drops ``--machine`` when it names this machine)."""
+    """Classify *raw* (already trimmed). *machine* is the other machine the command names,
+    from ``other_machine``: the one place that decides it. ``None`` means this machine."""
 
     if raw.startswith("@"):
         if raw in SELECTORS:
@@ -85,6 +84,8 @@ def parse_address(
             )
         if machine is not None:
             raise AddressError("usage", "an @ address does not cross machines: drop --machine")
+        if is_machine_call():
+            raise AddressError("refused", "an @ address doesn't reach another machine")
         return _person_address(raw)
 
     try:
@@ -97,19 +98,7 @@ def parse_address(
             f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
             "`<machine>/<id>` or an @person",
         )
-    if ref.machine is None:
-        return SessionAddress(ref.value) if machine is None else MachineAddress(machine, ref.value)
-    try:
-        named = resolve_machine(ref.machine)
-    except MachineError as exc:
-        raise AddressError(exc.kind, exc.text) from exc
-    if machine is not None and (not isinstance(named, SavedMachine) or named.id != machine.id):
-        raise AddressError("usage", "two machines in one command: use one")
-    if not isinstance(named, SavedMachine):
-        return SessionAddress(ref.value)
-    if is_machine_call():
-        raise AddressError("refused", "a call from another machine can't reach a third machine")
-    return MachineAddress(named, ref.value)
+    return SessionAddress(ref.value) if machine is None else MachineAddress(machine, ref.value)
 
 
 __all__ = [

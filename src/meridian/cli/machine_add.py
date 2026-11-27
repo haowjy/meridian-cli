@@ -6,21 +6,17 @@ a step that would ask a question, run without a terminal, prints what to run and
 
 from __future__ import annotations
 
-import getpass
-import json
 import re
-import shlex
-import socket
 import subprocess
 import sys
 import time
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
 
 from meridian import __version__
-from meridian.cli.invocation import get_global_options
+from meridian.cli.machine_back import offer_way_back
 from meridian.cli.machine_forward import base_caller
+from meridian.cli.machine_prompt import AddError, ask, is_terminal
 from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine, missing_text
 from meridian.lib.machines.discover import Discovery, discover, write_cache
 from meridian.lib.machines.resolve import MachineError, this_machine
@@ -36,7 +32,6 @@ from meridian.lib.state.saved_machines import (
     ssh_target_problem,
     update_saved_machines,
 )
-from meridian.lib.utils.json_shapes import json_list, json_object
 
 _INSTALL_SECONDS: Final = 300.0
 _REACH_SECONDS: Final = 60.0
@@ -51,32 +46,6 @@ for cand in "$@"; do
   fi
 done
 """
-
-
-class AddError(Exception):
-    """``machine add`` stops here; nothing is saved."""
-
-
-def _is_terminal() -> bool:
-    options = get_global_options()
-    return sys.stdin.isatty() and sys.stderr.isatty() and not options.no_input
-
-
-def _ask(question: str, *, default: bool) -> bool:
-    """Ask yes or no in a terminal; ``--yes`` takes the default. An answer that is neither ends
-    ``add``, as in herdr: Enter takes the default."""
-
-    if get_global_options().yes:
-        return default
-    print(f"{question} [{'Y/n' if default else 'y/N'}] ", end="", file=sys.stderr, flush=True)
-    answer = sys.stdin.readline().strip().lower()
-    if not answer:
-        return default
-    if answer in ("y", "yes"):
-        return True
-    if answer in ("n", "no"):
-        return False
-    raise AddError("expected yes or no")
 
 
 def _install(target: str, uv: str) -> None:
@@ -147,7 +116,7 @@ def _find_or_install(target: str, interactive: bool) -> str:
         question = "Upgrade it with uv?"
     else:
         question = f"Install Meridian on {target} with uv?"
-    if not _ask(question, default=not upgrade):
+    if not ask(question, default=not upgrade):
         raise AddError(_wanted(found, target))
     _install(target, found.uv)
     after = discover(target)
@@ -259,130 +228,13 @@ def _name_taken(name: str, holder: str, target: str) -> AddError:
     )
 
 
-def _has_way_back(target: str, path: str, ready: _Ready, here: MachineIdentity) -> str | bool:
-    """Step 8's check: the other side's saved list, looked at by this machine's ID. Returns the
-    name it saves this machine under, or ``False`` when it doesn't."""
-
-    result = call_machine(
-        target,
-        ["machine", "list", "--format", "json"],
-        None,
-        READ_LIMIT_SECONDS,
-        ready.id,
-        caller=base_caller(),
-        binary=path,
-    )
-    if not isinstance(result, Answered) or result.exit != 0:
-        return False
-    try:
-        document = json_object(json.loads(result.stdout)) or {}
-    except ValueError:
-        return False
-    for entry in json_list(document.get("machines")) or []:
-        fields = json_object(entry)
-        if fields is not None and fields.get("id") == here.id:
-            return str(fields.get("name"))
-    return False
-
-
-def _back_candidates(here: MachineIdentity) -> list[str]:
-    """Targets that may reach this machine from the other: ``<login>@<hostname>``, the short
-    name, and the addresses the host name resolves to."""
-
-    try:
-        login = getpass.getuser()
-    except (KeyError, OSError):
-        return []
-    host = socket.gethostname()
-    hosts = [host, host.split(".")[0]]
-    with suppress(OSError):
-        hosts += sorted({info[4][0] for info in socket.getaddrinfo(host, None, socket.AF_INET)})
-    found = [f"{login}@{name}" for name in dict.fromkeys(hosts) if name and name != "localhost"]
-    return [item for item in found if _BACK_TARGET_RE.fullmatch(item) and not item.startswith("-")]
-
-
-def _answering_from_there(target: str, candidates: list[str]) -> list[str]:
-    """The candidates the other machine can reach without a prompt and with a known host key,
-    in order: only a test from there says what works from there."""
-
-    if not candidates:
-        return []
-    process = SshProcess(target, ("/bin/sh", "-s", "--", *candidates))
-    process.write(_REACH_SCRIPT.encode())
-    process.close_stdin()
-    deadline = time.monotonic() + _REACH_SECONDS
-    reached: list[str] = []
-    while True:
-        line = process.read_line(deadline)
-        if line is None:
-            break
-        if line is TIMED_OUT:
-            process.kill()
-            return reached
-        assert isinstance(line, bytes)
-        marker, _, value = line.decode("utf-8", "replace").strip().partition(" ")
-        if marker == "meridian-reach" and value in candidates:
-            reached.append(value)
-    process.finish()
-    return reached
-
-
-def _offer_way_back(
-    target: str, path: str, ready: _Ready, here: MachineIdentity, interactive: bool
-) -> None:
-    saved_as = _has_way_back(target, path, ready, here)
-    if saved_as:
-        text = f"`{ready.name}` already has this machine saved."
-        if saved_as != here.name:
-            text += f" It saves it as `{saved_as}`, and corrects that on its next call here."
-        print(text)
-        return
-    reached = _answering_from_there(target, _back_candidates(here))
-    suggestion = reached[0] if reached else None
-    run_there = (
-        f"meridian machine add {suggestion or '<SSH target that reaches this machine from there>'}"
-    )
-    if not interactive:
-        print(
-            f"Replies need `{ready.name}` to save this machine too. Run there: {run_there}",
-        )
-        return
-    if not _ask(
-        f"Also save this machine on {ready.name}, so its sessions can reply?", default=True
-    ):
-        print(f"Replies from {ready.name} need it. To do it later, run there: {run_there}")
-        return
-    default = suggestion or (_back_candidates(here) or [""])[0]
-    if get_global_options().yes:
-        back = default
-    else:
-        print(
-            f"SSH target that reaches this machine from {ready.name} [{default}]: ",
-            end="",
-            file=sys.stderr,
-            flush=True,
-        )
-        back = sys.stdin.readline().strip() or default
-    if not back or not _BACK_TARGET_RE.fullmatch(back) or back.startswith("-"):
-        print(f"No target that can be sent. To do it, run on {ready.name}: {run_there}")
-        return
-    status = subprocess.run(
-        ["ssh", "-t", "--", target, path, "machine", "add", back], check=False
-    ).returncode
-    if status != 0:
-        print(
-            f"`machine add` on {ready.name} stopped (exit {status}); {ready.name} stays saved "
-            f"here. To finish, run on {ready.name}: meridian machine add {shlex.quote(back)}"
-        )
-
-
 def add_machine_command(target: str) -> int:
     try:
         problem = ssh_target_problem(target)
         if problem is not None:
             raise AddError(problem)
         here = this_machine()
-        interactive = _is_terminal()
+        interactive = is_terminal()
         if interactive:
             # Step 2: ssh owns the terminal, so a password, a passphrase or a new host key is
             # answered in place by the person. Meridian types into nothing and stores none of it.
@@ -393,12 +245,12 @@ def add_machine_command(target: str) -> int:
         ready = _read_ready(target, path)
         print(_save(ready, target, here))
         write_cache(ready.id, path=path, version=ready.version)
-        _offer_way_back(target, path, ready, here, interactive)
+        offer_way_back(target, path, ready.name, ready.id, here, interactive=interactive)
     except AddError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     except MachineError as exc:
-        print(f"Error: {exc.text}", file=sys.stderr)
+        print(f"error: {exc.text}", file=sys.stderr)
         return 1
     return 0
 

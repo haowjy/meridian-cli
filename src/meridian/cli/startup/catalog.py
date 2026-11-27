@@ -189,6 +189,7 @@ def _read_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
     crosses: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
@@ -198,6 +199,7 @@ def _read_runtime(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
         crosses=crosses,
     )
 
@@ -480,7 +482,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
     _write_rootless(("notify",), "Send a notification through its hook routes."),
-    _write_runtime(
+    _read_runtime(
         ("message",),
         "Send a message to a running session or a person.",
         startup_error=StartupErrorShape.MESSAGE,

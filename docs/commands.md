@@ -389,7 +389,8 @@ meridian message jimyao-minibox/c2041 "the PR is up"
 The reference goes to the other machine unchanged and its own `meridian` runs the command
 there, with no current project: a new ID resolves by its claim, an older one needs
 `--machine NAME -C <path on that machine>`, and `spawn list` and `session search` need
-`--global`. A command that doesn't cross, or a global option other than `-C`, `--json` and
+`--global` (or `-C <path on that machine>`). A call can't reach a third machine: a command that
+another machine started and that names yet another machine is refused. A command that doesn't cross, or a global option other than `-C`, `--json` and
 `--format` (`--config`, `--harness`, `--yes`, `--no-input`), is refused before anything
 connects. Two machines in one command is an error, and so is `-C` beside `NAME/ID` without
 `--machine`: `-C` would be applied here.

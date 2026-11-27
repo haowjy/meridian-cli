@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from meridian.lib.core.refs import is_machine_name, project_is_named
+from meridian.lib.core.refs import is_chat_id, is_machine_name, is_spawn_id, project_is_named
 from meridian.lib.utils.json_shapes import json_object
 
 MACHINE_CALL_ENV: Final = "_MERIDIAN_MACHINE_CALL"
@@ -33,28 +34,51 @@ class MachineCaller:
     project_id: str | None = None
 
 
+_ID_RE = re.compile(r"[0-9a-f]{12}")
+
+
 def _text(fields: Mapping[str, object], key: str) -> str | None:
     value = fields.get(key)
     return value if isinstance(value, str) and value else None
 
 
+def _shaped(value: str | None, *, spawn: bool = False, chat: bool = False) -> str | None:
+    """*value* when it has the shape of a spawn or chat ID: the request comes from the far side
+    of a trust boundary and these go into a prompt and an argv."""
+
+    if value is None:
+        return None
+    ok = (spawn and is_spawn_id(value)) or (chat and is_chat_id(value))
+    return value if ok else None
+
+
+def _path(value: str | None) -> str | None:
+    return value if value is not None and value.isprintable() and value.startswith("/") else None
+
+
 def parse_machine_caller(raw: object) -> MachineCaller | None:
-    """The caller block of a request, ``None`` when it is absent or has no usable machine."""
+    """The caller block of a request, ``None`` when it is absent or has no usable machine. A
+    session field that has the wrong shape is dropped, not trusted."""
 
     fields = json_object(raw)
     if fields is None:
         return None
     machine, machine_id = _text(fields, "machine"), _text(fields, "machine_id")
-    if machine is None or machine_id is None or not is_machine_name(machine):
+    if (
+        machine is None
+        or machine_id is None
+        or not is_machine_name(machine)
+        or _ID_RE.fullmatch(machine_id) is None
+    ):
         return None
     return MachineCaller(
         machine=machine,
         machine_id=machine_id,
-        spawn_id=_text(fields, "spawn_id"),
-        reply_id=_text(fields, "reply_id"),
+        spawn_id=_shaped(_text(fields, "spawn_id"), spawn=True),
+        reply_id=_shaped(_text(fields, "reply_id"), spawn=True, chat=True),
         claimed=fields.get("claimed") is True,
         can_reply=fields.get("can_reply") is True,
-        project_root=_text(fields, "project_root"),
+        project_root=_path(_text(fields, "project_root")),
         project_id=_text(fields, "project_id"),
     )
 
@@ -89,15 +113,15 @@ def require_project_or_global(what: str) -> None:
 
     if is_machine_call_without_project():
         raise ValueError(
-            f"{what} has no current project when another machine calls it: add `--global`, or "
-            "`-C <path on this machine>`"
+            f"{what} has no current project on the machine you called: add `--global`, or "
+            "`-C <a path on that machine>`"
         )
 
 
 def require_own_session(what: str) -> None:
     if is_machine_call():
         raise ValueError(
-            f"{what} needs a session of its own, and a call from another machine has none: name "
+            f"{what} needs a session of its own, and a call to another machine has none: name "
             "the spawn"
         )
 

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+from contextlib import suppress
 from typing import Final
 
 from meridian import __version__
@@ -71,11 +73,10 @@ def _refusal(argv: list[str]) -> str | None:
         return f"{', '.join(refused)} doesn't reach another machine"
     descriptor = classify_invocation(cleaned, COMMAND_CATALOG)
     if descriptor is None or not descriptor.crosses:
-        return f"`{' '.join(cleaned[:2])}` doesn't reach another machine"
-    if descriptor.command_path == ("message",) and any(
-        token.startswith("@") for token in cleaned[1:2]
-    ):
-        return "an @ address doesn't reach another machine"
+        command = (
+            " ".join(descriptor.command_path) if descriptor is not None else " ".join(cleaned[:2])
+        )
+        return f"`{command}` doesn't reach another machine"
     return None
 
 
@@ -94,6 +95,9 @@ def _run_child(argv: list[str], stdin: str | None, limit: int, caller: object) -
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_child_env(caller),
+        # Its own process group, so stopping it stops what it started too: the group of the
+        # child this process started, never a process it didn't.
+        start_new_session=True,
     )
     assert child.stdout is not None and child.stderr is not None
     out, err = CappedReader(child.stdout, STDOUT_CAP), CappedReader(child.stderr, STDERR_CAP)
@@ -106,7 +110,7 @@ def _run_child(argv: list[str], stdin: str | None, limit: int, caller: object) -
     except subprocess.TimeoutExpired:
         # Only the process this one started, through its handle: nothing recorded, no PID guessed.
         timed_out = True
-        child.kill()
+        _stop(child)
         child.wait()
     return {
         "exit": child.returncode,
@@ -115,6 +119,14 @@ def _run_child(argv: list[str], stdin: str | None, limit: int, caller: object) -
         "timed_out": timed_out,
         "truncated": out.truncated,
     }
+
+
+def _stop(child: subprocess.Popen[bytes]) -> None:
+    """Kill the child's process group while the child is unreaped, so its pid is still ours."""
+
+    if child.poll() is None:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(child.pid, signal.SIGKILL)
 
 
 def _feed(child: subprocess.Popen[bytes], text: str) -> None:
@@ -132,8 +144,7 @@ def _stop_when_caller_leaves(child: subprocess.Popen[bytes]) -> None:
 
     while os.read(0, 65536):
         pass
-    if child.poll() is None:
-        child.kill()
+    _stop(child)
 
 
 def run_machine_call(*, check: bool) -> None:
@@ -158,7 +169,15 @@ def run_machine_call(*, check: bool) -> None:
         request = None
     parsed = _parse_request(request) if request is not None else None
     if request is None or parsed is None:
-        _emit(RESULT_MARKER, _refused("the request is not a version-1 request"))
+        too_big = len(line) >= MAX_REQUEST_BYTES + _REQUEST_HEADROOM and not line.endswith(b"\n")
+        _emit(
+            RESULT_MARKER,
+            _refused(
+                "the request is over the size limit"
+                if too_big
+                else "the request is not a version-1 request"
+            ),
+        )
         return
     argv, stdin, limit = parsed
     refusal = _refusal(argv)
