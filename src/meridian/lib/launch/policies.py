@@ -268,17 +268,28 @@ _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
 # Routing tiers Meridian forwards to Mars, highest first. Each rides Mars's command-line tier
 # (``--model``/``--harness``/``--effort``): Mars has no caller slot between that and its
 # ``[agents.<name>]`` overlay, so ``agent-config`` ranks above the overlay and the profile.
-_BUNDLE_ROUTING_PRECEDENCE: tuple[str, ...] = (
-    "cli",
-    "env",
-    ProvenanceLevel.AGENT_CONFIG.value,
+_BUNDLE_ROUTING_PRECEDENCE: tuple[ProvenanceLevel, ...] = (
+    ProvenanceLevel.CLI,
+    ProvenanceLevel.ENV,
+    ProvenanceLevel.AGENT_CONFIG,
 )
 
 
+@dataclass(frozen=True)
+class _BundleRouting:
+    model: str | None
+    harness: str | None
+    effort: str | None
+    # False when the effort came from the agent's config section: it was not typed now,
+    # so a level Mars moves stays silent.
+    effort_typed: bool | None
+    provenance_overrides: dict[str, str]
+
+
 def _first_routing_candidate(
-    candidates: tuple[tuple[str, str | None], ...],
-) -> tuple[str, str] | None:
-    for source, value in candidates:
+    values: tuple[str | None, ...],
+) -> tuple[ProvenanceLevel, str] | None:
+    for source, value in zip(_BUNDLE_ROUTING_PRECEDENCE, values, strict=True):
         if value is not None:
             return source, value
     return None
@@ -288,14 +299,11 @@ def _resolve_bundle_routing(
     *,
     surface: SurfacePolicyInput,
     agent_routing: RuntimeOverrides,
-) -> tuple[str | None, str | None, dict[str, str]]:
+) -> _BundleRouting:
     tiers = (surface.cli_overrides, surface.env_overrides, agent_routing)
-    model_candidate = _first_routing_candidate(
-        tuple(zip(_BUNDLE_ROUTING_PRECEDENCE, (tier.model for tier in tiers), strict=True))
-    )
-    harness_candidate = _first_routing_candidate(
-        tuple(zip(_BUNDLE_ROUTING_PRECEDENCE, (tier.harness for tier in tiers), strict=True))
-    )
+    model_candidate = _first_routing_candidate(tuple(tier.model for tier in tiers))
+    harness_candidate = _first_routing_candidate(tuple(tier.harness for tier in tiers))
+    effort_candidate = _first_routing_candidate(tuple(tier.effort for tier in tiers))
 
     # A model named above the harness's tier drops that harness: it was chosen for another model.
     if (
@@ -308,14 +316,21 @@ def _resolve_bundle_routing(
 
     provenance_overrides: dict[str, str] = {}
     if model_candidate is not None:
-        provenance_overrides["model_source"] = model_candidate[0]
+        provenance_overrides["model_source"] = model_candidate[0].value
     if harness_candidate is not None:
-        provenance_overrides["harness_source"] = harness_candidate[0]
+        provenance_overrides["harness_source"] = harness_candidate[0].value
+    effort_from_config = (
+        effort_candidate is not None and effort_candidate[0] is ProvenanceLevel.AGENT_CONFIG
+    )
+    if effort_from_config:
+        provenance_overrides["effort_source"] = ProvenanceLevel.AGENT_CONFIG.value
 
-    return (
-        model_candidate[1] if model_candidate is not None else None,
-        harness_candidate[1] if harness_candidate is not None else None,
-        provenance_overrides,
+    return _BundleRouting(
+        model=model_candidate[1] if model_candidate is not None else None,
+        harness=harness_candidate[1] if harness_candidate is not None else None,
+        effort=effort_candidate[1] if effort_candidate is not None else None,
+        effort_typed=False if effort_from_config else None,
+        provenance_overrides=provenance_overrides,
     )
 
 
@@ -371,21 +386,10 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
     agent_routing = configured_agent_routing(profile.name if profile is not None else None)
-    (
-        bundle_model_override,
-        bundle_harness_override,
-        routing_provenance_overrides,
-    ) = _resolve_bundle_routing(
-        surface=surface,
-        agent_routing=agent_routing,
-    )
-    # The agent's configured effort was not typed now, so a level Mars moves stays silent.
-    agent_config_effort = agent_routing.effort if explicit_user_overrides.effort is None else None
-    if agent_config_effort is not None:
-        routing_provenance_overrides["effort_source"] = ProvenanceLevel.AGENT_CONFIG.value
+    routing = _resolve_bundle_routing(surface=surface, agent_routing=agent_routing)
 
     alias_catalog: dict[str, AliasEntry] = {}
-    if bundle_model_override:
+    if routing.model:
         alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
 
     requested_skill_names = dedupe_skill_names(surface.requested_skills)
@@ -393,10 +397,10 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
         agent_path=profile.path if profile is not None else None,
-        model_override=bundle_model_override,
-        harness_override=bundle_harness_override,
+        model_override=routing.model,
+        harness_override=routing.harness,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
-        effort_override=explicit_user_overrides.effort or agent_config_effort,
+        effort_override=routing.effort,
         config_effort=surface.config_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
@@ -416,8 +420,8 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
     selected_model_token = bundle_result.model_token or resolved_model
-    requested_token = bundle_model_override or selected_model_token or resolved_model
-    harness_provenance = routing_provenance_overrides.get(
+    requested_token = routing.model or selected_model_token or resolved_model
+    harness_provenance = routing.provenance_overrides.get(
         "harness_source",
         bundle_result.provenance.get("harness_source", ""),
     )
@@ -472,9 +476,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
 
     bundle_model_warning = (
         "\n".join(
-            bundle_adapter.warnings_to_print(
-                bundle_result, effort_typed=False if agent_config_effort is not None else None
-            )
+            bundle_adapter.warnings_to_print(bundle_result, effort_typed=routing.effort_typed)
         ).strip()
         or None
     )
@@ -523,7 +525,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
                     ),
                 )
             )
-        elif default_harness is None and bundle_harness_override is not None:
+        elif default_harness is None and routing.harness is not None:
             policy_warnings.append(
                 CompositionWarning(
                     code="missing_runnable_path",
@@ -535,7 +537,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
                 )
             )
 
-    provenance_overrides = dict(routing_provenance_overrides)
+    provenance_overrides = dict(routing.provenance_overrides)
     provenance_overrides.update(execution_policy_provenance_overrides)
 
     return bundle_adapter.bundle_to_resolved_policy(
