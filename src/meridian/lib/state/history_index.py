@@ -41,6 +41,7 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.refs import is_spawn_id
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text, fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.history_changes import (
@@ -931,13 +932,14 @@ class HistoryIndex:
         # spawn directory renames it into ``spawns/``, which changes that directory's time.
         spawns_dir = self.root / "spawns"
         stamp = self._spawns_dir_stamp()  # Before listing: a later publish re-lists.
-        if stamp is None:
-            return []
-        changed_at = stamp[0]
         remembered = db.exec_driver_sql(
             "SELECT extent FROM cursors WHERE source = ?", (SPAWNS_DIR_CURSOR,)
         ).first()
-        if remembered is not None and remembered[0] == changed_at:
+        if stamp is not None and remembered is not None and remembered[0] == stamp:
+            return []
+        try:
+            names = os.listdir(spawns_dir)
+        except FileNotFoundError:
             return []
         held = {
             source_id.removeprefix("spawn:")
@@ -947,8 +949,10 @@ class HistoryIndex:
         }
         active: list[str] = []
         skipped = False
-        for key in sorted(os.listdir(spawns_dir)):
-            if key in held or not (spawns_dir / key / "state.json").is_file():
+        for key in sorted(names):
+            if not is_spawn_id(key) or key in held:
+                continue
+            if not (spawns_dir / key / "state.json").is_file():
                 continue
             source = HistorySource(kind="spawn", key=key)
             if source.name in marked:  # The marker drain projects it.
@@ -959,24 +963,23 @@ class HistoryIndex:
                         active.append(key)
             except FileLockTimeout:
                 skipped = True
-        if not skipped:
-            self._remember_spawns_dir(db, stamp)
+        if stamp is not None and not skipped:
+            self._write_spawns_dir_cursor(db, stamp)
         db.commit()
         return active
 
-    def _spawns_dir_stamp(self) -> tuple[int, bool] | None:
-        """The directory's time and whether it is old enough to remember."""
+    def _spawns_dir_stamp(self) -> int | None:
+        """The directory's time in ns, or None when it is missing or too recent to remember."""
         try:
             changed_at = (self.root / "spawns").stat().st_mtime_ns
         except FileNotFoundError:
             return None
-        return changed_at, time.time_ns() - changed_at >= _TIMESTAMP_RESOLUTION_NS
+        if time.time_ns() - changed_at < _TIMESTAMP_RESOLUTION_NS:
+            return None
+        return changed_at
 
     @staticmethod
-    def _remember_spawns_dir(db: Connection, stamp: tuple[int, bool]) -> None:
-        changed_at, settled = stamp
-        if not settled:
-            return
+    def _write_spawns_dir_cursor(db: Connection, changed_at: int) -> None:
         db.exec_driver_sql(
             "INSERT OR REPLACE INTO cursors (source, inode, extent, tail, unsupported) "
             "VALUES (?, NULL, ?, NULL, NULL)",
@@ -1016,7 +1019,7 @@ class HistoryIndex:
                     ):
                         self._spawn(db, key)
                 if stamp is not None:
-                    self._remember_spawns_dir(db, stamp)
+                    self._write_spawns_dir_cursor(db, stamp)
                 for kind in ("sessions", "catalog"):
                     source = HistorySource(kind=kind)
                     with _source_lock(source.lock_path(self.root), deadline):
