@@ -42,6 +42,7 @@ def fire_inbox_received(message_id: str, message_path: Path) -> HookLog:
                     name=result.hook_name,
                     outcome=result.outcome,
                     exit_code=result.exit_code,
+                    stdout_tail=result.stdout or "",
                     stderr_tail=result.stderr or "",
                 )
             )

@@ -82,9 +82,9 @@ every other event's in four ways:
 The command that files the message does not wait for the rows, and their output
 goes nowhere. What each row did is written to
 `~/.meridian/machine/inbox/hook-log/<message id>.json`: each row's name, outcome,
-exit code and the last 1 KiB of its standard error, plus the errors that stopped
-a row from loading or running. A row that files a message does not fire the event
-again.
+exit code and the last 1 KiB each of its standard output and standard error, plus
+the errors that stopped a row from loading or running. A row that files a message
+does not fire the event again.
 
 ```toml
 # ~/.meridian/config.toml

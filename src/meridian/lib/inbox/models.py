@@ -94,6 +94,8 @@ class HookLogRow(BaseModel):
     name: str
     outcome: str
     exit_code: int | None
+    stdout_tail: str = ""
+    """A Meridian command run with ``--json`` says why it failed on stdout."""
     stderr_tail: str
 
 
