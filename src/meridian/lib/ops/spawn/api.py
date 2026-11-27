@@ -25,6 +25,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.sink import NullSink, OutputSink
@@ -54,7 +55,6 @@ from meridian.lib.launch.continue_replay import (
 from meridian.lib.launch.fork import require_replayed_agent
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.locate import (
-    require_project_dir,
     resolve_spawn_target,
     resolve_spawn_targets,
 )
@@ -1541,10 +1541,20 @@ async def _spawn_cancel_impl(
     target = resolve_spawn_target(project_root, payload.spawn_id, runtime_root=runtime_root)
     spawn_id = str(target.spawn_id)
     service_project = project_root
+    lifecycle: SpawnLifecycleService | None = None
+    hooks_skipped = False
     if not same_runtime_root(target.runtime_root, runtime_root):
         runtime_root = target.runtime_root
-        service_project = require_project_dir(target.project_root, spawn_id)
-    spawn_service = build_spawn_application_service_from_roots(service_project, runtime_root)
+        if target.project_root is not None and target.project_root.is_dir():
+            service_project = target.project_root
+        else:
+            # The hooks' config went with the directory: there is nothing to load, and a
+            # session that can be found by ID must still be stoppable.
+            lifecycle = SpawnLifecycleService(runtime_root)
+            hooks_skipped = True
+    spawn_service = build_spawn_application_service_from_roots(
+        service_project, runtime_root, lifecycle=lifecycle
+    )
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     if record is not None and record.record_mode == "historical":
         raise ValueError("Historical records cannot be cancelled")
@@ -1571,7 +1581,15 @@ async def _spawn_cancel_impl(
             spawn_id=outcome.spawn_id,
             launch_number=outcome.launch_number,
         )
-    return _spawn_cancel_output_from_outcome(outcome)
+    output = _spawn_cancel_output_from_outcome(outcome)
+    if hooks_skipped:
+        output = output.model_copy(
+            update={
+                "message": f"{output.message} Its project directory is gone, so no project "
+                "hooks ran."
+            }
+        )
+    return output
 
 
 def spawn_cancel_all_sync(
