@@ -94,12 +94,16 @@ waiting message in two ways: a line in its prompt when it starts fresh, or an
   subagents could, and a primary with no profile was blocked (or, in Claude's auto mode,
   refused) from running the `meridian inbox take` its offer printed. A spawn still gets
   them only when its profile may spawn, and `meridian spawn` stays behind that rule for
-  every session.
+  every session, except on Codex (next item).
 - **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`. A sandboxed
   Codex launch writes the rules files for the commands it was granted: a primary whose
   profile may not spawn writes `meridian-message.rules` and `meridian-inbox.rules`, not
   `meridian.rules`. Like the first, each applies to every Codex session of the user once
-  written.
+  written, children included: after any sandboxed Codex primary has run, every Codex
+  session using that `$CODEX_HOME`, whatever its profile, runs `meridian message` and
+  `meridian inbox` outside its sandbox (and `meridian spawn`, once a spawn-capable launch
+  has run). A child is still refused `inbox take`, `release` and `offer` by the inbox's own
+  role check.
 
 ## Machines can reach each other over SSH
 
@@ -140,7 +144,8 @@ New in this release. `meridian machine add <ssh target>` saves another computer;
   whatever its profile, and for a spawn whose profile lists subagents; it lets `meridian
   spawn …` out only for a session launched with such a profile (`-a <profile>`), the rule
   0.27 has for `meridian spawn message`. A spawn whose profile may not spawn runs all of
-  them inside the sandbox, and every session runs `meridian session …` and `meridian
+  them inside the sandbox (on Codex, only until a rules file for them has been written:
+  those files apply to every Codex session of the user), and every session runs `meridian session …` and `meridian
   machine …` there. There `ssh` is blocked: on Linux the call fails with kind
   `sandboxed`; on macOS it keeps the kind `ssh` gave it (usually `unreachable`, with
   `Operation not permitted`) and its text names the sandbox.

@@ -497,7 +497,6 @@ def _codex_report(
             )
         else:
             rules_error = spec.codex_runtime.rules_file_error
-            # The rules files are user-wide: one another launch wrote still applies here.
             escaped = rules_error is None
             lines.append(
                 ReportLine(
@@ -506,9 +505,10 @@ def _codex_report(
                     (
                         "-c sandbox_workspace_write.network_access=false"
                         + (
-                            "; the Meridian-owned user rules still let "
-                            f"{escaping_commands_text(RULES_FILES)} run outside the sandbox "
-                            "with network access"
+                            "; a Meridian-owned user rules file in $CODEX_HOME/rules, "
+                            "this launch's or another's, still lets its command "
+                            f"({escaping_commands_text(RULES_FILES)}) run outside the "
+                            "sandbox with network access"
                             if escaped
                             else ""
                         )

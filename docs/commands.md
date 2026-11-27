@@ -543,7 +543,9 @@ there, as here (`--wake` crosses).
 **Inside a harness sandbox, only `meridian spawn …`, `meridian message` and `meridian
 inbox` reach another machine.** A harness lets a command out of its sandbox by its first
 words: `meridian message` and `meridian inbox` for a primary session or a session whose
-profile may spawn, `meridian spawn …` only for a session whose profile may spawn.
+profile may spawn, `meridian spawn …` only for a session whose profile may spawn. On Codex
+the grant is a user-wide rules file, so once one is written it applies to every Codex
+session of the user.
 `meridian session …` and `meridian machine …` stay inside
 the sandbox, where `ssh` is blocked: a call to another machine then fails with kind
 `sandboxed`, and its text says so. On macOS Meridian can't tell whether a command left the
