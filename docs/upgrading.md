@@ -54,13 +54,14 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
 
 ## The machine has an inbox
 
-New in this release. `meridian message inbox "..."` leaves a message that names no session;
-it waits until a primary session or you take it with `meridian inbox take`. Nothing takes a
-message automatically and no session is woken. See
+New in this release. `meridian message inbox "..."` leaves a message that names no session.
+It waits until someone runs `meridian inbox take` for it: you, or a primary session.
+Nothing takes a message automatically and no session is woken. A primary learns of a
+waiting message in two ways: a line in its prompt when it starts fresh, or an
+`inbox.received` hook row of yours that runs `meridian inbox offer`. See
 [The machine inbox](commands.md#the-machine-inbox).
 
-- **`inbox` is an address now.** It was reserved while `meridian message` was built, and
-  failed.
+- **`inbox` is an address now.** Before this release it was not one, and failed.
 - **A new directory, `~/.meridian/machine/inbox/`,** holds the messages, claims and offers as
   files, one inbox per machine. 0.27 never reads it, so after a rollback the messages stay
   there, untaken, until you upgrade again.
@@ -77,17 +78,19 @@ message automatically and no session is woken. See
   events 0.27 had are unchanged. `project_root` and `runtime_root` may now be `null`, and
   are for `inbox.received`, which adds `inbox_message`. A hook that checks the version for
   an exact 3 needs updating.
-- **Another machine's inbox is reached like its sessions.** `meridian message
-  <machine>/inbox "..."` files there, and each `meridian inbox` command takes `--machine
-  <machine>`; see [Another machine's inbox](commands.md#another-machines-inbox). Both
+- **Another machine's inbox is reached by its saved name.** Once `meridian machine add
+  <ssh target>` has saved a machine ([below](#machines-can-reach-each-other-over-ssh)),
+  `meridian message <machine>/inbox "..."` files there, and each `meridian inbox` command
+  takes `--machine <machine>`; see
+  [Another machine's inbox](commands.md#another-machines-inbox). Both
   machines need this release: an older one refuses the call with a kind (`refused`,
   `usage` or `version`) and nothing is changed there.
 - **A message and a claim record the machine's ID** as `machine_id`, beside its name, in
-  the files and in `--json`. The ID decides whose a claim is, so `meridian machine rename`
-  doesn't lose a session the messages it took.
+  the files and in `--json`. The ID decides whose a claim is, so renaming a machine keeps
+  the messages a session on it already took.
 - **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`, so a
-  sandboxed Codex session whose profile may spawn can run `meridian inbox`, as it can
-  `meridian message`. It is written like the other two and
+  sandboxed Codex session can run `meridian inbox` when it can run `meridian message`:
+  when it was launched with a profile that lists subagents (`-a <profile>`). It is written like the other two and
   applies to every Codex session of the user.
 
 ## Machines can reach each other over SSH

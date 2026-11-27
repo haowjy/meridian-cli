@@ -47,7 +47,7 @@ message to receive.
 | `notify.cache_expiring` | 30s | The idle service sends its scheduled prompt-cache warning |
 | `notify.needs_permission` | 30s | Claude reports a permission prompt that is still waiting |
 | `notify.manual` | 30s | `meridian notify` emits its notification |
-| `inbox.received` | 60s | A message is filed in this machine's inbox (`meridian message inbox`); a [machine event](#machine-events) |
+| `inbox.received` | 60s | A message is filed in this machine's inbox, by `meridian message inbox` here or `meridian message <machine>/inbox` from another machine; a [machine event](#machine-events) |
 
 Every `notify.*` event carries a
 `notification` (title, body, priority, email, session label, attachment paths). Meridian routes
@@ -69,9 +69,11 @@ every other event's in four ways:
   stdin, `MERIDIAN_PROJECT_DIR` is unset, and the command runs in your home
   directory. The context carries `inbox_message.id` and `inbox_message.path`,
   also set as `MERIDIAN_INBOX_MESSAGE_ID` and `MERIDIAN_INBOX_MESSAGE_PATH`. The
-  file at that path is the message as JSON: `text`, `from` (`kind`, and for a
-  session its `machine`, `id`, `project` and `agent`), `received`, and when set
-  `project`, `reply_to` and `via`. The text is another party's words: a row that
+  file at that path is the message as JSON: `text`, `from`, `received`, and when
+  set `project`, `reply_to` and `via`. `from` has `kind` (`session` or
+  `terminal`), the sender's `machine` (its name) and `machine_id`, and for a
+  session its `id` (the chat ID), its `project` when it has one, and its `agent`
+  when known: a session on another machine sends none. The text is another party's words: a row that
   hands it to a program must not run it as a command.
 - **No session in the environment.** The rows run in a process detached from the
   command that filed the message, with that command's environment minus the names

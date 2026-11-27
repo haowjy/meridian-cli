@@ -1,7 +1,6 @@
 # Inbox: known limits left on purpose
 
-Each was seen in review or a probe and judged not worth a change yet. Revisit when the
-condition in it shows up.
+Each is judged not worth a change yet. Revisit when the condition in it shows up.
 
 - **Lock wait under load.** 17 processes at once (8 writers, 6 takers, 3 offers) gave
   two "the inbox is busy" errors after the 5 s wait. A write does about six fsyncs under
@@ -9,8 +8,8 @@ condition in it shows up.
   this. The error is safe to repeat.
 - **One interpreter per filed message.** The detached `inbox.received` process costs
   about 0.4 s of CPU with no rows, and nothing bounds how many run at once. A burst of
-  messages against a row that waits its full timeout stacks them; measure on a
-  Raspberry Pi before a router runs there.
+  messages against a row that waits its full timeout stacks them. Measure before a
+  small machine (a Raspberry Pi) takes bursts of messages filed by a daemon.
 - **Every terminal of one machine is the same taker.** A terminal has no ID, only its
   machine, so a second `take` from any terminal of that machine succeeds and prints the
   message. `take` is exclusive between sessions and between machines' terminals, not
@@ -42,8 +41,9 @@ condition in it shows up.
 - **A terminal's repeated `release` can drop a claim made in between.** A terminal may
   release any claim. If its `release` is cut off after it was sent and another session
   takes the message before the repeat, the repeat ("Run it again: a repeat is safe")
-  releases that session's claim. A daemon that releases on behalf of people is the caller
-  this fits; a release that names the claim it means to drop would close it.
+  releases that session's claim. The caller this can happen to is a daemon that calls
+  `release` from a terminal on behalf of people. A release that names the claim it means
+  to drop would close it.
 - **A session whose ID isn't machine-wide gets no reply address across machines.** Its
   way back is `<id> --machine <name> -C <path>`, and a message's `reply_to` is one
   address. `inbox read` says it has no reply address.

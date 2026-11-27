@@ -336,9 +336,9 @@ project and agent, or `terminal` when no session runs the command. The reply add
 the sender unless `--reply-to ADDRESS` names another. A program that passes on someone
 else's message says so with `--via-program NAME`, `--via-ref REF` and `--via-sender NAME`;
 the same program and ref filed twice is one inbox message, so a retried call is safe.
-`--project-id ID` sets the message's project and is accepted only when no session runs
-the command; without it such a message has no project, whatever directory the command
-ran in. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
+A filing from a session carries that session's project. A filing from a terminal has
+no project, whatever directory the command ran in, unless `--project-id ID` names one;
+the flag is refused when a session runs the command. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
 `--project-id` are each at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`. A project
 ID may have several parts joined by `/` (`team/app`), none of them empty or starting with `.`; a
 session whose own project ID is outside these rules is refused. The text is at most 64 KiB.
@@ -390,12 +390,18 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   the request was sent, and so does a filing. Run the command again: the same taker
   taking again succeeds, releasing a message that isn't taken succeeds, and a repeated
   offer sends the notice again. A filing is only safe to repeat with `--via-program` and
-  `--via-ref`; without them the repeat may file a second message. `list` and `read`
-  fail with `unreachable`: nothing was changed.
+  `--via-ref`; without them the repeat may file a second message. A `release` from a
+  terminal is the other repeat to check first: a terminal may release any claim, so if
+  another session took the message after the first try, the repeat releases that
+  session's claim. A hook or daemon that releases should read the message again before
+  it repeats. An error whose kind this Meridian doesn't know also reads as
+  `maybe_delivered` for these three commands. `list` and `read` fail with
+  `unreachable`: nothing was changed.
 - **Offering to a session on another machine.** Run `offer` on the machine that holds
-  the message and name the session as `<machine>/<id>`:
-  `meridian inbox offer m412 jimyao-minibox/c2041`. The notice names
-  `m412 on jimyao-raspberrypi` and gives the session the command
+  the message and name the session as `<machine>/<id>`. Typed on `jimyao-raspberrypi`,
+  which holds `m412`, for a session on `jimyao-minibox`:
+  `meridian inbox offer m412 jimyao-minibox/c2041`. The notice that session gets names
+  `m412 on jimyao-raspberrypi` and gives it the command
   `meridian inbox take m412 --machine jimyao-raspberrypi`, on a line of its own. The same
   refusals hold, from what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
   refused, because a call can't reach a third machine.

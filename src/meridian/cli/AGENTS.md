@@ -26,9 +26,10 @@ a command out of its sandbox by its first words.
 refuses a command that doesn't cross (`CommandDescriptor.crosses`, the one list, read again
 by `machine run` on arrival) and applies neither `-C` nor startup preparation. A crossing
 handler calls `forward_if_remote(refs)` first; `message` has its own route. Don't add a
-command to the list that has any form that writes. The exceptions Jimmy approved are
-`inbox take|release|offer`: each checks the caller's role before `forward_if_remote` (the
-request carries no role), passes `may_have`, and is safe to repeat.
+command to the list that has any form that writes. The exceptions are `message` and
+`inbox take|release|offer`. Each inbox handler checks the caller's role before
+`forward_if_remote` (the request carries no role) and passes `may_have`, and the command
+must be safe to repeat, because a call that got no answer may have acted.
 
 Session browse returns a re-entry decision; the handler execs it only after the
 full-screen app closes. Build help profiles per invocation rather than mutating

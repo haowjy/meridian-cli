@@ -21,6 +21,8 @@ hook-log/m412.json    what the `inbox.received` rows did for it
 
 A message's ID is its file name. Readers take no lock: every file appears whole or not at
 all (`link(2)` or rename), and a file that doesn't parse is skipped and named on stderr.
+The count for a launch (`count.launch_line`) skips one without naming it: a launch must not
+print a warning.
 
 ## The sequences
 
@@ -85,8 +87,8 @@ leaves records with no message, which the next pass removes, and never a message
 looks waiting again. A waiting message is never deleted. A claim that doesn't parse is
 skipped, and the models refuse a time with no zone, so no file can raise in the scan and
 stop the passes after it. It runs at most once a day (the
-`pruned` stamp), from the detached hook process and from every `meridian inbox` command;
-not at a primary launch, because the machine that runs a chat bot launches none.
+`pruned` stamp), from the detached hook process and from every `meridian inbox` command.
+A primary launch is not a trigger: a machine that only receives messages launches none.
 
 ## Who is calling
 
@@ -128,9 +130,9 @@ about.
 
 ## Other machines
 
-Each machine has its own inbox, and a command reaches another machine's through step 4's
-one call (`lib/machines/`): the other machine's own `meridian` runs the same command on its
-own files. Nothing here reads or writes another machine's directory.
+Each machine has its own inbox, and a command reaches another machine's through the one
+machine call (`lib/machines/call.call_machine`, answered there by `meridian machine run`):
+the other machine's own `meridian` runs the same command on its own files. Nothing here reads or writes another machine's directory.
 
 - **Filing.** `<machine>/inbox` is a reference `core/refs.parse_ref` knows (kind `inbox`),
   so `machine_forward.other_machine` decides which machine it names, as for every
@@ -153,18 +155,29 @@ own files. Nothing here reads or writes another machine's directory.
   the one this machine saved it under, else the one it gives itself. Its reply address
   is `message/reply.way_back`'s answer, the rule the reply line of a delivered message
   uses: none when this machine hasn't saved the caller's, or the session can't be reached.
-  A block whose session ID is not an ID never arrives: `machine run` refuses it, because
-  a block with no session is a terminal, which may do more.
+  Three blocks never arrive, because `machine run` refuses the request: one whose
+  session ID is not an ID, and one with a `reply_id` and no `spawn_id` (a block with no
+  session is a terminal, which may do more, so a damaged session block must not read as
+  one); and one whose `machine_id` is this machine's own (a copied home), whose sessions
+  would pass for this machine's.
 - **What the calling side sends** is built from the `InboxCaller` it resolved and
   checked (`cli/message.py:inbox_caller_block`, from the runtime root the record was
-  found under), through step 4's `session_caller_block`. Don't build it from the
+  found under), through `session_caller_block`, which builds `meridian message`'s block
+  too. Don't build it from the
   environment: that is a second resolver, and the two disagreed for a session whose
   working directory was in another project. A session with no record or no usable
   project is refused before anything connects.
 - **A repeat is safe**, which is what makes `maybe_delivered` recoverable: the taker is
-  (machine, chat ID), the same on every retry, so taking again succeeds; releasing a
+  (machine ID, chat ID), the same on every retry, so taking again succeeds; releasing a
   message with no claim succeeds; a repeated offer sends the notice again; and a filing
-  with a `via` ref matches `by-origin`. A filing without one can be filed twice.
+  with a `via` ref matches `by-origin`. Two repeats are not safe, both in `FUTURE`: a
+  filing without a `via` ref can be filed twice, and a terminal's repeated `release` can
+  drop a claim made in between.
+- **An error kind from the other machine.** `forward_if_remote` keeps the kind a read
+  gives when it is a short word. For `take`, `release` and `offer` (`may_have`), a
+  failure with no kind, or with one outside the message kinds and `taken`, is
+  `maybe_delivered`: a kind this build doesn't know doesn't say whether the command
+  acted. `meridian message` reads its answers from another machine the same way.
 - **`offer` runs where the message is.** Its session may be on another machine
   (`<machine>/<id>`): the notice then goes out as an ordinary cross-machine `message`,
   names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`
@@ -182,10 +195,10 @@ own files. Nothing here reads or writes another machine's directory.
 - **The hook process drops `_MERIDIAN_MACHINE_CALL`** (`session_free_env`: it is an
   injected handle), so an `inbox.received` row started by a filing from another machine
   runs as this machine, and its own `offer` may cross.
-- **Older peers** answer with a kind, never a traceback: a build without step 4 is
-  `version`; one without the crossing list entries is `refused` ("doesn't reach another
-  machine"); for `message <machine>/inbox`, lane 1's build answers `refused` and a build
-  with no inbox `usage`.
+- **Older peers** answer with a kind, never a traceback: a build with no `machine run`
+  is `version`; one whose crossing list lacks the inbox commands is `refused` ("doesn't
+  reach another machine"); for `message <machine>/inbox`, a build with the local inbox and
+  no crossing answers `refused`, and a build with no inbox `usage`.
 
 ## What a sender controls
 
