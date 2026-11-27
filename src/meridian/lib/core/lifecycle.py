@@ -669,6 +669,20 @@ def _hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
     return value.strip().lower() != "false"
 
 
+def _hook_env(project_root: Path, runtime_root: Path) -> Mapping[str, str] | None:
+    """The environment hooks run in: the process's, unless this dispatch is into another
+    project, where it is what ``-C`` into that project would leave (the caller's spawn,
+    chat and work names don't mean anything there)."""
+
+    from meridian.env_registry import env_toward_project
+    from meridian.lib.core.caller import caller_runtime_root, same_runtime_root
+
+    caller_root = caller_runtime_root()
+    if caller_root is None or same_runtime_root(caller_root, runtime_root):
+        return None
+    return env_toward_project(os.environ, project_root)
+
+
 def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatcher | None:
 
     if not _hooks_dispatch_enabled():
@@ -690,6 +704,7 @@ def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatche
             project_root,
             runtime_root,
             registry=HookRegistry(project_root, hooks_config=loaded_hooks.config),
+            env=_hook_env(project_root, runtime_root),
         )
     except ValueError as exc:
         logger.warning(

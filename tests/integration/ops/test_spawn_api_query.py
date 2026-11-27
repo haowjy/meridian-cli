@@ -53,7 +53,7 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
     ).spawn_id
     result = spawn_api.spawn_wait_sync(
         SpawnWaitInput(project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe),
-        ctx=RuntimeContext(spawn_id=observer_id),
+        ctx=RuntimeContext(spawn_id=observer_id, runtime_root=runtime_root),
     )
     assert result.total_runs == 1
     assert result.spawns[0].status == "succeeded"

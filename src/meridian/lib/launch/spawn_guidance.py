@@ -17,6 +17,7 @@ from meridian.lib.launch.composition import (
     CompositionBlock,
     GuidancePhase,
 )
+from meridian.lib.state.machine_ids import claim_root
 from meridian.plugin_api.types import SpawnKind
 
 # Capabilities a bundled `*__meridian` skill covers are named only in the
@@ -134,14 +135,18 @@ def _chat_lines(chat_id: str | None, project_root: Path, *, env: bool = True) ->
         return []
     # Only a primary renders this: its chat is the conversation's own, so it survives
     # resume. A spawn's launching chat is per-launch and lives in the `# Meridian spawn`
-    # block. Chat IDs count per project, so the bare ID is ambiguous to a peer in
-    # another repo; the command carries the project it belongs to.
+    # block. A claimed chat ID names this conversation from any directory; a legacy one
+    # counts only inside its project, so its address carries the project (after the
+    # address: a harness lets a command out of its sandbox by its first words).
+    address = f'meridian message {resolved_chat_id} "..."'
+    if claim_root(resolved_chat_id) is None:
+        address = (
+            f'meridian message {resolved_chat_id} -C {shlex.quote(project_root.as_posix())} "..."'
+        )
     return [
         f"- `{resolved_chat_id}` — this conversation's chat"
         f"{_env_ref('MERIDIAN_CHAT_ID', shown=env)}; use it in names and as a handoff's `--from`.",
-        "- To message this session from another session or repo: "
-        f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-        f'{resolved_chat_id} --message "..."`.',
+        f"- To message this session from another session or repo: `{address}`.",
     ]
 
 

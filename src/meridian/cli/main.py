@@ -72,15 +72,17 @@ from meridian.cli.output import (
     flush_sink,
     normalize_output_format,
 )
-from meridian.cli.startup.catalog import COMMAND_CATALOG
+from meridian.cli.startup.catalog import COMMAND_CATALOG, CommandDescriptor
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
-from meridian.env_registry import is_project_scoped_env_name
+from meridian.env_registry import project_scoped_env_names
+from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
+from meridian.lib.core.refs import project_named_scope
 from meridian.lib.core.types import harness_choices_text
 from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
@@ -902,15 +904,22 @@ def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | 
     return False
 
 
-def _continue_ref(argv: Sequence[str]) -> str | None:
-    for index, token in enumerate(argv):
-        if token == "--":
-            break
-        if token == "--continue":
-            return argv[index + 1] if index + 1 < len(argv) else None
-        if token.startswith("--continue="):
-            return token.partition("=")[2]
-    return None
+def _reenter_project_for_continue(
+    args: Sequence[str], descriptor: CommandDescriptor | None, options: GlobalOptions
+) -> None:
+    from meridian.cli.continue_reentry import reenter_project_for_continue
+    from meridian.cli.utils import resolve_cli_project_root
+
+    try:
+        reenter_project_for_continue(
+            args,
+            command_path=descriptor.command_path if descriptor is not None else None,
+            project_root=resolve_cli_project_root(),
+            directory_explicit=options.directory_explicit,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 def _launch_prints(
@@ -924,7 +933,9 @@ def _launch_prints(
 
     if command_path not in {None, ()}:
         return False
-    continue_ref = _continue_ref(argv) if harness is None else None
+    from meridian.cli.continue_reentry import continue_ref as find_continue_ref
+
+    continue_ref = find_continue_ref(argv) if harness is None else None
     if harness is None and continue_ref is None:
         return False
     from meridian.cli.utils import resolve_cli_project_root
@@ -1035,7 +1046,7 @@ def _install_cli_telemetry(
         install(
             TelemetryPlan(
                 mode=mode,
-                logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+                logical_owner=caller_spawn_id() or "cli",
                 runtime_root=runtime_root,
                 schedule_maintenance=schedule_maintenance,
             )
@@ -1132,12 +1143,12 @@ def _directory_env_scope(
     other_project = (
         directory_explicit and project_root is not None and not _inherited_project_is(project_root)
     )
-    dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
-    caller_spawn = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
+    dropped = project_scoped_env_names(os.environ) if other_project else []
+    caller_spawn = caller_spawn_id()
     caller_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
     caller = (
         Caller(
-            spawn_id=caller_spawn,
+            spawn_id=str(caller_spawn),
             project_root=Path(caller_root) if other_project else None,
         )
         if caller_spawn
@@ -1277,6 +1288,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         ),
     ):
         if not bootstrap_skipped:
+            _reenter_project_for_continue(args, descriptor, options)
             # A printed launch writes nothing, so startup treats it like a dry run.
             prints_launch = _launch_prints(
                 cleaned_args,
@@ -1332,6 +1344,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         )
         with ExitStack() as invocation_stack:
             invocation_stack.enter_context(invocation_scope(options))
+            invocation_stack.enter_context(project_named_scope(options.directory_explicit))
             invocation_stack.callback(flush_sink, active_sink)
             from meridian.cli.agent_help import (
                 leaf_help_rendering_scope,

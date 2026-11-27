@@ -18,6 +18,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recently finished spawns (default: active view, limit 20) |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn list --global` | Running sessions in every project on this machine, each row with its `project_root` |
 | `meridian spawn list --work SLUG\|current --view all --limit N` | Show a work item's spawn history, finished ones included; set `N` to the number of spawns to list |
 | `meridian spawn subagents` | List the agents in the calling agent's `subagents:` list, with descriptions and routing markers |
 | `meridian spawn subagents --all` | List every installed agent, including `model-invocable: false` ones and those outside the caller's list |
@@ -33,7 +34,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn done [ID]` | Inside a child: close when its turn ends, cancelling any spawns still running and stopping its background tasks |
 | `meridian spawn rearm --reason "..." [ID]` | Inside a child: stay open. The reason is stored and shown in `spawn show`; `--reason-file PATH` reads it from a file (`-` reads stdin), and a bare `rearm` warns. The next check comes 270 s after the child goes idle, only when nothing visible is running; `--long` puts it at the idle limit, for a wait Meridian can't see such as remote CI. Running spawns and background tasks keep it quiet until they change or the idle limit, in both forms |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session); `-C` reaches a session in another project |
+| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session). An ID issued since machine-wide IDs reaches its session from any directory; `-C` names the project of an older one |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
@@ -62,11 +63,13 @@ when that session bypasses permission prompts and `crossSessionInbound` is not
 `accept`; to skip the prompt, set `"crossSessionInbound": "accept"` in
 `~/.claude/settings.json`. This applies to every peer message, not only
 Meridian's; [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate)
-covers the values and the trade-off. Chat and spawn IDs count per
-project, so a peer in another repo is addressed with `-C <repo>`. Each injected
+covers the values and the trade-off. A chat or spawn ID issued
+since machine-wide IDs names the same session from any directory, so a peer in another repo is
+addressed by its ID alone; an older ID counts only inside its project and is addressed with
+`-C <repo>`. Each injected
 message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
 sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
-with `-C <sender project root>` when the sender is in another project. A primary states its own
+with `-C <sender project root>` when the sender's ID is an older one and it is in another project. A primary states its own
 address in that form in its capabilities block, including a Claude primary that publishes no
 inbox (`--bare`, `--safe-mode`), where the address leads to the no-route error.
 Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
@@ -75,6 +78,24 @@ After a `/clear` the run is in a new chat, so `spawn message` refuses its old ch
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
 `cancel` on a primary still needs `--force`.
+
+### IDs across projects
+
+A spawn or chat ID issued since machine-wide IDs is found from any directory, without `-C`
+(it is looked up in `~/.meridian/machine/ids/`, then read from that project's own state). An
+older ID counts only inside its project, as before: its "not found" says so, and `-C` names
+the project. An explicit `-C` names the project where an ID is looked up only when that
+project holds the ID itself; if a claimed ID is also held by the current project's own
+rows, the command refuses and asks for `-C`.
+
+| Command | With an ID in another project |
+| --- | --- |
+| `spawn show`, `status`, `children`, `report`, `session log`, `export`, `search REF`, `repair` | Read there |
+| `spawn cancel`, `done`, `rearm` | Act there; the project's own hooks run, without the caller's chat, spawn and work variables |
+| `spawn wait` | Watches each target in its own project; nothing is recorded for the caller there |
+| `--continue` | Re-runs the command under `-C <that project>`, as a continue with no parent and the caller's depth. `-C` naming another project is an error, and so is a project directory that is gone |
+| `--from` | Reads the source's report and session there; the new session starts in the current project |
+| `--fork`, `--fork-fresh` | Refused: a fork copies the harness's session, which harnesses keep per directory. Fork from that project |
 
 Common `spawn` flags:
 
@@ -112,6 +133,7 @@ are advisory and do not affect counts, fail-fast, observation, or the exit code.
 | `--limit N` | `spawn list` only: maximum rows (default 20). The `--all` shortcut drops the default to 5; use `--view all --limit N` to list a work item's full history |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
+| `--global` | `spawn list` only: running sessions in every project on this machine. Finds projects by their held lifetime lock, so a session that has not started yet is missing for that moment. Takes no `--all`, `--status`, `--view`, `--failed` or `--work` (history is `session search --global`) |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `never`. Overrides the profile; each harness applies only some modes: [Permissions by harness](agent-profiles.md#permissions-by-harness) |
 | `--sandbox MODE` | `default` \| `read-only` \| `workspace-write` \| `danger-full-access`. Overrides the profile; harness support differs |
 | `--network MODE` | `allow` \| `deny` \| `allowlist`. Overrides the profile mode for this launch; shell network only |
@@ -170,8 +192,10 @@ notice. `spawn cancel` likewise consumes an outcome it reports as `cancelled`.
 Pass `--no-observe` to any of those commands to leave the result owed. Piped or
 redirected output still counts as shown; use
 `--no-observe` when another process, UI, or file is the actual recipient.
-An invocation directed through `-C` never observes: show, full status, report show,
-cancel, cancel-all, and wait write no consumption record, while ack is refused.
+An invocation directed through `-C` to another project never observes: show, full status,
+report show, cancel, cancel-all, and wait write no consumption record, while ack is refused.
+The same holds for a bare ID that names a session in another project: the caller's ID means
+nothing in that project, so no observation, wait pin or owed result is recorded there.
 Use `--verbose` to include internal diagnostics (tokens, lifecycle fields, backend metadata, and other internals).
 
 Progressive disclosure:

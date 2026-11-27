@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.locate import resolve_spawn_target
+from meridian.lib.ops.locate import RunTarget, resolve_spawn_target
 from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_root_for_read,
@@ -22,7 +22,7 @@ def _resolve_target_spawn_id(
     spawn_id: str | None,
     *,
     current_spawn_id: str | None = None,
-) -> str:
+) -> RunTarget:
     candidate = (spawn_id or "").strip()
     if candidate:
         return resolve_spawn_target(project_root, candidate)
@@ -39,18 +39,15 @@ def _resolve_spawn(
     ctx: RuntimeContext | None = None,
 ) -> tuple[str, str, LaunchPaths]:
     resolved_ctx = runtime_context(ctx)
-    resolved_spawn = _resolve_target_spawn_id(
+    target = _resolve_target_spawn_id(
         project_root,
         spawn_id,
         current_spawn_id=str(resolved_ctx.spawn_id or ""),
     )
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        raise ValueError(f"Spawn '{resolved_spawn}' not found")
-    row = read_derived(runtime_root, resolved_spawn)
+    row = read_derived(target.runtime_root, target.spawn_id)
     if row is None:
-        raise ValueError(f"Spawn '{resolved_spawn}' not found")
-    return resolved_spawn, row.status, LaunchPaths.for_row(runtime_root, row)
+        raise ValueError(f"Spawn '{target.spawn_id}' not found")
+    return str(target.spawn_id), row.status, LaunchPaths.for_row(target.runtime_root, row)
 
 
 def _report_snippet(text: str, *, query: str) -> str:
@@ -167,20 +164,20 @@ def report_search_sync(
     query = payload.query.strip()
 
     runtime_root = resolve_runtime_root_for_read(project_root)
-    explicit_id: str | None = None
+    target: RunTarget | None = None
     if payload.spawn_id is not None and payload.spawn_id.strip():
-        explicit_id = resolve_spawn_target(project_root, payload.spawn_id.strip())
+        target = resolve_spawn_target(project_root, payload.spawn_id.strip())
     elif resolved_ctx.spawn_id is not None:
-        explicit_id = resolve_spawn_target(project_root, str(resolved_ctx.spawn_id))
+        target = resolve_spawn_target(project_root, str(resolved_ctx.spawn_id))
 
+    if target is not None:
+        runtime_root = target.runtime_root
     if runtime_root is None:
-        if explicit_id is not None:
-            raise ValueError(f"Report for spawn '{explicit_id}' not found")
         return ReportSearchOutput(results=())
-    if explicit_id is None:
+    if target is None:
         rows = tuple(reversed(indexed_spawn_scan(runtime_root).records))
     else:
-        explicit_row = read_derived(runtime_root, explicit_id)
+        explicit_row = read_derived(runtime_root, target.spawn_id)
         rows = () if explicit_row is None else (explicit_row,)
 
     matches: list[ReportSearchResult] = []

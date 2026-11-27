@@ -7,8 +7,10 @@ Pi runtime so their ownership and propagation rules stay explicit.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 
 class EnvTier(StrEnum):
@@ -433,6 +435,25 @@ def is_project_scoped_env_name(name: str) -> bool:
     return any(family.project_scoped and family.contains(name) for family in ENV_FAMILIES)
 
 
+def project_scoped_env_names(environ: Mapping[str, str]) -> list[str]:
+    """The names in *environ* that mean nothing in another project."""
+
+    return [name for name in environ if is_project_scoped_env_name(name)]
+
+
+def env_toward_project(environ: Mapping[str, str], project_root: Path) -> dict[str, str]:
+    """*environ* as a command with ``-C <project_root>`` into another project would see it.
+
+    ``-C`` into another project and a dispatch into another project (hooks) share this one
+    definition of what stays behind.
+    """
+
+    scoped = set(project_scoped_env_names(environ))
+    toward = {name: value for name, value in environ.items() if name not in scoped}
+    toward["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
+    return toward
+
+
 def is_allowed_child_env_name(name: str) -> bool:
     """Return whether the registry permits bind-time child injection of *name*."""
 
@@ -451,7 +472,9 @@ __all__ = [
     "EnvSubtype",
     "EnvTier",
     "EnvVar",
+    "env_toward_project",
     "is_allowed_child_env_name",
     "is_project_scoped_env_name",
     "is_registered_env_name",
+    "project_scoped_env_names",
 ]

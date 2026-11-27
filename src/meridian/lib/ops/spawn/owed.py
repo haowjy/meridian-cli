@@ -403,11 +403,12 @@ def record_result_shown_to_caller(
 ) -> None:
     """Best-effort consumption for a launch's result shown to a calling spawn."""
 
-    if runtime_root is None:
+    observer = caller.caller_in(runtime_root)
+    if runtime_root is None or observer is None:
         return
     _record_best_effort(
         runtime_root,
-        str(caller.spawn_id) if caller.spawn_id else None,
+        str(observer),
         observed_add=(str(LaunchKey(spawn_id, launch_number)),),
     )
 

@@ -8,6 +8,10 @@ the projection it needs and never re-classifies the string:
 - ``resolve_transcript_source`` (``ops/session_target.py``): the transcript to read.
 - ``resolve_context_ref`` (``ops/spawn/context_ref.py``): the ``--from`` payload.
 
+A spawn or chat ID asks ``claim_root`` first, so a claimed ID finds its project from any
+directory; a legacy ID (no claim) and a selector or native ID look in the current
+project. A hit carries the runtime root and project root it was found in.
+
 A native session ID with no record is ``Untracked``: reading a session Meridian never
 saw, and primary ``--continue`` / ``--fork`` and ``spawn --fork``, accept it. ``spawn
 --continue`` refuses it (it needs retained spawn metadata). Every other reference that
@@ -16,11 +20,19 @@ names nothing is a ``RefNotFound``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
 
-from meridian.lib.core.refs import SELECTORS, Ref, RefNotFound, parse_ref
+from meridian.lib.core.caller import same_runtime_root
+from meridian.lib.core.refs import (
+    SELECTORS,
+    Ref,
+    RefAmbiguous,
+    RefNotFound,
+    parse_ref,
+    project_is_named,
+)
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
@@ -31,17 +43,24 @@ from meridian.lib.state.history_index import (
     HistoryIndexIncomplete,
     indexed_spawn_scan,
 )
+from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 
 
 @dataclass(frozen=True)
 class SpawnHit:
-    """A spawn ref or selector: the spawn it names."""
+    """A spawn ref or selector: the spawn it names.
+
+    ``project_root`` is where the project lives: the invoking project's for a hit in
+    its own runtime root, else the row's ``control_root``, which may be ``None`` or a
+    directory that no longer exists.
+    """
 
     ref: Ref
     runtime_root: Path
     spawn: SpawnRecord
+    project_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +74,8 @@ class ChatHit:
     chat: session_store.SessionRecord
     # Other chats recorded under the same native ID.
     also_bound: tuple[str, ...] = ()
+    # As ``SpawnHit.project_root``; for another root, from the spawn that owns the chat.
+    project_root: Path | None = None
 
 
 Located = SpawnHit | ChatHit
@@ -75,6 +96,42 @@ def _select_latest_spawn_id(runtime_root: Path, statuses: tuple[str, ...] | None
     return spawns[-1].id if spawns else None
 
 
+def _read_id(ref: Ref, root: Path) -> SpawnRecord | session_store.SessionRecord | None:
+    if ref.kind == "spawn":
+        return spawn_store.get_spawn(root, ref.value)
+    return session_store.chat_record(root, ref.value)
+
+
+def require_project_dir(project_root: Path | None, ref: str) -> Path:
+    """The directory of the project a located session belongs to, for a command that
+    must work in it. A row records where it was launched; the directory may be gone."""
+
+    if project_root is None or not project_root.is_dir():
+        where = f"'{project_root}', which no longer exists" if project_root else "unknown"
+        raise ValueError(
+            f"'{ref}' belongs to a project whose directory is {where}, "
+            "so this command can't act on it from here."
+        )
+    return project_root
+
+
+def _owner_project_root(hit: SpawnHit | ChatHit) -> Path | None:
+    """The project directory the row of ``hit`` was launched from."""
+
+    if isinstance(hit, SpawnHit):
+        row: SpawnRecord | None = hit.spawn
+    else:
+        owner = chat_spawn(hit)
+        row = spawn_store.get_spawn(hit.runtime_root, owner) if owner is not None else None
+    return Path(row.control_root) if row is not None and row.control_root else None
+
+
+def _hit(ref: Ref, root: Path, found: SpawnRecord | session_store.SessionRecord) -> Located:
+    if isinstance(found, SpawnRecord):
+        return SpawnHit(ref, root, found)
+    return ChatHit(ref, root, found)
+
+
 def locate(
     project_root: Path,
     ref: str,
@@ -82,15 +139,44 @@ def locate(
     runtime_root: Path | None = None,
     harness: str | None = None,
 ) -> Located | Untracked:
-    """Find what ``ref`` names. ``harness`` narrows a native ID that two harnesses share."""
+    """Find what ``ref`` names. ``harness`` narrows a native ID that two harnesses share.
+
+    Raises ``RefAmbiguous`` when a claimed ID also names an unclaimed row in the current
+    project and the user did not name a project with ``-C``.
+    """
 
     parsed = parse_ref(ref)
-    root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if root is None:
+    own = runtime_root or resolve_runtime_root_for_read(project_root)
+    claimed = claim_root(parsed.value) if parsed.kind in ("spawn", "chat") else None
+    if claimed is not None and (own is None or not same_runtime_root(claimed, own)):
+        found = _read_id(parsed, claimed)
+        here = _read_id(parsed, own) if own is not None else None
+        if own is not None and here is not None and (found is None or project_is_named()):
+            return replace(_hit(parsed, own, here), project_root=project_root)
+        if found is None:
+            raise RefNotFound(parsed.value, parsed.kind, claimed_root=claimed)
+        hit = _hit(parsed, claimed, found)
+        hit = replace(hit, project_root=_owner_project_root(hit))
+        if here is not None:
+            raise RefAmbiguous(parsed.value, str(project_root), str(hit.project_root or claimed))
+        return hit
+    if own is None:
         if parsed.kind == "native":
             return Untracked(parsed.value)
-        raise RefNotFound(parsed.value, parsed.kind)
+        raise RefNotFound(parsed.value, parsed.kind, legacy=_is_legacy(parsed, claimed))
+    located = _locate_in(parsed, own, harness=harness, legacy=_is_legacy(parsed, claimed))
+    if isinstance(located, Untracked):
+        return located
+    return replace(located, project_root=project_root)
 
+
+def _is_legacy(ref: Ref, claimed: Path | None) -> bool:
+    return ref.kind in ("spawn", "chat") and claimed is None
+
+
+def _locate_in(
+    parsed: Ref, root: Path, *, harness: str | None, legacy: bool
+) -> Located | Untracked:
     match parsed.kind:
         case "selector":
             spawn_id = _select_latest_spawn_id(root, SELECTORS[parsed.value])
@@ -98,16 +184,11 @@ def locate(
             if spawn is None:
                 raise RefNotFound(parsed.value, "selector")
             return SpawnHit(parsed, root, spawn)
-        case "spawn":
-            spawn = spawn_store.get_spawn(root, parsed.value)
-            if spawn is None:
-                raise RefNotFound(parsed.value, "spawn")
-            return SpawnHit(parsed, root, spawn)
-        case "chat":
-            chat = session_store.chat_record(root, parsed.value)
-            if chat is None:
-                raise RefNotFound(parsed.value, "chat")
-            return ChatHit(parsed, root, chat)
+        case "spawn" | "chat":
+            found = _read_id(parsed, root)
+            if found is None:
+                raise RefNotFound(parsed.value, parsed.kind, legacy=legacy)
+            return _hit(parsed, root, found)
         case "native":
             generations = session_store.native_generations(root, parsed.value, harness=harness)
             if not generations:
@@ -130,7 +211,12 @@ def chat_spawn(hit: ChatHit) -> SpawnId | None:
 
 
 class RunTarget(NamedTuple):
+    """The spawn a command acts on, with where it lives: a bare spawn ID is not enough once
+    IDs reach other projects. ``project_root`` is as ``SpawnHit.project_root``."""
+
     spawn_id: SpawnId
+    runtime_root: Path
+    project_root: Path | None
     # Set when the reference named a chat (or a native session in one).
     chat_id: str | None = None
     # The spawn is live in ``chat_id`` now, rather than merely having run it.
@@ -149,7 +235,7 @@ def locate_run(project_root: Path, ref: str, *, runtime_root: Path | None = None
     if isinstance(located, Untracked):
         raise RefNotFound(located.native_id, "native")
     if isinstance(located, SpawnHit):
-        return RunTarget(SpawnId(located.spawn.id))
+        return RunTarget(SpawnId(located.spawn.id), located.runtime_root, located.project_root)
     chat_id = located.chat.chat_id
     # Only running rows can hold a chat, so read the index for those, never every
     # spawn's state file. Following a native /resume is best effort: when the index
@@ -162,23 +248,28 @@ def locate_run(project_root: Path, ref: str, *, runtime_root: Path | None = None
         located.runtime_root, chat_id, records=running
     )
     if occupant is not None:
-        return RunTarget(SpawnId(occupant), chat_id, True)
+        return RunTarget(
+            SpawnId(occupant), located.runtime_root, located.project_root, chat_id, True
+        )
     owner = chat_spawn(located)
     if owner is None:
         raise ValueError(f"Chat {chat_id} has no spawn")
-    return RunTarget(owner, chat_id)
+    return RunTarget(owner, located.runtime_root, located.project_root, chat_id)
 
 
-def resolve_spawn_target(project_root: Path, ref: str, *, runtime_root: Path | None = None) -> str:
-
-    return str(locate_run(project_root, ref, runtime_root=runtime_root).spawn_id)
+def resolve_spawn_target(
+    project_root: Path, ref: str, *, runtime_root: Path | None = None
+) -> RunTarget:
+    return locate_run(project_root, ref, runtime_root=runtime_root)
 
 
 def resolve_spawn_targets(
     project_root: Path, refs: tuple[str, ...], *, runtime_root: Path | None = None
-) -> tuple[str, ...]:
+) -> tuple[RunTarget, ...]:
+    """Each reference's target once, in order; targets may sit in different projects."""
+
     targets = (resolve_spawn_target(project_root, ref, runtime_root=runtime_root) for ref in refs)
-    return tuple(dict.fromkeys(targets))
+    return tuple({(target.runtime_root, target.spawn_id): target for target in targets}.values())
 
 
 __all__ = [
@@ -190,6 +281,7 @@ __all__ = [
     "chat_spawn",
     "locate",
     "locate_run",
+    "require_project_dir",
     "resolve_spawn_target",
     "resolve_spawn_targets",
 ]

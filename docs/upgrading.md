@@ -3,13 +3,31 @@
 ## Spawn and chat IDs are unique on the machine
 
 New in this release. Meridian now issues `pN` and `cN` from one list kept in
-`~/.meridian/machine/ids/` instead of one counter per project.
+`~/.meridian/machine/ids/` instead of one counter per project, so a new ID names the same
+session from any directory.
 
+- **A new ID needs no `-C`.** `meridian spawn show p21007`, `session log c20417`,
+  `spawn wait`, `spawn cancel` and the rest find the session's project themselves. `-C` still
+  works, and names the project where an ID is looked up only if that project holds the ID
+  itself.
+- **Old IDs count per project, as before.** An ID issued by an earlier build has no entry in
+  the list: it means something only inside its own project, and from another project you name
+  it with `-C`. Its "not found" says that it was issued before machine-wide IDs. The old
+  numbers are not renumbered, so `p41` can still exist in several projects.
+- **An ID held in two places is refused.** If a claimed ID is also a row of the project you
+  are in (an older build outran its room, below), the command stops and asks for `-C`
+  instead of acting on a session you may not mean.
+- **Across projects, commands are what `-C` made them.** Nothing is recorded for the caller in
+  another project: no observation, wait pin or owed result, because the caller's ID means
+  nothing there. `spawn --continue` and `meridian --continue` of a session in another project
+  re-run themselves under `-C <that project>`: the session continues in its own project with
+  no parent, and the depth guard still counts. `-C` naming another project is an error, and
+  so is a project directory that is gone. `--from` reads the source in its project and starts
+  in yours. `--fork` and `--fork-fresh` across projects are refused; run the fork there.
+  Hooks of the other project run without your session's chat, spawn and work variables.
 - **IDs jump.** The first new ID is above every ID your projects have used, rounded up to
   the next thousand plus one thousand: on a machine whose highest spawn is `p19220` the next
   one is `p21000`. IDs stop being consecutive within a project; they still rise with time.
-- **Old IDs keep their numbers** and mean something only inside their own project, as
-  before: from another project, name it with `-C`.
 - **Restart sessions started before 0.28, and above all before 0.27.11.** A session still
   running older code keeps allocating from its project's old counter, so its IDs are legacy
   IDs: right inside the project, with no claim, so nothing outside it finds them. Until
@@ -27,6 +45,13 @@ New in this release. Meridian now issues `pN` and `cN` from one list kept in
   the room left above that project's counter: at least 1,000 in any project, 1,779 in the
   busiest on the machine this was tested on. A new ID is findable by bare ID only inside
   its own project, as before, and the ordering caveat above applies until old sessions end.
+- **`meridian spawn list --global`** lists the running sessions of every project on the
+  machine, each with its `project_root`. `--all`, `--status`, `--view`, `--failed` and
+  `--work` are refused with it: history across projects is `session search --global`.
+- **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
+  additive JSON fields and are present without `--global`. `machine` is this machine's name,
+  kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is
+  `null` if the file can't be created.
 
 ## `meridian agy` prints an Antigravity launch
 

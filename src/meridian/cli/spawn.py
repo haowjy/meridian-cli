@@ -28,6 +28,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
+from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
@@ -899,6 +900,16 @@ def _spawn_list(
         bool,
         Parameter(name="--failed", help="Shortcut for status=failed."),
     ] = False,
+    all_projects: Annotated[
+        bool,
+        Parameter(
+            name="--global",
+            help=(
+                "List running sessions in every project on this machine, with each row's "
+                "project. Takes no --all, --status, --view or --work."
+            ),
+        ),
+    ] = False,
 ) -> None:
     normalized_status: SpawnStatus | None = None
     normalized_statuses: tuple[SpawnStatus, ...] | None = None
@@ -941,6 +952,7 @@ def _spawn_list(
             work=work,
             limit=limit,
             failed=False,
+            all_projects=all_projects,
         ),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
@@ -1284,7 +1296,7 @@ def _spawn_ack(
         Parameter(name="spawn_id", show=False),
     ],
 ) -> None:
-    if get_global_options().directory_explicit and not os.environ.get("MERIDIAN_SPAWN_ID"):
+    if get_global_options().directory_explicit and caller_spawn_id() is None:
         raise ValueError("Spawn acknowledgement must run in the caller's project")
     result = ack_owed_sync(
         SpawnAckInput(spawn_ids=spawn_ids),
@@ -1449,8 +1461,8 @@ def _spawn_message(
         Parameter(
             show_default=False,
             help=(
-                f"Required. Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
-                "use `-C <repo>` for a session elsewhere."
+                f"Required. Session to message: {_MESSAGE_REF_FORMS}. A new ID works from "
+                "any directory; one issued before machine-wide IDs needs `-C <repo>`."
             ),
         ),
     ] = "",
@@ -1552,8 +1564,9 @@ def register_spawn_commands(app: App) -> None:
         name="message",
         help=(
             "Send a message into a running spawn or another live session: a subagent "
-            "you launched, or a peer primary session, by spawn ID or chat ID; "
-            "`-C <repo>` reaches a session in another project. The receiver sees who "
+            "you launched, or a peer primary session, by spawn ID or chat ID, from any "
+            "directory (`-C <repo>` names the project of an ID issued before machine-wide "
+            "IDs). The receiver sees who "
             "sent it and how to reply. Don't use it to nudge your own running "
             "subagents to hurry or check in."
         ),

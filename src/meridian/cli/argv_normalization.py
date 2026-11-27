@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from meridian.lib.core.caller import caller_spawn_id
+from meridian.lib.core.types import SpawnId
 
 SELF_FORK_REF_SENTINEL = "__SELF__"
 SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})
@@ -114,6 +116,19 @@ def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:
     return normalized
 
 
+def _caller_set_aside() -> SpawnId | None:
+    """The caller ``-C`` took out of the environment, when its ID means the same thing in
+    the project ``-C`` names: a claimed one. A legacy ID would name another session there."""
+
+    from meridian.cli.invocation import get_global_options
+    from meridian.lib.state.machine_ids import claim_root
+
+    caller = get_global_options().caller
+    if caller is None or claim_root(caller.spawn_id) is None:
+        return None
+    return SpawnId(caller.spawn_id)
+
+
 def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> str | None:
     """Resolve normalized optional-value flag values from environment."""
 
@@ -125,8 +140,8 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
     if normalized != SELF_FORK_REF_SENTINEL:
         return normalized
 
-    spawn_id = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
-    if not spawn_id:
+    spawn_id = caller_spawn_id() or (_caller_set_aside() if flag_name == "--from" else None)
+    if spawn_id is None:
         if flag_name == "--fork":
             raise ValueError(FORK_INFERENCE_ERROR)
         if flag_name == "--from":
@@ -135,7 +150,7 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
             f"Cannot infer {flag_name} target: not inside a Meridian-managed session. "
             f"Pass {flag_name} REF explicitly."
         )
-    return spawn_id
+    return str(spawn_id)
 
 
 def validate_fork_mode(

@@ -7,6 +7,7 @@ from pathlib import Path
 from meridian.dev.lints import (
     CONTEXT_ENV_ALLOWLIST,
     RAW_WRITE_ALLOWLIST,
+    caller_env_read_violations,
     chat_lock_path_violations,
     context_env_read_violations,
     harness_idle_import_violations,
@@ -83,8 +84,22 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         'e = overrides["MERIDIAN_ACTIVE_WORK_ID"] = 1\n'
         "f = os.environ.get(context_env_key(name))\n",
     )
+    plant(
+        "meridian/core/caller_env.py",
+        'a = os.environ.get("MERIDIAN_SPAWN_ID", "")\n'
+        'b = os.environ["MERIDIAN_SPAWN_ID"]\n'
+        'c = os.getenv("MERIDIAN_SPAWN_ID")\n'
+        'd = os.environ.get("MERIDIAN_CHAT_ID")\n'
+        'e = env.get("MERIDIAN_SPAWN_ID")\n',
+    )
+    plant("meridian/lib/core/caller.py", 'a = os.environ.get("MERIDIAN_SPAWN_ID", "")\n')
     sources = read_sources(tmp_path)
 
+    assert [(v.path, v.line) for v in caller_env_read_violations(sources)] == [
+        ("meridian/core/caller_env.py", 1),
+        ("meridian/core/caller_env.py", 2),
+        ("meridian/core/caller_env.py", 3),
+    ]
     assert {v.path for v in raw_write_violations(sources)} == {
         "meridian/core/raw.py",
         "meridian/core/dump.py",
