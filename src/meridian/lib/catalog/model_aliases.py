@@ -10,7 +10,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.catalog.mars_cli import resolve_mars_executable
+from meridian.lib.catalog.mars_cli import mars_location, resolve_mars_executable
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 
@@ -250,12 +250,12 @@ def _run_mars_model_inventory(
     mars_bin = _resolve_mars_binary()
     if mars_bin is None:
         return None
-    project = resolve_project_root_resolution(project_root).project_root
+    location = mars_location(project_root)
     try:
         # Cold models.dev refresh can take ~45s; leave headroom, as resolve does.
         result = subprocess.run(
-            [mars_bin, "models", *arguments],
-            cwd=project,
+            location.command(mars_bin, "models", *arguments),
+            cwd=location.cwd,
             capture_output=True,
             text=True,
             timeout=60,
@@ -369,14 +369,14 @@ def run_mars_models_resolve(
             "Mars binary not found. Mars is required for model resolution. "
             "Run 'meridian doctor' to diagnose."
         )
-    project = resolve_project_root_resolution(project_root).project_root
-    cmd = [mars_bin, "models", "resolve", name, "--json"]
+    location = mars_location(project_root)
+    cmd = location.command(mars_bin, "models", "resolve", name, "--json")
     try:
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
         # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
         # Use the same timeout as run_mars_models_aliases since both paths can refresh.
-        result = subprocess.run(cmd, cwd=project, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, cwd=location.cwd, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Mars binary not found. Mars is required for model resolution. "

@@ -14,12 +14,12 @@ from typing import TextIO
 from meridian import __version__
 from meridian.lib.catalog.mars_cli import (
     MARS_UPGRADE_HINT,
+    is_project_not_found,
     mars_content_args,
-    parse_mars_root,
+    mars_location,
     provided_sync_args,
     resolve_mars_executable,
 )
-from meridian.lib.config.project_root import resolve_project_root_resolution
 
 # Mars creates a project for these when none encloses the directory; Meridian refuses instead.
 # Every other write with no project fails in Mars, with its own message.
@@ -34,10 +34,10 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
-    # Where Mars runs: it chooses the root from there, as it would for the user.
+    # The caller's working directory, where a relative path they typed resolves.
     cwd: Path
     user_scope: bool = False
-    # Root-selection flags the user typed (``--root X``), forwarded to the project probe.
+    # Where Mars's walk-up starts (``--root X``, typed or Meridian's project), for the probe.
     root_args: tuple[str, ...] = ()
     needs_project: bool = False
 
@@ -83,12 +83,17 @@ def parse_mars_passthrough(
     """Build an executable Mars passthrough request without side effects.
 
     ``--user`` and ``--root`` are Mars's own flags and are forwarded as typed; otherwise Mars
-    chooses the root from the project directory.
+    runs in the working directory with Meridian's project as its walk-up start
+    (``mars_location``).
     """
 
     mars_args = list(args)
     user_scope = "--user" in mars_args
     root_args = _root_args(mars_args)
+    location = mars_location()
+    if not user_scope and not root_args:
+        root_args = location.root_args
+        mars_args = [*root_args, *mars_args]
     subcommand = _mars_subcommand(mars_args)
     wants_help = any(argument in {"-h", "--help"} for argument in mars_args)
 
@@ -107,7 +112,7 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        cwd=resolve_project_root_resolution(None).project_root,
+        cwd=location.cwd,
         user_scope=user_scope,
         root_args=root_args,
         needs_project=not user_scope and not wants_help and subcommand in _AUTO_INIT_COMMANDS,
@@ -133,18 +138,20 @@ def _refusal(
         if probe.returncode != 0:
             return f"the installed Mars does not accept --user. {MARS_UPGRADE_HINT}"
     if request.needs_project:
+        # `doctor` writes nothing and, like every command that is not a lookup, fails with
+        # `project_not_found` when no project encloses where Mars looks.
         probe = run(
-            [request.command[0], "agents", "list", "--json", *request.root_args],
+            [request.command[0], *request.root_args, "--json", "doctor"],
             cwd=request.cwd,
             check=False,
             capture_output=True,
             text=True,
         )
         try:
-            root = parse_mars_root(json.loads(probe.stdout))
+            payload: object = json.loads(probe.stdout)
         except ValueError:
-            root = None
-        if root is not None and root.kind == "user":
+            payload = None
+        if is_project_not_found(payload):
             return _USER_MUTATION_ERROR
     return None
 

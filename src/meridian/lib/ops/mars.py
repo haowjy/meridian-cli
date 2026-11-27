@@ -15,10 +15,10 @@ from meridian.lib.catalog.mars_cli import (
     MarsRoot,
     legacy_user_root,
     mars_content_args,
+    mars_location,
     parse_mars_root,
     resolve_mars_executable,
 )
-from meridian.lib.config.project_root import resolve_project_root_resolution
 
 _logger = logging.getLogger(__name__)
 
@@ -55,12 +55,6 @@ class MarsAgentEntry(BaseModel):
     fanout: bool = False
 
 
-def _mars_cwd(project_root: Path | None) -> Path:
-    """Where Mars runs, so it chooses the root as it would for the user there."""
-
-    return resolve_project_root_resolution(project_root).project_root
-
-
 def _is_head_constraint(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -80,10 +74,11 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     if executable is None:
         return None
 
+    location = mars_location(project_root)
     try:
         result = subprocess.run(
-            [executable, "outdated", "--json"],
-            cwd=_mars_cwd(project_root),
+            location.command(executable, "outdated", "--json"),
+            cwd=location.cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -173,11 +168,11 @@ def mars_resolve_agent(project_root: Path, name: str) -> Path:
     executable = resolve_mars_executable()
     if executable is None:
         raise ValueError("mars agents show failed: mars is not installed")
-    command = [executable, "agents", "show", name, "--json", *mars_content_args()]
+    location = mars_location(project_root)
     try:
         result = subprocess.run(
-            command,
-            cwd=_mars_cwd(project_root),
+            location.command(executable, "agents", "show", name, "--json", *mars_content_args()),
+            cwd=location.cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -225,10 +220,11 @@ def mars_agent_inventory(project_root: Path | None) -> MarsAgentInventory:
     executable = resolve_mars_executable()
     if executable is None:
         raise ValueError("mars agents list failed: mars is not installed")
+    location = mars_location(project_root)
     try:
         result = subprocess.run(
-            [executable, "agents", "list", "--json", *mars_content_args()],
-            cwd=_mars_cwd(project_root),
+            location.command(executable, "agents", "list", "--json", *mars_content_args()),
+            cwd=location.cwd,
             check=False,
             capture_output=True,
             text=True,

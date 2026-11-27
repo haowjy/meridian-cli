@@ -2,13 +2,17 @@
 
 ## Mars roots
 
-Mars chooses the root; Meridian never does. Every Mars call runs in the project directory
-(`resolve_project_root_resolution`: an explicit path, `MERIDIAN_PROJECT_DIR`, else the working
-directory) with no `--root` of Meridian's own, so a launch and `meridian mars …` typed there
-address the same root. Mars uses the nearest `mars.toml`, else the user level for a lookup; a
-write with no project fails in Mars. Where Meridian must know the root (`config show`,
-`context`, `doctor`, the bootstrap store, the passthrough's `add`/`link` gate), it reads the
-`root` of Mars's `--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`.
+Mars chooses the root; Meridian never does. Every Mars call, launch bundle and passthrough
+included, gets its place from `mars_location`: it runs in the caller's working directory, so a
+relative path the caller typed (`meridian mars add ./x`) means what they meant, and a project
+Meridian was told about (an explicit path or `MERIDIAN_PROJECT_DIR`) that the working directory
+is not inside goes as `--root`. For Mars `--root` is only where its walk-up starts: Mars still
+skips home and picks the nearest `mars.toml`, else the user level for a lookup, and resolves a
+relative path from the working directory when it exists there. Meridian does no walk-up of its
+own. A write with no project fails in Mars with `project_not_found` (`is_project_not_found`;
+the passthrough's `add`/`link` gate keys on it). Where Meridian must know the root
+(`config show`, `context`, `doctor`, the bootstrap store), it reads the `root` of Mars's
+`--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`.
 Meridian reads installed files only where Mars points (an agent's `source_path`, the store
 `root` names; a project's store is its documented `.mars/`), and never Mars's state files
 (`native-agents.json`, `models-merged.json`, locks): ask Mars instead. The user level's location

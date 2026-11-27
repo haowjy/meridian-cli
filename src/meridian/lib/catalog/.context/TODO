@@ -6,3 +6,5 @@
   and the deprecated JSON fields `mars_fallback` (`config show`, `context`), `mars_user_root`
   (`context`) and `mars_roots` (`doctor`); `mars` replaces them. Mars drops `--fallback-root`
   in the same release. `has_project_marker` (`config/project_root.py`) stops excluding it.
+- Once the Mars that reports `project_not_found` is the minimum (`MARS_MIN_VERSION`), drop
+  the `invalid_config` + "no mars.toml found from" match in `is_project_not_found`.

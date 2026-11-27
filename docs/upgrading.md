@@ -4,8 +4,9 @@
 
 This release needs Mars 0.41.0, which adds a user level: your own packages live in
 `~/.config/mars/mars.toml` (store in `~/.local/share/mars/`; `MARS_CONFIG_DIR`,
-`MARS_DATA_DIR` and the XDG variables move them). Mars now chooses the root itself and Meridian
-passes none: the nearest project `mars.toml`, else the user level for a lookup. Your home
+`MARS_DATA_DIR` and the XDG variables move them). Mars now chooses the root itself: Meridian runs
+it in your working directory and names its project only as where Mars's walk-up starts. Mars
+takes the nearest project `mars.toml`, else the user level for a lookup. Your home
 directory's `mars.toml` is never a project any more; Mars warns where it finds one and its
 [guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project)
 says how to move it.

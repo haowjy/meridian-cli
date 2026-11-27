@@ -1,9 +1,10 @@
-"""How Meridian calls Mars: which binary, and what it adds to a lookup or a sync.
+"""How Meridian calls Mars: which binary, where it runs, and what it adds to a lookup or a sync.
 
-Mars chooses the root: Meridian runs it in the command's directory and passes no ``--root`` of
-its own. Mars uses the nearest project, else the user level for a lookup; a write with no
-project fails with Mars's own message. Every ``--json`` object Mars prints says which root it
-used (``MarsRoot``).
+Mars chooses the root. Meridian runs it in the caller's working directory, so a relative path
+the caller typed means what they meant, and names Meridian's project only as where Mars's
+walk-up starts (``mars_location``). Mars uses the nearest project, else the user level for a
+lookup; a write with no project fails with ``project_not_found``. Every ``--json`` object Mars
+prints says which root it used (``MarsRoot``).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 import meridian
 from meridian import __version__
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.platform.python_module import installed_executable
 from meridian.lib.state.user_paths import get_user_home
 
@@ -30,6 +32,53 @@ MARS_UPGRADE_HINT = (
     f"Meridian requires mars >= {MARS_MIN_VERSION}. Upgrade Meridian (for uv tools: "
     "uv tool upgrade meridian-cli); Meridian prefers its bundled Mars over PATH."
 )
+
+
+@dataclass(frozen=True)
+class MarsLocation:
+    """Where a Mars command runs, and the ``--root`` that starts its walk-up, if any."""
+
+    cwd: Path
+    root_args: tuple[str, ...] = ()
+
+    def command(self, executable: str, *args: str) -> list[str]:
+        return [executable, *self.root_args, *args]
+
+
+def mars_location(project_root: Path | None = None) -> MarsLocation:
+    """Run Mars in the working directory; start its walk-up at Meridian's project when named.
+
+    A project named by the caller or ``MERIDIAN_PROJECT_DIR`` that the working directory is not
+    inside (an agent in a worktree) becomes ``--root``, which Mars treats only as the start of
+    its walk-up: Mars still skips home and chooses the root. A relative path Mars reads resolves
+    from the working directory when it exists there.
+    """
+
+    resolution = resolve_project_root_resolution(project_root)
+    cwd = resolution.execution_cwd
+    if resolution.source == "cwd" or cwd.is_relative_to(resolution.project_root):
+        return MarsLocation(cwd=cwd)
+    return MarsLocation(cwd=cwd, root_args=("--root", resolution.project_root.as_posix()))
+
+
+def is_project_not_found(payload: object) -> bool:
+    """Whether a Mars ``--json`` error says no project encloses where it looked."""
+
+    if not isinstance(payload, dict):
+        return False
+    error = cast("dict[str, object]", payload).get("error")
+    if not isinstance(error, dict):
+        return False
+    row = cast("dict[str, object]", error)
+    if row.get("code") == "project_not_found":
+        return True
+    # Mars before its distinct code reports the same error as `invalid_config`.
+    message = row.get("message")
+    return (
+        row.get("code") == "invalid_config"
+        and isinstance(message, str)
+        and "no mars.toml found from " in message
+    )
 
 
 class MarsRoot(BaseModel):
@@ -189,9 +238,12 @@ __all__ = [
     "MARS_UPGRADE_HINT",
     "LegacyUserRoot",
     "MarsAgentNotFoundError",
+    "MarsLocation",
     "MarsRoot",
+    "is_project_not_found",
     "legacy_user_root",
     "mars_content_args",
+    "mars_location",
     "parse_mars_root",
     "provided_dir",
     "provided_sync_args",

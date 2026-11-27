@@ -925,8 +925,9 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars doctor` | Check for drift and integrity issues |
 
 `meridian mars --user <command>` runs a command against your Mars user level (forwarded as
-`mars --user`; needs Mars 0.41.0 or newer). Without `--user` or `--root`, Mars chooses the root
-from the project directory: the nearest `mars.toml`, and for lookups the user level when there is
+`mars --user`; needs Mars 0.41.0 or newer). Without `--user` or `--root`, Mars runs in the
+working directory and chooses the root from Meridian's project (as `--root` when the working
+directory is outside it): the nearest `mars.toml`, and for lookups the user level when there is
 none. See [Mars configuration](configuration/mars.md#user-packages-and-bare-directories).
 
 Mars also has `adopt`, `override`, `rename`, `resolve`, `outdated`, `why`, `cache`,

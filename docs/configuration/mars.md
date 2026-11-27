@@ -19,9 +19,11 @@ meridian mars --user sync
 `meridian mars --user …` forwards `mars --user …`; it needs Mars 0.41.0 or newer, and
 Meridian says so before forwarding when the Mars it runs is older.
 
-Mars chooses the root, not Meridian. Meridian runs Mars in the project directory
-(`MERIDIAN_PROJECT_DIR`, else the working directory) and passes no `--root` of its own; a
-`--root` you type is forwarded. Lookups (launches, `mars agents`, `mars skills`, `mars models`)
+Mars chooses the root, not Meridian. Meridian runs Mars in your working directory, so a
+relative path you type resolves from there. When Meridian's project (`-C` or
+`MERIDIAN_PROJECT_DIR`) does not contain the working directory, for example an agent in a
+worktree, Meridian passes it as `--root`, which only starts Mars's walk-up; a `--root` or
+`--user` you type is forwarded instead. Lookups (launches, `mars agents`, `mars skills`, `mars models`)
 use the nearest project `mars.toml`, and the user level when there is none. The user level has
 no `targets`, so it permits every harness. Your home directory's `mars.toml` is never a project.
 
@@ -32,8 +34,8 @@ packages wins. Model aliases and routing config come from the project's Mars con
 `mars` (`kind`, `path`, and for the user level `config_dir` and `store_dir`).
 
 Writes without `--user` need a project. `meridian mars add` and `link` would create one where
-there is none, so Meridian refuses them there; every other write Mars refuses itself, with a
-message naming `--user`. `meridian mars init` is the explicit way to start a project: it writes
+there is none, so Meridian refuses them when Mars reports `project_not_found` there; every
+other write Mars refuses itself, with a message naming `--user`. `meridian mars init` is the explicit way to start a project: it writes
 only `mars.toml`; the next Meridian runtime write mints the committed `[project] id` in
 `meridian.toml`.
 

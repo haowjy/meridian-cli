@@ -28,7 +28,9 @@ from meridian.lib.catalog.mars_cli import (
     MARS_AGENT_NOT_FOUND_CODES,
     MARS_MIN_VERSION,
     MarsAgentNotFoundError,
+    MarsLocation,
     mars_content_args,
+    mars_location,
     resolve_mars_executable,
 )
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
@@ -367,7 +369,7 @@ def _parse_harness_id(
     return harness_id
 
 
-def _build_bundle_command(request: BundleRequest) -> list[str]:
+def _build_bundle_command(request: BundleRequest, location: MarsLocation) -> list[str]:
     mars_binary = _resolve_mars_binary()
     if mars_binary is None:
         raise RuntimeError(
@@ -375,7 +377,9 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
             f"{MARS_MIN_VERSION}, but no mars binary was found."
         )
 
-    command = [mars_binary, "build", "launch-bundle", "--json", *mars_content_args()]
+    command = location.command(
+        mars_binary, "build", "launch-bundle", "--json", *mars_content_args()
+    )
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -715,12 +719,12 @@ def request_and_resolve(
     harness_registry: HarnessRegistry,
 ) -> BundleResult:
 
-    command = _build_bundle_command(request)
+    location = mars_location(request.project_root)
+    command = _build_bundle_command(request, location)
     try:
-        # Mars chooses the root from where it runs: the nearest project, else the user level.
         result = subprocess.run(
             command,
-            cwd=request.project_root,
+            cwd=location.cwd,
             input=_agent_tool_rules_json(request.agent_tool_rules),
             capture_output=True,
             text=True,
