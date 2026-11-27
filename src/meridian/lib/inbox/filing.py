@@ -112,7 +112,9 @@ def _build(caller: InboxCaller, text: str, options: FilingOptions) -> Message:
             f"`<machine>/<id>` or an @person), {SAFE_FIELD_RULE}",
             kind="usage",
         )
-    if reply_to is None and caller.chat_id is not None:
+    if reply_to is None and caller.machine is not None:
+        reply_to = caller.reply_to
+    elif reply_to is None and caller.chat_id is not None:
         reply_to = f"{sender.machine}/{caller.chat_id}" if sender.machine else caller.chat_id
     if not caller.is_terminal:
         sender = sender.model_copy(update={"project": project, "agent": caller.agent})

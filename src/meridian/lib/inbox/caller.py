@@ -17,7 +17,7 @@ from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_fi
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.machines.caller import MachineCaller, is_machine_call, machine_call_caller
-from meridian.lib.message.reply import saved_machine_by_id
+from meridian.lib.message.reply import saved_machine_by_id, way_back
 from meridian.lib.state import spawn_store
 from meridian.lib.state.machine_identity import MachineIdentity
 from meridian.lib.state.machine_ids import claim_root
@@ -48,6 +48,10 @@ class InboxCaller:
     for a caller on this machine."""
     machine_id: str | None = None
     """That machine's ID, from its request."""
+    reply_to: str | None = None
+    """The address that answers a session on another machine from here, when there is one."""
+    runtime_root: Path | None = None
+    """Where a session of this machine has its record."""
 
     @property
     def is_terminal(self) -> bool:
@@ -126,12 +130,16 @@ def _from_machine(caller: MachineCaller | None) -> InboxCaller:
             f"is {PROJECT_ID_RULE}. Nothing was changed.",
             kind="refused",
         )
+    # A message's reply address is one word, so a way back that needs `-C` (an ID from
+    # before machine-wide IDs) is none here.
+    tokens = way_back(caller, saved) or []
     return InboxCaller(
         spawn_id=caller.spawn_id,
         chat_id=caller.reply_id or caller.spawn_id,
         project=project,
         machine=machine,
         machine_id=caller.machine_id,
+        reply_to=tokens[0] if len(tokens) == 1 else None,
     )
 
 
@@ -161,6 +169,7 @@ def resolve_caller(spawn_id: str | None, project_root: Path | None) -> InboxCall
                 project=project_of_root(root),
                 # A label only, so a name the inbox can't store is left out, not refused.
                 agent=record.agent if is_safe_field(record.agent or "") else None,
+                runtime_root=root,
             )
     raise InboxError(
         f"this command runs as session {spawn_id} (MERIDIAN_SPAWN_ID), which has no record "

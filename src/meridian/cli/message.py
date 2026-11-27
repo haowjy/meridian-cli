@@ -31,7 +31,7 @@ from meridian.lib.core.process_start import starting_cwd, starting_env
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound, is_chat_id, is_spawn_id
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
-from meridian.lib.inbox.caller import resolve_caller
+from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.filing import FilingOptions, file_from_command
 from meridian.lib.inbox.store import MESSAGE_ID, InboxError
 from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, call_machine
@@ -410,32 +410,47 @@ async def _send_to_session(
         return may_have_arrived(f"no usable answer from spawn {spawn_id} ({exc})")
 
 
+def inbox_caller_block(caller: InboxCaller) -> dict[str, object]:
+    """The caller block for an inbox command, from the caller whose role and project this
+    side checked: the other machine believes the block, so it must name the same session."""
+
+    if caller.spawn_id is None or caller.runtime_root is None:
+        return base_caller()
+    return session_caller_block(caller.spawn_id, caller.runtime_root)
+
+
 def machine_caller_block() -> dict[str, object]:
-    """What the receiving machine's frame needs about the sender, which is a file on this one.
+    """The caller block for the session this command runs in, or for a terminal."""
+
+    identity = caller_identity()
+    if identity is None:
+        return base_caller()
+    return session_caller_block(str(identity.spawn_id), identity.runtime_root)
+
+
+def session_caller_block(spawn_id: str, runtime_root: Path) -> dict[str, object]:
+    """What the receiving machine needs about a calling session, which is a file on this one.
+    *runtime_root* is where its record is.
 
     ``reply_id`` is the sender's current chat, else its spawn (not the environment: after a
-    ``/clear`` the entry chat is a past session). Everything past the machine is absent when
-    the caller is a person at a terminal.
+    ``/clear`` the entry chat is a past session).
     """
 
     block = base_caller()
-    identity = caller_identity()
-    if identity is None:
-        return block
-    record = read_derived(identity.runtime_root, identity.spawn_id)
-    reply_id = (record.continue_chat_id or record.id) if record is not None else identity.spawn_id
+    record = read_derived(runtime_root, spawn_id)
+    reply_id = (record.continue_chat_id or record.id) if record is not None else spawn_id
     block.update(
         {
-            "spawn_id": str(identity.spawn_id),
+            "spawn_id": spawn_id,
             "reply_id": reply_id,
             "claimed": claim_root(reply_id) is not None,
-            "can_reply": record is not None and _can_receive_reply(record, identity.runtime_root),
+            "can_reply": record is not None and _can_receive_reply(record, runtime_root),
         }
     )
     project_root = caller_project_root()
     if project_root is not None:
         block["project_root"] = project_root.as_posix()
-    project_id = runtime_root_project_id(identity.runtime_root)
+    project_id = runtime_root_project_id(runtime_root)
     if project_id is not None:
         block["project_id"] = project_id
     return block
@@ -600,7 +615,7 @@ async def send_message(
                     )
                 # Who may file is settled here, as for a message filed here: a session
                 # with no record or no usable project is refused before anything connects.
-                resolve_caller(sender_spawn_id, sender_project_root)
+                filer = resolve_caller(sender_spawn_id, sender_project_root)
             except InboxError as exc:
                 return Failed(exc.kind, str(exc), receiver)
             except PermissionError:
@@ -613,7 +628,7 @@ async def send_message(
                 filing.argv(),
                 text,
                 receiver,
-                caller=machine_caller_block(),
+                caller=inbox_caller_block(filer),
                 remote_directory=remote_directory,
             )
         if filing is not None and filing.given():
@@ -714,6 +729,7 @@ __all__ = [
     "MESSAGE_WAKE_HELP",
     "cmd_message",
     "framed_message",
+    "inbox_caller_block",
     "machine_caller_block",
     "run_message",
     "send_message",

@@ -136,36 +136,80 @@ def forward_if_remote(
         label=target.name,
     )
 
-    def unanswered(why: str) -> Never:
+    failure = _failure(result, target.name, limit, may_have)
+    if failure is not None:
+        fail(target.name, *failure)
+    assert isinstance(result, Answered)
+    if result.exit != 0 and options.output.format == "json":
+        # A newer build's kind says nothing about whether the command acted.
+        kind, text = _error(result, "failed" if may_have is None else "maybe_delivered")
+        fail(target.name, kind, text)
+    sys.stdout.write(result.stdout)
+    sys.stdout.flush()
+    sys.stderr.write(result.stderr)
+    raise SystemExit(result.exit)
+
+
+def ask_machine(target: SavedMachine, argv: Sequence[str]) -> dict[str, object]:
+    """The JSON object a read prints on another machine, for a command that needs a fact
+    from there to go on here. Nothing is changed there. Raises ``MachineError`` with the
+    kind the other side gave, when it gave one; its text is the other side's words, which
+    the caller makes fit to print."""
+
+    result = call_machine(
+        target.ssh,
+        [*argv, "--format", "json"],
+        None,
+        READ_LIMIT_SECONDS,
+        target.id,
+        caller=base_caller(),
+        label=target.name,
+    )
+    failure = _failure(result, target.name, READ_LIMIT_SECONDS, None)
+    if failure is not None:
+        raise MachineError(*failure)
+    assert isinstance(result, Answered)
+    command = f"`meridian {' '.join(argv)}` on {target.name}"
+    if result.exit != 0:
+        kind, text = _error(result, "failed")
+        raise MachineError(kind, f"{command} failed: {text[:300]}")
+    try:
+        answer = json_object(json.loads(result.stdout))
+    except ValueError:
+        answer = None
+    if answer is None:
+        raise MachineError("failed", f"{command} printed no JSON object")
+    return answer
+
+
+def _failure(
+    result: NotSent | Unanswered | Answered, name: str, limit: int, may_have: str | None
+) -> tuple[str, str] | None:
+    """Why a call gave no whole answer, as a kind and a text; ``None`` when the command ran
+    there and all it printed came back. *may_have* as for ``forward_if_remote``."""
+
+    def unanswered(why: str) -> tuple[str, str]:
         if may_have is None:
             # A read is safe to run again.
-            fail(target.name, "unreachable", why)
-        fail(target.name, "maybe_delivered", f"{why}; {may_have}. Run it again: a repeat is safe.")
+            return "unreachable", why
+        return "maybe_delivered", f"{why}; {may_have}. Run it again: a repeat is safe."
 
     match result:
         case NotSent(kind, text):
-            fail(target.name, kind, text)
+            return kind, text
         case Unanswered(text):
-            unanswered(f"{target.name} did not answer: {text}")
+            return unanswered(f"{name} did not answer: {text}")
         case Answered():
             if result.truncated and may_have is None:
-                fail(
-                    target.name,
+                return (
                     "too_large",
                     "the answer is over the size limit: narrow the read (`--tail`, `--limit`)",
                 )
             if result.truncated:
-                unanswered(f"the answer from {target.name} is over the size limit")
+                return unanswered(f"the answer from {name} is over the size limit")
             if result.timed_out:
-                unanswered(f"timed out after {limit} s on {target.name}")
-            if result.exit != 0 and options.output.format == "json":
-                # A newer build's kind says nothing about whether the command acted.
-                kind, text = _error(result, "failed" if may_have is None else "maybe_delivered")
-                fail(target.name, kind, text)
-            sys.stdout.write(result.stdout)
-            sys.stdout.flush()
-            sys.stderr.write(result.stderr)
-            raise SystemExit(result.exit)
+                return unanswered(f"timed out after {limit} s on {name}")
+            return None
 
 
 def _error(answer: Answered, unknown: str) -> tuple[str, str]:
@@ -199,6 +243,7 @@ def error_text(answer: Answered) -> str:
 
 
 __all__ = [
+    "ask_machine",
     "base_caller",
     "error_text",
     "fail",

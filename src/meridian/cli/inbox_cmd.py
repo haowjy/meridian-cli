@@ -13,24 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Final, Never
+from typing import Annotated, Final, Never, get_args
 
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import inbox_app
 from meridian.cli.invocation import get_global_options
-from meridian.cli.machine_forward import (
-    base_caller,
-    error_text,
-    forward_if_remote,
-    other_machine,
-)
+from meridian.cli.machine_forward import ask_machine, forward_if_remote, other_machine
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
-from meridian.lib.core.refs import is_spawn_id, parse_ref
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, visible
 from meridian.lib.inbox.filing import via_from_flags
@@ -46,14 +41,14 @@ from meridian.lib.inbox.store import (
     release,
     take,
 )
-from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, READ_LIMIT_SECONDS, call_machine
+from meridian.lib.machines.call import MESSAGE_LIMIT_SECONDS, READ_LIMIT_SECONDS
 from meridian.lib.machines.resolve import MachineError
-from meridian.lib.machines.results import Answered, NotSent, Unanswered
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, MessageResult, print_result
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_list, json_object
+from meridian.plugin_api.types import SpawnKind
 
 _ALL_HELP: Final = (
     "Include messages filed for other projects. A session sees its own project's messages "
@@ -124,14 +119,16 @@ def _require_changer(caller: InboxCaller, what: str) -> None:
         )
 
 
-def _cross(*, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS) -> None:
+def _cross(
+    caller: InboxCaller, *, may_have: str | None = None, limit: int = READ_LIMIT_SECONDS
+) -> None:
     """Run the command on the machine `--machine` names and exit with its answer; return
     when it runs here. Called once the caller's role has been checked: the request carries
     who is calling, not what it may do."""
 
-    from meridian.cli.message import machine_caller_block
+    from meridian.cli.message import inbox_caller_block
 
-    forward_if_remote(caller=machine_caller_block, limit=limit, may_have=may_have)
+    forward_if_remote(caller=lambda: inbox_caller_block(caller), limit=limit, may_have=may_have)
 
 
 def _require_visible(caller: InboxCaller, found: Entry, *, all_projects: bool) -> None:
@@ -279,7 +276,7 @@ def cmd_inbox_list(
     with _inbox_command() as caller:
         if all_projects:
             _require_changer(caller, "--all")
-        _cross()
+        _cross(caller)
         now = datetime.now(UTC)
         machine = machine_identity_or_none()
         here = resolve_project_root_resolution().project_root
@@ -306,7 +303,7 @@ def cmd_inbox_read(
     with _inbox_command() as caller:
         if all_projects:
             _require_changer(caller, "--all")
-        _cross()
+        _cross(caller)
         found = entry(message_id)
         _require_visible(caller, found, all_projects=all_projects)
         _print_message(found)
@@ -326,7 +323,7 @@ def cmd_inbox_take(
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox take`")
-        _cross(may_have=f"{message_id} may have been taken")
+        _cross(caller, may_have=f"{message_id} may have been taken")
         via = via_from_flags(via_program, None, via_sender)
         _require_visible(caller, entry(message_id), all_projects=all_projects)
         _print_message(
@@ -340,7 +337,7 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox release`")
-        _cross(may_have=f"{message_id} may have been released")
+        _cross(caller, may_have=f"{message_id} may have been released")
         released = release(message_id, caller.party(machine_identity_or_none()))
         _print(
             {"id": message_id},
@@ -354,46 +351,6 @@ def _now_to_the_second() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
 
-def _ask(machine: SavedMachine, argv: Sequence[str]) -> dict[str, object]:
-    """What a read on another machine prints under ``--format json``. Nothing is changed
-    there, so every failure is one after which nothing was sent."""
-
-    try:
-        block = base_caller()
-    except MachineError as exc:
-        raise InboxError(exc.text, kind=exc.kind) from exc
-    result = call_machine(
-        machine.ssh,
-        [*argv, "--format", "json"],
-        None,
-        READ_LIMIT_SECONDS,
-        machine.id,
-        caller=block,
-        label=machine.name,
-    )
-    match result:
-        case NotSent(kind, text):
-            raise InboxError(text, kind=kind)
-        case Unanswered(text):
-            raise InboxError(f"{machine.name} did not answer: {text}", kind="unreachable")
-        case Answered():
-            command = "meridian " + " ".join(argv)
-            try:
-                answer = json_object(json.loads(result.stdout)) if result.exit == 0 else None
-            except ValueError:
-                answer = None
-            if result.timed_out or result.truncated:
-                raise InboxError(
-                    f"`{command}` on {machine.name} gave no whole answer", kind="unreachable"
-                )
-            if answer is None:
-                raise InboxError(
-                    f"`{command}` on {machine.name} failed: {visible(error_text(result))[:300]}",
-                    kind="not_found" if result.exit != 0 else "failed",
-                )
-            return answer
-
-
 def _remote_target(machine: SavedMachine, session_id: str, message: Message) -> Target:
     """A session on another machine, from what that machine's own commands report.
 
@@ -402,24 +359,14 @@ def _remote_target(machine: SavedMachine, session_id: str, message: Message) -> 
     runs and whether it is cold is the other machine's `meridian message` to refuse.
     """
 
-    shown = _ask(machine, ["spawn", "show", session_id])
+    shown = ask_machine(machine, ["spawn", "show", session_id])
     kind, spawn_id = shown.get("kind"), shown.get("spawn_id")
     project: str | None = None
     if message.project is not None:
-        rows = json_list(_ask(machine, ["spawn", "list", "--global"]).get("spawns")) or []
-        row = (
-            next(
-                (
-                    fields
-                    for fields in map(json_object, rows)
-                    if fields and fields["spawn_id"] == spawn_id
-                ),
-                None,
-            )
-            if isinstance(spawn_id, str) and is_spawn_id(spawn_id)
-            else None
-        )
-        if row is None:
+        listed = ask_machine(machine, ["spawn", "list", "--global"])
+        rows = [row for row in map(json_object, json_list(listed.get("spawns")) or []) if row]
+        row = next((row for row in rows if row.get("spawn_id") == spawn_id), None)
+        if row is None or not isinstance(spawn_id, str):
             raise InboxError(
                 f"session {machine.name}/{session_id} is not running. Nothing was sent.",
                 kind="not_running",
@@ -429,7 +376,8 @@ def _remote_target(machine: SavedMachine, session_id: str, message: Message) -> 
             project = found
     return Target(
         address=f"{machine.name}/{session_id}",
-        kind=kind if isinstance(kind, str) else None,
+        # Another machine's answer: only a kind this build knows is kept, and printed.
+        kind=kind if isinstance(kind, str) and kind in get_args(SpawnKind) else None,
         project=project,
         machine=machine.name,
     )
@@ -477,15 +425,15 @@ def cmd_inbox_offer(
             away = other_machine(
                 [session], option_machine=None, directory_explicit=options.directory_explicit
             )
+            if away is None:
+                return local_target(session, resolve_project_root_resolution().project_root)
+            return _remote_target(away, parse_ref(session).value, message)
         except MachineError as exc:
-            raise InboxError(f"{exc.text}. Nothing was sent.", kind=exc.kind) from exc
-        if away is None:
-            return local_target(session, resolve_project_root_resolution().project_root)
-        return _remote_target(away, parse_ref(session).value, message)
+            raise InboxError(f"{visible(exc.text)}. Nothing was sent.", kind=exc.kind) from exc
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
-        _cross(may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
+        _cross(caller, may_have=f"{message_id} may have been offered", limit=MESSAGE_LIMIT_SECONDS)
         offered = offer(message_id, session, find=find, send=send, now=_now_to_the_second())
         receiver = offered.delivered.receiver
         to: dict[str, object] = {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id}
