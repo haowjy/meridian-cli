@@ -7,6 +7,7 @@ from pathlib import Path
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.idle.deadline import cache_deadline
+from meridian.lib.idle.delivery import end_stretch_on_delivery
 from meridian.lib.ops.spawn.models import SpawnIdle
 from meridian.lib.state.idle_store import IdleStore
 from meridian.lib.state.paths import LaunchPaths
@@ -51,9 +52,9 @@ def spawn_idle(row: SpawnRecord, session_id: str | None, activity: str | None) -
     )
 
 
-def row_idle(runtime_root: Path, row: SpawnRecord) -> SpawnIdle | None:
-    """``spawn_idle`` for a row, reading a primary's session and activity from its metadata
-    as ``spawn list`` does."""
+def row_session(runtime_root: Path, row: SpawnRecord) -> tuple[str | None, str | None]:
+    """The harness session of a row and its reported activity; a primary's come from its
+    metadata, as ``spawn list`` reads them."""
 
     session_id = row.harness_session_id
     activity: str | None = None
@@ -61,4 +62,19 @@ def row_idle(runtime_root: Path, row: SpawnRecord) -> SpawnIdle | None:
         metadata = read_primary_surface_metadata(LaunchPaths.for_row(runtime_root, row))
         activity = metadata.activity
         session_id = metadata.harness_session_id or session_id
+    return session_id, activity
+
+
+def row_idle(runtime_root: Path, row: SpawnRecord) -> SpawnIdle | None:
+    """``spawn_idle`` for a row."""
+
+    session_id, activity = row_session(runtime_root, row)
     return spawn_idle(row, session_id, activity)
+
+
+def end_row_idle_stretch(runtime_root: Path, row: SpawnRecord) -> None:
+    """A message was delivered to ``row``: its open idle stretch is over."""
+
+    session_id, _ = row_session(runtime_root, row)
+    if session_id and row.harness:
+        end_stretch_on_delivery(row.harness, session_id)
