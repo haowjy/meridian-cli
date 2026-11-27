@@ -340,7 +340,7 @@ the same program and ref filed twice is one inbox message, so a retried call is 
 the command; without it such a message has no project, whatever directory the command
 ran in. The values of `--reply-to`, `--via-program`, `--via-ref`, `--via-sender` and
 `--project-id` are each at most 200 characters from `A-Z a-z 0-9 . _ : / @ -`. A project
-ID may have several parts joined by `/` (`team/app`), none of them empty, `.` or `..`; a
+ID may have several parts joined by `/` (`team/app`), none of them empty or starting with `.`; a
 session whose own project ID is outside these rules is refused. The text is at most 64 KiB.
 
 **Who sees a message.** A session sees messages filed for its own project and messages
@@ -397,8 +397,7 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   `meridian inbox offer m412 jimyao-minibox/c2041`. The notice names
   `m412 on jimyao-raspberrypi` and gives the session the command
   `meridian inbox take m412 --machine jimyao-raspberrypi`, on a line of its own. The same
-  refusals hold, from what the session's machine reports; a session ID that machine
-  doesn't know fails with kind `failed` and that machine's text, not `not_found`. `offer m412 <machine>/<id> --machine <holder>` is
+  refusals hold, from what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
   refused, because a call can't reach a third machine.
 - **An older Meridian there** refuses with a kind: `version` when it can't take calls
   at all, `refused` or `usage` when it takes calls and doesn't know the inbox.
@@ -527,7 +526,10 @@ A call that fails says why in `--json` as `{"ok": false, "machine": ..., "error"
 ..., "text": ...}}`. Kinds beyond the message kinds: `unreachable` (nothing was sent, safe to
 run again), `auth`, `host_key` (background calls accept only host keys already known; run
 `meridian machine add` in a terminal), `version` (Meridian there is missing or too old),
-`refused`, `too_large`. For `message`, a connection that ends after the request was written is
+`refused`, `too_large`. A spawn or chat the other machine doesn't have is `not_found`, with
+the machine's name at the start of `text`; any other error the command gave there is `failed`.
+On this machine the same miss prints `{"error": "Spawn 'p12' not found", "exit_code": 1,
+"kind": "not_found"}`. For `message`, a connection that ends after the request was written is
 `maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
 there, as here (`--wake` crosses).
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.locate import RunTarget, resolve_spawn_target
 from meridian.lib.ops.runtime import (
@@ -46,7 +47,7 @@ def _resolve_spawn(
     )
     row = read_derived(target.runtime_root, target.spawn_id)
     if row is None:
-        raise ValueError(f"Spawn '{target.spawn_id}' not found")
+        raise RefNotFound(target.spawn_id, "spawn")
     return str(target.spawn_id), row.status, LaunchPaths.for_row(target.runtime_root, row)
 
 

@@ -16,6 +16,7 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.spawn_lifecycle import (
     CANCEL_GRACE_SECS,
     ExecutionTerminalFacts,
@@ -334,7 +335,7 @@ class SpawnApplicationService:
     def require_spawn(self, spawn_id: SpawnId | str) -> SpawnRecord:
         record = self.get_spawn(spawn_id)
         if record is None:
-            raise ValueError(f"Spawn '{spawn_id}' not found")
+            raise RefNotFound(str(spawn_id), "spawn")
         return record
 
     def is_terminal(self, status: str) -> bool:

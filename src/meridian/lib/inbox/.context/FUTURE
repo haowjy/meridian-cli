@@ -44,9 +44,6 @@ condition in it shows up.
   takes the message before the repeat, the repeat ("Run it again: a repeat is safe")
   releases that session's claim. A daemon that releases on behalf of people is the caller
   this fits; a release that names the claim it means to drop would close it.
-- **An unknown session on another machine is `failed`, not `not_found`.** `offer m412
-  <machine>/<id>` asks that machine's `spawn show`, whose error carries no kind; the text
-  says "not found". It becomes `not_found` when `spawn show` prints kinds.
 - **A session whose ID isn't machine-wide gets no reply address across machines.** Its
   way back is `<id> --machine <name> -C <path>`, and a message's `reply_to` is one
   address. `inbox read` says it has no reply address.

@@ -115,9 +115,9 @@ none.
 
 A root that gives no ID `fields.is_project_id` accepts refuses the command. An ID is in
 the safe set and has the form `core/refs.is_project_id_form` checks (parts joined by `/`,
-none empty, `.` or `..`), the one predicate `lib/machines/caller.py` also holds a caller
-block's project ID to. Two things produce a
-root that fails: `meridian.toml` can set any string as a project ID, and
+none empty or starting with `.`), the one predicate `project_identity` and
+`lib/machines/caller.py` also apply. Two things produce a
+root that fails: `meridian.toml` can set an ID with a character outside the safe set, and
 `_MERIDIAN_RUNTIME_DIR` can put a root anywhere. The command is refused because the
 alternative is to read such a session as having no project, and its messages would then
 be shown to every session.

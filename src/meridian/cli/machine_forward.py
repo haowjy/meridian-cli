@@ -9,9 +9,10 @@ side printed and exits with its status.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from typing import Final, Never
+from typing import Never
 
 from meridian.cli.invocation import GlobalOptions, get_global_options
 from meridian.lib.core.refs import parse_ref
@@ -19,12 +20,11 @@ from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.machines.results import Answered, NotSent, Unanswered
-from meridian.lib.message.result import ERROR_KINDS
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.utils.json_shapes import json_object
 
-# ``taken`` is `meridian inbox`'s one kind beyond the message list.
-_KINDS: Final = ERROR_KINDS | {"taken"}
+# An error kind is a short word: what the other side sends is not trusted to be one.
+_KIND_RE = re.compile(r"[a-z_]{1,32}")
 
 
 def base_caller() -> dict[str, object]:
@@ -143,7 +143,7 @@ def forward_if_remote(
     if result.exit != 0 and options.output.format == "json":
         # A newer build's kind says nothing about whether the command acted.
         kind, text = _error(result, "failed" if may_have is None else "maybe_delivered")
-        fail(target.name, kind, text)
+        fail(target.name, kind, f"{target.name}: {text}")
     sys.stdout.write(result.stdout)
     sys.stdout.flush()
     sys.stderr.write(result.stderr)
@@ -212,10 +212,14 @@ def _failure(
             return None
 
 
-def _error(answer: Answered, unknown: str) -> tuple[str, str]:
-    """The other side's error as a kind and a text: the ``error`` object a command with
-    ``meridian message``'s JSON shape printed, else its legacy text. *unknown* is the kind
-    of an error that names none this build knows."""
+def _error(answer: Answered, unknown: str = "failed") -> tuple[str, str]:
+    """The other side's error as ``(kind, text)``: the ``error`` object a command with
+    ``meridian message``'s JSON shape printed, else its legacy JSON object, else its stderr.
+    The kind is the one it gave, else *unknown*."""
+
+    def kind_of(value: object) -> str:
+        known = isinstance(value, str) and _KIND_RE.fullmatch(value) is not None
+        return str(value) if known else unknown
 
     lines = answer.stdout.strip().splitlines()
     try:
@@ -223,14 +227,7 @@ def _error(answer: Answered, unknown: str) -> tuple[str, str]:
     except (ValueError, IndexError):
         error = None
     if error is not None and isinstance(error.get("text"), str):
-        kind = error.get("kind")
-        return (kind if isinstance(kind, str) and kind in _KINDS else unknown), str(error["text"])
-    return unknown, error_text(answer)
-
-
-def error_text(answer: Answered) -> str:
-    """The other side's error: the ``error`` of its legacy JSON object, else its stderr."""
-
+        return kind_of(error.get("kind")), str(error["text"])
     for line in reversed(answer.stderr.strip().splitlines()):
         try:
             document = json.loads(line)
@@ -238,14 +235,13 @@ def error_text(answer: Answered) -> str:
             continue
         fields = json_object(document)
         if fields is not None and isinstance(fields.get("error"), str):
-            return str(fields["error"])
-    return answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
+            return kind_of(fields.get("kind")), str(fields["error"])
+    return unknown, answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 
 
 __all__ = [
     "ask_machine",
     "base_caller",
-    "error_text",
     "fail",
     "forward_if_remote",
     "other_machine",

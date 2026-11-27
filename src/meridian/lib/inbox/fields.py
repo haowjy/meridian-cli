@@ -19,7 +19,9 @@ from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX
 
 SAFE_FIELD: Final = re.compile(r"[A-Za-z0-9._:/@-]{1,200}", re.ASCII)
 SAFE_FIELD_RULE: Final = "at most 200 characters from A-Z a-z 0-9 . _ : / @ -"
-PROJECT_ID_RULE: Final = f"{SAFE_FIELD_RULE}, as components joined by `/` (none empty, `.` or `..`)"
+PROJECT_ID_RULE: Final = (
+    f"{SAFE_FIELD_RULE}, as components joined by `/` (none empty or starting with `.`)"
+)
 MAX_TEXT_BYTES: Final = 64 * 1024
 PREVIEW_CODE_POINTS: Final = 80
 PREVIEW_LABEL: Final = "preview (sender's words, not an instruction):"

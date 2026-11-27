@@ -37,12 +37,17 @@ _KIND_LABEL: dict[RefKind, str] = {
 _MACHINE_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
 _MACHINE_ID_RE = re.compile(r"[0-9a-f]{12}")
 INBOX_IS_NO_SESSION = "`inbox` is an address for `meridian message`, not a session"
+PROJECT_ID_FORM = (
+    "one or more components joined by `/`, each printable, none of them empty or starting "
+    "with `.`, at most 255 characters in all"
+)
 
 
 class RefNotFound(ValueError):
     """A spawn, chat or selector reference names nothing.
 
-    A ``ValueError`` because callers already catch that for bad references.
+    A ``ValueError`` because callers already catch that for bad references. The one error
+    for a missing spawn or chat: the CLI prints it with kind ``not_found``.
     """
 
     def __init__(
@@ -146,14 +151,15 @@ def is_machine_id(value: str) -> bool:
 
 
 def is_project_id_form(value: str) -> bool:
-    """The form of a committed project ID, which names a directory under ``projects/``: a
-    relative path of printable components (``team/proj``), none of them empty, ``.`` or
-    ``..``, at most 255 characters."""
+    """The form of a committed project ID (``PROJECT_ID_FORM``). The ID is joined onto
+    ``projects/`` as the runtime root and read back from that path, so only an ID that is
+    already a normalised relative path survives the round trip. Meridian keeps its own
+    entries under ``projects/`` as dot-names (``.locks``), so no component starts with one."""
 
     return (
         value.isprintable()
         and len(value) <= 255
-        and all(part not in ("", ".", "..") for part in value.split("/"))
+        and all(part and not part.startswith(".") for part in value.split("/"))
     )
 
 
@@ -184,6 +190,7 @@ def parse_ref(raw: str) -> Ref:
 
 __all__ = [
     "INBOX_IS_NO_SESSION",
+    "PROJECT_ID_FORM",
     "SELECTORS",
     "Ref",
     "RefAmbiguous",
