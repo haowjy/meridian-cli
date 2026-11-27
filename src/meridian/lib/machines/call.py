@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from collections.abc import Mapping
 from typing import Final
 
-from meridian.lib.core.refs import is_machine_name
+from meridian.lib.core.refs import is_machine_id, is_machine_name
 from meridian.lib.machines.discover import (
     Discovery,
     discover,
@@ -28,8 +27,7 @@ from meridian.lib.machines.ssh import (
     TIMED_OUT,
     SshProcess,
     SshUnavailable,
-    failure_kind,
-    failure_text,
+    not_connected,
 )
 from meridian.lib.state.saved_machines import (
     NameTaken,
@@ -44,7 +42,6 @@ from meridian.lib.utils.json_shapes import json_list, json_object
 
 logger = logging.getLogger(__name__)
 
-# Placeholders until probe G sets them (design/machines.md, "Time limits").
 CONNECT_SECONDS: Final = 15.0
 """From starting ``ssh`` to the ready line."""
 MESSAGE_LIMIT_SECONDS: Final = 70
@@ -57,7 +54,6 @@ CALLER_GRACE_SECONDS: Final = 5.0
 READY_MARKER: Final = b"meridian-ready "
 RESULT_MARKER: Final = b"meridian-result "
 REQUEST_VERSION: Final = 1
-_ID_RE: Final = re.compile(r"[0-9a-f]{12}")
 
 
 def _ready(line: bytes) -> dict[str, object] | None:
@@ -77,7 +73,7 @@ def _check_ready(ready: Mapping[str, object]) -> tuple[str, str, str, list[int]]
     name, ident, version, versions = (ready.get(key) for key in ("machine", "id", "version", "v"))
     if not isinstance(name, str) or not is_machine_name(name):
         return "its `machine` is not a machine name"
-    if not isinstance(ident, str) or _ID_RE.fullmatch(ident) is None:
+    if not isinstance(ident, str) or not is_machine_id(ident):
         return "its `id` is not 12 hex characters"
     listed = json_list(versions)
     if listed is None or not all(
@@ -118,9 +114,7 @@ def _connect(
         if line is None:
             exited = process.finish()
             if exited.status == 255:
-                kind = failure_kind(exited.stderr)
-                last = exited.last_line or "ssh exited 255"
-                return NotSent(kind, failure_text(kind, label, target, last))
+                return not_connected(exited, label, target)
             if exited.status < 0:
                 # Our own ssh was stopped by a signal: nothing says the path is stale.
                 return NotSent("unreachable", f"the ssh call to {label} was interrupted")

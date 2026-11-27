@@ -16,6 +16,7 @@ from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.refs import RefNotFound, parse_ref, project_named_scope
 from meridian.lib.ops.locate import (
     Untracked,
+    local_ref,
     locate,
     require_project_dir,
 )
@@ -50,15 +51,21 @@ def reenter_project_for_continue(
 
     Returns when the session is in this project (or isn't a claimed ID, which looks in
     the project it is run from). Raises ``ValueError`` when ``-C`` names a project other
-    than the session's, or the session's project directory is gone.
+    than the session's, the session's project directory is gone, or the reference names
+    another machine.
     """
 
     ref = continue_ref(argv) if command_path in _CONTINUE_COMMANDS else None
-    if ref is None or parse_ref(ref).kind not in ("spawn", "chat"):
+    if ref is None:
+        return
+    # `<this machine>/<id>` is the bare ID; another machine's name raises here as it would
+    # in the launch.
+    parsed = local_ref(parse_ref(ref))
+    if parsed.kind not in ("spawn", "chat"):
         return
     # Most continues are in the project they run from: one readlink settles that, before
     # any journal is read.
-    claimed = claim_root(ref)
+    claimed = claim_root(parsed.value)
     own = resolve_runtime_root_for_read(project_root)
     if claimed is None or (own is not None and same_runtime_root(claimed, own)):
         return

@@ -1,9 +1,9 @@
 """``meridian machine run``: the receiving end of a call from another machine.
 
-Three lines go over the SSH channel (design: ``machines.md``, "The three lines"): this side
-prints ``meridian-ready``, reads one request line, runs the command as a child ``meridian``
-process and prints ``meridian-result``. The command crosses only if the catalog says so.
-The child gets the request's ``stdin`` as its own, because this process's stdin is the channel.
+Three lines go over the SSH channel: this side prints ``meridian-ready``, reads one request
+line, runs the command as a child ``meridian`` process and prints ``meridian-result``. The
+command crosses only if the catalog says so. The child gets the request's ``stdin`` as its
+own, because this process's stdin is the channel.
 """
 
 from __future__ import annotations
@@ -57,18 +57,7 @@ def _refusal(argv: list[str]) -> str | None:
         )
     except SystemExit as exc:
         return str(exc.code)
-    refused = [
-        flag
-        for flag, given in (
-            ("--machine", parsed.machine),
-            ("--config", parsed.config_file),
-            ("--harness", parsed.harness),
-            ("--yes", parsed.yes),
-            ("--no-input", parsed.no_input),
-            ("--mode", parsed.forced_render_mode),
-        )
-        if given
-    ]
+    refused = [*(["--machine"] if parsed.machine else []), *parsed.options_that_dont_cross()]
     if refused:
         return f"{', '.join(refused)} doesn't reach another machine"
     descriptor = classify_invocation(cleaned, COMMAND_CATALOG)

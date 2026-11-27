@@ -1,10 +1,9 @@
 """The address grammar of ``meridian message``: which receiver a typed address names.
 
 ``@…`` is tested here and everything else goes to ``parse_ref``, the one place that knows the
-reference forms (design ``machines.md``, "References and addresses"). Only the form is checked
-here; whether a session or a person exists is the route's question. An address that fits no
-form is an error and is never guessed to be a person: a mistyped session ID must not end up in
-Slack.
+reference forms. Only the form is checked here; whether a session or a person exists is the
+route's question. An address that fits no form is an error and is never guessed to be a
+person: a mistyped session ID must not end up in Slack.
 """
 
 from __future__ import annotations

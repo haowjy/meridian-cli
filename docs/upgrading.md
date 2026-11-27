@@ -35,7 +35,9 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
   "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it
   ignores it, with a warning, in a project's `meridian.toml`, `meridian.local.toml` or a file
   named by `--config` or `MERIDIAN_CONFIG`. `@latest`, `@last-failed` and `@last-completed`
-  still fail, and `inbox` is reserved.
+  still fail, and `inbox` is reserved. **After a rollback, remove `[message]`:** 0.27.11
+  doesn't know the table and prints `Ignoring unknown Meridian config key 'message'.` on
+  stderr, twice, on every command. Nothing else changes.
 - **Reply lines print `meridian message`, with `-C` after the address.** Every message a
   session receives names this form, to receivers of every build. A session that a build before
   0.28 started and that runs in a sandbox has no grant for it: it fails with kind `sandboxed`
@@ -68,10 +70,28 @@ New in this release. `meridian machine add <ssh target>` saves another computer;
   (`<login>-<hostname>`) is not what you want: `meridian machine rename jimyao-homebox`.
   Machines that saved it follow the rename on their next call; the machine's ID, in
   `~/.meridian/machine.json`, never changes. If that file is deleted the machine gets a new ID
-  and peers refuse it until you `machine remove` and `machine add` it again.
+  and peers refuse it until you `machine remove` and `machine add` it again. A later
+  Meridian may change the file's format: 0.28 then says it was written by a newer Meridian
+  and to upgrade, and a rename by 0.28 keeps the keys it doesn't know.
 - **Replies need the way back.** `machine add` offers to save this machine on the other one,
   testing from there which target reaches it. A message to a machine that hasn't saved the
   sender says so in its reply line.
+- **Claude may hold a message from another session.** A Claude session that bypasses
+  permission prompts may keep an incoming message for its human to approve, and show "Held
+  peer message … not delivered to Claude". The sender still sees `posted`. In testing, a
+  message from another machine was held on one machine and delivered at once on the other,
+  so expect either. To skip the prompt, set `"crossSessionInbound": "accept"` in
+  `~/.claude/settings.json` on the receiving machine; it then applies to every peer
+  message that session gets. See
+  [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate).
+- **A sandboxed session reaches another machine only if its profile may spawn.** A harness
+  lets `meridian message` and `meridian spawn …` out of its sandbox for a session launched
+  with a profile that lists subagents (`-a <profile>`), the rule 0.27 has for `meridian
+  spawn message`. A session launched with no profile, or with one that may not spawn, runs
+  them inside the sandbox, and so does every session for `meridian session …` and
+  `meridian machine …`. There `ssh` is blocked: on Linux the call fails with kind
+  `sandboxed`; on macOS it keeps the kind `ssh` gave it (usually `unreachable`, with
+  `Operation not permitted`) and its text names the sandbox.
 - **`machine run` there reads the default `~/.meridian`.** An SSH command doesn't read a
   `MERIDIAN_HOME` set in a shell profile; set it in `~/.ssh/environment` or link the
   directory.
@@ -131,7 +151,9 @@ session from any directory.
   `--work` are refused with it: history across projects is `session search --global`. It has
   no default `--limit` (give one to cut it), and it reads only each project's running rows.
 - **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
-  additive JSON fields and are present without `--global`. `machine` is this machine's name,
+  additive JSON fields and are present without `--global`. `project_id` is the project's
+  committed ID (`[project] id` in `meridian.toml`); it is `null` for a directory with no
+  committed ID, whose state Meridian keys by its path on this machine. `machine` is this machine's name,
   kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is
   `null` if the file can't be created.
 

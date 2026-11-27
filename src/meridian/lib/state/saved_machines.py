@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Final
 
 from meridian.lib.core.logging import warn_once
-from meridian.lib.core.refs import is_machine_name
+from meridian.lib.core.refs import is_machine_id, is_machine_name
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.user_paths import get_user_home
@@ -27,7 +27,6 @@ from meridian.lib.utils.json_shapes import is_json_object, json_list
 logger = logging.getLogger(__name__)
 
 FORMAT_VERSION: Final = 1
-_ID_RE: Final = re.compile(r"[0-9a-f]{12}")
 _MAX_TARGET_BYTES: Final = 1024
 _CONTROL_RE: Final = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -82,7 +81,7 @@ def _entry(raw: object, names: set[str], ids: set[str]) -> SavedMachine | str:
         return "`ssh` is not a string"
     if (problem := ssh_target_problem(ssh)) is not None:
         return f"`ssh` can't be used ({problem})"
-    if not isinstance(ident, str) or _ID_RE.fullmatch(ident) is None:
+    if not isinstance(ident, str) or not is_machine_id(ident):
         return "`id` is not 12 hex characters"
     was = json_list(raw["was"]) if "was" in raw else []
     if was is None or not all(isinstance(item, str) and is_machine_name(item) for item in was):

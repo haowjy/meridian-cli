@@ -51,6 +51,20 @@ class ParsedGlobalOptions:
     directory_explicit: bool = False
     machine: str | None = None
 
+    def options_that_dont_cross(self) -> list[str]:
+        """The global options given that a call to another machine can't carry. ``main``
+        refuses them before connecting and ``machine run`` again on arrival, where the
+        request comes from the other side of a trust boundary."""
+
+        given = (
+            ("--config", self.config_file),
+            ("--harness", self.harness),
+            ("--yes", self.yes),
+            ("--no-input", self.no_input),
+            ("--mode", self.forced_render_mode),
+        )
+        return [flag for flag, value in given if value]
+
 
 def iter_positional_tokens(argv: Sequence[str]) -> Iterator[tuple[int, str]]:
     """Yield command-position tokens before the passthrough separator."""

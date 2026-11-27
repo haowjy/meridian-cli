@@ -105,7 +105,9 @@ def machine_status(
         str | None, Parameter(show_default=False, help="One saved machine; default: all.")
     ] = None,
 ) -> None:
-    """Make one call to each named machine and print its name, version and what failed."""
+    """Make one call to each named machine and print its name, version and what failed. With
+    `--json`: `{"machines": [{"name", "ok": true, "version"} or {"name", "ok": false,
+    "error": {"kind", "text"}}]}`. Exits 1 when any call failed."""
 
     try:
         machines = read_saved_machines()
@@ -114,7 +116,8 @@ def machine_status(
     chosen = [m for m in machines if name is None or m.name == name]
     if name is not None and not chosen:
         _fail(f"no machine is saved as `{name}`; `meridian machine list` shows the saved ones")
-    failed = False
+    json_mode = get_global_options().output.format == "json"
+    rows: list[dict[str, object]] = []
     for machine in chosen:
         result = call_machine(
             machine.ssh,
@@ -126,14 +129,19 @@ def machine_status(
             label=machine.name,
         )
         if isinstance(result, Answered):
-            print(f"{machine.name}  ok  meridian {result.version}")
-        elif isinstance(result, NotSent):
-            failed = True
-            print(f"{machine.name}  {result.kind}  {result.text}")
+            rows.append({"name": machine.name, "ok": True, "version": result.version})
+            line = f"{machine.name}  ok  meridian {result.version}"
         else:
-            failed = True
-            print(f"{machine.name}  unreachable  {result.text}")
-    raise SystemExit(1 if failed else 0)
+            kind = result.kind if isinstance(result, NotSent) else "unreachable"
+            rows.append(
+                {"name": machine.name, "ok": False, "error": {"kind": kind, "text": result.text}}
+            )
+            line = f"{machine.name}  {kind}  {result.text}"
+        if not json_mode:
+            print(line)
+    if json_mode:
+        print(json.dumps({"machines": rows}, separators=(",", ":"), sort_keys=True))
+    raise SystemExit(0 if all(row["ok"] for row in rows) else 1)
 
 
 def _caller() -> dict[str, object]:
