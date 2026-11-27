@@ -59,8 +59,8 @@ exactly when `ok` is true:
 {"ok": false, "address": "c20391", "spawn_id": "p20417", "error": {"kind": "not_running", "text": "..."}}
 ```
 
-`error.kind` is one of `usage`, `not_found`, `ambiguous`, `not_running`, `no_route`,
-`too_large`, `sandboxed`, `refused`, `version`, `unreachable`, `auth`, `host_key`,
+`error.kind` is one of `usage`, `not_found`, `ambiguous`, `cold`, `not_running`,
+`no_route`, `too_large`, `sandboxed`, `refused`, `version`, `unreachable`, `auth`, `host_key`,
 `maybe_delivered`, `failed`. **Only `maybe_delivered` means the message may have
 arrived;** with any other kind nothing was sent, so sending again is safe. Once the
 first byte of a message is written, every outcome without a parsed answer is
@@ -68,6 +68,15 @@ first byte of a message is written, every outcome without a parsed answer is
 no kind, which reads as `maybe_delivered` until the session restarts. An error raised
 before the command runs (a missing address, an unknown option) prints the same object
 with kind `usage`.
+
+**A message to a cold session is held.** A session is cold when it is idle and its prompt
+cache has expired (`idle.warm_until` in `spawn list --json` is in the past). Waking it
+re-reads the whole conversation at full price, so `meridian message` to it sends nothing
+and fails with kind `cold`, saying how long it has been idle, its model, what it has cost
+so far, and the two ways on: send again with `--wake`, which delivers whatever the state, or
+start a new session from its context with `--from <session>`. `--wake` belongs to a session
+address; with an `@` address it is a `usage` error. This is best effort: a session that
+reports no idle state is delivered to as before.
 
 An address that starts with `@` goes to the program named in `[message] people` of
 `~/.meridian/config.toml`, for example `people = ["meridian-comms", "deliver"]`. Meridian

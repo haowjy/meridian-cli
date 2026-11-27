@@ -15,7 +15,12 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
-from meridian.cli.message import MESSAGE_ADDRESS_HELP, MESSAGE_TEXT_HELP, run_message
+from meridian.cli.message import (
+    MESSAGE_ADDRESS_HELP,
+    MESSAGE_TEXT_HELP,
+    MESSAGE_WAKE_HELP,
+    run_message,
+)
 from meridian.cli.utils import (
     parse_csv_list,
     resolve_cli_observer_context,
@@ -1457,12 +1462,13 @@ def _spawn_message(
     message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
     *,
     machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
+    wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
 ) -> None:
     print(
         'meridian: `spawn message` is deprecated; use `meridian message <address> "..."`.',
         file=sys.stderr,
     )
-    run_message(ref, message, machine)
+    run_message(ref, message, machine, wake)
 
 
 def _spawn_log_removed(

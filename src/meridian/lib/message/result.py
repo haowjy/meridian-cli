@@ -20,6 +20,7 @@ ERROR_KINDS: Final = frozenset(
         "usage",
         "not_found",
         "ambiguous",
+        "cold",
         "not_running",
         "no_route",
         "too_large",

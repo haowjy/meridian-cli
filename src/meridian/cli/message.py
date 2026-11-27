@@ -12,6 +12,7 @@ import json
 import shlex
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -47,6 +48,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_and_config,
     resolve_runtime_root_for_read,
 )
+from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -70,9 +72,52 @@ MESSAGE_ADDRESS_HELP: Final = (
     "session), or `@person` for a person. A new ID works from any directory; `-C <repo>` "
     "reaches an ID issued before machine-wide IDs in another project."
 )
+MESSAGE_WAKE_HELP: Final = (
+    "Deliver to a session whose prompt cache has gone cold. Without it, a message to a session "
+    "that is idle past its cache's expiry is held and fails with kind `cold`: waking it "
+    "re-reads the whole conversation. Best effort: a session that reports no idle state is "
+    "never held. Not valid with an `@` address."
+)
 MESSAGE_TEXT_HELP: Final = (
     "Message text, or `-` to read it from stdin. Put long content in a file and send its path."
 )
+
+
+def _held_if_cold(runtime_root: Path, spawn_id: str, receiver: Receiver) -> Failed | None:
+    """``Failed("cold")`` when the session is idle past its cache's expiry, else ``None``.
+
+    The same ``idle`` ``spawn list --json`` shows; a session with no idle data is not cold.
+    Runs before any byte is sent, so ``cold`` always means nothing was delivered.
+    """
+
+    record = read_derived(runtime_root, spawn_id)
+    if record is None:
+        return None
+    idle = row_idle(runtime_root, record)
+    if idle is None or idle.warm_until is None:
+        return None
+    now = datetime.now(UTC)
+    if datetime.fromisoformat(idle.warm_until) > now:
+        return None
+    idle_for = _duration_text((now - datetime.fromisoformat(idle.since)).total_seconds())
+    cost = record.total_usage.total_cost_usd
+    cost_text = f"${cost:.2f}" if cost else "nothing recorded"
+    chat = receiver.chat_id or record.continue_chat_id or spawn_id
+    return Failed(
+        "cold",
+        f"spawn {spawn_id} is cold: idle for {idle_for}, past its prompt cache's expiry. "
+        f"Model {record.model or 'unknown'}; cost so far {cost_text}. Waking it re-reads the whole "
+        "conversation. Nothing was sent. Send again with --wake to deliver anyway, or start "
+        f"a new session from its context with `--from {chat}`.",
+        receiver,
+    )
+
+
+def _duration_text(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{max(minutes, 1)} min"
+    return f"{minutes // 60} h {minutes % 60} min"
 
 
 def framed_message(
@@ -163,6 +208,7 @@ async def _send_to_session(
     *,
     sender_spawn_id: str | None,
     sender_project_root: Path | None,
+    wake: bool,
 ) -> MessageResult:
     """Deliver through a session's control socket.
 
@@ -192,6 +238,9 @@ async def _send_to_session(
         ):
             return Failed("not_running", f"chat {target.chat_id} has no running session", receiver)
     receiver = dataclasses.replace(receiver, spawn_id=spawn_id, chat_id=target.chat_id)
+
+    if not wake and (cold := _held_if_cold(runtime_root, spawn_id, receiver)) is not None:
+        return cold
 
     sandbox = inside_launcher_sandbox()
     sender_root = (
@@ -330,6 +379,7 @@ async def send_message(
     sender_spawn_id: str | None = None,
     sender_project_root: Path | None = None,
     machine: str | None = None,
+    wake: bool = False,
 ) -> MessageResult:
     """Send *message* to the receiver *ref* names and return what happened.
 
@@ -350,6 +400,8 @@ async def send_message(
     try:
         parsed = parse_address(address, machine=machine)
         if isinstance(parsed, PersonAddress):
+            if wake:
+                raise AddressError("usage", "--wake belongs to a session address, not an @ address")
             return await deliver_to_person(
                 parsed.address, text, receiver, env=starting_env(), cwd=starting_cwd()
             )
@@ -359,6 +411,7 @@ async def send_message(
             receiver,
             sender_spawn_id=sender_spawn_id,
             sender_project_root=sender_project_root,
+            wake=wake,
         )
     except AddressError as exc:
         return Failed(exc.kind, exc.text, receiver)
@@ -367,7 +420,7 @@ async def send_message(
         return Failed("failed", str(exc) or type(exc).__name__, receiver)
 
 
-def run_message(ref: str, message: str, machine: str | None = None) -> None:
+def run_message(ref: str, message: str, machine: str | None = None, wake: bool = False) -> None:
     """The body of ``meridian message`` and of the deprecated ``spawn message``."""
 
     options = get_global_options()
@@ -386,6 +439,7 @@ def run_message(ref: str, message: str, machine: str | None = None) -> None:
                 sender_spawn_id=caller.spawn_id if caller is not None else None,
                 sender_project_root=caller.project_root if caller is not None else None,
                 machine=machine,
+                wake=wake,
             )
         )
     raise SystemExit(print_result(result, json_mode=json_mode))
@@ -397,15 +451,17 @@ def cmd_message(
     message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
     *,
     machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
+    wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
 ) -> None:
     """Send a message to a running session or a person."""
 
-    run_message(ref, message, machine)
+    run_message(ref, message, machine, wake)
 
 
 __all__ = [
     "MESSAGE_ADDRESS_HELP",
     "MESSAGE_TEXT_HELP",
+    "MESSAGE_WAKE_HELP",
     "cmd_message",
     "framed_message",
     "run_message",

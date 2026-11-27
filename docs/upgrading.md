@@ -20,6 +20,15 @@ command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one lin
   ("unknown machine") until Meridian can reach other machines. An ID that names a session in
   two projects fails as `ambiguous`; one issued before machine-wide IDs that is not in the
   current project fails as `not_found`, with its text saying so.
+- **A message to a cold session is held.** A session that is idle with its prompt cache
+  expired (`idle.warm_until` in `spawn list --json` has passed) gets nothing: the command
+  exits 1 with kind `cold`, and the text gives the idle time, the model and the cost so far.
+  Waking it re-reads the whole conversation. Send again with `--wake` to deliver anyway, or
+  start a new session with `--from <session>`. This changes messages that are delivered
+  today, through `meridian spawn message` too. **`meridian-comms`' wake must pass
+  `--wake`.** A session that reports no idle state is delivered to as before, so the hold is
+  best effort. `--wake` with an `@` address is a `usage` error. Nothing was sent when the kind
+  is `cold`, so a script may send again.
 - **A text of `-` reads stdin.** Without it the text is the second argument, as before.
 - **`@person` addresses go to a program you name.** Set `[message] people = ["meridian-comms",
   "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it

@@ -41,7 +41,6 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
-from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.launch.continue_launch import (
     ContinueHold,
     begin_continue,
@@ -73,12 +72,12 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.spawn.idle import spawn_idle
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id, work_spawns
 from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.idle_store import IdleStore
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
@@ -127,7 +126,6 @@ from .models import (
     SpawnCreateInput,
     SpawnDetailOutput,
     SpawnForkInput,
-    SpawnIdle,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -280,35 +278,6 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     return normalized
 
 
-def _spawn_idle(row: SpawnRecord, session_id: str | None, activity: str | None) -> SpawnIdle | None:
-    """The row's open idle stretch: one file read keyed by its own harness session.
-
-    A stretch closes when a user-loop turn starts, so injected turns (wakes, task
-    notifications, peer messages, keepwarm) leave it open. A primary whose harness
-    reports it mid-turn is not idle, whatever a crashed session's stretch says.
-    """
-
-    if (
-        not session_id
-        or not row.harness
-        or not is_active_spawn_status(row.status)
-        or activity in {"starting", "turn_active", "finalizing"}
-    ):
-        return None
-    try:
-        state = IdleStore().read(row.harness, session_id)
-    except ValueError:  # a session id the store refuses as a filename
-        return None
-    if state is None or not state.stretch_open or state.idle_since_ms is None:
-        return None
-    deadline = cache_deadline(row.harness, state.idle_since_ms / 1000, state)
-    return SpawnIdle(
-        since=_iso_utc_ms(state.idle_since_ms),
-        warm_until=_iso_utc_ms(round(deadline[0] * 1000)) if deadline else None,
-        ttl_estimated=deadline[1] if deadline else True,
-    )
-
-
 def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str, str | None]:
     """Each row's chat's current work item, as `spawn show` reports it (the row keeps launch-time).
 
@@ -321,14 +290,6 @@ def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str,
             runtime_root, {row.entry_chat_id for row in rows if row.entry_chat_id}
         )
     }
-
-
-def _iso_utc_ms(epoch_ms: int) -> str:
-    return (
-        datetime.fromtimestamp(epoch_ms / 1000, UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
 
 
 def _spawn_display_label(row: SpawnRecord) -> str | None:
@@ -801,7 +762,7 @@ def _list_entries(
                 model=row.model or "",
                 agent=row.agent or None,
                 work_id=chat_work.get(row.entry_chat_id or ""),
-                idle=_spawn_idle(row, session_id, activity),
+                idle=spawn_idle(row, session_id, activity),
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
@@ -996,7 +957,7 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             work_id=chat_work.get(row.entry_chat_id or ""),
-            idle=_spawn_idle(row, row.harness_session_id, None),
+            idle=spawn_idle(row, row.harness_session_id, None),
             desc=_spawn_display_label(row),
             duration_secs=row.total_usage.duration_secs,
             cost_usd=row.total_usage.total_cost_usd,
