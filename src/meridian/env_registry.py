@@ -277,6 +277,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _hook_payload("MERIDIAN_HOOK_EVENT_ID", "Hook event identifier.", "event_id"),
     _hook_payload("MERIDIAN_HOOK_SCHEMA_VERSION", "Hook payload schema version.", "schema_version"),
     _hook_payload("MERIDIAN_HOOK_TIMESTAMP", "Hook event timestamp.", "timestamp"),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_ID", "Hook inbox message identifier.", "inbox_message_id"
+    ),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_PATH", "Hook inbox message file path.", "inbox_message_path"
+    ),
     _hook_payload("MERIDIAN_NOTIFICATION_BODY", "Hook notification body.", "notification_body"),
     _hook_payload(
         "MERIDIAN_NOTIFICATION_PRIORITY", "Hook notification priority.", "notification_priority"

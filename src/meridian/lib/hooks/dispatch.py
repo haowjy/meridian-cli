@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import Protocol, cast
 
 import structlog
 
@@ -13,8 +13,7 @@ from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
 from meridian.lib.hooks.interval import IntervalTracker
-from meridian.lib.hooks.registry import HookRegistry
-from meridian.lib.hooks.runner import ExternalHookRunner, hooks_dispatch_enabled
+from meridian.lib.hooks.runner import ExternalHookRunner
 from meridian.lib.hooks.types import (
     EVENTS,
     Hook,
@@ -22,11 +21,9 @@ from meridian.lib.hooks.types import (
     HookEventName,
     HookResult,
     SpawnStatus,
+    hooks_dispatch_enabled,
 )
 from meridian.plugin_api import Hook as PluginHook
-
-if TYPE_CHECKING:
-    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 
 class _HookRegistryLike(Protocol):
@@ -54,11 +51,10 @@ class HookDispatcher(LifecycleHook):
 
     def __init__(
         self,
-        project_root: Path,
+        project_root: Path | None,
         runtime_root: Path | None,
         *,
-        authority: RuntimeAuthoritySnapshot | None = None,
-        registry: _HookRegistryLike | None = None,
+        registry: _HookRegistryLike,
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
@@ -66,35 +62,18 @@ class HookDispatcher(LifecycleHook):
     ) -> None:
         # The environment hooks run in; MERIDIAN_HOOKS_ENABLED=false there turns them off.
         self._env = os.environ if env is None else env
-        if authority is not None:
-            self._project_root = authority.project_root.expanduser().resolve()
-            self._runtime_root = (
-                authority.runtime_root.expanduser().resolve()
-                if authority.runtime_root is not None
-                else None
-            )
-            registry_authority = authority.model_copy(
-                update={
-                    "project_root": self._project_root,
-                    "runtime_root": self._runtime_root,
-                }
-            )
-        else:
-            self._project_root = project_root.expanduser().resolve()
-            self._runtime_root = (
-                runtime_root.expanduser().resolve() if runtime_root is not None else None
-            )
-            registry_authority = None
-        self._registry = registry or HookRegistry(
-            self._project_root,
-            authority=registry_authority,
+        # No project root: a machine event, whose contexts the caller builds.
+        self._project_root = (
+            project_root.expanduser().resolve() if project_root is not None else None
         )
+        self._runtime_root = (
+            runtime_root.expanduser().resolve() if runtime_root is not None else None
+        )
+        self._registry = registry
         self._interval_tracker = interval_tracker or (
             IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
         )
-        self._external_runner = external_runner or ExternalHookRunner(
-            self._project_root, env=self._env
-        )
+        self._external_runner = external_runner or ExternalHookRunner(env=self._env)
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
     def on_event(self, event: LifecycleEvent) -> None:

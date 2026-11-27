@@ -1,42 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-from meridian.lib.hooks.config import (
-    HOOK_SOURCE_PRECEDENCE,
-    HooksConfig,
-    load_hooks_config_report,
-)
+from meridian.lib.hooks.config import HOOK_SOURCE_PRECEDENCE, HooksConfig
 from meridian.lib.hooks.types import Hook, HookEventName
-
-if TYPE_CHECKING:
-    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 _SOURCE_RANK = {source: rank for rank, source in enumerate(HOOK_SOURCE_PRECEDENCE)}
 
 
 class HookRegistry:
-    """Resolves hooks and serves event-scoped lookups."""
+    """Serves event-scoped lookups over loaded hook rows."""
 
-    def __init__(
-        self,
-        project_root: Path,
-        *,
-        user_config: Path | None = None,
-        authority: RuntimeAuthoritySnapshot | None = None,
-        hooks_config: HooksConfig | None = None,
-    ) -> None:
-        self._project_root = project_root.expanduser().resolve()
-        if hooks_config is None:
-            loaded = load_hooks_config_report(
-                self._project_root,
-                user_config=user_config,
-                authority=authority,
-            )
-            self._config = loaded.require_valid()
-        else:
-            self._config = hooks_config
+    def __init__(self, hooks_config: HooksConfig) -> None:
+        self._config = hooks_config
         self._hooks = {(hook.name, hook.event): hook for hook in self._config.hooks}
         self._by_event: dict[HookEventName, list[Hook]] = {}
         self._build_event_index()
