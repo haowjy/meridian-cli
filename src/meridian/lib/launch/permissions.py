@@ -112,6 +112,9 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
 )
 
 SPAWN_PLATFORM_COMMAND = _prefix("meridian spawn", runs_outside_sandbox=True)
+# `meridian message` reaches control sockets, ssh and the people program, all out of a
+# sandbox's reach; a harness matches the first words, so it needs a grant of its own.
+MESSAGE_PLATFORM_COMMAND = _prefix("meridian message", runs_outside_sandbox=True)
 
 # Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
 # directories beneath the active work directory, so it is intentionally not a general read grant.
@@ -184,9 +187,14 @@ def launch_permission_rules(
         rules.append(PlatformRule(kind="builtin-agents"))
     commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
     if has_spawn_capability:
-        commands = (*commands, _SPAWN_WORK_PATH_COMMAND, SPAWN_PLATFORM_COMMAND)
+        commands = (
+            *commands,
+            _SPAWN_WORK_PATH_COMMAND,
+            SPAWN_PLATFORM_COMMAND,
+            MESSAGE_PLATFORM_COMMAND,
+        )
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 
 
-__all__ = ["SPAWN_PLATFORM_COMMAND", "launch_permission_rules"]
+__all__ = ["MESSAGE_PLATFORM_COMMAND", "SPAWN_PLATFORM_COMMAND", "launch_permission_rules"]

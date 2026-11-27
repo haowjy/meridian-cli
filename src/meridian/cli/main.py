@@ -75,7 +75,12 @@ from meridian.cli.output import (
 from meridian.cli.startup.catalog import COMMAND_CATALOG, CommandDescriptor
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
-from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
+from meridian.cli.startup.policy import (
+    BootstrapPlan,
+    StartupClass,
+    StartupErrorShape,
+    StateRequirement,
+)
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import project_scoped_env_names
@@ -770,6 +775,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _notify_cmd
 
+        def _register_message() -> None:
+            import meridian.cli.message as _message_cmd
+
+            _ = _message_cmd
+
         def _register_idle() -> None:
             import meridian.cli.idle_cmd as _idle_cmd
 
@@ -805,6 +815,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "mermaid": _register_mermaid,
             "artifact": _register_artifact,
             "notify": _register_notify,
+            "message": _register_message,
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
@@ -852,6 +863,26 @@ def _emit_idle_error(message: str) -> None:
     import json
 
     print(json.dumps({"error": message}, separators=(",", ":")))
+
+
+def _prints_startup_error(shape: StartupErrorShape, *, json_mode: bool) -> bool:
+    """Whether an error raised before the handler is printed as an object on stdout."""
+
+    return shape is StartupErrorShape.IDLE or (shape is StartupErrorShape.MESSAGE and json_mode)
+
+
+def _emit_startup_error(shape: StartupErrorShape, message: str, *, json_mode: bool) -> bool:
+    """Print *message* in the command's own error shape; False leaves it to the caller."""
+
+    if not _prints_startup_error(shape, json_mode=json_mode):
+        return False
+    if shape is StartupErrorShape.IDLE:
+        _emit_idle_error(message)
+    else:
+        from meridian.lib.message.result import print_startup_error
+
+        print_startup_error(message)
+    return True
 
 
 def _top_level_command_names() -> set[str]:
@@ -1197,12 +1228,15 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     verbose_count = args.count("--verbose")
     configure_logging(json_mode=json_mode, verbosity=verbose_count)
 
-    idle_invocation = _bootstrap_first_positional_token(args) == "idle"
+    early_descriptor = classify_invocation(args, COMMAND_CATALOG)
     try:
         cleaned_args, options = _extract_global_options(args)
     except SystemExit as exc:
-        if idle_invocation and isinstance(exc.code, str):
-            _emit_idle_error(exc.code)
+        if (
+            early_descriptor is not None
+            and isinstance(exc.code, str)
+            and _emit_startup_error(early_descriptor.startup_error, exc.code, json_mode=json_mode)
+        ):
             raise SystemExit(1) from None
         raise
     if not (cleaned_args and cleaned_args[0] == "mars"):
@@ -1369,13 +1403,19 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 temporary_config_env(options.config_file),
             ):
                 try:
-                    if cleaned_args[:1] == ["idle"]:
+                    if descriptor is not None and _prints_startup_error(
+                        descriptor.startup_error, json_mode=json_mode
+                    ):
                         from cyclopts.exceptions import CycloptsError
 
                         try:
                             app(cleaned_args, print_error=False, exit_on_error=False)
                         except CycloptsError as exc:
-                            _emit_idle_error(_operation_error_message(exc))
+                            _emit_startup_error(
+                                descriptor.startup_error,
+                                _operation_error_message(exc),
+                                json_mode=json_mode,
+                            )
                             raise SystemExit(1) from None
                     else:
                         app(cleaned_args)

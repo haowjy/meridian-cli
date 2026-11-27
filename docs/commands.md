@@ -34,7 +34,6 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn done [ID]` | Inside a child: close when its turn ends, cancelling any spawns still running and stopping its background tasks |
 | `meridian spawn rearm --reason "..." [ID]` | Inside a child: stay open. The reason is stored and shown in `spawn show`; `--reason-file PATH` reads it from a file (`-` reads stdin), and a bare `rearm` warns. The next check comes 270 s after the child goes idle, only when nothing visible is running; `--long` puts it at the idle limit, for a wait Meridian can't see such as remote CI. Running spawns and background tasks keep it quiet until they change or the idle limit, in both forms |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
-| `meridian [-C REPO] spawn message REF --message "text"` | Send a message into a running spawn or another live session. `REF` is a spawn ID or a chat ID (that chat's running session). An ID issued since machine-wide IDs reaches its session from any directory; `-C` names the project of an older one |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children [ID]` | List direct child spawns (defaults to this spawn) |
 
@@ -42,7 +41,47 @@ A primary launch (`meridian`, `--continue`, `--fork`, `--from`, `bootstrap`) exi
 
 OpenCode managed primaries honor explicit provider/model selections without editing
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
-`spawn message` reaches a session through the session's control socket. It prints
+
+**`meridian message ADDRESS "text" [-C REPO]`** sends a message to a running session or a
+person. `ADDRESS` is a spawn ID or a chat ID (that chat's running session), or `@person`
+for a person. A new ID works from any directory; `-C` reaches a session with an ID
+issued before machine-wide IDs in another project.
+`meridian spawn message ADDRESS --message "text"` is the deprecated name for it: it works
+through 0.28.x, prints a line on stderr naming the new command, and fails from 0.29.0.
+Put `-C` after the address so the command begins `meridian message`: a harness lets a
+command out of its sandbox by its first words. A text of `-` reads stdin.
+
+`--json` prints one line for every outcome, success or failure, and the exit status is 0
+exactly when `ok` is true:
+
+```json
+{"ok": true, "address": "c20391", "spawn_id": "p20417", "chat_id": "c20391", "delivery": "posted", "note": "..."}
+{"ok": false, "address": "c20391", "spawn_id": "p20417", "error": {"kind": "not_running", "text": "..."}}
+```
+
+`error.kind` is one of `usage`, `not_found`, `ambiguous`, `not_running`, `no_route`,
+`too_large`, `sandboxed`, `refused`, `version`, `unreachable`, `auth`, `host_key`,
+`maybe_delivered`, `failed`. **Only `maybe_delivered` means the message may have
+arrived;** with any other kind nothing was sent, so sending again is safe. Once the
+first byte of a message is written, every outcome without a parsed answer is
+`maybe_delivered`. A session started by a build older than 0.28 answers a failure with
+no kind, which reads as `maybe_delivered` until the session restarts. An error raised
+before the command runs (a missing address, an unknown option) prints the same object
+with kind `usage`.
+
+An address that starts with `@` goes to the program named in `[message] people` of
+`~/.meridian/config.toml`, for example `people = ["meridian-comms", "deliver"]`. Meridian
+runs it with no shell, the address as its last argument, the text on stdin and the
+environment `meridian` was started with, and reads one line of JSON back
+(`{"ok": true, "delivery": "posted", "note": "..."}` or
+`{"ok": false, "error": {"kind": "...", "text": "..."}}`). It stops the program after
+120 s. `[message]` is read from that one file: in a project's `meridian.toml`,
+`meridian.local.toml` or a file named by `--config` or `MERIDIAN_CONFIG` it is ignored
+with a warning, because a message runs outside the sandbox and a repository file must not
+choose the program. `@latest`, `@last-failed` and `@last-completed` are references, not
+addresses, and fail. `inbox` is reserved.
+
+`meridian message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
 (Codex, OpenCode) and "Message posted … (no receipt)" when the write finished but
 the harness confirms nothing (Claude, and Pi, whose message API returns nothing). A Pi primary
@@ -53,7 +92,7 @@ Claude has published its session inbox, so a primary that has not (`--bare`, `--
 for one, then fails saying the session has no message route. A primary started by an older
 build never had a socket and needs a relaunch. A Codex or OpenCode primary's route serves the
 session its launcher started: once the TUI opens another (`/new`, `/fork`, `/resume` on Codex;
-Fork session, or the human's first input in a new or other session, on OpenCode), `spawn message` fails with "The TUI moved to
+Fork session, or the human's first input in a new or other session, on OpenCode), `meridian message` fails with "The TUI moved to
 another session" and sends nothing, until the primary is relaunched (`--continue` reopens the
 first session, not the one the TUI was on). Two cases the launcher cannot act on: on OpenCode,
 a message sent after the new-session or switch-session command (`ctrl+x n`, `ctrl+x l`) but
@@ -68,13 +107,13 @@ since machine-wide IDs names the same session from any directory, so a peer in a
 addressed by its ID alone; an older ID counts only inside its project and is addressed with
 `-C <repo>`. Each injected
 message opens with a `[Meridian]` line naming the sending spawn and chat and, when the
-sender can receive one, the command that answers it: `meridian spawn message <sender chat ID>`,
-with `-C <sender project root>` when the sender's ID is an older one and it is in another project. A primary states its own
+sender can receive one, the command that answers it: `meridian message <sender chat ID> "..."`,
+with `-C <sender project root>` after the address when the sender's ID was issued before machine-wide IDs and it is in another project. A primary states its own
 address in that form in its capabilities block, including a Claude primary that publishes no
 inbox (`--bare`, `--safe-mode`), where the address leads to the no-route error.
-Every spawn command resolves a chat ID, like `spawn message` does, to the run live in
+Every spawn command resolves a chat ID, like `meridian message` does, to the run live in
 that chat now, else the spawn that ran it; a chat ID never means a child it launched.
-After a `/clear` the run is in a new chat, so `spawn message` refuses its old chat ID
+After a `/clear` the run is in a new chat, so `meridian message` refuses its old chat ID
 (`show` and `cancel` still name the run through it), and the address to use is the chat
 in the sender line or `continue_chat_id`.
 `cancel` on a primary still needs `--force`.
@@ -764,7 +803,7 @@ not-found error.
 
 Every spawn command above, `--continue`, `--fork`, `--fork-fresh`, `--from`,
 `session log`/`export`/`search` and `session repair` also accept symbolic references.
-`spawn message` is the exception and refuses them, because they name finished spawns:
+`meridian message` is the exception and refuses them, because they name finished spawns:
 
 | Reference | Resolves to |
 | --------- | ----------- |

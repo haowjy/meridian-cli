@@ -12,7 +12,7 @@ Meridian does not bundle or control Pi itself.
 | `meridian-spawn-watch` | Canonical child-spawn observation, result notifications, `/spawn*` |
 | `session-boundary` | Bounded launch-correlated native entry/exit observations |
 | `meridian-idle` | Primary TUI idle sensing and push/warn notification timers |
-| `meridian-message` | Primary TUI control socket: `spawn message` becomes a user turn |
+| `meridian-message` | Primary TUI control socket: `meridian message` becomes a user turn |
 | `meridian-permissions` | Scoped tool rules, allowlist backstops, and interactive/headless `ask` |
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.

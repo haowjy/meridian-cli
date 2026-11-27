@@ -68,7 +68,7 @@ def _message_line(target: str | None, status: str) -> list[str]:
     # Queued and finalizing spawns have no live control endpoint to take the message.
     if not target or not target.strip() or status != "running":
         return []
-    return [f'- Still running; message it: `meridian spawn message {target} --message "..."`']
+    return [f'- Still running; message it: `meridian message {target} "..."`']
 
 
 def _work_lines(ref: ContextRef) -> list[str]:

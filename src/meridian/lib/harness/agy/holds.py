@@ -363,7 +363,7 @@ def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reope
             dry_run=False,
         )
     except ValueError as exc:
-        # Its text ends in CLI advice ("; use spawn message ... or --fork ..."), which the
+        # Its text ends in CLI advice ("; use meridian message ... or --fork ..."), which the
         # agy model cannot act on: keep the cause.
         raise ValueError(str(exc).partition("; ")[0]) from exc
     return None if hold is None else _Reopen(chat_id, hold)

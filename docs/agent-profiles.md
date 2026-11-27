@@ -698,10 +698,10 @@ them:
   sockets. The launcher pre-creates this project's lifetime lock, which child commands open
   read-only; the shared `.locks` directory is not writable from the sandbox. Codex's
   `read-only` sandbox can only read the projected roots. Claude `read-only` and every
-  `workspace-write` launch can write Meridian runtime state, so `spawn message` and `cancel`
+  `workspace-write` launch can write Meridian runtime state, so `meridian message` and `cancel`
   do not claim a separate delegation boundary.
 - **Meridian commands.** Meridian adds completion and read-command grants to every launch;
-  a profile that can spawn also gets the `meridian spawn ...` launch commands. Completion
+  a profile that can spawn also gets the `meridian spawn ...` launch commands and `meridian message`, which run outside a sandbox. Completion
   (`spawn done` / `rearm`) is control-plane liveness and a profile cannot restrict it.
   Pi, Codex and OpenCode decide these grants before any profile rule, so no profile rule
   restricts them; the report marks a deny or ask that reaches a grant `partial` and names the grants that still run. Claude checks every deny and ask before any allow, so there a profile

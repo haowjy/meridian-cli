@@ -69,7 +69,31 @@ def canonicalize_argv(argv: Sequence[str]) -> list[str]:
         if first_positional_token(argv[:bare_continue_index]) is None:
             return ["session", "browse", *normalize_optional_value_flags(remaining)]
 
-    return normalize_optional_value_flags(argv)
+    return normalize_message_stdin(normalize_optional_value_flags(argv))
+
+
+def normalize_message_stdin(argv: Sequence[str]) -> list[str]:
+    """Spell the message text ``-`` (read stdin) as ``--message=-``.
+
+    Cyclopts reads a bare ``-`` as an unknown option. Only ``message`` and its
+    deprecated ``spawn message`` take it.
+    """
+
+    from meridian.cli.bootstrap import iter_positional_tokens
+    from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
+
+    command = [token for _, token in iter_positional_tokens(argv)][:2]
+    if command[:1] != ["message"] and command != ["spawn", "message"]:
+        return list(argv)
+    stop = argv.index("--") if "--" in argv else len(argv)
+    normalized = list(argv)
+    for index in range(stop):
+        if normalized[index] == "-" and (
+            index == 0 or normalized[index - 1] not in TOP_LEVEL_VALUE_FLAGS
+        ):
+            normalized[index] = "--message=-"
+            break
+    return normalized
 
 
 def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:

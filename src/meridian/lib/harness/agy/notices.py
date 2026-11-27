@@ -46,11 +46,10 @@ def _send(sender: MessageSender, text: str) -> None:
         subprocess.run(
             module_argv(
                 "meridian",
-                "-C",
-                sender.project_root,
-                "spawn",
                 "message",
                 sender.spawn_id,
+                "-C",
+                sender.project_root,
                 "--message",
                 text,
             ),

@@ -1,6 +1,5 @@
 """CLI command handlers for spawn.* operations."""
 
-import asyncio
 import os
 import re
 import sys
@@ -16,7 +15,7 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
-from meridian.cli.spawn_message import send_message
+from meridian.cli.message import MESSAGE_ADDRESS_HELP, MESSAGE_TEXT_HELP, run_message
 from meridian.cli.utils import (
     parse_csv_list,
     resolve_cli_observer_context,
@@ -105,8 +104,6 @@ _SPAWN_USAGE_EPILOGUE = (
 _RUNNING_REF_FORMS = (
     "spawn ID or chat ID (a chat names the run live in it now, else the spawn that ran it)"
 )
-# `spawn message` has to reach a live process, so a chat names only its running session.
-_MESSAGE_REF_FORMS = "spawn ID or chat ID (that chat's running session)"
 _INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
 _SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
@@ -1456,32 +1453,16 @@ def _spawn_rearm(
 
 
 def _spawn_message(
-    ref: Annotated[
-        str,
-        Parameter(
-            show_default=False,
-            help=(
-                f"Required. Session to message: {_MESSAGE_REF_FORMS}. A new ID works from "
-                "any directory; one issued before machine-wide IDs needs `-C <repo>`."
-            ),
-        ),
-    ] = "",
-    message: Annotated[
-        str,
-        Parameter(help="Message text. Put long content in a file and send its path."),
-    ] = "",
+    ref: Annotated[str, Parameter(show_default=False, help=MESSAGE_ADDRESS_HELP)] = "",
+    message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
+    *,
+    machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
 ) -> None:
-    if not ref:
-        raise ValueError("spawn message needs a spawn ID or chat ID")
-    caller = get_global_options().caller
-    asyncio.run(
-        send_message(
-            ref,
-            message,
-            sender_spawn_id=caller.spawn_id if caller is not None else None,
-            sender_project_root=caller.project_root if caller is not None else None,
-        )
+    print(
+        'meridian: `spawn message` is deprecated; use `meridian message <address> "..."`.',
+        file=sys.stderr,
     )
+    run_message(ref, message, machine)
 
 
 def _spawn_log_removed(
@@ -1562,14 +1543,8 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         _spawn_message,
         name="message",
-        help=(
-            "Send a message into a running spawn or another live session: a subagent "
-            "you launched, or a peer primary session, by spawn ID or chat ID, from any "
-            "directory (`-C <repo>` names the project of an ID issued before machine-wide "
-            "IDs). The receiver sees who "
-            "sent it and how to reply. Don't use it to nudge your own running "
-            "subagents to hurry or check in."
-        ),
+        help="Deprecated: use `meridian message`.",
+        show=False,
     )
     registered.add("spawn.message")
     app.command(

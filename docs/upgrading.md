@@ -1,5 +1,37 @@
 # Upgrade notes
 
+## `meridian message` replaces `meridian spawn message`
+
+New in this release. `meridian message <address> "..."` sends to a running session by its
+spawn ID or chat ID, or to a person by `@name`. `meridian spawn message <ref> --message "..."`
+still works through 0.28.x through the same code, prints one line on stderr naming the new
+command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one line that names
+`meridian message`.
+
+- **`--json` works and has a shape.** One line on stdout for every outcome: `{"ok": true,
+  "delivery": ...}` or `{"ok": false, "error": {"kind": ..., "text": ...}}`, exit 0 exactly
+  when `ok` is true. Only the kind `maybe_delivered` means the message may have arrived, so a
+  script resends on any other kind. An error raised before the command runs prints the same
+  object with kind `usage`. Plain text output is unchanged.
+- **A text of `-` reads stdin.** Without it the text is the second argument, as before.
+- **`@person` addresses go to a program you name.** Set `[message] people = ["meridian-comms",
+  "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it
+  ignores it, with a warning, in a project's `meridian.toml`, `meridian.local.toml` or a file
+  named by `--config` or `MERIDIAN_CONFIG`. `@latest`, `@last-failed` and `@last-completed`
+  still fail, and `inbox` is reserved.
+- **Reply lines print `meridian message`, with `-C` after the address.** Every message a
+  session receives names this form, to receivers of every build. A session that a build before
+  0.28 started and that runs in a sandbox has no grant for it: it fails with kind `sandboxed`
+  and a text that says to restart the session, or to use `meridian spawn message` meanwhile.
+  Restart sandboxed sessions started before 0.28.
+- **Codex gets a second rules file**, `$CODEX_HOME/rules/meridian-message.rules`, beside the
+  unchanged `meridian.rules`. Each build rewrites only the files it knows, so a 0.27 and a
+  0.28 process starting Codex sessions never undo each other. Like the first, it applies to
+  every Codex session of the user.
+- **A session's control server says whether a refused message arrived.** Its failure reply
+  gains `kind`. A session that an older build started still answers without one, which
+  reads as `maybe_delivered` until the session restarts.
+
 ## Spawn and chat IDs are unique on the machine
 
 New in this release. Meridian now issues `pN` and `cN` from one list kept in

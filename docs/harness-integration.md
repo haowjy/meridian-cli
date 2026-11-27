@@ -216,7 +216,7 @@ sessions load only session-boundary.
 
 ### Primary message delivery and Claude's inbound gate
 
-`meridian [-C <root>] spawn message <primary chat ID>` connects to the control socket the
+`meridian message <primary chat ID> [-C <root>]` connects to the control socket the
 primary's launcher serves. The launcher binds it once Claude has published its messaging
 socket, which meridian-session-boundary records at SessionStart and which is Claude Code's
 cross-session peer lane, and forwards each message there. Claude decides delivery, not
@@ -264,7 +264,7 @@ Claude's `crossSessionInbound` setting picks the policy:
 
 With the setting absent, Claude runs a permission-mode parity check. A message
 that does not attest the sender's mode — Meridian never attests one, because an
-agent could then use `spawn message` to steer a bypassed session past review —
+agent could then use `meridian message` to steer a bypassed session past review —
 is held for approval when the receiving session bypasses prompts. That includes
 `permissions.defaultMode: "auto"`. The hold appears as "Held peer message …
 not delivered to Claude (1 held)" and releases only when the person approves or
@@ -275,7 +275,7 @@ To stop the approval prompt, set `"crossSessionInbound": "accept"` in
 It applies to every peer message that session receives, not only Meridian's, so
 a session that bypasses prompts will act on another session's message without
 review. `"refuse"` is the opposite: no peer message is delivered, including
-`spawn message`. A repository or managed settings file can tighten the value
+`meridian message`. A repository or managed settings file can tighten the value
 but cannot loosen it.
 
 Messages to spawned sessions are unaffected: they use Meridian's own control
@@ -319,7 +319,7 @@ Both roles load the stable bundles listed below where enabled; `meridian-idle` a
   into core idle push and warning decisions. It never loads in spawned RPC
   sessions.
 - **meridian-message**, interactive primaries only, and loaded first: serves the primary's
-  control socket (`spawn message`) from inside Pi, at the path the launcher passes in
+  control socket (`meridian message`) from inside Pi, at the path the launcher passes in
   `_MERIDIAN_PI_CONTROL_SOCKET`, and only in TUI mode. It binds at `session_start`,
   except at the first startup of a launch that passes a prompt
   (`_MERIDIAN_PI_LAUNCH_PROMPT`): it binds at the first `agent_start`, so a message

@@ -121,6 +121,30 @@ class CallerBoundary:
         )
 
 
+def inside_launcher_sandbox() -> bool | None:
+    """Whether this process runs inside the sandbox its launching session recorded.
+
+    ``True`` when the launcher recorded a constrained sandbox and this process is in
+    another PID namespace (the test ``meridian spawn`` makes); ``None`` when a
+    constrained sandbox was recorded and the namespaces can't be compared (macOS);
+    ``False`` otherwise.
+    """
+
+    raw = os.environ.get(CALLER_BOUNDARY_ENV)
+    if raw is None:
+        return False
+    try:
+        boundary = CallerBoundary.from_env_value(raw)
+    except ValueError:
+        return False
+    if not boundary.is_floored:
+        return False
+    namespace = current_pid_namespace()
+    if boundary.pid_namespace is None or namespace is None:
+        return None
+    return namespace != boundary.pid_namespace
+
+
 @dataclass(frozen=True)
 class CallerBoundaryCheck:
     """One caller-boundary check split around child policy resolution."""
@@ -201,4 +225,5 @@ __all__ = [
     "CallerBoundary",
     "CallerBoundaryCheck",
     "current_pid_namespace",
+    "inside_launcher_sandbox",
 ]

@@ -12,6 +12,7 @@ from meridian.cli.bootstrap import (
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
+from meridian.lib.core.process_start import capture_process_start
 from meridian.lib.harness.plugin_hosted import run_command as run_plugin_hosted_command
 from meridian.lib.platform import IS_WINDOWS
 
@@ -33,6 +34,7 @@ def _is_version_request(argv: Sequence[str]) -> bool:
 def main() -> None:
     """Thin CLI entrypoint: handles trivial fast paths, delegates the rest."""
 
+    capture_process_start()
     with meridian_managed_env_default():
         _main_impl()
 
