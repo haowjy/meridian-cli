@@ -22,7 +22,7 @@ from contextlib import suppress
 from typing import Final
 
 from meridian.cli.machine_forward import base_caller
-from meridian.cli.machine_prompt import ask, ask_text
+from meridian.cli.machine_prompt import ask, ask_text, say
 from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine
 from meridian.lib.machines.results import Answered
 from meridian.lib.machines.ssh import TIMED_OUT, SshProcess
@@ -238,7 +238,7 @@ def offer_way_back(
     entries = _far_machines(target, path, far_id)
     saved_as = _saved_there_as(entries, here)
     if saved_as is not None:
-        print(_outcome(entries, entries, far, here, "", 0))
+        say(_outcome(entries, entries, far, here, "", 0))
         return
     reached, hashed = answering_from_there(target, back_candidates())
     suggestion = reached[0] if reached else None
@@ -246,27 +246,27 @@ def offer_way_back(
         f"meridian machine add {suggestion or '<SSH target that reaches this machine from there>'}"
     )
     if not interactive:
-        print(f"Replies need `{far}` to save this machine too. Run there: {run_there}")
+        say(f"Replies need `{far}` to save this machine too. Run there: {run_there}")
         return
     if not ask(f"Also save this machine on {far}, so its sessions can reply?", default=True):
-        print(f"Replies from {far} need it. To do it later, run there: {run_there}")
+        say(f"Replies from {far} need it. To do it later, run there: {run_there}")
         return
     if suggestion is None:
-        print(f"No target I tried reaches this machine from {far}.")
+        say(f"No target I tried reaches this machine from {far}.")
     if hashed:
-        print(
+        say(
             f"{far}'s known_hosts file is hashed, so a host name for this machine can't be read "
             "from it; type the name you use there."
         )
     back = ask_text(f"SSH target that reaches this machine from {far}", suggestion)
     if not back or not valid_target(back):
-        print(f"No target that can be sent. To do it, run on {far}: {run_there}")
+        say(f"No target that can be sent. To do it, run on {far}: {run_there}")
         return
     status = subprocess.run(
         ["ssh", "-t", "--", target, path, "machine", "add", back], check=False
     ).returncode
     after = _far_machines(target, path, far_id)
-    print(_outcome(entries, after, far, here, back, status))
+    say(_outcome(entries, after, far, here, back, status))
 
 
 __all__ = ["offer_way_back", "valid_target"]
