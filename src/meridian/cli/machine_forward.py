@@ -220,28 +220,27 @@ def _failure(
 
 
 def _error(answer: Answered, unknown: str = "failed") -> tuple[str, str]:
-    """The other side's error as ``(kind, text)``: the ``error`` object a command with
-    ``meridian message``'s JSON shape printed, else its legacy JSON object, else its stderr.
-    The kind is the one it gave, else *unknown*."""
+    """The other side's error as ``(kind, text)``: from the object ``fail``, or a command with
+    ``meridian message``'s JSON shape, printed on its stdout, else from a legacy JSON object
+    on its stderr; the ``kind`` it gave, else *unknown*. With neither the text is its
+    stderr."""
 
     def kind_of(value: object) -> str:
-        known = isinstance(value, str) and _KIND_RE.fullmatch(value) is not None
-        return str(value) if known else unknown
+        return value if isinstance(value, str) and _KIND_RE.fullmatch(value) else unknown
 
-    lines = answer.stdout.strip().splitlines()
-    try:
-        error = json_object((json_object(json.loads(lines[-1])) or {}).get("error"))
-    except (ValueError, IndexError):
-        error = None
-    if error is not None and isinstance(error.get("text"), str):
+    def parsed(line: str) -> dict[str, object]:
+        try:
+            return json_object(json.loads(line)) or {}
+        except ValueError:
+            return {}
+
+    printed = parsed(answer.stdout.strip())
+    error = json_object(printed.get("error")) or {}
+    if printed.get("ok") is False and isinstance(error.get("text"), str):
         return kind_of(error.get("kind")), str(error["text"])
     for line in reversed(answer.stderr.strip().splitlines()):
-        try:
-            document = json.loads(line)
-        except ValueError:
-            continue
-        fields = json_object(document)
-        if fields is not None and isinstance(fields.get("error"), str):
+        fields = parsed(line)
+        if isinstance(fields.get("error"), str):
             return kind_of(fields.get("kind")), str(fields["error"])
     return unknown, answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 

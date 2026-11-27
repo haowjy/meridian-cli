@@ -1,4 +1,4 @@
-"""Questions ``machine add`` asks, in a terminal only."""
+"""What ``machine add`` says, and the questions it asks in a terminal only."""
 
 from __future__ import annotations
 
@@ -9,6 +9,14 @@ from meridian.cli.invocation import get_global_options
 
 class AddError(Exception):
     """``machine add`` stops here; nothing is saved."""
+
+
+def say(text: str) -> None:
+    """A sentence for the person: on stdout, or on stderr under ``--json``, where stdout is the
+    one object."""
+
+    json_mode = get_global_options().output.format == "json"
+    print(text, file=sys.stderr if json_mode else sys.stdout)
 
 
 def is_terminal() -> bool:
@@ -44,4 +52,4 @@ def ask_text(question: str, default: str | None) -> str:
     return sys.stdin.readline().strip() or (default or "")
 
 
-__all__ = ["AddError", "ask", "ask_text", "is_terminal"]
+__all__ = ["AddError", "ask", "ask_text", "is_terminal", "say"]

@@ -500,12 +500,12 @@ in `~/.meridian/machine.json`.
 
 | Command | |
 | --- | --- |
-| `meridian machine add TARGET` | Save the machine at an SSH target (a `Host` from `~/.ssh/config`, `user@host`, `ssh://user@host:port`). It saves the name the machine gives itself. In a terminal it asks: to install Meridian there with `uv` if there is none (default Yes), to upgrade an old one (default No), and to save this machine there too so its sessions can reply (default Yes). Without a terminal it asks nothing and prints the command to run. `--yes` answers each question with its default. |
-| `meridian machine list` | The saved machines: name, target, ID, former names. |
-| `meridian machine remove NAME` | Forget one. Nothing changes on that machine. |
+| `meridian machine add TARGET` | Save the machine at an SSH target (a `Host` from `~/.ssh/config`, `user@host`, `ssh://user@host:port`). It saves the name the machine gives itself. In a terminal it asks: to install Meridian there with `uv` if there is none (default Yes), to upgrade an old one (default No), and to save this machine there too so its sessions can reply (default Yes). Without a terminal it asks nothing and prints the command to run. `--yes` answers each question with its default. `--json` prints the saved machine as `machine list` shows one, and the sentences go to stderr. |
+| `meridian machine list` | The saved machines: name, target, ID, former names. `--json` prints `{"machines": [{"name": ..., "ssh": ..., "id": ..., "was": [...]}]}`. |
+| `meridian machine remove NAME` | Forget one. Nothing changes on that machine. `--json` prints the machine it forgot, as `machine list` shows one. |
 | `meridian machine status [NAME]` | One call to each machine; prints its Meridian version or what failed, and exits 1 if any call failed. `--json` prints `{"machines": [{"name": ..., "ok": true, "version": ...}, {"name": ..., "ok": false, "error": {"kind": ..., "text": ...}}]}`. |
-| `meridian machine name` | This machine's name. |
-| `meridian machine rename NEW` | Rename this machine: `[a-z][a-z0-9-]{0,62}`, not `inbox`, not shaped like `p123` or `c123`. Peers correct their saved name on their next call, and a reference written with the old name still resolves. |
+| `meridian machine name` | This machine's name. `--json` prints its identity, `{"name": ..., "id": ..., "was": [...]}`: the ID never changes and is the `machine_id` a message's sender carries, and `was` holds the former names. With `--machine NAME` it is that machine's identity. |
+| `meridian machine rename NEW` | Rename this machine: `[a-z][a-z0-9-]{0,62}`, not `inbox`, not shaped like `p123` or `c123`. Peers correct their saved name on their next call, and a reference written with the old name still resolves. `--json` prints the identity as `machine name --json` does. |
 
 **Reading, messaging and the inbox cross; nothing else does.**
 `spawn list|show|status|children`, `spawn report show`, `session log|search`, `message`,
@@ -534,6 +534,7 @@ run again), `auth`, `host_key` (background calls accept only host keys already k
 `meridian machine add` in a terminal), `version` (Meridian there is missing or too old),
 `refused`, `too_large`. A spawn or chat the other machine doesn't have is `not_found`, with
 the machine's name at the start of `text`; any other error the command gave there is `failed`.
+A `machine` command that fails on this machine prints the same object without `machine`.
 On this machine the same miss prints `{"error": "Spawn 'p12' not found", "exit_code": 1,
 "kind": "not_found"}`. For `message`, a connection that ends after the request was written is
 `maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
