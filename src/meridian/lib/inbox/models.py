@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from meridian.lib.inbox.fields import is_project_id, is_reply_address, is_safe_field
+from meridian.lib.inbox.fields import is_project_id, is_reply_address, is_safe_field, shown
 
 
 def _safe(value: str) -> str:
@@ -53,6 +53,12 @@ class Party(_Doc):
     def same_as(self, other: Party) -> bool:
         return (self.kind, self.machine, self.id) == (other.kind, other.machine, other.id)
 
+    def label(self) -> str:
+        if self.kind == "terminal":
+            return "terminal"
+        where = f"{self.machine}/{self.id}" if self.machine else str(self.id)
+        return f"{where} ({shown(self.agent)})" if self.agent else where
+
 
 class Via(_Doc):
     """What an outside program says about a message or a claim. Always shown as a claim."""
@@ -60,6 +66,11 @@ class Via(_Doc):
     program: SafeField
     ref: SafeField | None = None
     sender: SafeField | None = None
+
+    def label(self) -> str:
+        """As it is always shown: the program's claim, never a fact."""
+
+        return f"via {self.program}: {self.sender}" if self.sender else f"via {self.program}"
 
 
 class Message(_Doc):

@@ -60,13 +60,17 @@ program and sender) succeeds and anyone else is refused. **Release** unlinks the
 message with no claim is already released, which is a success so a cut-off call can be
 repeated.
 
-**Offer** (`cli/inbox_cmd.py`): read the spawn store and refuse a session that is not a
-primary (an offer says "claim it", and only a primary may take), then under the lock check the message
-exists and is not taken; release the lock; send the notice with `send_message`; take the
-lock again, check once more, and append to `offered/<id>.json`. Send first, record second:
-a crash between the two leaves a session that was told and no record, and the repeat
-tells it again. The lock is never held across the send. A cold or stopped session is
-refused by `send_message` itself.
+**Offer** (`offer.offer`): read the spawn store and refuse a session that is not a
+primary (an offer says "claim it", and only a primary may take), then under the lock check
+the message exists and is not taken; release the lock; send the notice; take the lock
+again, check once more, and append to `offered/<id>.json`. Send first, record second: a
+crash between the two leaves a session that was told and no record, and the repeat tells
+it again. The lock is never held across the send. The send is a function the caller
+passes in: the CLI passes `cli/message.py:send_message`, which refuses a cold or stopped
+session itself, and the receiving side of a machine call (lane 2) passes its own. The CLI
+only checks the caller's role, parses and prints. `offer.taker_running` holds the rule for
+whether a chat's run is live, which `list --taken` shows; `cli/message.py` has its own
+copy until the machine-wide-IDs rewrite of that file lands.
 
 **Prune** (`prune.py`): scans without the lock and takes it for each deletion, checking
 again under it. A message taken more than 30 days ago is deleted in this order: message,

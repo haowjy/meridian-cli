@@ -19,11 +19,13 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import inbox_app
 from meridian.cli.invocation import get_global_options
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
-from meridian.lib.inbox.caller import InboxCaller, project_of_root, resolve_caller
-from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, shown, visible
+from meridian.lib.inbox.caller import InboxCaller, resolve_caller
+from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, visible
 from meridian.lib.inbox.filing import via_from_flags
-from meridian.lib.inbox.models import Claim, Message, Party, Via
+from meridian.lib.inbox.models import Claim, Message
+from meridian.lib.inbox.offer import offer, taker_running
 from meridian.lib.inbox.prune import prune_if_due
 from meridian.lib.inbox.store import (
     Entry,
@@ -31,13 +33,11 @@ from meridian.lib.inbox.store import (
     MessageTaken,
     entries,
     entry,
-    record_offer,
     release,
     take,
-    waiting_message,
 )
 from meridian.lib.message.address import local_machine_name
-from meridian.lib.message.result import Delivered, Failed, print_result
+from meridian.lib.message.result import Failed, MessageResult, print_result
 
 _ALL_HELP: Final = (
     "Include messages filed for other projects. A session sees its own project's messages "
@@ -118,25 +118,10 @@ def _require_visible(caller: InboxCaller, found: Entry, *, all_projects: bool) -
         )
 
 
-def _party(party: Party) -> str:
-    if party.kind == "terminal":
-        return "terminal"
-    where = f"{party.machine}/{party.id}" if party.machine else str(party.id)
-    return f"{where} ({shown(party.agent)})" if party.agent else where
-
-
-def _via(via: Via | None) -> str | None:
-    """A ``via`` as it is always shown: the program's claim, never a fact."""
-
-    if via is None:
-        return None
-    return f"via {via.program}: {via.sender}" if via.sender else f"via {via.program}"
-
-
 def _held_by(claim: Claim | None) -> str:
     if claim is None:
         return " (its claim file can't be read; `meridian inbox release` from a terminal clears it)"
-    who = ", ".join(part for part in (_party(claim.by), _via(claim.via)) if part)
+    who = ", ".join((claim.by.label(), *([claim.via.label()] if claim.via else [])))
     return f" by {who} since {_stamp(claim.at)}"
 
 
@@ -156,30 +141,6 @@ def _size(message: Message) -> int:
     return len(message.text.encode("utf-8"))
 
 
-def _taker_running(claim: Claim, machine: str | None) -> bool | None:
-    """Whether the session that holds a claim is still running; ``None`` when that can't be
-    told from here (a terminal, another machine, a record that is gone)."""
-
-    if claim.by.kind != "session" or claim.by.id is None or claim.by.machine != machine:
-        return None
-    from meridian.lib.config.project_root import resolve_project_root_resolution
-    from meridian.lib.core.refs import RefAmbiguous, RefNotFound
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-    from meridian.lib.ops.locate import locate_run
-    from meridian.lib.state.spawn_status import read_derived
-
-    try:
-        target = locate_run(resolve_project_root_resolution().project_root, claim.by.id)
-    except (RefAmbiguous, RefNotFound, ValueError):
-        return None
-    record = read_derived(target.runtime_root, target.spawn_id)
-    if record is None:
-        return None
-    return is_active_spawn_status(record.status) and (
-        target.occupant or record.current_chat_id in (None, target.chat_id)
-    )
-
-
 def _reply_command(message: Message) -> str | None:
     """The command that answers the sender, built here from a checked address: a message
     never hands a reader a command of its own."""
@@ -197,9 +158,9 @@ def _offers_json(found: Entry) -> list[dict[str, object]]:
 
 def _summary_parts(found: Entry) -> list[str]:
     message = found.message
-    parts = [f"from {_party(message.sender)}"]
-    if (via := _via(message.via)) is not None:
-        parts.append(via)
+    parts = [f"from {message.sender.label()}"]
+    if message.via is not None:
+        parts.append(message.via.label())
     if message.project is not None:
         parts.append(f"project {message.project}")
     parts.append(f"{_size(message)} B")
@@ -295,8 +256,9 @@ def cmd_inbox_list(
             _require_changer(caller, "--all")
         now = datetime.now(UTC)
         machine = local_machine_name()
+        here = resolve_project_root_resolution().project_root
         found = [
-            (item, _taker_running(item.claim, machine) if item.claim is not None else None)
+            (item, taker_running(item.claim, machine, here) if item.claim is not None else None)
             for item in entries(taken=taken)
             if caller.may_see(item.message.project, all_projects=all_projects)
         ]
@@ -357,22 +319,6 @@ def cmd_inbox_release(message_id: Annotated[str, Parameter(help=_ID_HELP)]) -> N
         )
 
 
-def _notice(message_id: str, message: Message) -> str:
-    """The fixed text an offered session receives. It never carries the message text."""
-
-    about = [message_id, f"from {shown(_party(message.sender))}"]
-    if (via := _via(message.via)) is not None:
-        about.append(shown(via))
-    line = ", ".join(about)
-    if message.project is not None:
-        line += f" (project {shown(message.project)})"
-    return (
-        f"A message is waiting in this machine's inbox and looks like yours: {line}.\n"
-        f"`meridian inbox take {message_id}` claims and prints it. If it isn't yours, do "
-        "nothing and it stays for someone else."
-    )
-
-
 def _now_to_the_second() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
@@ -394,79 +340,39 @@ def cmd_inbox_offer(
     """
 
     from meridian.cli.message import send_message
-    from meridian.lib.config.project_root import resolve_project_root_resolution
-    from meridian.lib.core.refs import RefAmbiguous, RefNotFound
-    from meridian.lib.message.address import AddressError, SessionAddress, parse_address
-    from meridian.lib.ops.locate import locate_run
-    from meridian.lib.state import spawn_store
+
+    def send(session_id: str, text: str) -> MessageResult:
+        sender = get_global_options().caller
+        return asyncio.run(
+            send_message(
+                session_id,
+                text,
+                sender_spawn_id=sender.spawn_id if sender else None,
+                sender_project_root=sender.project_root if sender else None,
+            )
+        )
 
     with _inbox_command() as caller:
         _require_changer(caller, "`meridian inbox offer`")
-        try:
-            address = parse_address(session.strip())
-        except AddressError as exc:
-            raise InboxError(exc.text, kind=exc.kind) from exc
-        if not isinstance(address, SessionAddress):
-            raise InboxError(
-                f"`{session}` is not a session: an offer goes to a spawn ID or chat ID",
-                kind="usage",
-            )
-        # The spawn store is read before ``inbox.lock`` is taken: the lock is a leaf.
-        try:
-            target = locate_run(resolve_project_root_resolution().project_root, address.id)
-        except RefAmbiguous as exc:
-            raise InboxError(str(exc), kind="ambiguous") from exc
-        except (RefNotFound, ValueError) as exc:
-            raise InboxError(str(exc), kind="not_found") from exc
-        # An offer says "claim it", so it goes only to a session that may.
-        record = spawn_store.get_spawn(target.runtime_root, target.spawn_id)
-        if record is None or record.kind != "primary":
-            _refuse(
-                f"session {address.id} is "
-                f"{'a ' + record.kind + ' session' if record is not None else 'unrecorded'}, "
-                "not a primary: only a primary session can take a message, so only a "
-                "primary is offered one. Nothing was sent."
-            )
-        session_project = project_of_root(target.runtime_root)
-
-        message = waiting_message(message_id)
-        if message.project is not None and message.project != session_project:
-            _refuse(
-                f"{message_id} is for project {message.project}; session {address.id} is in "
-                f"{'project ' + session_project if session_project else 'no project'}. "
-                "Nothing was sent."
-            )
-
-        options = get_global_options()
-        result = asyncio.run(
-            send_message(
-                address.id,
-                _notice(message_id, message),
-                sender_spawn_id=options.caller.spawn_id if options.caller else None,
-                sender_project_root=options.caller.project_root if options.caller else None,
-            )
+        offered = offer(
+            message_id,
+            session,
+            project_root=resolve_project_root_resolution().project_root,
+            send=send,
+            now=_now_to_the_second(),
         )
-        if not isinstance(result, Delivered):
-            reason = result.text if isinstance(result, Failed) else "it was not delivered"
-            if isinstance(result, Failed) and result.kind == "cold":
-                reason = f"an offer never wakes a cold session. {reason}"
-            raise InboxError(
-                f"no offer was recorded: {reason}",
-                kind=result.kind if isinstance(result, Failed) else "failed",
-            )
-
-        to = result.receiver.chat_id or result.receiver.spawn_id or address.id
+        receiver = offered.delivered.receiver
         payload: dict[str, object] = {
             "id": message_id,
-            "to": {"spawn_id": result.receiver.spawn_id, "chat_id": result.receiver.chat_id},
-            "delivery": result.delivery.value,
+            "to": {"spawn_id": receiver.spawn_id, "chat_id": receiver.chat_id},
+            "delivery": offered.delivered.delivery.value,
         }
-        text = f"{message_id} offered to {to}"
-        try:
-            record_offer(message_id, to, _now_to_the_second())
-        except InboxError as exc:
-            # The notice is out; the record is for `list` and for people, and grants nothing.
-            text = f"the notice went out to {to}, but no offer was recorded: {exc}"
+        text = f"{message_id} offered to {offered.to}"
+        if offered.unrecorded is not None:
+            text = (
+                f"the notice went out to {offered.to}, but no offer was recorded: "
+                f"{offered.unrecorded}"
+            )
             payload["note"] = text
         _print(payload, text)
 
