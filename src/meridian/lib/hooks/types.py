@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
@@ -27,6 +28,9 @@ class EventSpec:
 
     default_timeout_secs: int
     when_fields: frozenset[HookWhenField]
+    # A machine event belongs to no project: its rows are read from the user config
+    # alone and run with no project root, so a repository can neither add nor replace one.
+    machine: bool = False
 
 
 _SPAWN_FIELDS: frozenset[HookWhenField] = frozenset(("agent", "kind"))
@@ -44,7 +48,19 @@ EVENTS: dict[HookEventName, EventSpec] = {
     "notify.cache_expiring": EventSpec(30, _SPAWN_FIELDS),
     "notify.needs_permission": EventSpec(30, _SPAWN_FIELDS),
     "notify.manual": EventSpec(30, _SPAWN_FIELDS),
+    "inbox.received": EventSpec(60, frozenset(), machine=True),
 }
+
+# The one config layer a machine event's rows may come from.
+MACHINE_EVENT_SOURCE = "user"
+
+
+def hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
+    scope = os.environ if env is None else env
+    value = scope.get("MERIDIAN_HOOKS_ENABLED")
+    if value is None:
+        return True
+    return value.strip().lower() != "false"
 
 
 def _default_options() -> dict[str, object]:
@@ -85,6 +101,7 @@ class Hook:
 __all__ = [
     "EVENTS",
     "HOOK_CONTEXT_SCHEMA_VERSION",
+    "MACHINE_EVENT_SOURCE",
     "NOTIFICATION_EVENTS",
     "EventSpec",
     "Hook",
@@ -97,4 +114,5 @@ __all__ = [
     "Notification",
     "SpawnKind",
     "SpawnStatus",
+    "hooks_dispatch_enabled",
 ]

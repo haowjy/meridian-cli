@@ -30,6 +30,8 @@ builtin, command, options and timeout are one hook: without
 builtin row runs as the last of its default events), and `--event` may name any event, as
 for a single-row hook. When those fields differ, use `--event` to select a row. A builtin that only supports notification events cannot run
 manually because it has no notification payload; use `meridian notify` instead.
+A row on a [machine event](#machine-events) cannot run manually either: it has no
+message to receive.
 
 ## Events
 
@@ -45,11 +47,52 @@ manually because it has no notification payload; use `meridian notify` instead.
 | `notify.cache_expiring` | 30s | The idle service sends its scheduled prompt-cache warning |
 | `notify.needs_permission` | 30s | Claude reports a permission prompt that is still waiting |
 | `notify.manual` | 30s | `meridian notify` emits its notification |
+| `inbox.received` | 60s | A message is filed in this machine's inbox (`meridian message inbox`); a [machine event](#machine-events) |
 
 Every `notify.*` event carries a
 `notification` (title, body, priority, email, session label, attachment paths). Meridian routes
 each one to the built-in `notify` hook unless config routes it; see
 [Builtin: `notify`](#builtin-notify).
+
+### Machine events
+
+`inbox.received` belongs to the machine, not to a project. Its rows differ from
+every other event's in four ways:
+
+- **Only the user config supplies them** (`~/.meridian/config.toml`, or the file
+  `MERIDIAN_CONFIG` names). A project's `meridian.toml` and `meridian.local.toml`
+  are not read when the event fires, so a repository cannot add a row, replace
+  yours by name, or stop the event with a broken file. An `inbox.received` row in
+  a project file is an invalid row: `hooks list` and `hooks check` report it, and
+  the project's other hooks keep running without it.
+- **No project in the context.** `project_root` and `runtime_root` are `null` on
+  stdin, `MERIDIAN_PROJECT_DIR` is unset, and the command runs in your home
+  directory. The context carries `inbox_message.id` and `inbox_message.path`,
+  also set as `MERIDIAN_INBOX_MESSAGE_ID` and `MERIDIAN_INBOX_MESSAGE_PATH`. The
+  sender and text are in the file at that path.
+- **No session in the environment.** The rows run in a process detached from the
+  command that filed the message, with that command's environment minus the names
+  Meridian injects into a session (`MERIDIAN_SPAWN_ID`, `MERIDIAN_CHAT_ID`,
+  `MERIDIAN_PROJECT_DIR` and the rest). `MERIDIAN_HOME`, `MERIDIAN_CONFIG` and
+  other config inputs stay. `PATH` is the filing command's, so a program the row
+  runs must be on it.
+- **No `interval`.** A row with one is invalid: the event has no project state to
+  record the last run in.
+
+The command that files the message does not wait for the rows, and their output
+goes nowhere. What each row did is written to
+`~/.meridian/machine/inbox/hook-log/<message id>.json`: each row's name, outcome,
+exit code and the last 1 KiB of its standard error, plus the errors that stopped
+a row from loading or running. A row that files a message does not fire the event
+again.
+
+```toml
+# ~/.meridian/config.toml
+[[hooks]]
+name    = "offer-to-dispatcher"
+event   = "inbox.received"
+command = "meridian inbox offer \"$MERIDIAN_INBOX_MESSAGE_ID\" c20417"
+```
 
 Hook failures always log and continue to the next hook; they never undo or stop
 the event that fired them.
@@ -156,9 +199,10 @@ event   = "spawn.finished"
 
 Inline commands are fine when they remain short and readable.
 
-Command hooks receive the event context as JSON on stdin (`schema_version` 3)
+Command hooks receive the event context as JSON on stdin (`schema_version` 4)
 and as `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`,
-`MERIDIAN_ACTIVE_WORK_*`, and `MERIDIAN_NOTIFICATION_*` environment variables.
+`MERIDIAN_ACTIVE_WORK_*`, `MERIDIAN_NOTIFICATION_*`, and `MERIDIAN_INBOX_MESSAGE_*`
+environment variables.
 Before adding the current payload, Meridian removes every payload variable
 inherited from the caller, so an absent field cannot leak stale spawn, work, or
 notification context. The resulting spawn and work variables describe only the
@@ -173,7 +217,7 @@ Every command hook receives one object like this on standard input:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "event_name": "spawn.finished",
   "event_id": "2bd5e40f-8282-52a6-bfdb-28c456300e53",
   "timestamp": "2026-10-18T18:42:00+00:00",
@@ -190,12 +234,14 @@ Every command hook receives one object like this on standard input:
     "error": null
   },
   "work": {"id": "hook-event-names", "dir": "/workspace/project/.work"},
-  "notification": null
+  "notification": null,
+  "inbox_message": null
 }
 ```
 
 `spawn`, `work`, and `notification` are `null` when none of their fields is
-known. The `spawn` object is present when any spawn field is known, even if
+known. `inbox_message` (`id`, `path`) is set only for `inbox.received`, where
+`project_root` and `runtime_root` are `null`. The `spawn` object is present when any spawn field is known, even if
 `spawn.id` is `null` (for example, a notification labeled with an agent but no
 spawn). Individual unknown fields inside a present block are `null`.
 

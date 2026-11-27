@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -176,21 +175,6 @@ def inflight_path(conversation_id: str) -> Path:
     return agy_root() / "inflight" / f"{conversation_id}.jsonl"
 
 
-# MERIDIAN_HOME relocates the state the hook already wrote; the rest is identity and
-# launch state that belongs to whichever session started the server.
-_KEPT_ENV = frozenset({"MERIDIAN_HOME"})
-
-
-def scrubbed_env(base: Mapping[str, str]) -> dict[str, str]:
-    """``base`` without Meridian identity, which an ``agy`` started in a session would leak."""
-
-    return {
-        key: value
-        for key, value in base.items()
-        if key in _KEPT_ENV or not key.upper().startswith(("MERIDIAN_", "_MERIDIAN_"))
-    }
-
-
 def write_private_json(path: Path, doc: dict[str, Any]) -> None:
     atomic_write_text(
         path, json.dumps(doc, separators=(",", ":")), durable=False, permissions=PRIVATE_FILE_MODE
@@ -240,7 +224,6 @@ __all__ = [
     "read_seen_offset",
     "request_path",
     "row_path",
-    "scrubbed_env",
     "seen_path",
     "watch_lock_path",
     "write_private_json",

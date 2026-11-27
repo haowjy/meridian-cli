@@ -11,7 +11,9 @@ import pytest
 
 from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.lifecycle import LifecycleEvent
+from meridian.lib.hooks.config import HooksConfig
 from meridian.lib.hooks.dispatch import HookDispatcher
+from meridian.lib.hooks.registry import HookRegistry
 
 
 @pytest.mark.parametrize(
@@ -30,7 +32,7 @@ def test_every_terminal_spawn_status_reaches_when_status(
     dispatcher = HookDispatcher(
         project_root=tmp_path,
         runtime_root=None,
-        registry=None,
+        registry=HookRegistry(HooksConfig(hooks=())),
         interval_tracker=None,
         external_runner=None,
         builtin_hooks={},

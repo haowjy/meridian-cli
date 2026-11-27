@@ -21,6 +21,7 @@ HookEventName = Literal[
     "notify.cache_expiring",
     "notify.needs_permission",
     "notify.manual",
+    "inbox.received",
 ]
 
 # Events that carry a `HookContext.notification`.
@@ -30,7 +31,7 @@ NOTIFICATION_EVENTS: tuple[HookEventName, ...] = (
     "notify.needs_permission",
     "notify.manual",
 )
-HOOK_CONTEXT_SCHEMA_VERSION = 3
+HOOK_CONTEXT_SCHEMA_VERSION = 4
 
 HookOutcome = Literal["success", "failure", "timeout", "skipped"]
 SpawnKind = Literal["child", "primary", "streaming"]
@@ -107,7 +108,8 @@ class HookContext:
     event_name: HookEventName
     event_id: UUID
     timestamp: str
-    project_root: str
+    # None for an event that belongs to no project (`inbox.received`).
+    project_root: str | None
     runtime_root: str | None
     schema_version: int = HOOK_CONTEXT_SCHEMA_VERSION
 
@@ -125,11 +127,14 @@ class HookContext:
 
     notification: Notification | None = None
 
+    inbox_message_id: str | None = None
+    inbox_message_path: str | None = None
+
     @classmethod
     def from_roots(
         cls,
         *,
-        project_root: str | Path,
+        project_root: str | Path | None,
         runtime_root: str | Path | None,
         event_name: HookEventName,
         event_id: UUID,
@@ -145,12 +150,14 @@ class HookContext:
         work_id: str | None = None,
         work_dir: str | Path | None = None,
         notification: Notification | None = None,
+        inbox_message_id: str | None = None,
+        inbox_message_path: str | Path | None = None,
     ) -> HookContext:
         return cls(
             event_name=event_name,
             event_id=event_id,
             timestamp=timestamp,
-            project_root=Path(project_root).as_posix(),
+            project_root=Path(project_root).as_posix() if project_root is not None else None,
             runtime_root=Path(runtime_root).as_posix() if runtime_root is not None else None,
             spawn_id=spawn_id,
             spawn_status=spawn_status,
@@ -163,6 +170,10 @@ class HookContext:
             work_id=work_id,
             work_dir=Path(work_dir).as_posix() if work_dir is not None else None,
             notification=notification,
+            inbox_message_id=inbox_message_id,
+            inbox_message_path=(
+                Path(inbox_message_path).as_posix() if inbox_message_path is not None else None
+            ),
         )
 
     def to_env(self) -> dict[str, str]:
@@ -193,6 +204,8 @@ class HookContext:
             "notification_priority": (
                 str(self.notification.priority) if self.notification else None
             ),
+            "inbox_message_id": self.inbox_message_id,
+            "inbox_message_path": self.inbox_message_path,
         }
         return {
             HOOK_PAYLOAD_ENV_KEYS[field]: value
@@ -242,6 +255,12 @@ class HookContext:
             if self.work_id or self.work_dir
             else None,
             "notification": self.notification.to_dict() if self.notification else None,
+            "inbox_message": {
+                "id": self.inbox_message_id,
+                "path": self.inbox_message_path,
+            }
+            if self.inbox_message_id
+            else None,
         }
         return json.dumps(payload)
 

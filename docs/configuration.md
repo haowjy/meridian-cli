@@ -353,7 +353,7 @@ enabled = false
 
 **Extension channels.** Any `[[hooks]] command = "..."` row on a notification
 event receives the notification, so a Slack or desktop channel is one row and
-one script. Stdin carries the hook payload (`schema_version` 3) with a
+one script. Stdin carries the hook payload (`schema_version` 4) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
 (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `child_spawn_id`, `child_agent`, `child_harness`, `sender`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The

@@ -168,10 +168,7 @@ def emit(
         project_root,
         runtime_root,
         env=env,
-        registry=HookRegistry(
-            project_root,
-            hooks_config=loaded_hooks.config,
-        ),
+        registry=HookRegistry(loaded_hooks.config),
     )
 
     report = report_from_hooks(event, dispatcher.fire(context))

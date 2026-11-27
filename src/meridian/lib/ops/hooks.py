@@ -12,10 +12,12 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
+from meridian.lib.hooks.config import load_hooks_config
 from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.types import (
+    EVENTS,
     NOTIFICATION_EVENTS,
     Hook,
     HookContext,
@@ -313,7 +315,7 @@ def _same_manual_action(left: Hook, right: Hook) -> bool:
 
 def hooks_list_sync(payload: HookListInput) -> HookListOutput:
     authority = resolve_project_authority(payload.project_root)
-    registry = HookRegistry(authority.project_root)
+    registry = HookRegistry(load_hooks_config(authority.project_root))
     hooks = tuple(
         HookListItem(
             name=hook.name,
@@ -330,8 +332,8 @@ def hooks_list_sync(payload: HookListInput) -> HookListOutput:
 def hooks_check_sync(payload: HookCheckInput) -> HookCheckOutput:
     authority = resolve_project_authority(payload.project_root)
     load_config(authority.project_root, authority=authority)
-    # Constructing the registry validates every hook row.
-    HookRegistry(authority.project_root, authority=authority)
+    # Loading validates every hook row.
+    load_hooks_config(authority.project_root, authority=authority)
 
     checks: list[HookCheckItem] = []
     all_ok = True
@@ -406,7 +408,7 @@ def _result_to_output(result: HookResult) -> HookRunResult:
 
 def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     authority = resolve_runtime_authority_for_read(payload.project_root)
-    registry = HookRegistry(authority.project_root, authority=authority)
+    registry = HookRegistry(load_hooks_config(authority.project_root, authority=authority))
 
     hook_name = payload.name.strip()
     if not hook_name:
@@ -455,13 +457,18 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
             raise ValueError(
                 f"Builtin hook {builtin.name!r} supports only [{supported}], not {run_event!r}."
             )
+    if EVENTS[run_event].machine:
+        raise ValueError(
+            f"Hook '{hook_name}' cannot run manually: {run_event!r} fires for a message filed "
+            "in the machine inbox and has no message to pass here. Send one with "
+            "`meridian message inbox`."
+        )
     if run_event != effective_hook.event:
         effective_hook = replace(effective_hook, event=run_event)
 
     dispatcher = HookDispatcher(
         authority.project_root,
         authority.runtime_root,
-        authority=authority,
         registry=_SingleHookRegistry(effective_hook),
         interval_tracker=(
             _BypassIntervalTracker(IntervalTracker(authority.runtime_root))
@@ -491,7 +498,7 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
 
 def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
     authority = resolve_project_authority(payload.project_root)
-    registry = HookRegistry(authority.project_root)
+    registry = HookRegistry(load_hooks_config(authority.project_root))
 
     hooks = tuple(
         HookResolveItem(

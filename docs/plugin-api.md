@@ -19,7 +19,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, Spaw
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
-| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual` |
+| `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual`, `inbox.received` |
 | `SpawnKind` | Spawn kind literal — `"child"` \| `"primary"` \| `"streaming"` |
 | `SpawnStatus` | Hook terminal status literal — `"success"` \| `"failure"` \| `"cancelled"` \| `"timeout"` |
 | `NOTIFICATION_EVENTS` | Every notification event, each carrying `HookContext.notification` |
@@ -39,9 +39,9 @@ arbitrary `details`.
 | `event_name` | `HookEventName` | all events |
 | `event_id` | `UUID` | all events |
 | `timestamp` | `str` (ISO 8601) | all events |
-| `project_root` | `str` | all events |
+| `project_root` | `str \| None` | all events; `None` for `inbox.received`, which has no project |
 | `runtime_root` | `str \| None` | all events; `None` in a directory with no Meridian runtime state |
-| `schema_version` | `int` (currently `3`) | all events |
+| `schema_version` | `int` (currently `4`) | all events |
 | `spawn_id` | `str \| None` | spawn events; notification events when the notifying spawn is known |
 | `spawn_status` | `SpawnStatus \| None` | `spawn.finished`; one of `success`, `failure`, `cancelled`, or `timeout` |
 | `spawn_agent` | `str \| None` | spawn events; notification events when known |
@@ -53,8 +53,10 @@ arbitrary `details`.
 | `work_id` | `str \| None` | work events; spawn events when the spawn has work; notification events when the session has work |
 | `work_dir` | `str \| None` | work events |
 | `notification` | `Notification \| None` | notification events |
+| `inbox_message_id` | `str \| None` | `inbox.received` |
+| `inbox_message_path` | `str \| None` | `inbox.received`; the message file |
 
-`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables, including `MERIDIAN_SPAWN_KIND` when known (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks); its nested payload shape and null rules are documented in [Hooks: JSON stdin payload](hooks.md#json-stdin-payload).
+`HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables, including `MERIDIAN_SPAWN_KIND` when known (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`; `inbox.received` adds `MERIDIAN_INBOX_MESSAGE_ID`, `MERIDIAN_INBOX_MESSAGE_PATH` and sets no `MERIDIAN_PROJECT_DIR`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks); its nested payload shape and null rules are documented in [Hooks: JSON stdin payload](hooks.md#json-stdin-payload).
 
 ## State Helpers
 

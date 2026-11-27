@@ -277,6 +277,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _hook_payload("MERIDIAN_HOOK_EVENT_ID", "Hook event identifier.", "event_id"),
     _hook_payload("MERIDIAN_HOOK_SCHEMA_VERSION", "Hook payload schema version.", "schema_version"),
     _hook_payload("MERIDIAN_HOOK_TIMESTAMP", "Hook event timestamp.", "timestamp"),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_ID", "Hook inbox message identifier.", "inbox_message_id"
+    ),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_PATH", "Hook inbox message file path.", "inbox_message_path"
+    ),
     _hook_payload("MERIDIAN_NOTIFICATION_BODY", "Hook notification body.", "notification_body"),
     _hook_payload(
         "MERIDIAN_NOTIFICATION_PRIORITY", "Hook notification priority.", "notification_priority"
@@ -454,6 +460,28 @@ def env_toward_project(environ: Mapping[str, str], project_root: Path) -> dict[s
     return toward
 
 
+_SESSION_SUBTYPES = frozenset((EnvSubtype.INJECTED_HANDLE, EnvSubtype.HOOK_PAYLOAD))
+_SESSION_ENV_NAMES = frozenset(item.name for item in ENV_VARS if item.subtype in _SESSION_SUBTYPES)
+
+
+def session_free_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """*environ* for a process that acts for no session.
+
+    Drops what a launch injects into its session and what a hook dispatch hands a row;
+    config inputs (``MERIDIAN_HOME``, ``MERIDIAN_CONFIG``, ``MERIDIAN_HOOKS_ENABLED``...)
+    stay, so the process reads the state and config its starter did.
+    """
+
+    return {
+        name: value
+        for name, value in environ.items()
+        if name not in _SESSION_ENV_NAMES
+        and not any(
+            family.subtype in _SESSION_SUBTYPES and family.contains(name) for family in ENV_FAMILIES
+        )
+    }
+
+
 def is_allowed_child_env_name(name: str) -> bool:
     """Return whether the registry permits bind-time child injection of *name*."""
 
@@ -477,4 +505,5 @@ __all__ = [
     "is_project_scoped_env_name",
     "is_registered_env_name",
     "project_scoped_env_names",
+    "session_free_env",
 ]
