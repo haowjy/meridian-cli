@@ -6,7 +6,7 @@ from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile, parse_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.mars_roots import resolve_mars_roots
+from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError, resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.agent_routing import configured_agent_routing
 from meridian.lib.config.models import MeridianConfig
@@ -412,7 +412,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     profile_warning: str | None = None
     try:
         routing, alias_catalog, bundle_result = ask_for_bundle(agent)
-    except bundle_adapter.MarsAgentNotFoundError:
+    except MarsAgentNotFoundError:
         if configured_default_agent is None:
             raise
         profile_warning = (

@@ -25,8 +25,7 @@ skills only. Model aliases still resolve from the project's Mars config. If a
 user agent depends on an alias that the project does not define, add its package
 to the project with `meridian mars add <source>` or pass `--model`.
 `meridian config show` and `meridian context` report `mars_fallback` as `active`
-when this fallback is available, `unsupported` when the installed Mars lacks it,
-and `n/a` when the user root is already primary.
+inside a project Mars root and `n/a` when the user root is already primary.
 
 Package mutations without `--user` require a project Mars root; so do `migrate` (except
 `migrate --check`, which only reports) and `provide`. In a bare

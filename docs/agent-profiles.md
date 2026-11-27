@@ -289,10 +289,9 @@ source. See [the upgrade notes](upgrading.md#mars-0234).
 
 ## Skills and Skill Variants
 
-Meridian's own operating guidance ships with the binary. Before a launch, Meridian asks
-its Mars to install it into the resolved Mars root with `mars provide`, under
-`.mars/skills/`. Where Mars cannot (a Mars older than 0.20, a held lock, an interrupted
-sync, or a refused bundle), Meridian reads its built-in copies. Every
+Meridian's own operating guidance ships with the binary. A launch reads it in place:
+Mars finds a bundled skill by name in the binary's bundle directory when no installed
+skill has that name, as it does for built-in agents. Every
 launch receives a compact `# Meridian
 skills` trigger list generated from the binary's bundled descriptions, except for
 a skill Mars loaded with non-blank content into the prompt. The agent reads a

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.native_identity import PrecreatedSession
@@ -282,7 +283,9 @@ def stub_bundle_request_and_resolve(
         if request.agent:
             agent_file = request.project_root / ".mars" / "agents" / f"{request.agent}.md"
             if not agent_file.is_file():
-                raise bundle_adapter.MarsAgentNotFoundError(f"Agent '{request.agent}' not found.")
+                raise MarsAgentNotFoundError(
+                    "agent_not_found", f"agent `{request.agent}` not found"
+                )
             agent_source_path = agent_file.as_posix()
         resolved_policy = execution_policy or ResolvedExecutionPolicy()
         resolved_provenance = provenance or {"model_source": "cli", "harness_source": "provider"}

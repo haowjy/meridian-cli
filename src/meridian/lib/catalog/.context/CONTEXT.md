@@ -37,7 +37,9 @@ the file Mars chose (`parse_agent_profile` on the bundle's `agent_source_path`, 
 pick a different file than the one that runs. Mars reads profile skills when building the
 launch bundle for the same reason. Every by-name call to Mars sends `mars_content_args`
 (`mars_roots.py`): the user root as `--fallback-root`, then this build's bundle directory
-as `--provided-root`.
+as `--provided-root`. A missing agent is `MarsAgentNotFoundError` on every path (spawn,
+`--fork`, configured default) and carries Mars's message; Meridian adds only a hint that
+holds for every layer. Meridian never words its own guess at which layer was searched.
 
 Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) come from that provided
 layer, which answers a name only when no installed agent claims it; a name Mars renamed on

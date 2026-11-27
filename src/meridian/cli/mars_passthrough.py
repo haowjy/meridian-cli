@@ -143,7 +143,7 @@ def parse_mars_passthrough(
         selected_root = project_root
     mars_args = [*mars_args, "--root", selected_root.as_posix()]
     if not user_scope and subcommand in {"agents", "skills"}:
-        mars_args.extend(mars_content_args(roots, executable=executable))
+        mars_args.extend(mars_content_args(roots))
     return MarsPassthroughRequest(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),

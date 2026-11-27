@@ -102,7 +102,7 @@ class ConfigShowOutput(BaseModel):
     project_identity_source: Literal["meridian.toml", "path", "unminted"]
     mars_root: str
     mars_scope: Literal["project", "user"]
-    mars_fallback: Literal["active", "unsupported", "n/a"]
+    mars_fallback: Literal["active", "n/a"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.mars_roots import (
     MARS_AGENT_NOT_FOUND_CODES,
+    MarsAgentNotFoundError,
     MarsRoots,
     ensure_resolved_mars_root,
     mars_content_args,
@@ -171,7 +172,7 @@ def _entry_scope(value: object) -> Literal["root", "fallback", "provided"]:
 def mars_resolve_agent(project_root: Path, name: str) -> Path:
     """The profile file Mars resolves for agent *name*, the one a launch bundle reads.
 
-    Raises ``FileNotFoundError`` when no content layer has it, with Mars's message, and
+    Raises ``MarsAgentNotFoundError`` when no content layer has it, with Mars's message, and
     ``ValueError`` when Mars cannot answer.
     """
 
@@ -190,7 +191,7 @@ def mars_resolve_agent(project_root: Path, name: str) -> Path:
         "--json",
         "--root",
         mars_roots.primary.as_posix(),
-        *mars_content_args(mars_roots, executable=executable),
+        *mars_content_args(mars_roots),
     ]
     try:
         result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
@@ -204,9 +205,10 @@ def mars_resolve_agent(project_root: Path, name: str) -> Path:
     error = row.get("error")
     if isinstance(error, dict):
         error_row = cast("dict[str, object]", error)
-        message = str(error_row.get("message") or f"agent '{name}' not found")
-        if error_row.get("code") in MARS_AGENT_NOT_FOUND_CODES:
-            raise FileNotFoundError(message)
+        message = str(error_row.get("message") or f"agent `{name}` not found")
+        code = str(error_row.get("code"))
+        if code in MARS_AGENT_NOT_FOUND_CODES:
+            raise MarsAgentNotFoundError(code, message)
         raise ValueError(f"mars agents show failed: {message}")
     source_path = row.get("source_path")
     if result.returncode != 0 or not isinstance(source_path, str) or not source_path.strip():
@@ -239,7 +241,7 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         "--root",
         mars_roots.primary.as_posix(),
     ]
-    command.extend(mars_content_args(mars_roots, executable=executable))
+    command.extend(mars_content_args(mars_roots))
 
     try:
         result = subprocess.run(
