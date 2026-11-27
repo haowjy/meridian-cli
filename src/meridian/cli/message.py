@@ -87,7 +87,8 @@ MESSAGE_TEXT_HELP: Final = (
 def _held_if_cold(runtime_root: Path, spawn_id: str, receiver: Receiver) -> Failed | None:
     """``Failed("cold")`` when the session is idle past its cache's expiry, else ``None``.
 
-    The same ``idle`` ``spawn list --json`` shows; a session with no idle data is not cold.
+    The same ``idle`` ``spawn list --json`` shows; a session with no idle data is not cold,
+    and neither is one in a turn right now (``spawn_idle`` reads that as no idle stretch).
     Runs before any byte is sent, so ``cold`` always means nothing was delivered.
     """
 

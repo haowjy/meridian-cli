@@ -1,7 +1,10 @@
-"""A message delivered to a session that starts a turn ends the session's open idle stretch.
+"""A message delivered to a child spawn that starts a turn ends the spawn's open idle stretch.
 
 The route reports how far the message got (``DeliveryKind``); this decides what that means
-for idle state, as a turn starting does.
+for idle state, as a turn starting does. Only a child spawn's control server calls it: no
+human is pushed for a child, and its activity is not read, so nothing else would end the
+stretch. A primary's or agy's idle sensor sees its turns start, and a held or unread
+message (a Claude session may hold one for approval) must not drop the push owed the human.
 """
 
 from __future__ import annotations
