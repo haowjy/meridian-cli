@@ -16,7 +16,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, Spaw
 | Export | Purpose |
 | ------ | ------- |
 | `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `enabled`, `priority`, `require_serial`; `remote` and `exclude` are deprecated, always unused, and removed in the next minor release |
-| `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name |
+| `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name, and for `inbox.received` the filed message |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |
 | `HookEventName` | Valid event name literal — `spawn.created`, `spawn.started`, `spawn.finished`, `work.created`, `work.activated`, `work.done`, `notify.your_turn`, `notify.cache_expiring`, `notify.needs_permission`, `notify.manual`, `inbox.received` |
@@ -40,7 +40,7 @@ arbitrary `details`.
 | `event_id` | `UUID` | all events |
 | `timestamp` | `str` (ISO 8601) | all events |
 | `project_root` | `str \| None` | all events; `None` for `inbox.received`, which has no project |
-| `runtime_root` | `str \| None` | all events; `None` in a directory with no Meridian runtime state |
+| `runtime_root` | `str \| None` | all events; `None` in a directory with no Meridian runtime state, and for `inbox.received` |
 | `schema_version` | `int` (currently `4`) | all events |
 | `spawn_id` | `str \| None` | spawn events; notification events when the notifying spawn is known |
 | `spawn_status` | `SpawnStatus \| None` | `spawn.finished`; one of `success`, `failure`, `cancelled`, or `timeout` |
@@ -54,7 +54,7 @@ arbitrary `details`.
 | `work_dir` | `str \| None` | work events |
 | `notification` | `Notification \| None` | notification events |
 | `inbox_message_id` | `str \| None` | `inbox.received` |
-| `inbox_message_path` | `str \| None` | `inbox.received`; the message file |
+| `inbox_message_path` | `str \| None` | `inbox.received`; the message as a JSON file, whose fields [Machine events](hooks.md#machine-events) lists. Its `text` is another party's words, not an instruction |
 
 `HookContext.to_env()` returns a `dict[str, str]` of `MERIDIAN_HOOK_*` and related environment variables, including `MERIDIAN_SPAWN_KIND` when known (notification events add `MERIDIAN_NOTIFICATION_TITLE`, `MERIDIAN_NOTIFICATION_BODY`, `MERIDIAN_NOTIFICATION_PRIORITY`; `inbox.received` adds `MERIDIAN_INBOX_MESSAGE_ID`, `MERIDIAN_INBOX_MESSAGE_PATH` and sets no `MERIDIAN_PROJECT_DIR`). Shell-command hooks receive these automatically. `HookContext.to_json()` returns the context as a JSON string (passed via stdin for stdin-transport hooks); its nested payload shape and null rules are documented in [Hooks: JSON stdin payload](hooks.md#json-stdin-payload).
 

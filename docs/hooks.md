@@ -69,7 +69,10 @@ every other event's in four ways:
   stdin, `MERIDIAN_PROJECT_DIR` is unset, and the command runs in your home
   directory. The context carries `inbox_message.id` and `inbox_message.path`,
   also set as `MERIDIAN_INBOX_MESSAGE_ID` and `MERIDIAN_INBOX_MESSAGE_PATH`. The
-  sender and text are in the file at that path.
+  file at that path is the message as JSON: `text`, `from` (`kind`, and for a
+  session its `machine`, `id`, `project` and `agent`), `received`, and when set
+  `project`, `reply_to` and `via`. The text is another party's words: a row that
+  hands it to a program must not run it as a command.
 - **No session in the environment.** The rows run in a process detached from the
   command that filed the message, with that command's environment minus the names
   Meridian injects into a session (`MERIDIAN_SPAWN_ID`, `MERIDIAN_CHAT_ID`,
@@ -94,8 +97,10 @@ event   = "inbox.received"
 command = "meridian inbox offer \"$MERIDIAN_INBOX_MESSAGE_ID\" c20417"
 ```
 
-`c20417` is a running primary session: `offer` refuses any other, and the refusal
-is in the hook log.
+`c20417` stands for the chat ID of a primary session that is running: in that
+session, `echo $MERIDIAN_CHAT_ID` prints it. `offer` refuses any other session,
+and the refusal is in the hook log. The row does nothing once that session has
+exited or moved to a new chat, so change the ID when you start the next one.
 
 Hook failures always log and continue to the next hook; they never undo or stop
 the event that fired them.
@@ -205,7 +210,8 @@ Inline commands are fine when they remain short and readable.
 Command hooks receive the event context as JSON on stdin (`schema_version` 4)
 and as `MERIDIAN_HOOK_*`, `MERIDIAN_PROJECT_DIR`, `MERIDIAN_SPAWN_*`,
 `MERIDIAN_ACTIVE_WORK_*`, `MERIDIAN_NOTIFICATION_*`, and `MERIDIAN_INBOX_MESSAGE_*`
-environment variables.
+environment variables. Each is set only when the event has that field:
+`MERIDIAN_PROJECT_DIR`, for one, is unset for `inbox.received`.
 Before adding the current payload, Meridian removes every payload variable
 inherited from the caller, so an absent field cannot leak stale spawn, work, or
 notification context. The resulting spawn and work variables describe only the
