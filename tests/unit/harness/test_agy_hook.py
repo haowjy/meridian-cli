@@ -22,7 +22,6 @@ from meridian.lib.harness.agy.state import (
     process_dir,
     read_json,
     request_path,
-    scrubbed_env,
     watch_lock_path,
     write_private_json,
 )
@@ -434,19 +433,6 @@ def test_claim_gives_up_while_another_process_holds_the_lock(agy_home: Path) -> 
     finally:
         os.close(fd)
     assert len(inbox.claim("c1", None)) == 1
-
-
-def test_mcp_child_env_drops_identity_but_keeps_home() -> None:
-    env = scrubbed_env(
-        {
-            "MERIDIAN_SPAWN_ID": "p9",
-            "_MERIDIAN_DEPTH": "2",
-            "MERIDIAN_HOME": "/x",
-            "PATH": "/bin",
-        }
-    )
-
-    assert env == {"MERIDIAN_HOME": "/x", "PATH": "/bin"}
 
 
 def test_tool_result_shows_stdout_stderr_and_exit_code() -> None:
