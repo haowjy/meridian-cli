@@ -22,7 +22,7 @@ from meridian.lib.artifact.store import (
     serves_lock_path,
 )
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detach import detached_popen_kwargs
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
@@ -148,19 +148,12 @@ def tailscale_serve_ports() -> set[int]:
 def launch_http_server(directory: Path, port: int, slug: str) -> subprocess.Popen[Any]:
     if not is_valid_slug(slug):
         raise ArtifactError("refusing to launch a server with an invalid artifact slug")
-    kwargs: dict[str, Any] = {
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
-    if IS_WINDOWS:
-        # Win32 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
-        kwargs["creationflags"] = 0x00000008 | 0x00000200
-    else:
-        kwargs["start_new_session"] = True
     return subprocess.Popen(
         module_argv("meridian.lib.artifact._serve_dir", str(directory), str(port), slug),
-        **kwargs,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **detached_popen_kwargs(),
     )
 
 
