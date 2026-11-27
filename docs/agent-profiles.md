@@ -25,7 +25,9 @@ meridian mars list --json # machine-readable
 
 Meridian looks a name up in the project's Mars root, then in user packages
 (`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian. A
-package or project agent with a built-in profile's name replaces it. The one built-in
+package or project agent with a built-in profile's name replaces it, and so does a name
+collision Mars renamed (`inbox-router__a`, `inbox-router__b`) or a user-package copy the
+project can't see: those fail with their usual error instead of falling back. The one built-in
 profile today is `inbox-router`, which the
 [meridian-comms](https://github.com/haowjy/meridian-comms) router starts to decide where
 an inbox message goes. It cannot spawn and is not offered to other agents

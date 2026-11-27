@@ -133,12 +133,15 @@ def builtin_agents_dir() -> Path:
 
 
 def _agent_search_dirs(project_root: Path) -> list[Path]:
-    # Built-in profiles come last, so a package or project agent of the same name wins.
     roots = resolve_mars_roots(project_root)
-    return [
-        *(root / ".mars" / "agents" for root in mars_content_roots(roots)),
-        builtin_agents_dir(),
-    ]
+    return [root / ".mars" / "agents" for root in mars_content_roots(roots)]
+
+
+def _find_profile(profiles: list[AgentProfile], name: str) -> AgentProfile | None:
+    return next(
+        (profile for profile in profiles if profile.path.stem == name or profile.name == name),
+        None,
+    )
 
 
 def scan_agent_profiles(
@@ -179,9 +182,9 @@ def load_agent_profile(
 
     roots = resolve_mars_roots(root)
     profiles = scan_agent_profiles(project_root=root)
-    for profile in profiles:
-        if profile.path.stem == normalized or profile.name == normalized:
-            return profile
+    found = _find_profile(profiles, normalized)
+    if found is not None:
+        return found
     # Mars renames every side of a name collision to `<name>__<source>`.
     renamed = sorted(
         profile.path.stem for profile in profiles if profile.path.stem.startswith(f"{normalized}__")
@@ -198,14 +201,20 @@ def load_agent_profile(
             project_root=root,
             search_dirs=[user_root / ".mars" / "agents"],
         )
-        if any(
-            profile.path.stem == normalized or profile.name == normalized
-            for profile in user_profiles
-        ):
+        if _find_profile(user_profiles, normalized) is not None:
             raise FileNotFoundError(
                 f"Agent '{normalized}' found in user packages ({user_root}); "
                 "add it here: meridian mars add <source>"
             )
+
+    # Built-in profiles are the last resort: a Mars agent of the same name, including the
+    # renamed sides of a collision and a user-package copy, must win or fail loudly instead.
+    builtin = _find_profile(
+        scan_agent_profiles(project_root=root, search_dirs=[builtin_agents_dir()]),
+        normalized,
+    )
+    if builtin is not None:
+        return builtin
 
     if roots.scope == "user":
         raise FileNotFoundError(

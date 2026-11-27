@@ -36,7 +36,10 @@ Mars reads profile skills when building the launch bundle. A separate Meridian
 parse would diverge from the skills actually loaded.
 
 Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) are read from the
-installed wheel as the last search directory, never installed into a Mars root: an
+installed wheel only when the Mars lookup would otherwise end in "not found", never
+installed into a Mars root. The collision-rename and user-packages errors run first, so a
+user's own copy is never silently replaced by the built-in (the built-in directory is not
+one more Mars root, and `_agent_search_dirs` must not list it). Never installed because an
 installed copy could go missing whenever another sync held the lock or another Meridian
 version provided a different bundle. A launch sends the resolved profile's path to Mars as
 `--agent-file`, so Meridian's lookup and Mars's always read the same file; overlays stay
