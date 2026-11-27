@@ -126,7 +126,7 @@ meridian agy --continue c12                   # resume a chat; keeps its model, 
 - **A row in `spawn list --primary`.** The first prompt of a conversation registers it;
   the row stays running until `agy` exits. Children the session spawns are its children,
   and a no-argument `spawn wait` works.
-- **Messages.** `meridian spawn message <spawn or chat> --message "..."` to the session
+- **Messages.** `meridian message <spawn or chat> "..."` to the session
   prints `queued`. `agy` has no way to push a message in, so it reaches the model at the
   session's next model call: later in the current turn, or when the session wakes. The plugin
   confirms it at the turn's end by finding it in `agy`'s transcript; one it cannot find is

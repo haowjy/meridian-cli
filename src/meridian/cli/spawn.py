@@ -1,6 +1,5 @@
 """CLI command handlers for spawn.* operations."""
 
-import asyncio
 import os
 import re
 import sys
@@ -16,7 +15,12 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
-from meridian.cli.spawn_message import send_message
+from meridian.cli.message import (
+    MESSAGE_ADDRESS_HELP,
+    MESSAGE_TEXT_HELP,
+    MESSAGE_WAKE_HELP,
+    run_message,
+)
 from meridian.cli.utils import (
     parse_csv_list,
     resolve_cli_observer_context,
@@ -28,6 +32,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
+from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
@@ -104,8 +109,6 @@ _SPAWN_USAGE_EPILOGUE = (
 _RUNNING_REF_FORMS = (
     "spawn ID or chat ID (a chat names the run live in it now, else the spawn that ran it)"
 )
-# `spawn message` has to reach a live process, so a chat names only its running session.
-_MESSAGE_REF_FORMS = "spawn ID or chat ID (that chat's running session)"
 _INSPECT_REF_FORMS = f"{_RUNNING_REF_FORMS}, or @latest / @last-failed / @last-completed"
 _SELECTORS_NOTE = "@-selectors also resolve but name finished spawns"
 
@@ -893,19 +896,35 @@ def _spawn_list(
         ),
     ] = None,
     limit: Annotated[
-        int, Parameter(name="--limit", help="Maximum number of spawns to return.")
-    ] = 20,
+        int | None,
+        Parameter(
+            name="--limit",
+            help="Maximum number of spawns to return (20; `--global` has no limit unless set).",
+        ),
+    ] = None,
     failed: Annotated[
         bool,
         Parameter(name="--failed", help="Shortcut for status=failed."),
     ] = False,
+    all_projects: Annotated[
+        bool,
+        Parameter(
+            name="--global",
+            help=(
+                "List running sessions in every project on this machine, with each row's "
+                "project. Takes no --all, --status, --view or --work."
+            ),
+        ),
+    ] = False,
 ) -> None:
+    if limit is not None and limit < 1:
+        raise ValueError("--limit must be at least 1")
     normalized_status: SpawnStatus | None = None
     normalized_statuses: tuple[SpawnStatus, ...] | None = None
     normalized_view = view.strip().lower() if view.strip() else "active"
     if all_spawns:
         normalized_view = "all"
-        if limit == 20:  # user didn't override the default
+        if limit is None:
             limit = 5
     view_map: dict[str, tuple[SpawnStatus, ...]] = {
         "active": _ACTIVE_VIEW_STATUSES,
@@ -939,8 +958,11 @@ def _spawn_list(
             profile=profile,
             primary=primary,
             work=work,
-            limit=limit,
+            # No limit for `--global`: its list is bounded by what is running, and a silent
+            # cut would hide sessions from a caller that lists them all.
+            limit=limit if limit is not None or all_projects else 20,
             failed=False,
+            all_projects=all_projects,
         ),
         sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
@@ -1284,7 +1306,7 @@ def _spawn_ack(
         Parameter(name="spawn_id", show=False),
     ],
 ) -> None:
-    if get_global_options().directory_explicit and not os.environ.get("MERIDIAN_SPAWN_ID"):
+    if get_global_options().directory_explicit and caller_spawn_id() is None:
         raise ValueError("Spawn acknowledgement must run in the caller's project")
     result = ack_owed_sync(
         SpawnAckInput(spawn_ids=spawn_ids),
@@ -1444,32 +1466,17 @@ def _spawn_rearm(
 
 
 def _spawn_message(
-    ref: Annotated[
-        str,
-        Parameter(
-            show_default=False,
-            help=(
-                f"Required. Session to message: {_MESSAGE_REF_FORMS}. IDs are per project: "
-                "use `-C <repo>` for a session elsewhere."
-            ),
-        ),
-    ] = "",
-    message: Annotated[
-        str,
-        Parameter(help="Message text. Put long content in a file and send its path."),
-    ] = "",
+    ref: Annotated[str, Parameter(show_default=False, help=MESSAGE_ADDRESS_HELP)] = "",
+    message: Annotated[str, Parameter(help=MESSAGE_TEXT_HELP)] = "",
+    *,
+    machine: Annotated[str | None, Parameter(name="--machine", show=False)] = None,
+    wake: Annotated[bool, Parameter(name="--wake", help=MESSAGE_WAKE_HELP)] = False,
 ) -> None:
-    if not ref:
-        raise ValueError("spawn message needs a spawn ID or chat ID")
-    caller = get_global_options().caller
-    asyncio.run(
-        send_message(
-            ref,
-            message,
-            sender_spawn_id=caller.spawn_id if caller is not None else None,
-            sender_project_root=caller.project_root if caller is not None else None,
-        )
+    print(
+        'meridian: `spawn message` is deprecated; use `meridian message <address> "..."`.',
+        file=sys.stderr,
     )
+    run_message(ref, message, machine, wake)
 
 
 def _spawn_log_removed(
@@ -1550,13 +1557,8 @@ def register_spawn_commands(app: App) -> None:
     app.command(
         _spawn_message,
         name="message",
-        help=(
-            "Send a message into a running spawn or another live session: a subagent "
-            "you launched, or a peer primary session, by spawn ID or chat ID; "
-            "`-C <repo>` reaches a session in another project. The receiver sees who "
-            "sent it and how to reply. Don't use it to nudge your own running "
-            "subagents to hurry or check in."
-        ),
+        help="Deprecated: use `meridian message`.",
+        show=False,
     )
     registered.add("spawn.message")
     app.command(

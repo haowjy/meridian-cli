@@ -38,6 +38,19 @@ class TelemetryMode(StrEnum):
     SEGMENT_OPTIONAL = "segment_optional"
 
 
+class StartupErrorShape(StrEnum):
+    """How an error raised before the command's handler runs is printed."""
+
+    LEGACY = "legacy"
+    """The text error every command prints."""
+
+    IDLE = "idle"
+    """``{"error": text}`` on stdout, always: harness adapters parse it."""
+
+    MESSAGE = "message"
+    """``meridian message``'s error object on stdout, when ``--json`` was asked for."""
+
+
 class RootSource(StrEnum):
     """Source used to resolve the target project root."""
 

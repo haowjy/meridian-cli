@@ -3,6 +3,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.caller import CallerIdentity
 from meridian.lib.core.depth import is_nested_meridian_depth
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
@@ -18,6 +19,17 @@ class RuntimeContext(BaseModel):
     chat_id: str = ""
     work_id: str | None = None
     work_dir: Path | None = None
+
+    def caller_in(self, runtime_root: Path | None) -> SpawnId | None:
+        """The calling spawn's ID, for state kept in ``runtime_root`` only.
+
+        ``spawn_id`` and ``runtime_root`` are one identity: the ID names a session only in
+        its own root. Anything keyed by "the caller" in another root has no caller.
+        """
+
+        if self.spawn_id is None or self.runtime_root is None:
+            return None
+        return CallerIdentity(self.runtime_root, self.spawn_id).in_root(runtime_root)
 
     @property
     def is_nested(self) -> bool:

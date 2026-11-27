@@ -595,6 +595,28 @@ Meridian runs without a predefined profile. Pass `-a ""` to explicitly clear
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.
 
+## Messages to people
+
+`meridian message @alice "..."` hands the message to a program you name. Meridian knows
+nothing of Slack or any other chat; it runs the program with the address as its last
+argument and the text on stdin, and reads one line of JSON back.
+
+```toml
+# ~/.meridian/config.toml
+[message]
+people = ["meridian-comms", "deliver"]
+```
+
+`people` is the first words of a command line, run with no shell, looked up on `PATH`
+unless the first word is an absolute path. The program gets the environment `meridian`
+was started with and is stopped after 120 s.
+
+**`[message]` is read from `~/.meridian/config.toml` only.** In `meridian.toml`,
+`meridian.local.toml`, a file named by `--config` or by `MERIDIAN_CONFIG` it is ignored
+with a warning. `meridian message` runs outside the harness sandbox, and those files are
+repository content that a sandboxed session can write. The program's answer and the error
+kinds are in [commands.md](commands.md#spawning--monitoring).
+
 ## History ZIP retention
 
 `[history.archive]` controls optional history retention, not UI visibility archive

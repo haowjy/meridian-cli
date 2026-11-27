@@ -33,6 +33,7 @@ from meridian.lib.config.project_root import (
     resolve_user_config_path,
 )
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
+from meridian.lib.config.user_only import USER_ONLY_SECTIONS, is_user_config_file, user_config_path
 from meridian.lib.utils.json_shapes import is_json_object
 
 logger = logging.getLogger(__name__)
@@ -175,6 +176,15 @@ def _normalize_toml_payload_values(
             continue
         if key == _LEGACY_AGENTS_SECTION:
             raise _legacy_agents_section_error(path=path)
+        if key in USER_ONLY_SECTIONS:
+            if not is_user_config_file(path):
+                logger.warning(
+                    "Ignoring [%s] in '%s': it is read from '%s' only.",
+                    key,
+                    path,
+                    user_config_path(),
+                )
+            continue
         if key in DYNAMIC_SECTION_DESCRIPTORS:
             section = normalize_dynamic_sections(
                 payload={key: raw_value},

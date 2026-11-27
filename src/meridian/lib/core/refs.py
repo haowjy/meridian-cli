@@ -7,7 +7,11 @@ the named thing exists is a question for ``ops/locate.py``.
 from __future__ import annotations
 
 import re
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 _SPAWN_ID_RE = re.compile(r"p[0-9]+")
@@ -32,13 +36,60 @@ class RefNotFound(ValueError):
     A ``ValueError`` because callers already catch that for bad references.
     """
 
-    def __init__(self, ref: str, kind: RefKind) -> None:
+    def __init__(
+        self,
+        ref: str,
+        kind: RefKind,
+        *,
+        legacy: bool = False,
+        claimed_root: Path | None = None,
+    ) -> None:
         self.ref = ref
         self.kind: RefKind = kind
-        super().__init__(
+        # Where the claim says the ID lives, when the row is no longer there (reclaimed or
+        # pruned): a reader that can recover rows from history looks in this root.
+        self.claimed_root = claimed_root
+        text = (
             f"No spawn matches '{ref}'"
             if kind == "selector"
             else f"{_KIND_LABEL[kind]} '{ref}' not found"
+        )
+        if legacy:
+            text += f". '{ref}' was issued before machine-wide IDs; name its project with -C"
+        super().__init__(text)
+
+
+_PROJECT_NAMED: ContextVar[bool] = ContextVar("meridian_project_named", default=False)
+
+
+@contextmanager
+def project_named_scope(named: bool) -> Generator[None]:
+    """Mark that the user named the current project (``-C``) for this invocation.
+
+    An ID that is claimed for another project and also held, unclaimed, by the named
+    project means the named project: that is how a caller picks one of the two.
+    """
+
+    token = _PROJECT_NAMED.set(named)
+    try:
+        yield
+    finally:
+        _PROJECT_NAMED.reset(token)
+
+
+def project_is_named() -> bool:
+    return _PROJECT_NAMED.get()
+
+
+class RefAmbiguous(ValueError):
+    """One ID names a session in the current project and another in the project its
+    claim points at. A ``ValueError`` for the same reason as ``RefNotFound``."""
+
+    def __init__(self, ref: str, here: str, there: str) -> None:
+        self.ref = ref
+        super().__init__(
+            f"'{ref}' names a session in {here} and one in {there}; "
+            "add -C to say which project you mean"
         )
 
 
@@ -81,9 +132,12 @@ def parse_ref(raw: str) -> Ref:
 __all__ = [
     "SELECTORS",
     "Ref",
+    "RefAmbiguous",
     "RefKind",
     "RefNotFound",
     "is_chat_id",
     "is_spawn_id",
     "parse_ref",
+    "project_is_named",
+    "project_named_scope",
 ]

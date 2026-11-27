@@ -8,6 +8,7 @@ rationale: ``../.context/CONTEXT.md``.
 
 import os
 import re
+import time
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
@@ -126,6 +127,56 @@ def _highest(root: Path, kind: IdKind) -> int | None:
     return None
 
 
+def lowest_claim(kind: IdKind) -> int | None:
+    """The lowest number of ``kind`` that has a claim, ``None`` when there is none.
+
+    Every ID of ``kind`` below it was issued before claims; one above it with no claim
+    was never issued.
+    """
+
+    kind_dir = ids_dir() / kind
+    try:
+        buckets = sorted(int(n) for n in os.listdir(kind_dir) if n.isdecimal())
+    except (FileNotFoundError, PermissionError):
+        return None
+    for bucket in buckets:
+        numbers = numbered_names(kind_dir / str(bucket), kind)
+        if numbers:
+            return numbers[-1]
+    return None
+
+
+def recent_claim_roots(max_age_seconds: float) -> set[Path]:
+    """The runtime roots of claims made in the last ``max_age_seconds``.
+
+    Looks only at the two newest buckets of each kind, skipping a bucket whose directory
+    has not changed in that time, and never follows a link.
+    """
+
+    cutoff = time.time() - max_age_seconds
+    roots: set[Path] = set()
+    for kind in ("p", "c"):
+        kind_dir = ids_dir() / kind
+        try:
+            buckets = sorted((int(n) for n in os.listdir(kind_dir) if n.isdecimal()), reverse=True)
+        except (FileNotFoundError, PermissionError):
+            continue
+        for bucket in buckets[:2]:
+            bucket_dir = kind_dir / str(bucket)
+            try:
+                if bucket_dir.stat().st_mtime < cutoff:
+                    continue
+                with os.scandir(bucket_dir) as entries:
+                    links = [e for e in entries if e.stat(follow_symlinks=False).st_mtime >= cutoff]
+            except (FileNotFoundError, PermissionError):
+                continue
+            for link in links:
+                target = claim_root(link.name)
+                if target is not None:
+                    roots.add(target)
+    return roots
+
+
 def _create_claim(root: Path, kind: IdKind, number: int, runtime_root: Path) -> None:
     link = _claim_path(root, kind, number)
     bucket = link.parent
@@ -179,4 +230,12 @@ def _used_in_root(kind: IdKind, root: Path) -> int:
     return max(max(numbered_names(directory, kind), default=0), _counter_in_root(kind, root))
 
 
-__all__ = ["MachineIdError", "allocate", "claim_root", "ids_dir", "numbered_names"]
+__all__ = [
+    "MachineIdError",
+    "allocate",
+    "claim_root",
+    "ids_dir",
+    "lowest_claim",
+    "numbered_names",
+    "recent_claim_roots",
+]

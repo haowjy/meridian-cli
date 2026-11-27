@@ -166,6 +166,11 @@ defers while another row bound to the native session is active. Scope terminatio
 requires positive runner-death evidence; unknown identity or access errors do not
 authorize signals, even when replaying a cleanup claim.
 
+`~/.meridian/machine.json` (`machine_identity.py`) holds this machine's `id` and `name`, written
+once on first need through a temp file and `link(2)`: of two racing first calls the loser
+reads the winner's file. A file that can't be parsed is an error naming it, never rewritten:
+a new `id` would make every machine that saved this one refuse it.
+
 ### Native chat identity
 
 

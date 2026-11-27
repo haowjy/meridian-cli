@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from meridian.lib.core.caller import caller_spawn_id
+from meridian.lib.core.types import SpawnId
 
 SELF_FORK_REF_SENTINEL = "__SELF__"
 SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})
@@ -67,7 +69,36 @@ def canonicalize_argv(argv: Sequence[str]) -> list[str]:
         if first_positional_token(argv[:bare_continue_index]) is None:
             return ["session", "browse", *normalize_optional_value_flags(remaining)]
 
-    return normalize_optional_value_flags(argv)
+    return normalize_message_stdin(normalize_optional_value_flags(argv))
+
+
+def normalize_message_stdin(argv: Sequence[str]) -> list[str]:
+    """Spell the message text ``-`` (read stdin) as ``--message=-``, whether it is the bare
+    argument or follows ``--message``.
+
+    Cyclopts reads a bare ``-`` as an unknown option. Only ``message`` and its
+    deprecated ``spawn message`` take it.
+    """
+
+    from meridian.cli.bootstrap import iter_positional_tokens
+    from meridian.lib.cli_args import TOP_LEVEL_VALUE_FLAGS
+
+    command = [token for _, token in iter_positional_tokens(argv)][:2]
+    if command[:1] != ["message"] and command != ["spawn", "message"]:
+        return list(argv)
+    stop = argv.index("--") if "--" in argv else len(argv)
+    normalized = list(argv)
+    for index in range(stop):
+        if normalized[index] != "-":
+            continue
+        before = normalized[index - 1] if index else None
+        if before == "--message":
+            normalized[index - 1 : index + 1] = ["--message=-"]
+            break
+        if before not in TOP_LEVEL_VALUE_FLAGS:
+            normalized[index] = "--message=-"
+            break
+    return normalized
 
 
 def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:
@@ -114,6 +145,19 @@ def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:
     return normalized
 
 
+def _caller_set_aside() -> SpawnId | None:
+    """The caller ``-C`` took out of the environment, when its ID means the same thing in
+    the project ``-C`` names: a claimed one. A legacy ID would name another session there."""
+
+    from meridian.cli.invocation import get_global_options
+    from meridian.lib.state.machine_ids import claim_root
+
+    caller = get_global_options().caller
+    if caller is None or claim_root(caller.spawn_id) is None:
+        return None
+    return SpawnId(caller.spawn_id)
+
+
 def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> str | None:
     """Resolve normalized optional-value flag values from environment."""
 
@@ -125,8 +169,8 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
     if normalized != SELF_FORK_REF_SENTINEL:
         return normalized
 
-    spawn_id = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
-    if not spawn_id:
+    spawn_id = caller_spawn_id() or (_caller_set_aside() if flag_name == "--from" else None)
+    if spawn_id is None:
         if flag_name == "--fork":
             raise ValueError(FORK_INFERENCE_ERROR)
         if flag_name == "--from":
@@ -135,7 +179,7 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
             f"Cannot infer {flag_name} target: not inside a Meridian-managed session. "
             f"Pass {flag_name} REF explicitly."
         )
-    return spawn_id
+    return str(spawn_id)
 
 
 def validate_fork_mode(

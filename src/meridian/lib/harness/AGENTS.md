@@ -219,7 +219,7 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   a notice; `settle_undelivered` checks both files against the whole transcript. An in-flight
   entry an older build wrote has no size and is read against the whole file. `guard.sh` starts
   Python for `PreInvocation` only for queued messages, never for in-flight ones. The sender
-  arrives as data (`MessageSender`, from `spawn message` through the route), never parsed
+  arrives as data (`MessageSender`, from `meridian message` through the route), never parsed
   from the text. Nothing is sent at exit (the server has about 400 ms before SIGKILL);
   `send_owed_notices` runs at the next server start and in primary-launch recovery, from the
   sender's project, removing each entry only after its notice was attempted. A tool call

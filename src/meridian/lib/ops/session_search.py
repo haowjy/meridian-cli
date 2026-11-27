@@ -10,6 +10,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
+from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
@@ -34,6 +35,7 @@ from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexIncomplete,
 )
+from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.native_search_index import SearchRow, discard_native_search_index
 
 _PREVIEW_LIMIT = 200
@@ -357,7 +359,9 @@ def _render_match(
         context=_OPEN_CONTEXT if row.kind != "setup" else None,
         tools=row.role != "user",
     )
-    if scope.runtime_root != runtime_root:
+    claimed = claim_root(chats[0])
+    names_itself = claimed is not None and same_runtime_root(claimed, scope.runtime_root)
+    if scope.runtime_root != runtime_root and not names_itself:
         command = (
             "env -u MERIDIAN_PROJECT_DIR "
             f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command

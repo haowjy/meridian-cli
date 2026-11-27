@@ -94,7 +94,7 @@ def _busy_error(
             f"continue after it exits, or --fork {chat_id}"
         )
     return ValueError(
-        f"{spawn_id} is still running; use spawn message {spawn_id} or --fork {spawn_id}"
+        f"{spawn_id} is still running; use meridian message {spawn_id} or --fork {spawn_id}"
     )
 
 

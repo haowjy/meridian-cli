@@ -1,4 +1,4 @@
-- `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `spawn message` can report "held for approval" or "refused" instead of just "posted".
+- `claude_inbox.py`: posting to Claude's inbox is fire-and-forget, because the socket replies with nothing. Claude can send a `peer_message_status` receipt (delivered/held/refused) to a sender's `uds:` reply address, but the format was found only in the bundle and isn't documented. If it becomes documented, bind a temporary reply socket so `meridian message` can report "held for approval" or "refused" instead of just "posted".
 - `projections/project_opencode_subprocess.py`: an OpenCode 2 black-box fallback that
   resumes a session committed to another agent gets no Meridian prompt, because the v2
   bare TUI rejects `--agent`. Fresh fallback sessions take `default_agent`. To close it,

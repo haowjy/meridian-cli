@@ -417,10 +417,11 @@ class IdleService:
                 session=session,
                 stretch=stretch,
                 stretch_open=True,
+                # The last typed step the stored stretch saw, kept across a stretch opened by a
+                # turn the user did not type (a message woke the session): a sensor that
+                # restarts reads it back, and with None it would take that step for a return.
                 last_turn_id=(
-                    turn_id
-                    if implies_return
-                    else (current.last_turn_id if current is not None and not opens_new else None)
+                    turn_id if implies_return else (current.last_turn_id if current else None)
                 ),
                 last_input_count=kept_input,
                 last_user_text=user_excerpt,

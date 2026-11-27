@@ -1,5 +1,16 @@
 # Operations
 
+A spawn or chat ID asks `claim_root` first (`locate()`), so a claimed ID names its session from
+any project; selectors, native IDs and legacy IDs look in the current project. A located
+target carries its runtime root and project root (a row's `control_root`; that directory may
+be gone, which only commands that work in it refuse). The caller's spawn ID is meaningful
+only in its own root: anything keyed by "the caller" asks `RuntimeContext.caller_in(root)`
+or `core/caller.py` and gets none for another root, so no observation, pin or owed result
+is written there. `-C` into another project still removes the caller's project-scoped
+variables for the whole invocation (`cli/main.py`); `--continue` of a claimed ID in another
+project re-runs the command under `-C` (`cli/continue_reentry.py`) rather than trying to
+keep the caller's identity out of a launch.
+
 Work attachment publishes item links before session updates. Holding the work
 and session locks together deadlocks against restore; done and reopen move the
 item while its links carry attached chats to the new location.

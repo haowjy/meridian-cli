@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import sys
 from collections.abc import Generator
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.relocate_prompt import RelocateStop
+from meridian.lib.core.caller import caller_in
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
@@ -153,11 +153,14 @@ def resolve_session_target(
     project_root: Path,
     continue_ref: str,
     harness_hint: str | None = None,
+    launching: Literal["fork", "continue"],
 ) -> ResolvedSessionReference:
     normalized = continue_ref.strip()
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
-    return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
+    return resolve_session_reference(
+        project_root, normalized, harness_hint=harness_hint, launching=launching
+    )
 
 
 def _refuse_if_harness_directory_gone(
@@ -365,6 +368,7 @@ def run_primary_launch(
             project_root=project_root,
             continue_ref=resume_target,
             harness_hint=harness,
+            launching="continue",
         )
         continue_source_chat_id = resolved_continue.source_chat_id
         # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
@@ -391,6 +395,7 @@ def run_primary_launch(
                     project_root=project_root,
                     continue_ref=resume_target,
                     harness_hint=harness,
+                    launching="continue",
                 )
                 continue_source_chat_id = resolved_continue.source_chat_id
             continue_warning = redirect_notice
@@ -460,7 +465,7 @@ def run_primary_launch(
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
-            project_root=project_root, continue_ref=selected_fork_target
+            project_root=project_root, continue_ref=selected_fork_target, launching="fork"
         )
         if resolved_fork.missing_harness_session_id:
             raise NativeSessionUnavailable(selected_fork_target, "unbound")
@@ -576,13 +581,14 @@ def run_primary_launch(
     if continue_source is not None:
         # The continue keeps the spawn's ID: hold its launch lock from here until the runner
         # owns it, so a second terminal's continue is refused rather than racing this one.
+        runtime_root = resolve_project_runtime_root(project_root)
         hold = begin_continue(
             project_root=project_root,
-            runtime_root=resolve_project_runtime_root(project_root),
+            runtime_root=runtime_root,
             target=continue_source,
             chat_id=continue_source_chat_id,
             parent_id=None,
-            caller_spawn_id=os.environ.get("MERIDIAN_SPAWN_ID") or None,
+            caller_spawn_id=caller_in(runtime_root),
             dry_run=dry_run,
         )
     with (

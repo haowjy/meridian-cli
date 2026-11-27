@@ -9,6 +9,7 @@ from meridian.cli.startup.policy import (
     BootstrapPlan,
     RootSource,
     StartupClass,
+    StartupErrorShape,
     StateRequirement,
     TelemetryMode,
 )
@@ -25,6 +26,7 @@ class CommandDescriptor:
     telemetry_mode: TelemetryMode
     default_output_mode: str
     root_source: RootSource = RootSource.CWD
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY
 
 
 class CommandCatalog:
@@ -76,6 +78,7 @@ def _descriptor(
     summary: str,
     *,
     root_source: RootSource = RootSource.CWD,
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
 ) -> CommandDescriptor:
     bootstrap_plan = BootstrapPlan(
         StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement
@@ -88,6 +91,7 @@ def _descriptor(
         telemetry_mode=telemetry_mode,
         default_output_mode=default_output_mode,
         root_source=root_source,
+        startup_error=startup_error,
     )
 
 
@@ -108,6 +112,7 @@ def _read_rootless(
     *,
     startup_class: StartupClass = StartupClass.READ_ROOTLESS,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
 ) -> CommandDescriptor:
     """Path- or user-level read commands that do not require a Meridian project."""
 
@@ -118,6 +123,7 @@ def _read_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
     )
 
 
@@ -126,6 +132,7 @@ def _write_rootless(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
 ) -> CommandDescriptor:
     """Path- or user-level write commands that do not require a Meridian project."""
 
@@ -136,6 +143,7 @@ def _write_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
     )
 
 
@@ -190,6 +198,7 @@ def _write_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -198,6 +207,7 @@ def _write_runtime(
         TelemetryMode.SEGMENT,
         default_output_mode,
         summary,
+        startup_error=startup_error,
     )
 
 
@@ -319,8 +329,8 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
     _write_runtime(
         ("spawn", "message"),
-        "Send a message to a running spawn.",
-        default_output_mode="text",
+        "Deprecated: use `meridian message`.",
+        startup_error=StartupErrorShape.MESSAGE,
     ),
     _read_runtime(
         ("spawn", "children"),
@@ -455,19 +465,61 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
     _write_rootless(("notify",), "Send a notification through its hook routes."),
-    _read_rootless(("idle",), "Manage harness idle schedules.", default_output_mode="json"),
-    _read_rootless(("idle", "config"), "Resolve idle policy.", default_output_mode="json"),
-    _write_rootless(("idle", "arm"), "Arm an idle schedule.", default_output_mode="json"),
-    _write_rootless(("idle", "return"), "Close an idle stretch.", default_output_mode="json"),
+    _write_runtime(
+        ("message",),
+        "Send a message to a running session or a person.",
+        startup_error=StartupErrorShape.MESSAGE,
+    ),
+    _read_rootless(
+        ("idle",),
+        "Manage harness idle schedules.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _read_rootless(
+        ("idle", "config"),
+        "Resolve idle policy.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "arm"),
+        "Arm an idle schedule.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "return"),
+        "Close an idle stretch.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
     _write_rootless(
         ("idle", "needs-permission"),
         "Forward a waiting permission prompt.",
         default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
     ),
-    _write_rootless(("idle", "fire"), "Claim an idle stage.", default_output_mode="json"),
-    _write_rootless(("idle", "event"), "Handle a harness idle event.", default_output_mode="json"),
-    _read_rootless(("idle", "status"), "Show open idle stretches."),
-    _read_rootless(("idle", "mod-path"), "Print the bundled Claude idle mod path."),
+    _write_rootless(
+        ("idle", "fire"),
+        "Claim an idle stage.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "event"),
+        "Handle a harness idle event.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _read_rootless(
+        ("idle", "status"), "Show open idle stretches.", startup_error=StartupErrorShape.IDLE
+    ),
+    _read_rootless(
+        ("idle", "mod-path"),
+        "Print the bundled Claude idle mod path.",
+        startup_error=StartupErrorShape.IDLE,
+    ),
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),

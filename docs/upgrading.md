@@ -1,15 +1,81 @@
 # Upgrade notes
 
+## `meridian message` replaces `meridian spawn message`
+
+New in this release. `meridian message <address> "..."` sends to a running session by its
+spawn ID or chat ID, or to a person by `@name`. `meridian spawn message <ref> --message "..."`
+still works through 0.28.x through the same code, prints one line on stderr naming the new
+command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one line that names
+`meridian message`.
+
+- **`--json` works and has a shape.** One line on stdout for every outcome: `{"ok": true,
+  "delivery": ...}` or `{"ok": false, "error": {"kind": ..., "text": ...}}`, exit 0 exactly
+  when `ok` is true. Only the kind `maybe_delivered` means the message may have arrived, so a
+  script resends on any other kind. An error raised before the command runs prints the same
+  object with kind `usage`. Plain text output is unchanged.
+- **A new ID needs no `-C`.** `meridian message c20417 "..."` reaches the session from any
+  project, by spawn ID or chat ID; see [IDs are unique on the machine](#spawn-and-chat-ids-are-unique-on-the-machine).
+  A `--json` result also carries `machine`, this machine's name, and the address may be
+  written `<this machine's name>/<id>`. Any other machine name fails as `not_found`
+  ("unknown machine") until Meridian can reach other machines. An ID that names a session in
+  two projects fails as `ambiguous`; one issued before machine-wide IDs that is not in the
+  current project fails as `not_found`, with its text saying so.
+- **A message to a cold session is held.** A session that is idle with its prompt cache
+  expired (`idle.warm_until` in `spawn list --json` has passed) gets nothing: the command
+  exits 1 with kind `cold`, and the text gives the idle time, the model and the cost so far.
+  Waking it re-reads the whole conversation. Send again with `--wake` to deliver anyway, or
+  start a new session with `--from <session>`. This changes messages that are delivered
+  today, through `meridian spawn message` too. **`meridian-comms`' wake must pass
+  `--wake`.** A session that reports no idle state is delivered to as before, so the hold is
+  best effort. `--wake` with an `@` address is a `usage` error. Nothing was sent when the kind
+  is `cold`, so a script may send again.
+- **A text of `-` reads stdin.** Without it the text is the second argument, as before.
+- **`@person` addresses go to a program you name.** Set `[message] people = ["meridian-comms",
+  "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it
+  ignores it, with a warning, in a project's `meridian.toml`, `meridian.local.toml` or a file
+  named by `--config` or `MERIDIAN_CONFIG`. `@latest`, `@last-failed` and `@last-completed`
+  still fail, and `inbox` is reserved.
+- **Reply lines print `meridian message`, with `-C` after the address.** Every message a
+  session receives names this form, to receivers of every build. A session that a build before
+  0.28 started and that runs in a sandbox has no grant for it: it fails with kind `sandboxed`
+  and a text that says to restart the session, or to use `meridian spawn message` meanwhile.
+  Restart sandboxed sessions started before 0.28.
+- **Codex gets a second rules file**, `$CODEX_HOME/rules/meridian-message.rules`, beside the
+  unchanged `meridian.rules`. Each build rewrites only the files it knows, so a 0.27 and a
+  0.28 process starting Codex sessions never undo each other. Like the first, it applies to
+  every Codex session of the user.
+- **A session's control server says whether a refused message arrived.** Its failure reply
+  gains `kind`. A session that an older build started still answers without one, which
+  reads as `maybe_delivered` until the session restarts.
+
 ## Spawn and chat IDs are unique on the machine
 
 New in this release. Meridian now issues `pN` and `cN` from one list kept in
-`~/.meridian/machine/ids/` instead of one counter per project.
+`~/.meridian/machine/ids/` instead of one counter per project, so a new ID names the same
+session from any directory.
 
+- **A new ID needs no `-C`.** `meridian spawn show p21007`, `session log c20417`,
+  `spawn wait`, `spawn cancel` and the rest find the session's project themselves. `-C` still
+  works, and names the project where an ID is looked up only if that project holds the ID
+  itself.
+- **Old IDs count per project, as before.** An ID issued by an earlier build has no entry in
+  the list: it means something only inside its own project, and from another project you name
+  it with `-C`. Its "not found" says that it was issued before machine-wide IDs. The old
+  numbers are not renumbered, so `p41` can still exist in several projects.
+- **An ID held in two places is refused.** If a claimed ID is also a row of the project you
+  are in (an older build outran its room, below), the command stops and asks for `-C`
+  instead of acting on a session you may not mean.
+- **Across projects, commands are what `-C` made them.** Nothing is recorded for the caller in
+  another project: no observation, wait pin or owed result, because the caller's ID means
+  nothing there. `spawn --continue` and `meridian --continue` of a session in another project
+  re-run themselves under `-C <that project>`: the session continues in its own project with
+  no parent, and the depth guard still counts. `-C` naming another project is an error, and
+  so is a project directory that is gone. `--from` reads the source in its project and starts
+  in yours. `--fork` and `--fork-fresh` across projects are refused; run the fork there.
+  Hooks of the other project run without your session's chat, spawn and work variables.
 - **IDs jump.** The first new ID is above every ID your projects have used, rounded up to
   the next thousand plus one thousand: on a machine whose highest spawn is `p19220` the next
   one is `p21000`. IDs stop being consecutive within a project; they still rise with time.
-- **Old IDs keep their numbers** and mean something only inside their own project, as
-  before: from another project, name it with `-C`.
 - **Restart sessions started before 0.28, and above all before 0.27.11.** A session still
   running older code keeps allocating from its project's old counter, so its IDs are legacy
   IDs: right inside the project, with no claim, so nothing outside it finds them. Until
@@ -27,6 +93,14 @@ New in this release. Meridian now issues `pN` and `cN` from one list kept in
   the room left above that project's counter: at least 1,000 in any project, 1,779 in the
   busiest on the machine this was tested on. A new ID is findable by bare ID only inside
   its own project, as before, and the ordering caveat above applies until old sessions end.
+- **`meridian spawn list --global`** lists the running sessions of every project on the
+  machine, each with its `project_root`. `--all`, `--status`, `--view`, `--failed` and
+  `--work` are refused with it: history across projects is `session search --global`. It has
+  no default `--limit` (give one to cut it), and it reads only each project's running rows.
+- **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
+  additive JSON fields and are present without `--global`. `machine` is this machine's name,
+  kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is
+  `null` if the file can't be created.
 
 ## `meridian agy` prints an Antigravity launch
 
