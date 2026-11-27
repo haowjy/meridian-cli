@@ -342,6 +342,26 @@ def mars_root_report(project_root: Path | None) -> MarsRootReport:
     return MarsRootReport(root=inventory.root, fallback=fallback, error=error)
 
 
+def mars_user_level() -> MarsRoot | None:
+    """The Mars user level's root, as ``mars --user list --json`` reports it; None if Mars can't."""
+
+    executable = resolve_mars_executable()
+    if executable is None:
+        return None
+    try:
+        result = subprocess.run(
+            [executable, "--user", "--json", "list"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        payload: object = json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return parse_mars_root(payload)
+
+
 def _string_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()

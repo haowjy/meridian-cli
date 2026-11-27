@@ -21,11 +21,13 @@ from meridian.lib.catalog.mars_cli import (
     provided_sync_args,
     resolve_mars_executable,
 )
+from meridian.lib.platform import get_home_path
 
 # Mars creates a project for these when none encloses the directory; Meridian refuses instead.
-# Every other write with no project fails in Mars, with its own message.
+# Every other write with no project fails in Mars, with its own message, and so do these where
+# Mars would create the project in home.
 _AUTO_INIT_COMMANDS = frozenset({"add", "link"})
-_USER_MUTATION_ERROR = (
+_NO_PROJECT_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use 'meridian mars --user …'"
 )
 
@@ -152,9 +154,20 @@ def _refusal(
             payload: object = json.loads(probe.stdout)
         except ValueError:
             payload = None
-        if is_project_not_found(payload):
-            return _USER_MUTATION_ERROR
+        if is_project_not_found(payload) and _new_project_dir(request) != _home():
+            return _NO_PROJECT_ERROR
     return None
+
+
+def _new_project_dir(request: MarsPassthroughRequest) -> Path:
+    """Where Mars would create the project for an add or link that finds none: --root, or cwd."""
+
+    root = request.root_args[-1].removeprefix("--root=") if request.root_args else "."
+    return (request.cwd / Path(root).expanduser()).resolve()
+
+
+def _home() -> Path:
+    return get_home_path().expanduser().resolve()
 
 
 def execute_mars_passthrough(

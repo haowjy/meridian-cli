@@ -99,6 +99,12 @@ def _run_mars_json(
         for entry in payload.get("diagnostics", [])
         if entry.get("level") in {"warning", "error"}
     ]
+    # A failed command prints its reason only as this object under --json.
+    error: object = payload.get("error")
+    if isinstance(error, dict) and isinstance(
+        message := cast("dict[str, object]", error).get("message"), str
+    ):
+        lines.append(f"error: {message}")
     if result.returncode != 0:
         if result.stderr_text:
             sys.stderr.write(result.stderr_text)
@@ -268,8 +274,6 @@ def run_init_flow(
     from meridian.cli.mars_passthrough import resolve_mars_executable
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
 
-    config_result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-
     executable = resolve_mars_executable()
     if executable is None:
         sys.stderr.write(
@@ -278,9 +282,12 @@ def run_init_flow(
         raise SystemExit(1)
 
     diagnostics: list[str] = []
-    # `mars init` is a no-op where the project already exists.
+    # Before meridian.toml, so a directory Mars refuses (home) is left as it was. A no-op
+    # where the project already exists.
     _, init_diagnostics = _run_mars_json(project_root, "init", [], executable=executable)
     diagnostics.extend(init_diagnostics)
+
+    config_result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
 
     add_result: InitAddResult | None = None
     if add_sources:

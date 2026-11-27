@@ -955,6 +955,11 @@ hooks, harness defaults, and primary-session defaults.
 - without `mars.toml`, it shells through `meridian mars init --link DIR`
 - with `mars.toml`, it shells through `meridian mars link DIR`
 
+Both run `mars init` before writing `meridian.toml`. Mars refuses your home directory, which
+is never a project, so init leaves home unchanged and prints Mars's message pointing at
+`meridian mars --user add`. Any Mars error during init is printed before it exits with Mars's
+code.
+
 `meridian bootstrap --add ... --link ...` runs this same setup flow, then launches a guided bootstrap primary session.
 
 Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.

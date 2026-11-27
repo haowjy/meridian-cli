@@ -195,16 +195,31 @@ _ADD_KEYS = {"url", "path", "version", *_ADD_LIST_FLAGS, *_ADD_VALUE_FLAGS, *_AD
 _CONFIG_SECTIONS = ("settings", "models", "agents", "skills")
 
 
-def legacy_user_root() -> LegacyUserRoot | None:
-    """``~/.meridian/mars`` when it exists. Meridian never deletes or writes it."""
+def legacy_user_root(user_level: MarsRoot | None = None) -> LegacyUserRoot | None:
+    """``~/.meridian/mars`` when it exists. Meridian never deletes or writes it.
+
+    ``user_level``: the Mars user level, whose real paths the move steps then name; without
+    it they say which field of ``meridian mars --user list --json`` holds each path.
+    """
 
     root = get_user_home() / "mars"
     own_items = root / ".mars-src"
     has_own_items = own_items.is_dir()
-    own_items_step = (
-        f"move {own_items.as_posix()} into your Mars user level's .mars-src/ "
-        "(root.path of meridian mars --user list --json)"
-    )
+    if user_level is not None:
+        user_items = f"{(user_level.path / '.mars-src').as_posix()}/"
+        user_manifest = (user_level.path / "mars.toml").as_posix()
+        user_config = ((user_level.config_dir or user_level.path) / "config.toml").as_posix()
+    else:
+        user_items = (
+            "your Mars user level's .mars-src/ (root.path of meridian mars --user list --json)"
+        )
+        user_manifest = (
+            "your Mars user level's mars.toml (in root.path of meridian mars --user list --json)"
+        )
+        user_config = (
+            "your Mars user config.toml (in root.config_dir of meridian mars --user list --json)"
+        )
+    own_items_step = f"move {own_items.as_posix()} into {user_items}"
     try:
         manifest = tomllib.loads((root / "mars.toml").read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -214,7 +229,7 @@ def legacy_user_root() -> LegacyUserRoot | None:
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         return LegacyUserRoot(path=root, active=True, unreadable=str(exc))
     dependency_steps = [
-        _dependency_step(name, spec, table=table, base=root)
+        _dependency_step(name, spec, table=table, base=root, user_manifest=user_manifest)
         for table in ("dependencies", "local-dependencies")
         if isinstance(entries := manifest.get(table), dict)
         for name, spec in cast("dict[str, object]", entries).items()
@@ -225,16 +240,15 @@ def legacy_user_root() -> LegacyUserRoot | None:
         steps.append(own_items_step)
     if sections:
         steps.append(
-            f"move {', '.join(sections)} from {(root / 'mars.toml').as_posix()} into your Mars "
-            "user config.toml (in root.config_dir of meridian mars --user list --json), which "
-            "every root reads"
+            f"move {', '.join(sections)} from {(root / 'mars.toml').as_posix()} into "
+            f"{user_config}, which every root reads"
         )
     return LegacyUserRoot(
         path=root, active=has_own_items or bool(dependency_steps), steps=tuple(steps)
     )
 
 
-def _dependency_step(name: str, spec: object, *, table: str, base: Path) -> str:
+def _dependency_step(name: str, spec: object, *, table: str, base: Path, user_manifest: str) -> str:
     """The ``meridian mars --user add`` that recreates one dependency, options included.
 
     An entry with a key ``mars add`` cannot set (``rename``, say) is copied instead.
@@ -251,9 +265,8 @@ def _dependency_step(name: str, spec: object, *, table: str, base: Path) -> str:
         source = None
     if source is None or not set(entry) <= _ADD_KEYS:
         return (
-            f"copy [{table}.{name}] from {(base / 'mars.toml').as_posix()} into your Mars user "
-            "level's mars.toml (in root.path of meridian mars --user list --json), with any "
-            "relative path made absolute"
+            f"copy [{table}.{name}] from {(base / 'mars.toml').as_posix()} into "
+            f"{user_manifest}, with any relative path made absolute"
         )
     version = entry.get("version")
     if isinstance(url, str) and isinstance(version, str) and version.strip():
@@ -270,14 +283,28 @@ def _dependency_step(name: str, spec: object, *, table: str, base: Path) -> str:
     return " ".join(words)
 
 
+# Set once this run has told the user how to move ``~/.meridian/mars``.
+_legacy_user_root_told = False
+
+
+def mark_legacy_user_root_reported() -> None:
+    """A command that prints the move steps itself (``doctor``): lookups in this run don't."""
+
+    global _legacy_user_root_told
+    _legacy_user_root_told = True
+
+
 @cache
 def _active_legacy_user_root() -> LegacyUserRoot | None:
-    """The legacy root lookups still read, warning once per command how to move it."""
+    """The legacy root lookups still read, warning once per run how to move it."""
 
+    global _legacy_user_root_told
     legacy = legacy_user_root()
     if legacy is None or not legacy.active:
         return None
-    print(f"warning: {legacy.migration_message()}", file=sys.stderr)
+    if not _legacy_user_root_told:
+        _legacy_user_root_told = True
+        print(f"warning: {legacy.migration_message()}", file=sys.stderr)
     return legacy
 
 
@@ -309,6 +336,7 @@ __all__ = [
     "MarsRoot",
     "is_project_not_found",
     "legacy_user_root",
+    "mark_legacy_user_root_reported",
     "mars_content_args",
     "mars_location",
     "parse_mars_root",

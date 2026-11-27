@@ -7,7 +7,11 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_cli import MarsRoot, legacy_user_root
+from meridian.lib.catalog.mars_cli import (
+    MarsRoot,
+    legacy_user_root,
+    mark_legacy_user_root_reported,
+)
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chats
@@ -19,6 +23,7 @@ from meridian.lib.ops.mars import (
     check_upgrade_availability,
     format_upgrade_availability,
     mars_root_report,
+    mars_user_level,
 )
 from meridian.lib.ops.pruning import (
     AdHocProjectDir,
@@ -732,6 +737,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         else GlobalReport()
     )
 
+    # The legacy root's move steps print once, as doctor's finding, not again from this lookup.
+    mark_legacy_user_root_reported()
     mars = mars_root_report(project_root)
     store = mars.root.store if mars.root is not None else None
 
@@ -751,7 +758,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload=finding.payload,
             )
         )
-    warnings.extend(_legacy_user_root_warnings())
+    warnings.extend(_legacy_user_root_warnings(mars.root))
     if mars.error is not None:
         warnings.append(DoctorWarning(code="mars_unavailable", message=mars.error))
     if mars.root is not None and mars.root.kind == "project":
@@ -825,10 +832,14 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     )
 
 
-def _legacy_user_root_warnings() -> list[DoctorWarning]:
+def _legacy_user_root_warnings(root: MarsRoot | None) -> list[DoctorWarning]:
     legacy = legacy_user_root()
     if legacy is None:
         return []
+    if legacy.steps:
+        # Name the user level's real paths in the steps.
+        user_level = root if root is not None and root.kind == "user" else mars_user_level()
+        legacy = legacy_user_root(user_level) or legacy
     return [
         DoctorWarning(
             code="legacy_user_mars_root",
