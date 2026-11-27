@@ -17,7 +17,7 @@ def test_meridian_rules_is_byte_identical_to_0_27_10() -> None:
     assert MERIDIAN_RULES_FILE_CONTENT == V0_27_10_MERIDIAN_RULES
 
 
-def test_message_grant_goes_in_its_own_file_and_leaves_the_first_alone(tmp_path: Path) -> None:
+def test_each_later_grant_goes_in_its_own_file_and_leaves_the_first_alone(tmp_path: Path) -> None:
     rules = tmp_path / "rules"
     rules.mkdir()
     first = rules / "meridian.rules"
@@ -32,4 +32,8 @@ def test_message_grant_goes_in_its_own_file_and_leaves_the_first_alone(tmp_path:
     assert (rules / "meridian-message.rules").read_text(encoding="utf-8") == (
         "# This file is owned and rewritten by Meridian.\n"
         'prefix_rule(pattern=["meridian", "message"], decision="allow")\n'
+    )
+    assert (rules / "meridian-inbox.rules").read_text(encoding="utf-8") == (
+        "# This file is owned and rewritten by Meridian.\n"
+        'prefix_rule(pattern=["meridian", "inbox"], decision="allow")\n'
     )
