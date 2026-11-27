@@ -96,6 +96,10 @@ with none. `meridian.toml` can set any string as a project ID, so one is held to
 `fields.SAFE_FIELD` before it is stored; a session whose ID fails is refused, because
 filing its message with no project would show it to every session.
 
+A process no session runs has a project only from `--project-id`, never from its working
+directory: a hook row runs in home, and a daemon's directory is not what its messages are
+about.
+
 ## What a sender controls
 
 Meridian never stores or prints a command a caller supplied.

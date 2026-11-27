@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.fields import (
     MAX_TEXT_BYTES,
@@ -23,7 +22,6 @@ from meridian.lib.inbox.models import Message, Via
 from meridian.lib.inbox.store import InboxError, file_message
 from meridian.lib.message.address import local_machine_name
 from meridian.lib.message.result import Failed, Filed, MessageResult, Receiver
-from meridian.lib.state.project_identity import Committed, resolve_project_identity
 
 
 @dataclass(frozen=True)
@@ -82,21 +80,15 @@ def _project(caller: InboxCaller, flag: str | None) -> str | None:
                 kind="refused",
             )
         return caller.project
-    if flag is not None:
-        if not is_project_id(flag):
-            raise InboxError(
-                f"--project-id takes a committed project ID, {SAFE_FIELD_RULE}", kind="usage"
-            )
-        return flag
-    identity = resolve_project_identity(resolve_project_root_resolution().project_root)
-    found = identity.id if isinstance(identity, Committed) else None
-    if found is not None and not is_project_id(found):
+    # A process with no session has no project of its own: its working directory may be
+    # one Meridian chose (a hook row runs in home), and never names one.
+    if flag is None:
+        return None
+    if not is_project_id(flag):
         raise InboxError(
-            f"this directory's project ID {found!r} can't be shown in the inbox: a project "
-            f"ID there is {SAFE_FIELD_RULE}. Nothing was filed.",
-            kind="refused",
+            f"--project-id takes a committed project ID, {SAFE_FIELD_RULE}", kind="usage"
         )
-    return found
+    return flag
 
 
 def _build(caller: InboxCaller, text: str, options: FilingOptions) -> Message:
