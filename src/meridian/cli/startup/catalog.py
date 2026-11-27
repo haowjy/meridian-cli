@@ -327,7 +327,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
     _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
-    _write_runtime(
+    _write_rootless(
         ("spawn", "message"),
         "Deprecated: use `meridian message`.",
         startup_error=StartupErrorShape.MESSAGE,
@@ -465,7 +465,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
     _write_rootless(("notify",), "Send a notification through its hook routes."),
-    _write_runtime(
+    _write_rootless(
         ("message",),
         "Send a message to a running session or a person.",
         startup_error=StartupErrorShape.MESSAGE,

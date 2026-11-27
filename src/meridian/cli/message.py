@@ -21,6 +21,7 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import message_app
 from meridian.cli.invocation import get_global_options
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
 from meridian.lib.core.process_start import starting_cwd, starting_env
@@ -46,11 +47,7 @@ from meridian.lib.message.result import (
     print_result,
 )
 from meridian.lib.ops.locate import locate_run
-from meridian.lib.ops.runtime import (
-    resolve_runtime_root,
-    resolve_runtime_root_and_config,
-    resolve_runtime_root_for_read,
-)
+from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -240,8 +237,9 @@ async def _send_to_session(
     message, and a script that read it as a plain failure would send it twice.
     """
 
-    project_root, _ = resolve_runtime_root_and_config(None)
-    current_root = resolve_runtime_root(project_root)
+    # Sending reads state and writes to a socket: it never makes the directory it runs
+    # from a project, which may be one Meridian chose (a hook row runs in home).
+    project_root = resolve_project_root_resolution().project_root
     try:
         target = locate_run(project_root, session_id)
     except RefAmbiguous as exc:
@@ -267,9 +265,9 @@ async def _send_to_session(
 
     sandbox = inside_launcher_sandbox()
     sender_root = (
-        resolve_runtime_root_for_read(sender_project_root)
-        if sender_project_root is not None
-        else current_root
+        resolve_runtime_root_for_read(sender_project_root or project_root)
+        if sender_spawn_id is not None
+        else None
     )
     sender = _sender_record(sender_root, sender_spawn_id)
     framed = framed_message(

@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -86,10 +87,10 @@ async def test_claude_primary_message_reaches_published_inbox(
     )
     monkeypatch.setattr(
         message_cli,
-        "resolve_runtime_root_and_config",
-        lambda _root: (tmp_path, object()),
+        "resolve_project_root_resolution",
+        lambda: SimpleNamespace(project_root=tmp_path),
     )
-    monkeypatch.setattr(message_cli, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(message_cli, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     monkeypatch.setattr(locate_module, "resolve_runtime_root_for_read", lambda _root: tmp_path)
 
     spawn_store.start_spawn(
@@ -155,9 +156,11 @@ def running_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         worker_pid=os.getpid(),
     )
     monkeypatch.setattr(
-        message_cli, "resolve_runtime_root_and_config", lambda _root: (tmp_path, object())
+        message_cli,
+        "resolve_project_root_resolution",
+        lambda: SimpleNamespace(project_root=tmp_path),
     )
-    monkeypatch.setattr(message_cli, "resolve_runtime_root", lambda _root: tmp_path)
+    monkeypatch.setattr(message_cli, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     monkeypatch.setattr(locate_module, "resolve_runtime_root_for_read", lambda _root: tmp_path)
     path = control_socket_path(tmp_path, "p1")
     prepare_socket_directory(path.parent)
