@@ -436,6 +436,8 @@ def cmd_inbox_offer(
         )
         if not isinstance(result, Delivered):
             reason = result.text if isinstance(result, Failed) else "it was not delivered"
+            if isinstance(result, Failed) and result.kind == "cold":
+                reason = f"an offer never wakes a cold session. {reason}"
             raise InboxError(
                 f"no offer was recorded: {reason}",
                 kind=result.kind if isinstance(result, Failed) else "failed",
