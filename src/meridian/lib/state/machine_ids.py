@@ -8,8 +8,9 @@ rationale: ``../.context/CONTEXT.md``.
 
 import os
 import re
+import time
 from collections.abc import Iterator
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from typing import Final, Literal
 
@@ -21,6 +22,7 @@ type IdKind = Literal["p", "c"]
 
 FORMAT_VERSION: Final = "1"
 LOCK_TIMEOUT_SECONDS: Final = 5.0
+_PROGRESS_CHECK_SECONDS: Final = 0.5
 _BUCKET_SIZE: Final = 1000
 # Room left above every legacy number for older builds that are still running.
 _SEED_HEADROOM: Final = 1000
@@ -71,26 +73,47 @@ def allocate(kind: IdKind, runtime_root: Path) -> str:
     root = ids_dir()
     _check_format(root)
     seed = _seed(kind, runtime_root) if _highest(root, kind) is None else None
+    with ExitStack() as stack:
+        _acquire_ids_lock(stack, root)
+        highest = _highest(root, kind)
+        if highest is not None:
+            number = highest + 1
+        else:
+            number = seed if seed is not None else _seed(kind, runtime_root)
+        while True:
+            try:
+                _create_claim(root, kind, number, runtime_root)
+            except FileExistsError:
+                number += 1
+                continue
+            return f"{kind}{number}"
+
+
+def _acquire_ids_lock(stack: ExitStack, root: Path) -> None:
+    """Take ``ids.lock``, failing only after ``LOCK_TIMEOUT_SECONDS`` without progress.
+
+    ``lock_file`` polls, so a holder that releases and allocates again at once can keep
+    winning while its peers wait. The limit exists to catch a holder that is stuck, so
+    the wait restarts whenever a claim of either kind appears.
+    """
+
     lock_path = root / "ids.lock"
-    try:
-        with lock_file(lock_path, timeout=LOCK_TIMEOUT_SECONDS):
-            highest = _highest(root, kind)
-            if highest is not None:
-                number = highest + 1
-            else:
-                number = seed if seed is not None else _seed(kind, runtime_root)
-            while True:
-                try:
-                    _create_claim(root, kind, number, runtime_root)
-                except FileExistsError:
-                    number += 1
-                    continue
-                return f"{kind}{number}"
-    except FileLockTimeout as exc:
-        raise MachineIdError(
-            f"Timed out after {LOCK_TIMEOUT_SECONDS:g}s waiting for {lock_path}: "
-            "another Meridian process holds the ID lock (stopped or stuck?)."
-        ) from exc
+    seen = (_highest(root, "p"), _highest(root, "c"))
+    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            stack.enter_context(lock_file(lock_path, timeout=_PROGRESS_CHECK_SECONDS))
+            return
+        except FileLockTimeout:
+            now = (_highest(root, "p"), _highest(root, "c"))
+            if now != seen:
+                seen = now
+                deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+            elif time.monotonic() >= deadline:
+                raise MachineIdError(
+                    f"No ID was issued: waited {LOCK_TIMEOUT_SECONDS:g}s on {lock_path} and "
+                    "no claim appeared meanwhile; the process holding it is stopped or stuck."
+                ) from None
 
 
 def _claim_path(root: Path, kind: str, number: int) -> Path:

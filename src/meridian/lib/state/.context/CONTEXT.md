@@ -32,8 +32,10 @@ used. `claim_root(id)` is one `readlink`, never followed, and answers `None` for
 ID. A claim says which root an ID was issued for, not that the root holds the row.
 
 `ids/format` holds `1`; a build that finds another value issues no ID. `ids.lock` is
-held only while the number is chosen (highest claim plus one, retry on `EEXIST`) and times
-out with an error naming the lock. The first allocation of a kind seeds above every number
+held only while the number is chosen (highest claim plus one, retry on `EEXIST`) and a waiter
+fails with an error naming the lock only after 5 s in which no claim of either kind
+appeared (the lock polls, so a live holder that allocates again at once can keep winning;
+progress, not elapsed time, marks a stuck holder). The first allocation of a kind seeds above every number
 any root has used (counter files, `spawns/p*`, `sessions/c*`), rounded up to the next
 thousand plus one thousand, so older builds still running in a root, or a rollback, have room (a first-ever
 allocation starts at 1000). An allocation that cannot create the claim fails;
