@@ -83,21 +83,11 @@ def _isolate_control_sockets() -> Iterator[Path]:
         yield production_root
 
 
-_NATIVE_STORE_ENV = frozenset(
-    {
-        "CODEX_HOME",
-        "CLAUDE_CONFIG_DIR",
-        "OPENCODE_HOME",
-        "OPENCODE_DB",
-        "OPENCODE_CONFIG",
-        "OPENCODE_CONFIG_DIR",
-        "PI_CODING_AGENT_DIR",
-        "PI_CODING_AGENT_SESSION_DIR",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_STATE_HOME",
-    }
-)
+# A harness session sets its own variables (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, the
+# `CLAUDE_CODE_PROMPT_CACHE_TTL` Meridian gave a spawned Claude), so a run from inside one
+# would read them as the environment a launch inherits.
+_HARNESS_ENV_PREFIXES = ("CLAUDE", "CODEX_", "OPENCODE_", "PI_CODING_AGENT_")
+_NATIVE_STORE_ENV = frozenset({"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"})
 
 
 @pytest.fixture(autouse=True)
@@ -124,14 +114,18 @@ def _clean_meridian_runtime_env(
 ) -> None:
     """Isolate tests from parent harness runtime state environment.
 
-    Harness store variables are cleared too: a test that swaps HOME must not
-    reach the user's real native stores through an inherited CODEX_HOME etc.
+    Harness variables are cleared too: a test that swaps HOME must not reach the
+    user's real native stores through an inherited CODEX_HOME etc., and a run from
+    inside a harness session must not pass that session's variables to a launch.
     A real `mars` gets an empty user config and cache, since the developer's
     `~/.config/mars/config.toml` is a config layer (agents, models, settings).
     """
 
     for key in tuple(os.environ):
-        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")) or key in _NATIVE_STORE_ENV:
+        if (
+            key.upper().startswith(("MERIDIAN_", "_MERIDIAN_", *_HARNESS_ENV_PREFIXES))
+            or key in _NATIVE_STORE_ENV
+        ):
             monkeypatch.delenv(key, raising=False)
 
     # Issued IDs are machine-wide state under the home: a fresh home per test keeps
