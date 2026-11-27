@@ -1,8 +1,9 @@
 """``meridian inbox``: list, read, take, release and offer the machine inbox's messages.
 
 A message's text is another party's words. ``list`` shows 80 cleaned characters of it
-after a fixed label; ``read`` and ``take`` print everything Meridian says first, so
-nothing after the header can pass for Meridian's own line.
+after a fixed label; ``read`` and ``take`` print everything Meridian says first and the
+text with its control characters escaped, so nothing after the header can pass for
+Meridian's own line or redraw it.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from meridian.cli.app_tree import inbox_app
 from meridian.cli.invocation import get_global_options
 from meridian.lib.core.caller_boundary import inside_launcher_sandbox
 from meridian.lib.inbox.caller import InboxCaller, project_of_root, resolve_caller
-from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, shown
+from meridian.lib.inbox.fields import PREVIEW_LABEL, preview, shown, visible
 from meridian.lib.inbox.filing import via_from_flags
 from meridian.lib.inbox.models import Claim, Message, Party, Via
 from meridian.lib.inbox.prune import prune_if_due
@@ -256,7 +257,7 @@ def _print_message(found: Entry) -> None:
         lines.append(f"taken{_held_by(found.claim)}")
     lines.append(f"to answer: {reply}" if reply else "it has no reply address")
     lines.append(_HEADER_END)
-    _print(payload, "\n".join(lines) + "\n\n" + message.text)
+    _print(payload, "\n".join(lines) + "\n\n" + visible(message.text))
 
 
 @inbox_app.default

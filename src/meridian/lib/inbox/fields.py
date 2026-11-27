@@ -1,7 +1,8 @@
 """The checks on every field of an inbox message that a sender could use against a reader.
 
 A sender's own words reach a reader in two places only: the message text, printed by
-``read`` and ``take`` under a header, and the preview in ``list``. Every other field is
+``read`` and ``take`` under a header with its control characters made visible, and the
+preview in ``list``. Every other field is
 either filled in by Meridian or held to ``SAFE_FIELD``, so it can carry a name and never
 a sentence or a command.
 """
@@ -43,8 +44,27 @@ def is_reply_address(value: str) -> bool:
     return is_safe_field(value) and is_address_form(value)
 
 
+def _is_control(char: str) -> bool:
+    """C0 and C1 controls (Cc) and format characters (Cf: bidi overrides, zero-width)."""
+
+    return unicodedata.category(char) in ("Cc", "Cf")
+
+
 def _without_controls(text: str) -> str:
-    return "".join(char for char in text if unicodedata.category(char) not in ("Cc", "Cf"))
+    return "".join(char for char in text if not _is_control(char))
+
+
+def visible(text: str) -> str:
+    """A message's text as a terminal may print it: every control and format character but
+    newline and tab becomes its escape (``\\x1b``, ``\\u202e``), so the sender's words
+    can't clear the screen, move the cursor or reorder what Meridian printed."""
+
+    return "".join(
+        char.encode("unicode_escape").decode("ascii")
+        if _is_control(char) and char not in "\n\t"
+        else char
+        for char in text
+    )
 
 
 def preview(text: str) -> str:
@@ -74,4 +94,5 @@ __all__ = [
     "is_safe_field",
     "preview",
     "shown",
+    "visible",
 ]

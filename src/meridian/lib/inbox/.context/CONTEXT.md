@@ -115,7 +115,10 @@ Meridian never stores or prints a command a caller supplied.
   tabs to spaces, then categories Cc and Cf removed (this takes out the bidirectional controls),
   spaces collapsed, trimmed, 80 code points, printed as a JSON string after a fixed label.
   `read` and `take` print everything Meridian says first, the reply command included, then
-  a line saying the rest is the message, so nothing after it can pass for Meridian's line.
+  a line saying the rest is the message. In text mode the text goes through
+  `fields.visible`: every Cc and Cf character but newline and tab is printed as its escape
+  (`\x1b`, `\u202e`), so it can't clear the screen or redraw what Meridian printed above.
+  `--json` carries the text as stored; JSON escapes the C0 controls itself.
 
 ## The launch line
 
