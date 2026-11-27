@@ -19,7 +19,9 @@ Sessions take gate shared, then `sessions.jsonl.flock`, only through
 and the session pair are never held together, in either order: a command that changes
 both runs them as sequential steps, work store first (`ops/work_attachment.attach_executions`).
 `ops/legacy_native_import.py` takes `locks/legacy-native-import.lock` before the gate
-during native session import. Cross-leaf composition (spawn lock +
+during native session import. `inbox.lock` (`lib/inbox/store.py`, the machine inbox) is a
+leaf: held with no other lock, for one change, and never unlinked; read the spawn store
+before taking it. Cross-leaf composition (spawn lock +
 projection lock) lives in `spawn_aggregate.py`, not in either leaf repository. Pending
 reaper cleanup claims make its published-row deletion seam skip the row until cleanup
 completes or the claim is cleared. Per-spawn mutations never take

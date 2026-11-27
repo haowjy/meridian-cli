@@ -2,6 +2,7 @@ import pytest
 
 from meridian.lib.message.address import (
     AddressError,
+    InboxAddress,
     PersonAddress,
     SessionAddress,
     parse_address,
@@ -15,9 +16,12 @@ from meridian.lib.message.address import (
         ("c20417", SessionAddress("c20417")),
         ("@alice", PersonAddress("@alice")),
         ("@T123/1731600123.000200", PersonAddress("@T123/1731600123.000200")),
+        ("inbox", InboxAddress()),
     ],
 )
-def test_address_that_names_a_receiver(raw: str, expected: SessionAddress | PersonAddress) -> None:
+def test_address_that_names_a_receiver(
+    raw: str, expected: SessionAddress | PersonAddress | InboxAddress
+) -> None:
     assert parse_address(raw) == expected
 
 
@@ -32,8 +36,7 @@ def test_address_that_names_a_receiver(raw: str, expected: SessionAddress | Pers
         ("@a b", "usage"),
         ("@a\x00b", "usage"),
         ("@" + "x" * 256, "usage"),
-        ("inbox", "usage"),
-        ("some-machine/inbox", "usage"),
+        ("some-machine/inbox", "not_found"),
         # Never guessed to be a person: a mistyped session ID must not end up in Slack.
         ("p12x", "usage"),
         ("native-session-uuid", "usage"),

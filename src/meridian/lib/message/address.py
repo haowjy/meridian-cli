@@ -42,6 +42,11 @@ class PersonAddress:
     address: str
 
 
+@dataclass(frozen=True)
+class InboxAddress:
+    """``inbox``: this machine's inbox, where a message waits for a session to take it."""
+
+
 def local_machine_name() -> str | None:
     """This machine's name, for ``machine`` in the JSON; ``None`` when its identity file
     can't be created."""
@@ -76,7 +81,28 @@ def _is_session_id(value: str) -> bool:
     return is_spawn_id(value) or is_chat_id(value)
 
 
-def parse_address(raw: str, *, machine: str | None = None) -> SessionAddress | PersonAddress:
+def is_address_form(raw: str) -> bool:
+    """True when *raw* has the form of a session or person address, on any machine.
+
+    For an address Meridian stores and prints back as a reply command: nothing is
+    resolved, so a machine this one has not saved passes.
+    """
+
+    if raw.startswith("@"):
+        return len(raw) > 1 and raw not in SELECTORS
+    head, slash, tail = raw.partition("/")
+    if slash:
+        return (
+            _MACHINE_NAME_RE.fullmatch(head) is not None
+            and not _is_session_id(head)
+            and _is_session_id(tail)
+        )
+    return _is_session_id(raw)
+
+
+def parse_address(
+    raw: str, *, machine: str | None = None
+) -> SessionAddress | PersonAddress | InboxAddress:
     """Classify *raw* (already trimmed); *machine* is the ``--machine`` option."""
 
     if raw.startswith("@"):
@@ -92,7 +118,11 @@ def parse_address(raw: str, *, machine: str | None = None) -> SessionAddress | P
 
     head, slash, tail = raw.partition("/")
     if raw == "inbox" or (slash and tail == "inbox"):
-        raise AddressError("usage", "the inbox address is not built yet")
+        if slash and machine is not None and machine != head:
+            raise AddressError("usage", "two machines in one command: use one")
+        if slash or machine is not None:
+            resolve_machine(head if slash else machine or "")
+        return InboxAddress()
 
     if slash and _MACHINE_NAME_RE.fullmatch(head) and not _is_session_id(head):
         if not _is_session_id(tail):
@@ -114,14 +144,16 @@ def parse_address(raw: str, *, machine: str | None = None) -> SessionAddress | P
     raise AddressError(
         "usage",
         f"`{raw}` is not an address: use a spawn ID (p123), a chat ID (c123), "
-        "`<machine>/<id>` or an @person",
+        "`<machine>/<id>`, an @person or `inbox`",
     )
 
 
 __all__ = [
     "AddressError",
+    "InboxAddress",
     "PersonAddress",
     "SessionAddress",
+    "is_address_form",
     "local_machine_name",
     "parse_address",
     "resolve_machine",
