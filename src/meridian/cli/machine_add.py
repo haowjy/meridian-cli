@@ -14,8 +14,8 @@ from typing import Final
 
 from meridian import __version__
 from meridian.cli.machine_back import offer_way_back
-from meridian.cli.machine_forward import base_caller
-from meridian.cli.machine_prompt import AddError, ask, is_terminal
+from meridian.cli.machine_forward import base_caller, fail
+from meridian.cli.machine_prompt import AddError, ask, is_terminal, say
 from meridian.lib.machines.call import READ_LIMIT_SECONDS, call_machine, missing_text
 from meridian.lib.machines.discover import Discovery, discover, write_cache
 from meridian.lib.machines.resolve import MachineError, this_machine
@@ -27,6 +27,7 @@ from meridian.lib.state.saved_machines import (
     SavedMachine,
     SavedMachinesError,
     add_machine,
+    read_saved_machines,
     set_machine_name,
     ssh_target_problem,
     update_saved_machines,
@@ -217,7 +218,10 @@ def _name_taken(name: str, holder: str, target: str) -> AddError:
     )
 
 
-def add_machine_command(target: str) -> int:
+def add_machine_command(target: str) -> SavedMachine:
+    """Save the machine at *target* and return its entry; a step that stops prints why and
+    exits 1."""
+
     try:
         problem = ssh_target_problem(target)
         if problem is not None:
@@ -232,16 +236,17 @@ def add_machine_command(target: str) -> int:
                 raise AddError(f"ssh to {target} failed (exit {signed_in}); fix sign-in first")
         path = _find_or_install(target, interactive)
         ready = _read_ready(target, path)
-        print(_save(ready, target, here))
+        say(_save(ready, target, here))
         write_cache(ready.id, path=path, version=ready.version)
         offer_way_back(target, path, ready.name, ready.id, here, interactive=interactive)
-    except AddError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        saved = next((m for m in read_saved_machines() if m.id == ready.id), None)
+        if saved is None:
+            raise AddError(f"`{ready.name}` was removed from the saved list while it was added")
+        return saved
+    except (AddError, SavedMachinesError) as exc:
+        fail(None, "failed", str(exc))
     except MachineError as exc:
-        print(f"error: {exc.text}", file=sys.stderr)
-        return 1
-    return 0
+        fail(None, exc.kind, exc.text)
 
 
 __all__ = ["add_machine_command"]

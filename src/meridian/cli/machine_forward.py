@@ -157,19 +157,27 @@ def _finish(target: SavedMachine, answer: Answered) -> Never:
 
 
 def _error(answer: Answered) -> tuple[str, str]:
-    """The other side's error as ``(kind, text)``, from its legacy JSON object: the ``kind``
-    it gave, else ``failed``. With no such object the text is its stderr."""
+    """The other side's error as ``(kind, text)``: from the object ``fail`` printed on its
+    stdout, else from a legacy JSON object on its stderr; the ``kind`` it gave, else
+    ``failed``. With neither the text is its stderr."""
 
-    for line in reversed(answer.stderr.strip().splitlines()):
+    def kind_of(value: object) -> str:
+        return value if isinstance(value, str) and _KIND_RE.fullmatch(value) else "failed"
+
+    def parsed(line: str) -> dict[str, object]:
         try:
-            document = json.loads(line)
+            return json_object(json.loads(line)) or {}
         except ValueError:
-            continue
-        fields = json_object(document)
-        if fields is not None and isinstance(fields.get("error"), str):
-            kind = fields.get("kind")
-            known = isinstance(kind, str) and _KIND_RE.fullmatch(kind) is not None
-            return (str(kind) if known else "failed"), str(fields["error"])
+            return {}
+
+    printed = parsed(answer.stdout.strip())
+    error = json_object(printed.get("error")) or {}
+    if printed.get("ok") is False and isinstance(error.get("text"), str):
+        return kind_of(error.get("kind")), str(error["text"])
+    for line in reversed(answer.stderr.strip().splitlines()):
+        fields = parsed(line)
+        if isinstance(fields.get("error"), str):
+            return kind_of(fields.get("kind")), str(fields["error"])
     return "failed", answer.stderr.strip() or answer.stdout.strip() or f"exit status {answer.exit}"
 
 
