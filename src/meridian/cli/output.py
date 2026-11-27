@@ -133,9 +133,10 @@ class TextSink:
         *,
         exit_code: int = 1,
         name: str | None = None,
+        kind: str | None = None,
     ) -> None:
-        """Emit a human error; ``name`` is intentionally JSON-only metadata."""
-        _ = (exit_code, name)
+        """Emit a human error; ``name`` and ``kind`` are intentionally JSON-only metadata."""
+        _ = (exit_code, name, kind)
         print(f"error: {message}", file=self._stderr)
 
     def heartbeat(self, message: str) -> None:
@@ -191,12 +192,15 @@ class JsonSink:
         *,
         exit_code: int = 1,
         name: str | None = None,
+        kind: str | None = None,
     ) -> None:
         payload = (
             {"error": message, "exit_code": exit_code}
             if name is None
             else {"error": name, "message": message, "exit_code": exit_code}
         )
+        if kind is not None:
+            payload["kind"] = kind
         print(
             json.dumps(_to_json_value(payload), separators=(",", ":")),
             file=self._stderr,

@@ -144,11 +144,14 @@ def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
         flush_sink(sink)
 
 
-def emit_error(message: str, *, exit_code: int = 1, name: str | None = None) -> Never:
-    """Write a command error through the current sink and exit."""
+def emit_error(
+    message: str, *, exit_code: int = 1, name: str | None = None, kind: str | None = None
+) -> Never:
+    """Write a command error through the current sink and exit. *kind* is the error's kind
+    for a caller that branches on it (``not_found``); JSON output only."""
 
     sink, flush_after = _resolve_sink(get_global_options())
-    sink.error(message, exit_code=exit_code, name=name)
+    sink.error(message, exit_code=exit_code, name=name, kind=kind)
     if flush_after:
         flush_sink(sink)
     raise SystemExit(exit_code)

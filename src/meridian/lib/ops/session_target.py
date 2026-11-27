@@ -324,7 +324,7 @@ def resolve_capture_source(
     """The exact native source of a terminal spawn's own bound generation, for capture."""
     row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     if (
         row.record_mode == "historical"
         or row.status not in TERMINAL_SPAWN_STATUSES

@@ -88,7 +88,7 @@ from meridian.env_registry import project_scoped_env_names
 from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
-from meridian.lib.core.refs import project_named_scope
+from meridian.lib.core.refs import RefNotFound, project_named_scope
 from meridian.lib.core.types import harness_choices_text
 from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
@@ -1500,5 +1500,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                         _operation_error_message(exc),
                         name="work_task_dir_missing",
                     )
+                except RefNotFound as exc:
+                    _emit_error(_operation_error_message(exc), kind="not_found")
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))

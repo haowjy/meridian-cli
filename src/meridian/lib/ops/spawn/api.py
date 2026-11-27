@@ -1168,7 +1168,7 @@ def spawn_show_sync(
     runtime_root = target.runtime_root
     row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     kind = "primary" if (row.kind or "").strip() == "primary" else None
     managed_backend = False
     activity: str | None = None
@@ -1392,7 +1392,7 @@ def _resolve_signal_spawn(
     target = resolve_spawn_target(project_root, candidate, runtime_root=runtime_root)
     record = spawn_store.get_spawn(target.runtime_root, target.spawn_id)
     if record is None:
-        raise ValueError(f"Spawn '{target.spawn_id}' not found")
+        raise RefNotFound(target.spawn_id, "spawn")
     if record.record_mode == "historical":
         raise ValueError("Historical records have no live process ownership")
     return record, target.runtime_root
@@ -2701,7 +2701,7 @@ def spawn_continue_sync(
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
-        raise ValueError(f"Spawn '{normalized}' not found")
+        raise RefNotFound(normalized, "spawn")
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,

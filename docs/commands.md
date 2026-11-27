@@ -477,7 +477,10 @@ A call that fails says why in `--json` as `{"ok": false, "machine": ..., "error"
 ..., "text": ...}}`. Kinds beyond the message kinds: `unreachable` (nothing was sent, safe to
 run again), `auth`, `host_key` (background calls accept only host keys already known; run
 `meridian machine add` in a terminal), `version` (Meridian there is missing or too old),
-`refused`, `too_large`. For `message`, a connection that ends after the request was written is
+`refused`, `too_large`. A spawn or chat the other machine doesn't have is `not_found`, with
+the machine's name at the start of `text`; any other error the command gave there is `failed`.
+On this machine the same miss prints `{"error": "Spawn 'p12' not found", "exit_code": 1,
+"kind": "not_found"}`. For `message`, a connection that ends after the request was written is
 `maybe_delivered`: it may have arrived and was not resent. A message to a cold session is held
 there, as here (`--wake` crosses).
 
