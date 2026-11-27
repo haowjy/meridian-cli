@@ -90,7 +90,7 @@ environment `meridian` was started with, and reads one line of JSON back
 `meridian.local.toml` or a file named by `--config` or `MERIDIAN_CONFIG` it is ignored
 with a warning, because a message runs outside the sandbox and a repository file must not
 choose the program. `@latest`, `@last-failed` and `@last-completed` are references, not
-addresses, and fail. `inbox` is reserved.
+addresses, and fail.
 
 `meridian message` reaches a session through the session's control socket. It prints
 "Message delivered" when the harness answered the request that carried the message
