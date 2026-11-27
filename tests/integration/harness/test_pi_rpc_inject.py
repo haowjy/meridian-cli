@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -210,13 +211,8 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
     )
     monkeypatch.setattr(
         message_module,
-        "resolve_runtime_root_and_config",
-        lambda _root: (project_root, object()),
-    )
-    monkeypatch.setattr(
-        message_module,
-        "resolve_runtime_root",
-        lambda _root: control_root,
+        "resolve_project_root_resolution",
+        lambda: SimpleNamespace(project_root=project_root),
     )
     monkeypatch.setattr(
         locate_module,
