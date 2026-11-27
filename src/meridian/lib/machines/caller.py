@@ -59,10 +59,12 @@ def _path(value: str | None) -> str | None:
 
 
 def _project_id(value: str | None) -> str | None:
-    """A project ID names a directory under ``projects/``: one printable path component."""
+    """A project ID names a directory under ``projects/``: a relative path of printable
+    components (``team/proj``), none of them empty, ``.`` or ``..``."""
 
-    ok = value is not None and value.isprintable() and "/" not in value and value not in (".", "..")
-    return value if ok and len(value or "") <= 255 else None
+    if value is None or not value.isprintable() or len(value) > 255:
+        return None
+    return value if all(part not in ("", ".", "..") for part in value.split("/")) else None
 
 
 def parse_machine_caller(raw: object) -> MachineCaller | None:

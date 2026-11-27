@@ -151,7 +151,9 @@ session from any directory.
   `--work` are refused with it: history across projects is `session search --global`. It has
   no default `--limit` (give one to cut it), and it reads only each project's running rows.
 - **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
-  additive JSON fields and are present without `--global`. `machine` is this machine's name,
+  additive JSON fields and are present without `--global`. `project_id` is the project's
+  committed ID (`[project] id` in `meridian.toml`); it is `null` for a directory with no
+  committed ID, whose state Meridian keys by its path on this machine. `machine` is this machine's name,
   kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is
   `null` if the file can't be created.
 

@@ -57,7 +57,7 @@ from meridian.lib.ops.locate import locate_run
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.idle import row_idle
 from meridian.lib.state.machine_ids import claim_root
-from meridian.lib.state.project_identity import resolve_project_identity, state_id
+from meridian.lib.state.runtime_root import runtime_root_project_id
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import read_derived
@@ -417,11 +417,9 @@ def _machine_caller_block() -> dict[str, object]:
     project_root = caller_project_root()
     if project_root is not None:
         block["project_root"] = project_root.as_posix()
-        # From the project, not the runtime root's name: `_MERIDIAN_RUNTIME_DIR` may put the
-        # root anywhere.
-        project_id = state_id(resolve_project_identity(project_root))
-        if project_id is not None:
-            block["project_id"] = project_id
+    project_id = runtime_root_project_id(identity.runtime_root)
+    if project_id is not None:
+        block["project_id"] = project_id
     return block
 
 

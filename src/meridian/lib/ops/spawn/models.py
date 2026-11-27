@@ -736,7 +736,7 @@ class SpawnLocation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_root: str | None
-    project_id: str
+    project_id: str | None
     machine: str | None
 
 
@@ -854,7 +854,8 @@ class SpawnListOutput(BaseModel):
                 rows[0].append("project")
                 for row, entry in zip(rows[1:], self.spawns, strict=True):
                     located = entry.located
-                    row.append((located.project_root or located.project_id) if located else "-")
+                    where = (located.project_root or located.project_id) if located else None
+                    row.append(where or "-")
             result = tabular(rows)
         if self.truncated and self.total_count is not None:
             result += (
