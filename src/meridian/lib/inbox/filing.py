@@ -72,13 +72,6 @@ def _project(caller: InboxCaller, flag: str | None) -> str | None:
                 "its own project",
                 kind="refused",
             )
-        if caller.project is not None and not is_project_id(caller.project):
-            # Never filed without a project instead: every session would see it.
-            raise InboxError(
-                f"this session's project ID {caller.project!r} can't be shown in the inbox: "
-                f"a project ID there is {SAFE_FIELD_RULE}. Nothing was filed.",
-                kind="refused",
-            )
         return caller.project
     # A process with no session has no project of its own: its working directory may be
     # one Meridian chose (a hook row runs in home), and never names one.

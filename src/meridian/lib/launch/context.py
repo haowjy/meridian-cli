@@ -1038,7 +1038,7 @@ def _resolve_primary_projection(
         kind="primary",
         # Fresh launch only, so every continue recomposes the same bytes
         # (``.context/CONTEXT.md``, "Prompt and skills").
-        inbox_line=launch_line(project_paths.project_root, datetime.now(UTC))
+        inbox_line=launch_line(Path(runtime.runtime_root), datetime.now(UTC))
         if session_mode == "fresh"
         else None,
     )

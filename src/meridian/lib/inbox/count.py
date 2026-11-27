@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final
 
+from meridian.lib.inbox.caller import project_of_root
 from meridian.lib.inbox.models import Message
 from meridian.lib.inbox.store import check_format, inbox_dir, read_doc, read_issued
-from meridian.lib.state.project_identity import Committed, resolve_project_identity
 
 _COUNT_WINDOW: Final = timedelta(days=7)
 _NUMBERS_LOOKED_AT: Final = 200
@@ -49,16 +49,15 @@ def waiting_count(project: str | None, now: datetime) -> int:
     return count
 
 
-def launch_line(project_root: Path, now: datetime) -> str | None:
-    """The guidance line for a primary launched in ``project_root``, or ``None`` when
+def launch_line(runtime_root: Path, now: datetime) -> str | None:
+    """The guidance line for a primary recorded under ``runtime_root``, or ``None`` when
     nothing is waiting for it. It is a hint: any failure leaves it out and never fails a
     launch."""
 
     try:
         if not inbox_dir().is_dir():
             return None
-        identity = resolve_project_identity(project_root)
-        count = waiting_count(identity.id if isinstance(identity, Committed) else None, now)
+        count = waiting_count(project_of_root(runtime_root), now)
     except Exception:
         return None
     if count == 0:
