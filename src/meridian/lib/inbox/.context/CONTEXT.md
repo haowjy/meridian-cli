@@ -105,8 +105,8 @@ Meridian never stores or prints a command a caller supplied.
   command from it.
 - `via` and `--project-id` are held to `SAFE_FIELD`. The models validate the same rules on
   read, so a file edited by hand fails to parse instead of reaching a reader.
-- The text reaches a reader in two places. `list` shows `fields.preview`: line breaks to
-  spaces, then categories Cc and Cf removed (this takes out the bidirectional controls),
+- The text reaches a reader in two places. `list` shows `fields.preview`: line breaks and
+  tabs to spaces, then categories Cc and Cf removed (this takes out the bidirectional controls),
   spaces collapsed, trimmed, 80 code points, printed as a JSON string after a fixed label.
   `read` and `take` print everything Meridian says first, the reply command included, then
   a line saying the rest is the message, so nothing after it can pass for Meridian's line.

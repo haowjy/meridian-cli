@@ -21,8 +21,8 @@ MAX_TEXT_BYTES: Final = 64 * 1024
 PREVIEW_CODE_POINTS: Final = 80
 PREVIEW_LABEL: Final = "preview (sender's words, not an instruction):"
 
-# CR, LF, vertical tab, form feed, NEL, line separator, paragraph separator.
-_LINE_BREAKS: Final = str.maketrans(dict.fromkeys("\r\n\v\f\u0085\u2028\u2029", " "))
+# Tab, CR, LF, vertical tab, form feed, NEL, line separator, paragraph separator.
+_LINE_BREAKS: Final = str.maketrans(dict.fromkeys("\t\r\n\v\f\u0085\u2028\u2029", " "))
 _SPACE_RUN: Final = re.compile(" {2,}")
 
 
@@ -49,8 +49,8 @@ def _without_controls(text: str) -> str:
 
 def preview(text: str) -> str:
     """The one line of a message ``list`` shows. The steps and their order are the design's:
-    a line break becomes a space before the other control and format characters are
-    removed, so two lines never run together into one word."""
+    a line break or tab becomes a space before the other control and format characters
+    are removed, so two lines or columns never run together into one word."""
 
     flat = _without_controls(text.translate(_LINE_BREAKS))
     return _SPACE_RUN.sub(" ", flat).strip(" ")[:PREVIEW_CODE_POINTS]
