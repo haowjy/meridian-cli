@@ -97,6 +97,13 @@ because continue replays no user turn. A primary goal is guidance, not a user tu
 otherwise a bare launch would submit it as the first message. A work item's goal is
 looked up with `meridian work show` so the prompt cannot retain stale text or an ID.
 
+The inbox line ("3 messages are waiting in this machine's inbox") is the one count in a
+prompt. A fresh primary launch computes it; a continue or fork leaves the block out, so
+every continue recomposes the same bytes. The cost is one changed prompt between a fresh
+launch that had the line and its first continue, on harnesses that don't replay a prompt
+snapshot. Storing the line in the launch snapshot would avoid that, at the price of a new
+field an older build reading the row would have to accept.
+
 Mars supplies skill bodies through the launch bundle. Do not filter loaded skills by
 `model-invocable`: the harness-native skill list may omit them, and composition is
 their delivery channel. Loaded skill headers say they are already loaded so agents

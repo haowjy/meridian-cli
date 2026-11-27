@@ -4,6 +4,7 @@ import os
 import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,6 +47,7 @@ from meridian.lib.harness.bundle import (
     materialize_launch_spec,
     project_effective_policy,
 )
+from meridian.lib.inbox.count import launch_line
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreparedLaunchContent,
@@ -913,6 +915,7 @@ def _build_shared_composition(
     *,
     policy: ResolvedLaunchPolicy,
     kind: SpawnKind,
+    inbox_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
     variants = policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     spawn_usage_contract = build_spawn_usage_contract(variants, kind=kind)
@@ -934,6 +937,7 @@ def _build_shared_composition(
             native_config=policy.execution_policy.native_config,
         ),
         waiting_line=variants.waiting_line if kind == "child" else None,
+        inbox_line=inbox_line,
     )
 
 
@@ -1029,7 +1033,15 @@ def _resolve_primary_projection(
 
     # A primary goal must not create a user turn, including on resume.
     goal_block = _goal_block(request)
-    shared_blocks = _build_shared_composition(policy=policy, kind="primary")
+    shared_blocks = _build_shared_composition(
+        policy=policy,
+        kind="primary",
+        # Fresh launch only, so every continue recomposes the same bytes
+        # (``.context/CONTEXT.md``, "Prompt and skills").
+        inbox_line=launch_line(project_paths.project_root, datetime.now(UTC))
+        if session_mode == "fresh"
+        else None,
+    )
     guidance_blocks = (goal_block, *shared_blocks) if goal_block is not None else shared_blocks
 
     seed = harness.seed_session(
