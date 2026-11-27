@@ -40,7 +40,12 @@ def _notice_text(entry: inbox.InboxEntry, session: str) -> str:
 
 
 def _send(sender: MessageSender, text: str) -> None:
-    """One notice, from the sender's own project. A sender that can't be reached is skipped."""
+    """One notice, from the sender's own project. A sender that can't be reached is skipped.
+
+    ``--wake``: the notice reports a delivery failure the sender is owed and nobody is here
+    to decide, so a cold sender must not hold it. The entry leaves the inbox once this has
+    been tried, so a held notice would be dropped silently.
+    """
 
     with suppress(OSError, subprocess.TimeoutExpired):
         subprocess.run(
@@ -50,6 +55,7 @@ def _send(sender: MessageSender, text: str) -> None:
                 sender.spawn_id,
                 "-C",
                 sender.project_root,
+                "--wake",
                 "--message",
                 text,
             ),

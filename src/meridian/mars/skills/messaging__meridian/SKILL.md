@@ -28,7 +28,11 @@ given. Without one, answer through the channel the human gave you.
 
 **When a send fails,** the error says why and what to do. With `--json`, `error.kind`
 says whether to send again: only `maybe_delivered` may have arrived, and every other kind
-means nothing was sent. Three cases it can't show:
+means nothing was sent. Four cases it can't show:
+- `cold`: the session is idle with its prompt cache expired, and waking it re-reads the
+  whole conversation at its cost. Nothing was sent. Weigh `--wake` (deliver anyway) against
+  `--from <session>` (start a new session from its context), or ask your user; don't
+  add `--wake` by reflex.
 - After `/clear`, a session continues in a new chat, and its old chat ID reports "no
   running session". Use the chat in the sender line of its latest message.
 - On OpenCode, a message sent after the human switched sessions in the TUI, but before

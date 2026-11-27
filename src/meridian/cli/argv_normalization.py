@@ -73,7 +73,8 @@ def canonicalize_argv(argv: Sequence[str]) -> list[str]:
 
 
 def normalize_message_stdin(argv: Sequence[str]) -> list[str]:
-    """Spell the message text ``-`` (read stdin) as ``--message=-``.
+    """Spell the message text ``-`` (read stdin) as ``--message=-``, whether it is the bare
+    argument or follows ``--message``.
 
     Cyclopts reads a bare ``-`` as an unknown option. Only ``message`` and its
     deprecated ``spawn message`` take it.
@@ -88,9 +89,13 @@ def normalize_message_stdin(argv: Sequence[str]) -> list[str]:
     stop = argv.index("--") if "--" in argv else len(argv)
     normalized = list(argv)
     for index in range(stop):
-        if normalized[index] == "-" and (
-            index == 0 or normalized[index - 1] not in TOP_LEVEL_VALUE_FLAGS
-        ):
+        if normalized[index] != "-":
+            continue
+        before = normalized[index - 1] if index else None
+        if before == "--message":
+            normalized[index - 1 : index + 1] = ["--message=-"]
+            break
+        if before not in TOP_LEVEL_VALUE_FLAGS:
             normalized[index] = "--message=-"
             break
     return normalized

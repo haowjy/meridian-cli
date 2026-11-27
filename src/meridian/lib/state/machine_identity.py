@@ -88,7 +88,12 @@ class _MachineFile(BaseModel):
 
 
 def _parse(path: Path) -> MachineIdentity:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, MachineIdentityError):
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise MachineIdentityError(f"{path} can't be read ({exc})") from exc
     try:
         data = _MachineFile.model_validate_json(text)
     except ValueError as exc:

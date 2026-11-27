@@ -66,10 +66,7 @@ def _parse_answer(stdout: bytes, receiver: Receiver, address: str) -> MessageRes
     first = next((line for line in lines if line.strip()), None)
     if first is None:
         return unanswered
-    try:
-        answer = json_object(json.loads(first))
-    except json.JSONDecodeError:
-        return unanswered
+    answer = json_object(json.loads(first))
     if answer is None:
         return unanswered
     ok = answer.get("ok")
@@ -130,10 +127,14 @@ async def deliver_to_person(
             "Nothing was sent.",
             receiver,
         )
+    # One try from the hand-over to a parsed answer: whatever goes wrong in it, the program
+    # had the text, so a post may have gone out. A failure nobody listed must not read as
+    # `failed`, which tells a script to send again.
     try:
         stdout, _ = await asyncio.wait_for(
             process.communicate(text.encode("utf-8")), PEOPLE_TIMEOUT_SECONDS
         )
+        return _parse_answer(stdout or b"", receiver, address)
     except TimeoutError:
         await _stop(process)
         return Failed(
@@ -142,10 +143,17 @@ async def deliver_to_person(
             f"stopped; the message to {address} may have been posted and was not resent",
             receiver,
         )
+    except Exception as error:
+        await _stop(process)
+        return Failed(
+            "maybe_delivered",
+            f"the people program's answer could not be read ({error}); the message to "
+            f"{address} may have been posted and was not resent",
+            receiver,
+        )
     except BaseException:
         await _stop(process)
         raise
-    return _parse_answer(stdout or b"", receiver, address)
 
 
 __all__ = ["PEOPLE_TIMEOUT_SECONDS", "deliver_to_person", "people_command"]

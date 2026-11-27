@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 import shlex
 import sys
 import time
@@ -271,10 +272,16 @@ async def _send_to_session(
             )
         if receiver.chat_id is None and record.continue_chat_id:
             receiver = dataclasses.replace(receiver, chat_id=record.continue_chat_id)
+        # ``Path.exists()`` reads any OSError as "absent" from Python 3.14 on, which would hide
+        # a sandbox's denial; tell the two apart here.
         try:
-            visible = socket_path.exists()
+            os.stat(socket_path)
+        except FileNotFoundError:
+            visible = False
         except PermissionError:
             return Failed("sandboxed", _SANDBOX_SENTENCE, receiver)
+        else:
+            visible = True
         if visible:
             break
         if sandbox is True:
@@ -288,7 +295,10 @@ async def _send_to_session(
                 if record.kind == "primary"
                 else ""
             )
-            return Failed("no_route", f"spawn {spawn_id} has no message route{older}", receiver)
+            no_route = f"spawn {spawn_id} has no message route{older}"
+            if sandbox is None:
+                no_route += f"; {_SANDBOX_SENTENCE}"
+            return Failed("no_route", no_route, receiver)
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     # The server limit applies to the encoded line (JSON escapes non-ASCII to 6 bytes).
@@ -329,47 +339,44 @@ async def _send_to_session(
             receiver,
         )
 
+    # One try from the first written byte to a parsed answer: whatever goes wrong in it,
+    # the session may have the message, so a failure nobody listed must not read as `failed`.
     try:
         response_data = await _send_and_receive(reader, writer, line)
+        if not response_data:
+            return may_have_arrived(f"spawn {spawn_id} closed the connection without an answer")
+        parsed = json_object(json.loads(response_data.decode("utf-8")))
+        if parsed is None:
+            return may_have_arrived(f"invalid response from spawn {spawn_id}")
+        ok = parsed.get("ok")
+        if ok is True:
+            # A server without ``delivery`` (an older build) does not say how far the
+            # message got, so claim only that it was posted.
+            note = parsed.get("note")
+            return Delivered(
+                delivery_kind(parsed.get("delivery")),
+                f"spawn {spawn_id}",
+                note if isinstance(note, str) else None,
+                receiver,
+            )
+        if ok is not False:
+            return may_have_arrived(f"invalid response from spawn {spawn_id}")
+        # A server without ``kind`` is an older build, which can't tell a refusal from a
+        # delivery that may have arrived; the only safe reading is the second.
+        error_value = parsed.get("error")
+        error_text = error_value.strip() if isinstance(error_value, str) else ""
+        return Failed(
+            error_kind(parsed.get("kind"), unknown="maybe_delivered"),
+            error_text or "unknown error",
+            receiver,
+        )
     except TimeoutError:
         return may_have_arrived(f"timed out waiting for response from spawn {spawn_id}")
     except (ConnectionResetError, BrokenPipeError):
         return may_have_arrived(f"connection to spawn {spawn_id} was reset")
     except Exception as exc:
-        # Includes a reply over asyncio's 64 KiB line limit, a ValueError.
+        # Includes a reply over asyncio's 64 KiB line limit and one that isn't JSON.
         return may_have_arrived(f"no usable answer from spawn {spawn_id} ({exc})")
-
-    if not response_data:
-        return may_have_arrived(f"spawn {spawn_id} closed the connection without an answer")
-    try:
-        parsed = json_object(json.loads(response_data.decode("utf-8")))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        parsed = None
-    if parsed is None:
-        return may_have_arrived(f"invalid response from spawn {spawn_id}")
-
-    ok = parsed.get("ok")
-    if ok is True:
-        # A server without ``delivery`` (an older build) does not say how far the message
-        # got, so claim only that it was posted.
-        note = parsed.get("note")
-        return Delivered(
-            delivery_kind(parsed.get("delivery")),
-            f"spawn {spawn_id}",
-            note if isinstance(note, str) else None,
-            receiver,
-        )
-    if ok is not False:
-        return may_have_arrived(f"invalid response from spawn {spawn_id}")
-    # A server without ``kind`` is an older build, which can't tell a refusal from a
-    # delivery that may have arrived; the only safe reading is the second.
-    error_value = parsed.get("error")
-    error_text = error_value.strip() if isinstance(error_value, str) else ""
-    return Failed(
-        error_kind(parsed.get("kind"), unknown="maybe_delivered"),
-        error_text or "unknown error",
-        receiver,
-    )
 
 
 async def send_message(
@@ -416,7 +423,7 @@ async def send_message(
     except AddressError as exc:
         return Failed(exc.kind, exc.text, receiver)
     except Exception as exc:
-        # Every failure after the first written byte is answered inside the routes.
+        # Only what happens before a route writes: each route answers its own failures after.
         return Failed("failed", str(exc) or type(exc).__name__, receiver)
 
 
