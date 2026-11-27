@@ -780,6 +780,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _message_cmd
 
+        def _register_inbox() -> None:
+            import meridian.cli.inbox_cmd as _inbox_cmd
+
+            _ = _inbox_cmd
+
         def _register_idle() -> None:
             import meridian.cli.idle_cmd as _idle_cmd
 
@@ -816,6 +821,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "artifact": _register_artifact,
             "notify": _register_notify,
             "message": _register_message,
+            "inbox": _register_inbox,
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,

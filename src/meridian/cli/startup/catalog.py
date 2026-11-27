@@ -470,6 +470,26 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Send a message to a running session or a person.",
         startup_error=StartupErrorShape.MESSAGE,
     ),
+    _read_rootless(("inbox",), "Show inbox help.", startup_error=StartupErrorShape.MESSAGE),
+    _read_rootless(
+        ("inbox", "list"),
+        "List the machine inbox's waiting messages.",
+        startup_error=StartupErrorShape.MESSAGE,
+    ),
+    _read_rootless(
+        ("inbox", "read"), "Print one inbox message.", startup_error=StartupErrorShape.MESSAGE
+    ),
+    _write_rootless(
+        ("inbox", "take"), "Claim an inbox message.", startup_error=StartupErrorShape.MESSAGE
+    ),
+    _write_rootless(
+        ("inbox", "release"), "Give an inbox claim back.", startup_error=StartupErrorShape.MESSAGE
+    ),
+    _write_rootless(
+        ("inbox", "offer"),
+        "Tell a running session an inbox message looks like its own.",
+        startup_error=StartupErrorShape.MESSAGE,
+    ),
     _read_rootless(
         ("idle",),
         "Manage harness idle schedules.",
