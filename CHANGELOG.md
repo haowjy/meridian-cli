@@ -6,6 +6,10 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.27.11] - 2026-11-27
+
+None. The history index finds new spawns by listing the spawns directory instead of counting up to the spawn ID counter; nothing a user or developer sees changes.
+
 ## [0.27.10] - 2026-11-24
 
 ### Fixed
