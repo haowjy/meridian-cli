@@ -60,7 +60,7 @@ from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import (
     ActivityState,
     PrimaryMetadata,
-    write_primary_metadata,
+    write_native_primary_metadata,
 )
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.session_store import (
@@ -134,7 +134,7 @@ def _write_native_primary_metadata(
 ) -> None:
 
     try:
-        write_primary_metadata(
+        write_native_primary_metadata(
             launch,
             PrimaryMetadata(
                 managed_backend=False,
@@ -155,7 +155,6 @@ def _write_native_primary_metadata(
                 session_dir=runtime_metadata.session_dir if runtime_metadata else None,
                 auth_policy=runtime_metadata.auth_policy if runtime_metadata else None,
             ),
-            guarded=True,
         )
     except Exception:
         logger.debug("Failed to write native primary metadata", exc_info=True)
@@ -941,7 +940,8 @@ def run_harness_process(
                                 launch_cwd=launch_child_cwd,
                                 launcher_pid=os.getpid(),
                                 tui_pid=child_pid,
-                                activity="idle",
+                                # The runtime reports the TUI's turns.
+                                activity=None,
                                 started_at_epoch=primary_started_epoch,
                                 ended_at_epoch=None,
                                 exit_code=None,

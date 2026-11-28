@@ -16,6 +16,6 @@ describe.skipIf(!existsSync(bundlePath))("meridian-idle bundle smoke", () => {
 
     bundle.default({ on: (name: string) => events.push(name) });
 
-    expect(events).toEqual(["session_start", "agent_end", "input", "session_shutdown"]);
+    expect(events).toEqual(["session_start", "agent_start", "agent_end", "agent_settled", "input", "session_shutdown"]);
   });
 });

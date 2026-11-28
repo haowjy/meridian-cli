@@ -299,6 +299,7 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         agent_subcommands=(
             "config",
             "arm",
+            "activity",
             "return",
             "needs-permission",
             "fire",

@@ -6,6 +6,18 @@ does not qualify as a wake.
 
 KB `spawns/idle-notifications.md` records the policy and the reasons behind it.
 
+**Turn activity is not idle policy, but rides its adapters.** `activity.py` records the
+calling primary's turn edge in its `primary_meta.json` (`spawn list`'s `activity`), from the
+caller identity: a row only when it is a running primary of the reporting harness. The
+runtimes report it whatever the idle config says (`meridian idle activity`, which skips the
+role and idle gates), because turning notices off must not turn `activity` off; `idle arm`
+records the turn's end itself, so a turn end that arms costs no second process. That record
+runs only after the arm returns and never fails it (the stretch is already open and must be
+timed): a failed record shows as `activity_error` in the reply, and a runtime whose arm
+failed, timed out or replied with it reports the end through `idle activity` instead. It lives in
+`primary_meta.json`, not `IdleState`: `IdleState` is `extra="forbid"` and older builds would
+fail to read a new field, while an unknown `activity` value already reads as `None`.
+
 Core claims the warning once per stretch, whatever the harness, and sends it
 through the configured notify routes. The Claude mod's keepwarm pings ride that
 one warning (ping 1) and time the later pings itself

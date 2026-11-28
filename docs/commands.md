@@ -266,14 +266,19 @@ meridian session log p123 --full --no-truncate     # full selected segment with 
 
 `spawn list --json` and `spawn children --json` rows carry `agent` (the
 profile), `work_id` (the spawn's chat's current work item, as `spawn show`
-reports it) and `idle`. `idle` is `null` unless the spawn is active, its harness
+reports it) and `idle`. A running primary's row (and `spawn show --json`) also
+carries `activity`: `turn_active` while its harness is in a turn, whatever
+started it (a typed prompt, a wake, a peer message, a task notification), `idle`
+between turns, `starting` and `finalizing` around a launch, and `unknown` when
+the harness has reported nothing (the moment after launch, or a session an older
+build launched). `idle` is `null` unless the spawn is active, its harness
 session has an open idle stretch, and the harness isn't reporting a turn in
 progress; otherwise it is `{"since", "warm_until", "ttl_estimated"}`, ISO-8601
 UTC. The stretch opens when a user-loop turn ends and closes when the next one
 starts. Injected turns (wakes, task notifications, peer messages, keepwarm) don't
 close it, so `since` can be older than the latest model call and `warm_until`
-then understates the warm cache. Claude primaries report no per-turn activity,
-so the mid-turn check only applies to harnesses that do. `warm_until` is
+then understates the warm cache. A row reading `activity: "unknown"` gets no
+mid-turn check. `warm_until` is
 `since` plus the sensed TTL, or the harness default with `ttl_estimated: true`;
 `session browse --plain --json` uses the same rule for `cache_deadline`. It is read from the
 same state as `idle status`, keyed by the row's own harness session. Whether a
@@ -798,8 +803,12 @@ cache warning should still be sent. Humans normally use only:
 | `meridian idle status [--json]` | List open idle stretches and their stored schedules |
 | `meridian idle mod-path` | Print the bundled Claude idle mod directory for an external-TUI opt-in |
 
-The adapter subcommands are `config`, `arm`, `return`, `needs-permission`,
-`fire`, and `event`; run `meridian idle --help` for their typed contract.
+The adapter subcommands are `config`, `arm`, `activity`, `return`,
+`needs-permission`, `fire`, and `event`; run `meridian idle --help` for their
+typed contract. `activity turn_active|idle` records the calling primary's turn
+edge for `spawn list`; it runs whatever the idle config says, and `arm`, a turn
+end, records `idle` itself; its reply carries `activity_error` when that record
+failed and the arm did not.
 `fire warn` adds `remind: true` to an `act` answer when the adapter should ask
 the model to record its state in the session's work item (`[idle] state_reminder`
 on and a work item attached).

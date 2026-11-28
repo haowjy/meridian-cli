@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -14,6 +15,8 @@ from meridian.lib.state.spawn_aggregate import (
 from meridian.lib.utils.json_shapes import is_object_sequence
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
+TurnActivity = Literal["idle", "turn_active"]
+"""What a harness runtime reports at a turn edge."""
 
 
 def _positive_int_or_none(value: object) -> object:
@@ -135,11 +138,56 @@ def write_primary_metadata(
             path,
             PrimaryMetadata,
             lambda _current: (metadata, None),
-            lock=published_artifact_lock(launch.runtime_root, launch.spawn_id),
+            lock=_artifact_lock(launch),
         )
     except PublishedArtifactUnavailable:
         return False
     return True
+
+
+def _artifact_lock(launch: LaunchPaths) -> AbstractContextManager[None]:
+    return published_artifact_lock(launch.runtime_root, launch.spawn_id)
+
+
+def write_native_primary_metadata(launch: LaunchPaths, metadata: PrimaryMetadata) -> bool:
+    """The native runner's write: every field from ``metadata`` except ``activity`` when it
+    is ``None``. Then the activity a runtime reported stays, and a ``starting`` the runner
+    wrote before the TUI existed ends (unknown until the runtime reports). Returns False once
+    the published spawn is gone."""
+
+    def merge(current: PrimaryMetadata | None) -> tuple[PrimaryMetadata, None]:
+        if metadata.activity is not None or current is None:
+            return metadata, None
+        kept = None if current.activity == "starting" else current.activity
+        return metadata.model_copy(update={"activity": kept}), None
+
+    try:
+        mutate_model(launch.primary_meta, PrimaryMetadata, merge, lock=_artifact_lock(launch))
+    except PublishedArtifactUnavailable:
+        return False
+    return True
+
+
+def record_turn_activity(launch: LaunchPaths, activity: TurnActivity) -> bool:
+    """Set a native primary's ``activity`` from its runtime's turn edge; True when written.
+
+    ``finalizing`` (the runner saw the TUI exit) wins over a report that arrives late. A
+    primary with no file yet (its runner writes none) gets one holding only the activity."""
+
+    def update(current: PrimaryMetadata | None) -> tuple[PrimaryMetadata | None, bool]:
+        if current is None:
+            return PrimaryMetadata(managed_backend=False, activity=activity), True
+        if current.activity in {"finalizing", activity}:
+            return None, False
+        return current.model_copy(update={"activity": activity}), True
+
+    try:
+        _, written = mutate_model(
+            launch.primary_meta, PrimaryMetadata, update, lock=_artifact_lock(launch)
+        )
+    except PublishedArtifactUnavailable:
+        return False
+    return written
 
 
 def read_primary_surface_metadata(launch: LaunchPaths) -> PrimarySurfaceMetadata:
@@ -202,9 +250,12 @@ __all__ = [
     "ActivityState",
     "PrimaryMetadata",
     "PrimarySurfaceMetadata",
+    "TurnActivity",
     "is_managed_primary",
     "read_primary_harness_session_id",
     "read_primary_metadata",
     "read_primary_surface_metadata",
+    "record_turn_activity",
+    "write_native_primary_metadata",
     "write_primary_metadata",
 ]

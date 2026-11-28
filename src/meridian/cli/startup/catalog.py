@@ -551,6 +551,12 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         startup_error=StartupErrorShape.IDLE,
     ),
     _write_rootless(
+        ("idle", "activity"),
+        "Record whether a primary is mid-turn.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
         ("idle", "return"),
         "Close an idle stretch.",
         default_output_mode="json",

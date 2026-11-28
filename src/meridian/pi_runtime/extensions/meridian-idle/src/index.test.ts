@@ -58,13 +58,24 @@ async function event(
   await handlers.get(name)!(payload, ctx);
 }
 
+/** One agent run: its last agent_end, then agent_settled. */
+async function endRun(
+  handlers: Map<string, Handler>,
+  payload: Record<string, unknown>,
+  ctx: ExtensionContext,
+): Promise<void> {
+  await event(handlers, "agent_end", payload, ctx);
+  await event(handlers, "agent_settled", { aborted: false }, ctx);
+}
+
 function flag(args: string[], name: string): string | undefined {
   const at = args.indexOf(name);
   return at < 0 ? undefined : args[at + 1];
 }
 
 function expectCliContract(calls: string[][]): void {
-  expect(calls.every((args) => args.at(-1) === "--interactive")).toBe(true);
+  // `activity` is reported whatever the idle gate says, so it asserts no TUI ownership.
+  expect(calls.every((args) => args[1] === "activity" || args.at(-1) === "--interactive")).toBe(true);
   for (const args of calls.filter((args) => ["arm", "return", "fire"].includes(args[1] ?? ""))) {
     expect(flag(args, "--harness")).toBe("pi");
     expect(flag(args, "--session")).toBe("pi-session");
@@ -84,19 +95,49 @@ afterEach(() => {
 });
 
 describe("meridian idle event mapping", () => {
-  it("stays inert when the interactive policy gate disables it", async () => {
+  it("only reports turn activity when the interactive policy gate disables it", async () => {
     const run = vi.fn<MeridianRunner>(async () => commandResult({ enabled: false }));
     const { ctx } = context();
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_start", {}, ctx);
     await event(handlers, "agent_end", {}, ctx);
+    await event(handlers, "agent_settled", { aborted: true }, ctx);
     await event(handlers, "input", { source: "interactive" }, ctx);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["idle", "config", "--interactive"],
+      ["idle", "activity", "idle", "--harness", "pi"],
+      ["idle", "activity", "turn_active", "--harness", "pi"],
+      ["idle", "activity", "idle", "--harness", "pi"],
     ]);
+  });
+
+  it("a retried run is one turn: busy at its start, its end carried by the arm once it settles", async () => {
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      return commandResult({ stretch: 1, anchor: 1 });
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_start", {}, ctx);
+    await event(handlers, "agent_end", {}, ctx);
+    await event(handlers, "agent_start", {}, ctx);
+    await endRun(handlers, {}, ctx);
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
+    });
+
+    const edges = run.mock.calls
+      .map(([args]) => args)
+      .filter((args) => ["activity", "arm"].includes(args[1]!))
+      .map((args) => (args[1] === "arm" ? "idle (arm)" : args[2]));
+    expect(edges).toEqual(["idle", "turn_active", "idle (arm)"]);
   });
 
   it("arms every returned deadline and fires push then warn", async () => {
@@ -117,7 +158,7 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {}, ctx);
+    await endRun(handlers, {}, ctx);
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => {
       expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
@@ -196,7 +237,7 @@ describe("meridian idle event mapping", () => {
       const { handlers } = host(run);
       await event(handlers, "session_start", {}, ctx);
 
-      await event(handlers, "agent_end", {}, ctx);
+      await endRun(handlers, {}, ctx);
       await vi.advanceTimersByTimeAsync(0);
       await vi.waitFor(() => {
         expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);
@@ -216,7 +257,7 @@ describe("meridian idle event mapping", () => {
       expect(tasks[0]).toEqual({ kind: "other" });
 
       await writeFile(recordsPath, "{", "utf8");
-      await event(handlers, "agent_end", {}, ctx);
+      await endRun(handlers, {}, ctx);
       await vi.advanceTimersByTimeAsync(0);
       await vi.waitFor(() => {
         expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(2);
@@ -243,7 +284,7 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {
+    await endRun(handlers, {
       messages: [
         { role: "user", content: [{ type: "text", text: "old prompt" }] },
         { role: "assistant", content: [{ type: "text", text: "old answer" }] },
@@ -283,13 +324,13 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {
+    await endRun(handlers, {
       messages: [
         { role: "user", content: [{ type: "text", text: "original prompt" }] },
         { role: "assistant", content: [{ type: "text", text: "first answer" }] },
       ],
     }, ctx);
-    await event(handlers, "agent_end", {
+    await endRun(handlers, {
       messages: [
         { role: "custom", content: [{ type: "text", text: "spawn finished" }] },
         { role: "assistant", content: [{ type: "text", text: "follow-up answer" }] },
@@ -321,7 +362,7 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {}, ctx);
+    await endRun(handlers, {}, ctx);
     await vi.advanceTimersByTimeAsync(0);
     await event(handlers, "input", { source: "rpc" }, ctx);
     expect(run.mock.calls.some(([args]) => args[1] === "return")).toBe(false);
@@ -355,7 +396,7 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {}, ctx);
+    await endRun(handlers, {}, ctx);
     await vi.advanceTimersByTimeAsync(0);
     await armStarted.promise;
 
@@ -392,7 +433,7 @@ describe("meridian idle event mapping", () => {
     const { handlers } = host(run);
 
     await event(handlers, "session_start", {}, ctx);
-    await event(handlers, "agent_end", {}, ctx);
+    await endRun(handlers, {}, ctx);
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => {
       expect(run.mock.calls.filter(([args]) => args[1] === "arm")).toHaveLength(1);

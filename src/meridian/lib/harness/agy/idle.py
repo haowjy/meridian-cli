@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,6 +33,9 @@ from meridian.lib.harness.agy.watch import watcher_running
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import IdleEvent
 from meridian.lib.platform import fcntl
+from meridian.lib.state.primary_meta import TurnActivity
+
+logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 1.0
 
@@ -243,9 +247,13 @@ class AgyIdleSensor:
         conversation: str,
         *,
         stored_turn_id: str | None,
+        report_activity: Callable[[TurnActivity], object],
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
         self._proc_dir = proc_dir
+        # Told each change between a running turn and none, for ``spawn list``'s activity.
+        self._report_activity = report_activity
+        self._reported: TurnActivity | None = None
         self._conversation = conversation
         self._turn = TurnState(proc_dir, conversation)
         self._poll_seconds = poll_seconds
@@ -285,7 +293,20 @@ class AgyIdleSensor:
             if self._seen_running and not running:
                 self._unreported = True
             self._seen_running = running
+            self._publish("turn_active" if running else "idle")
             return state
+
+    def _publish(self, activity: TurnActivity) -> None:
+        """Report a change once; a failed write is retried at the next observation."""
+
+        if activity == self._reported:
+            return
+        try:
+            self._report_activity(activity)
+        except Exception:
+            logger.debug("agy activity not recorded", exc_info=True)
+            return
+        self._reported = activity
 
     def _busy(self) -> bool:
         return self._observe() == "running" or self._unreported

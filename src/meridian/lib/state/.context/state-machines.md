@@ -42,20 +42,34 @@ offered a message.
 ```mermaid
 stateDiagram-v2
   [*] --> starting
+  starting --> unknown: native TUI started, nothing reported yet
   starting --> idle: harness ready
+  unknown --> idle: runtime reports session start or turn end
+  unknown --> turn_active: first report lands mid-turn (agy's first poll, a failed start report)
   idle --> turn_active: a turn starts
   turn_active --> idle: turn ends
   idle --> finalizing: the harness exits
   turn_active --> finalizing: the harness exits
+  unknown --> finalizing: the harness exits
   finalizing --> [*]
 ```
 
-This is a projection, not authority. Each harness adapter and the runner write it at their own
-lifecycle points (`write_primary_metadata`). No single function owns the transitions, so a
-new adapter can skip one.
+`unknown` is no stored value: `spawn list` shows it for a running primary whose file has no
+`activity`, or no file. A Claude row has no runner write and gets its first file from the mod.
 
-**What a rewrite could drop.** The adapters each write the activity. A runner that sees every
-harness event could own the activity as one state machine.
+This is a projection, not authority. Two writers:
+
+- Codex and OpenCode (managed): `primary_attach.py` follows the server stream and rewrites the
+  whole file (`write_primary_metadata`).
+- Native primaries: the runner writes `starting` and `finalizing` through
+  `write_native_primary_metadata`, and the runtimes report each turn edge through
+  `record_turn_activity` (the Claude mod and Pi extension via `meridian idle activity` or
+  `idle arm`; agy's hold from its sensor). Both read-modify-write under the published-artifact
+  lock, so the runner's TUI-started write keeps a turn already reported, and `finalizing` wins
+  over a report that arrives late. A runtime too old to report leaves the row `unknown`.
+
+**What a rewrite could drop.** The managed attach could report through the same seam instead
+of owning a whole-file copy in memory.
 
 ## A work item
 

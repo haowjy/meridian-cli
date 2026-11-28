@@ -72,7 +72,11 @@ class Session:
         task = asyncio.create_task(
             run_hold_idle(
                 lambda stored: AgyIdleSensor(
-                    self.proc, CONVERSATION, stored_turn_id=stored, poll_seconds=0.02
+                    self.proc,
+                    CONVERSATION,
+                    stored_turn_id=stored,
+                    report_activity=lambda _activity: None,
+                    poll_seconds=0.02,
                 ),
                 ctx,
                 readopted=readopted,
@@ -189,7 +193,13 @@ def test_the_reply_to_a_prompt_meridian_sent_is_reported_with_the_turn_end(
     from meridian.lib.harness.agy.state import watch_lock_path
     from meridian.lib.platform import fcntl
 
-    sensor = AgyIdleSensor(session.proc, CONVERSATION, stored_turn_id=None, poll_seconds=0.02)
+    sensor = AgyIdleSensor(
+        session.proc,
+        CONVERSATION,
+        stored_turn_id=None,
+        report_activity=lambda _activity: None,
+        poll_seconds=0.02,
+    )
     lock = watch_lock_path(session.proc, CONVERSATION)
     lock.parent.mkdir(parents=True, exist_ok=True)
 
@@ -244,7 +254,13 @@ def test_the_reply_to_a_prompt_meridian_sent_is_reported_with_the_turn_end(
 def test_the_sensor_is_busy_from_the_mark_going_until_the_turn_end_is_reported(
     session: Session,
 ) -> None:
-    sensor = AgyIdleSensor(session.proc, CONVERSATION, stored_turn_id=None, poll_seconds=0.5)
+    sensor = AgyIdleSensor(
+        session.proc,
+        CONVERSATION,
+        stored_turn_id=None,
+        report_activity=lambda _activity: None,
+        poll_seconds=0.5,
+    )
 
     async def main() -> tuple[bool, bool, bool]:
         session.transcript.touch()
