@@ -254,10 +254,11 @@ def test_managed_primary_dryrun_has_one_truthful_structured_plan(
         request=LaunchRequest(model="google/gemini-2.5-pro", harness="opencode", dry_run=True),
         harness_registry=get_default_harness_registry(),
     )
+    from meridian.lib.catalog.mars_cli import MarsLocation
     from meridian.lib.launch.bundle_adapter import _build_bundle_command
 
     assert requests and requests[0].no_refresh_models
-    assert "--no-refresh-models" in _build_bundle_command(requests[0])
+    assert "--no-refresh-models" in _build_bundle_command(requests[0], MarsLocation(tmp_path))
     assert result.command == ()
     plan = result.launch_plan
     assert plan is not None

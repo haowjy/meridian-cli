@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -11,38 +12,22 @@ from pathlib import Path
 from typing import TextIO
 
 from meridian import __version__
-from meridian.lib.bundled_skills import WHEEL, provide_bundled_skills, report_provide_refusal
-from meridian.lib.catalog.mars_roots import (
-    ensure_user_mars_root,
+from meridian.lib.catalog.mars_cli import (
+    MARS_SYNCING_COMMANDS,
+    MARS_UPGRADE_HINT,
+    is_project_not_found,
     mars_content_args,
+    mars_location,
+    provided_sync_args,
     resolve_mars_executable,
-    resolve_mars_roots,
-    user_mars_root,
 )
-from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.platform import get_home_path
 
-_MUTATING_COMMANDS = frozenset(
-    {
-        "add",
-        "remove",
-        "link",
-        "unlink",
-        "sync",
-        "upgrade",
-        "rename",
-        "override",
-        "adopt",
-        "version",
-        "repair",
-        "resolve",
-        "provide",
-    }
-)
-_MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
-_PROVIDE_COMMANDS = frozenset(
-    {"sync", "upgrade", "add", "remove", "repair", "validate", "doctor", "build"}
-)
-_USER_MUTATION_ERROR = (
+# Mars creates a project for these when none encloses the directory; Meridian refuses instead.
+# Every other write with no project fails in Mars, with its own message, and so do these where
+# Mars would create the project in home.
+_AUTO_INIT_COMMANDS = frozenset({"add", "link"})
+_NO_PROJECT_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use 'meridian mars --user …'"
 )
 
@@ -52,8 +37,12 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
-    provide_root: Path | None
+    # The caller's working directory, where a relative path they typed resolves.
+    cwd: Path
     user_scope: bool = False
+    # Where Mars's walk-up starts (``--root X``, typed or Meridian's project), for the probe.
+    root_args: tuple[str, ...] = ()
+    needs_project: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,45 +57,23 @@ def mars_requested_json(args: Sequence[str]) -> bool:
     return any(token == "--json" for token in args)
 
 
-def _strip_meridian_mars_options(
-    args: Sequence[str],
-) -> tuple[list[str], bool, Path | None]:
-    forwarded: list[str] = []
-    user_scope = False
-    requested_root: Path | None = None
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--user":
-            user_scope = True
-            index += 1
-            continue
+def _root_args(args: Sequence[str]) -> tuple[str, ...]:
+    for index, token in enumerate(args):
         if token == "--root":
             if index + 1 >= len(args) or not args[index + 1].strip():
                 raise ValueError("--root requires a value")
-            requested_root = Path(args[index + 1]).expanduser()
-            index += 2
-            continue
+            return (token, args[index + 1])
         if token.startswith("--root="):
-            raw_root = token.partition("=")[2].strip()
-            if not raw_root:
+            if not token.partition("=")[2].strip():
                 raise ValueError("--root requires a value")
-            requested_root = Path(raw_root).expanduser()
-            index += 1
-            continue
-        forwarded.append(token)
-        index += 1
-    return forwarded, user_scope, requested_root
+            return (token,)
+    return ()
 
 
 def _mars_subcommand(args: Sequence[str]) -> str | None:
-    return next((token for token in args if not token.startswith("-")), None)
-
-
-def _is_mars_mutation(args: Sequence[str]) -> bool:
-    commands = tuple(token for token in args if not token.startswith("-"))
-    return bool(
-        commands and (commands[0] in _MUTATING_COMMANDS or commands[:2] in _MUTATING_COMMAND_PAIRS)
+    root_value = _root_args(args)[1:]
+    return next(
+        (token for token in args if not token.startswith("-") and (token,) != root_value), None
     )
 
 
@@ -116,46 +83,91 @@ def parse_mars_passthrough(
     output_format: str | None = None,
     executable: str,
 ) -> MarsPassthroughRequest:
-    """Build an executable Mars passthrough request without side effects."""
+    """Build an executable Mars passthrough request without side effects.
 
-    mars_args, user_scope, requested_root = _strip_meridian_mars_options(args)
-    explicit_root = requested_root.resolve() if requested_root is not None else None
-    project_root = resolve_project_root_resolution(explicit_root).project_root
-    roots = resolve_mars_roots(project_root)
+    ``--user`` and ``--root`` are Mars's own flags and are forwarded as typed; otherwise Mars
+    runs in the working directory with Meridian's project as its walk-up start
+    (``mars_location``).
+    """
+
+    mars_args = list(args)
+    user_scope = "--user" in mars_args
+    root_args = _root_args(mars_args)
+    location = mars_location()
+    if not user_scope and not root_args:
+        root_args = location.root_args
+        mars_args = [*root_args, *mars_args]
     subcommand = _mars_subcommand(mars_args)
-
-    # Gate before root injection so Mars's add/link auto-init can never write a
-    # mars.toml into a bare project directory.
-    if not user_scope and roots.scope == "user" and _is_mars_mutation(mars_args):
-        raise ValueError(_USER_MUTATION_ERROR)
-    if (
-        user_scope
-        and subcommand == "init"
-        and any(token == "--link" or token.startswith("--link=") for token in mars_args)
-    ):
-        raise ValueError("meridian mars init --link is project-only")
+    wants_help = any(argument in {"-h", "--help"} for argument in mars_args)
 
     wants_json = mars_requested_json(mars_args) or output_format == "json"
     if wants_json and not mars_requested_json(mars_args):
         mars_args = ["--json", *mars_args]
-    selected_root = user_mars_root() if user_scope else roots.primary
-    if not user_scope and subcommand == "init":
-        selected_root = project_root
-    mars_args = [*mars_args, "--root", selected_root.as_posix()]
-    if not user_scope and subcommand in {"agents", "skills"}:
-        mars_args.extend(mars_content_args(roots))
+    if not user_scope and not wants_help:
+        if subcommand in {"agents", "skills"}:
+            mars_args.extend(mars_content_args())
+        if subcommand in MARS_SYNCING_COMMANDS and not any(
+            token == "--provided-root" or token.startswith("--provided-root=")
+            for token in mars_args
+        ):
+            mars_args.extend(provided_sync_args())
     return MarsPassthroughRequest(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        provide_root=(
-            selected_root
-            if subcommand in _PROVIDE_COMMANDS
-            and not any(argument in {"-h", "--help"} for argument in mars_args)
-            else None
-        ),
-        user_scope=selected_root == user_mars_root(),
+        cwd=location.cwd,
+        user_scope=user_scope,
+        root_args=root_args,
+        needs_project=not user_scope and not wants_help and subcommand in _AUTO_INIT_COMMANDS,
     )
+
+
+def _refusal(
+    request: MarsPassthroughRequest,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> str | None:
+    """Why Meridian will not forward the request, or None to forward it."""
+
+    if request.user_scope:
+        # An older Mars rejects the flag with clap's usage error; say what to upgrade instead.
+        probe = run(
+            [request.command[0], "--user", "--help"],
+            cwd=request.cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            return f"the installed Mars does not accept --user. {MARS_UPGRADE_HINT}"
+    if request.needs_project:
+        # `doctor` writes nothing and, like every command that is not a lookup, fails with
+        # `project_not_found` when no project encloses where Mars looks.
+        probe = run(
+            [request.command[0], *request.root_args, "--json", "doctor"],
+            cwd=request.cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            payload: object = json.loads(probe.stdout)
+        except ValueError:
+            payload = None
+        if is_project_not_found(payload) and _new_project_dir(request) != _home():
+            return _NO_PROJECT_ERROR
+    return None
+
+
+def _new_project_dir(request: MarsPassthroughRequest) -> Path:
+    """Where Mars would create the project for an add or link that finds none: --root, or cwd."""
+
+    root = request.root_args[-1].removeprefix("--root=") if request.root_args else "."
+    return (request.cwd / Path(root).expanduser()).resolve()
+
+
+def _home() -> Path:
+    return get_home_path().expanduser().resolve()
 
 
 def execute_mars_passthrough(
@@ -167,23 +179,8 @@ def execute_mars_passthrough(
     """Execute a prepared Mars passthrough request."""
 
     stderr_stream = sys.stderr if stderr is None else stderr
-    if request.user_scope:
-        try:
-            ensure_user_mars_root(executable=request.command[0])
-        except RuntimeError as exc:
-            print(f"error: {exc}", file=stderr_stream)
-            raise SystemExit(1) from None
-
-    bundled_source = WHEEL
-    if request.provide_root is not None:
-        bundled_source = provide_bundled_skills(
-            request.provide_root,
-            executable=request.command[0],
-            run=run,
-            stderr=stderr_stream,
-        )
-
     run_kwargs: dict[str, object] = {
+        "cwd": request.cwd,
         "env": {
             **os.environ,
             "MERIDIAN_MANAGED": os.environ.get("MERIDIAN_MANAGED", "1"),
@@ -191,6 +188,10 @@ def execute_mars_passthrough(
         },
     }
     try:
+        refusal = _refusal(request, run=run)
+        if refusal is not None:
+            print(f"error: {refusal}", file=stderr_stream)
+            raise SystemExit(1)
         if request.wants_json:
             result = run(
                 list(request.command),
@@ -214,8 +215,6 @@ def execute_mars_passthrough(
             file=stderr_stream,
         )
         raise SystemExit(1) from None
-    if outcome.returncode == 0:
-        report_provide_refusal(bundled_source, stderr=stderr_stream)
     return outcome
 
 

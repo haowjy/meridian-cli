@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_claude import project_claude_settings_json
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding, ResolvedLaunchSpec
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from meridian.lib.ops import mars as mars_ops
 from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import (
@@ -179,13 +181,6 @@ def test_primary_surface_denies_agent_but_not_task(
     assert _TASK_DENIES.isdisjoint(disallowed)
 
 
-def _write_native_agents(mars_root: Path) -> None:
-    (mars_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
-    ledger = mars_root / ".mars" / "native-agents.json"
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text('{"version": 1, "agents": {"scratch": ["claude"]}}', encoding="utf-8")
-
-
 def test_agent_copy_exception_keeps_generic_agent_only(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -200,7 +195,14 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         ),
         platform_tool_rules=_CLAUDE_PLATFORM_RULES,
     )
-    _write_native_agents(tmp_path)
+    monkeypatch.setattr(
+        mars_ops,
+        "mars_agent_inventory",
+        lambda _root: mars_ops.MarsAgentInventory(
+            root=MarsRoot(kind="project", path=tmp_path),
+            agents=(mars_ops.MarsAgentEntry(name="scratch", native_harnesses=("claude",)),),
+        ),
+    )
     context = build_launch_context(
         spawn_id="p-agent-copy",
         request=SpawnRequest(

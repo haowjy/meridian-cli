@@ -2,23 +2,16 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from meridian.cli.invocation import current_output_sink, get_global_options
-from meridian.cli.utils import resolve_cli_project_root
 from meridian.lib.bundled_skills import (
-    SYNC_PENDING_MESSAGE,
-    WHEEL,
     list_bundled_skills,
     load_bundled_skill,
-    provide_bundled_skills,
     read_bundled_skill_resource,
-    report_provide_refusal,
 )
-from meridian.lib.catalog.mars_roots import resolve_mars_executable, resolve_mars_roots
 from meridian.lib.launch.prompt_context import render_skill_block
 
 
@@ -54,22 +47,11 @@ def cmd_skills(
         sink.error(f"unknown Meridian skill {name!r}; choose one of: {available}", exit_code=2)
         raise SystemExit(2)
 
-    roots = resolve_mars_roots(resolve_cli_project_root())
-    source = WHEEL
-    if roots.scope == "project":
-        source = provide_bundled_skills(
-            roots.primary,
-            executable=resolve_mars_executable(),
-        )
-        if source.sync_pending:
-            print(SYNC_PENDING_MESSAGE, file=sys.stderr)
-        report_provide_refusal(source)
-
     try:
         if resource_path is None:
-            content = render_skill_block(load_bundled_skill(name, source))
+            content = render_skill_block(load_bundled_skill(name))
         else:
-            content = read_bundled_skill_resource(name, resource_path, source)
+            content = read_bundled_skill_resource(name, resource_path)
     except ValueError as exc:
         sink.error(str(exc), exit_code=2)
         raise SystemExit(2) from None

@@ -10,11 +10,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.catalog.mars_roots import (
-    ensure_resolved_mars_root,
-    resolve_mars_executable,
-    resolve_mars_roots,
-)
+from meridian.lib.catalog.mars_cli import mars_location, resolve_mars_executable
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 
@@ -158,8 +154,7 @@ def parse_runnable_paths(raw_paths: object) -> tuple[RunnablePath, ...]:
 
 
 def _normalize_project_root_key(project_root: Path | None) -> str:
-    root = resolve_project_root_resolution(project_root).project_root
-    return resolve_mars_roots(root).primary.as_posix()
+    return resolve_project_root_resolution(project_root).project_root.as_posix()
 
 
 def _resolve_cache_key(name: str, project_root: Path | None) -> tuple[str, str]:
@@ -255,17 +250,16 @@ def _run_mars_model_inventory(
     mars_bin = _resolve_mars_binary()
     if mars_bin is None:
         return None
-    project = resolve_project_root_resolution(project_root).project_root
-    roots = resolve_mars_roots(project)
-    try:
-        ensure_resolved_mars_root(roots, executable=mars_bin)
-    except RuntimeError:
-        logger.debug("user Mars root unavailable", exc_info=True)
-        return None
-    cmd = [mars_bin, "models", *arguments, "--root", roots.primary.as_posix()]
+    location = mars_location(project_root)
     try:
         # Cold models.dev refresh can take ~45s; leave headroom, as resolve does.
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            location.command(mars_bin, "models", *arguments),
+            cwd=location.cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
     except (OSError, subprocess.TimeoutExpired):
         logger.debug("mars inventory unavailable: %s", arguments, exc_info=True)
         return None
@@ -297,7 +291,7 @@ def run_mars_models_aliases(
     *,
     no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
-    """Read aliases, returning None on failure so callers can use the merged file."""
+    """Read aliases, or None when Mars cannot answer."""
     arguments = ["aliases", "--json"]
     if no_refresh_models:
         arguments.append("--no-refresh-models")
@@ -375,24 +369,14 @@ def run_mars_models_resolve(
             "Mars binary not found. Mars is required for model resolution. "
             "Run 'meridian doctor' to diagnose."
         )
-    project = resolve_project_root_resolution(project_root).project_root
-    roots = resolve_mars_roots(project)
-    ensure_resolved_mars_root(roots, executable=mars_bin)
-    cmd = [
-        mars_bin,
-        "models",
-        "resolve",
-        name,
-        "--json",
-        "--root",
-        roots.primary.as_posix(),
-    ]
+    location = mars_location(project_root)
+    cmd = location.command(mars_bin, "models", "resolve", name, "--json")
     try:
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
         # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
         # Use the same timeout as run_mars_models_aliases since both paths can refresh.
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, cwd=location.cwd, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Mars binary not found. Mars is required for model resolution. "
@@ -480,20 +464,6 @@ def cached_mars_models_catalog(
     return result
 
 
-def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object]:
-    project = resolve_project_root_resolution(project_root).project_root
-    roots = resolve_mars_roots(project)
-    merged_path = roots.primary / ".mars" / "models-merged.json"
-    if merged_path.is_file():
-        try:
-            raw = json.loads(merged_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                return cast("dict[str, object]", raw)
-        except (OSError, json.JSONDecodeError, ValueError):
-            logger.debug("Failed to read %s", merged_path, exc_info=True)
-    return {}
-
-
 def _mars_aliases_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEntry]:
     entries: list[AliasEntry] = []
     for item in aliases_list:
@@ -529,45 +499,6 @@ def _mars_aliases_to_entries(aliases_list: list[dict[str, object]]) -> list[Alia
     return entries
 
 
-def _mars_merged_to_entries(merged: dict[str, object]) -> list[AliasEntry]:
-    """Convert ``.mars/models-merged.json`` raw data to :class:`AliasEntry` objects.
-
-    For pinned aliases, the model ID is stored directly.  For auto-resolve aliases,
-    only the harness and description are available — the model ID is unknown
-    without the models cache, so these are skipped.
-    """
-    entries: list[AliasEntry] = []
-    for alias_name, alias_data in merged.items():
-        if not isinstance(alias_data, dict):
-            continue
-        typed_data = cast("dict[str, object]", alias_data)
-
-        # Pinned alias: has a "model" key
-        model_id = typed_data.get("model")
-        if isinstance(model_id, str) and model_id.strip():
-            harness = typed_data.get("harness")
-            description = typed_data.get("description")
-            default_effort = typed_data.get("default_effort")
-            default_autocompact = typed_data.get("autocompact")
-            default_autocompact_pct = typed_data.get("autocompact_pct")
-            entries.append(
-                entry(
-                    alias=alias_name,
-                    model_id=model_id.strip(),
-                    harness=str(harness) if isinstance(harness, str) else None,
-                    description=str(description) if isinstance(description, str) else None,
-                    default_effort=_coerce_optional_string(default_effort),
-                    default_autocompact=_coerce_optional_int(default_autocompact),
-                    default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
-                )
-            )
-        # Auto-resolve aliases without the cache cannot be resolved from the merged file.
-        # Use `mars models resolve <alias> --json` for authoritative per-alias routing
-        # or the launch bundle for routed availability/runnable data.
-
-    return entries
-
-
 def load_mars_aliases(
     project_root: Path | None = None,
     *,
@@ -576,28 +507,16 @@ def load_mars_aliases(
 ) -> list[AliasEntry]:
     """Load model aliases from mars.
 
-    Prefers ``mars models aliases --json`` for the static project alias inventory.
-    Falls back to reading ``.mars/models-merged.json`` if the mars binary isn't
-    available. Use ``mars models resolve <alias> --json`` for authoritative
-    per-alias resolution and the launch bundle for routed availability/runnable data.
+    ``mars models aliases --json`` is the static alias inventory; none when Mars cannot run.
+    Use ``mars models resolve <alias> --json`` for authoritative per-alias resolution and the
+    launch bundle for routed availability/runnable data.
     """
-    # Try mars CLI first — it returns the static project alias inventory.
     mars_aliases = cached_mars_models_aliases(
         project_root, cache=cache, no_refresh_models=no_refresh_models
     )
-    if mars_aliases is not None:
-        entries = _mars_aliases_to_entries(mars_aliases)
-        if entries:
-            return sorted(entries, key=lambda e: e.alias)
-
-    # Fallback: read the cached dependency file directly
-    merged = _read_mars_merged_file(project_root)
-    if merged:
-        entries = _mars_merged_to_entries(merged)
-        if entries:
-            return sorted(entries, key=lambda e: e.alias)
-
-    return []
+    if mars_aliases is None:
+        return []
+    return sorted(_mars_aliases_to_entries(mars_aliases), key=lambda e: e.alias)
 
 
 def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
@@ -615,24 +534,6 @@ def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
                 and description.strip()
             ):
                 descriptions[resolved_model.strip()] = description.strip()
-        return descriptions
-
-    # Fallback: read merged file
-    merged = _read_mars_merged_file(project_root)
-    for alias_data in merged.values():
-        if not isinstance(alias_data, dict):
-            continue
-        typed_data = cast("dict[str, object]", alias_data)
-        model_id = typed_data.get("model")
-        description = typed_data.get("description")
-        if (
-            isinstance(model_id, str)
-            and model_id.strip()
-            and isinstance(description, str)
-            and description.strip()
-        ):
-            descriptions[model_id.strip()] = description.strip()
-
     return descriptions
 
 

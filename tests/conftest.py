@@ -118,7 +118,7 @@ def _clean_meridian_runtime_env(
     user's real native stores through an inherited CODEX_HOME etc., and a run from
     inside a harness session must not pass that session's variables to a launch.
     A real `mars` gets an empty user config and cache, since the developer's
-    `~/.config/mars/config.toml` is a config layer (agents, models, settings).
+    `~/.mars/config.toml` is a config layer (agents, models, settings).
     """
 
     for key in tuple(os.environ):
@@ -135,7 +135,7 @@ def _clean_meridian_runtime_env(
     plant_id_claims(home)
 
     mars_user = tmp_path_factory.mktemp("mars-user")
-    monkeypatch.setenv("MARS_CONFIG_DIR", str(mars_user / "config"))
+    monkeypatch.setenv("MARS_HOME", str(mars_user / "home"))
     monkeypatch.setenv("MARS_CACHE_DIR", str(mars_user / "cache"))
 
 

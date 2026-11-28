@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.autosync.clones import require_outside_clone
-from meridian.lib.catalog.mars_roots import mars_fallback_label
+from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContext as ResolvedContextEntry,
@@ -105,8 +105,11 @@ class ContextOutput(BaseModel):
     kb_path: str
     kb_resolved: str | None
     kb_source: str
-    mars_root: str
-    mars_scope: Literal["project", "user"]
+    # The root Mars chooses here, as Mars reports it; None when Mars cannot answer.
+    mars: MarsRoot | None
+    mars_root: str | None
+    mars_scope: Literal["project", "user"] | None
+    # Deprecated: ~/.meridian/mars while lookups still read it. Go in the next minor release.
     mars_user_root: str | None = None
     mars_fallback: Literal["active", "n/a"]
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
@@ -178,8 +181,8 @@ class ContextOutput(BaseModel):
             ]
 
         user_root = self.mars_user_root or "(same as primary)"
-        lines.append(f"mars_root: {self.mars_root}")
-        lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_root: {self.mars_root or '(unknown: Mars did not answer)'}")
+        lines.append(f"mars_scope: {self.mars_scope or '(unknown: Mars did not answer)'}")
         lines.append(f"mars_user_root: {user_root}")
         lines.append(f"mars_fallback: {self.mars_fallback}")
 
@@ -476,7 +479,9 @@ def context_sync(input: ContextInput) -> ContextOutput:
         if c.path is not None
     }
 
-    mars_roots = authority.mars_roots
+    from meridian.lib.ops.mars import mars_root_report
+
+    mars = mars_root_report(authority.project_root)
     return ContextOutput(
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
@@ -503,10 +508,11 @@ def context_sync(input: ContextInput) -> ContextOutput:
             resolved_paths.kb_root.as_posix() if resolved_paths.kb_root is not None else None
         ),
         kb_source=context_config.kb.source.value,
-        mars_root=mars_roots.primary.as_posix(),
-        mars_scope=mars_roots.scope,
-        mars_user_root=(mars_roots.user.as_posix() if mars_roots.user is not None else None),
-        mars_fallback=mars_fallback_label(mars_roots),
+        mars=mars.root,
+        mars_root=mars.root.path.as_posix() if mars.root is not None else None,
+        mars_scope=mars.root.kind if mars.root is not None else None,
+        mars_user_root=mars.user_root.as_posix() if mars.user_root is not None else None,
+        mars_fallback=mars.fallback_label,
         extra_contexts=extra_entries,
         sync_status=project_sync_summaries(authority.project_root),
         render_verbose=input.verbose,
