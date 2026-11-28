@@ -28,11 +28,6 @@ from meridian.lib.core.spawn_lifecycle import (
     resolve_execution_terminal_outcome,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
-from meridian.lib.core.telemetry import (
-    LifecycleObserver,
-    LifecycleObserverTier,
-    register_observer,
-)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
@@ -89,6 +84,11 @@ from meridian.lib.state.spawn_status import (
     wait_until,
 )
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
+from meridian.lib.telemetry.observers import (
+    LifecycleObserver,
+    LifecycleObserverTier,
+    register_observer,
+)
 from meridian.plugin_api.types import SpawnKind
 
 if TYPE_CHECKING:

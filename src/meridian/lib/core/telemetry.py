@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.telemetry.observers import notify_observers
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import SpawnId
@@ -190,26 +191,10 @@ SIGNAL_EVENTS = frozenset(
     }
 )
 
-
-# Compatibility re-exports — observer registry moved to lib/telemetry/.
-# Keep this block after local domain definitions so observers.py can refer to
-# core telemetry types without a circular import at module initialization.
-from meridian.lib.telemetry.observers import (  # noqa: E402
-    DebugTraceObserver,
-    LifecycleObserver,
-    LifecycleObserverTier,
-    notify_observers,
-    register_debug_trace_observer,
-    register_observer,
-)
-
 __all__ = [
     "CORE_EVENTS",
     "SIGNAL_EVENTS",
-    "DebugTraceObserver",
     "LifecycleEvent",
-    "LifecycleObserver",
-    "LifecycleObserverTier",
     "SpawnEventCounter",
     "SpawnFailureCategory",
     "StartupPhase",
@@ -217,8 +202,5 @@ __all__ = [
     "StartupPhaseSignal",
     "allocate_spawn_sequence",
     "next_spawn_sequence",
-    "notify_observers",
-    "register_debug_trace_observer",
-    "register_observer",
     "release_spawn_sequence",
 ]

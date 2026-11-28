@@ -305,12 +305,6 @@ def resolve_project_paths_from_context(
     )
 
 
-def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
-
-    root_dir = resolve_project_runtime_root_for_write(project_root)
-    return ProjectPaths.from_root_dir(root_dir)
-
-
 def resolve_project_runtime_root(project_root: Path) -> Path:
 
     runtime_root = resolve_project_runtime_root_or_none(project_root)

@@ -338,13 +338,6 @@ class SpawnManager:
             send=session.connection.send_cancel,
         )
 
-    def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
-
-        session = self._sessions.get(spawn_id)
-        if session is None or session.terminal_published:
-            return None
-        return session.connection
-
     def get_tracer(self, spawn_id: SpawnId) -> DebugTracer | None:
 
         session = self._sessions.get(spawn_id)

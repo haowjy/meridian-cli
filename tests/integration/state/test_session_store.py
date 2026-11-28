@@ -279,7 +279,9 @@ def test_concurrent_native_binding_has_one_winner(tmp_path: Path) -> None:
         winner = next(result.key for result in results if isinstance(result, Bound))
         loser = next(result.kept for result in results if isinstance(result, Conflict))
         assert winner == loser
-        assert session_store.get_session_harness_id(root, chat_id) == winner.session_id
+        record = session_store.chat_record(root, chat_id)
+        assert record is not None
+        assert record.harness_session_id == winner.session_id
     finally:
         session_store.stop_session(root, chat_id)
 

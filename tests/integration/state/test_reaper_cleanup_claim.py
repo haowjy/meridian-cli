@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.reaper import reconcile_active_spawn
 from tests.support.launch_paths import launch_paths
@@ -19,7 +19,7 @@ _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
 
 def _spawn_with_scope(tmp_path: Path) -> tuple[Path, str, ProcessScopeSnapshot]:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     runtime_root.mkdir(parents=True, exist_ok=True)
     spawn_id = "p1"
     spawn_store.start_spawn(

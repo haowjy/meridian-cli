@@ -1221,14 +1221,6 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     return record.active_work_id if record else None
 
 
-def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
-
-    record = chat_record(runtime_root, chat_id)
-    if record is None:
-        return None
-    return record.harness_session_id
-
-
 def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
     """Stop and remove dead session locks left behind by crashed harnesses."""
 

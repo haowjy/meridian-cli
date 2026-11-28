@@ -7,7 +7,7 @@ from pathlib import Path
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import LaunchMode, SpawnRecord
 from tests.support.launch_paths import launch_paths
@@ -16,7 +16,7 @@ _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
 
 def _state_root(tmp_path: Path) -> Path:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
 

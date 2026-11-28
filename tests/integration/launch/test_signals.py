@@ -19,7 +19,7 @@ from meridian.lib.launch.signals import (
     SignalCallbackReceiver,
     SignalCoordinator,
 )
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.support.launch_paths import launch_paths
 
@@ -29,7 +29,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     run_streaming_spawn = importlib.import_module(
         "meridian.lib.launch.streaming_runner"
     ).run_streaming_spawn

@@ -30,9 +30,9 @@ import json
 import os
 from pathlib import Path
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 chat = session_store.start_session(root, harness='codex', harness_session_id='',
     model=os.environ['CONTEXT_MODEL'], kind='primary').chat_id
 ids = []

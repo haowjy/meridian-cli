@@ -599,11 +599,6 @@ class PiDrainCoordinator:
     async def handle_aux_wake(self) -> DrainLoopDecision:
         return await self._coordinator.handle_aux_wake()
 
-    async def reevaluate_after_disk_change(self) -> DrainLoopDecision:
-        if not self._profile.quiescence_enabled:
-            return DrainLoopDecision()
-        return await self._coordinator.handle_aux_wake()
-
     def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
         return self._coordinator.handle_close(intentional_stop=intentional_stop)
 
