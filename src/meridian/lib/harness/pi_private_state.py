@@ -13,6 +13,7 @@ import psutil
 import structlog
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
+from meridian.lib.harness.command_ports import CommandPorts
 from meridian.lib.state.json_doc import VersionedPrivateDoc, read_owned_doc, write_model
 from meridian.lib.state.spawn_observations import LaunchKey, observed_launches
 
@@ -208,3 +209,14 @@ def read_pi_consumption_state(
     own = read_pi_delivery_consumption(runtime_root, parent_spawn_id, on_read=on_read)
     observed = observed_launches(runtime_root, parent_spawn_id, on_read=on_read)
     return PiConsumptionState(own.consumed_ids | observed, own.receipt_message_ids)
+
+
+def _consumed_launches(
+    runtime_root: Path, parent_spawn_id: str, on_read: Callable[[Path, str | None], None] | None
+) -> frozenset[str]:
+    return read_pi_delivery_consumption(runtime_root, parent_spawn_id, on_read=on_read).consumed_ids
+
+
+COMMAND_PORTS = CommandPorts(
+    consumed_launches=_consumed_launches, blocking_command_hold=hold_pi_bash
+)

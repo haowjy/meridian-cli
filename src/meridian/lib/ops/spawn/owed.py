@@ -15,7 +15,7 @@ from meridian.lib.bootstrap.services import RuntimeReadContext
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.logging import warn_once
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
-from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.harness.command_ports import consumed_launches
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read, runtime_context
 from meridian.lib.state import history_index
 from meridian.lib.state.history_index import HistoryIndexBusy
@@ -165,9 +165,8 @@ def owed_consumed_ids(runtime_root: Path, parent_ids: Sequence[str]) -> frozense
                 ),
             )
 
-    registry = get_default_harness_registry()
     for parent_id in set(parent_ids):
-        consumed.update(registry.consumed_launches(runtime_root, parent_id, on_read=diagnose))
+        consumed.update(consumed_launches(runtime_root, parent_id, on_read=diagnose))
     return frozenset(consumed)
 
 

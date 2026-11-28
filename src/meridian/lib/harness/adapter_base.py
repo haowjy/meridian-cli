@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Generic, Literal, final
 
@@ -386,22 +386,6 @@ class BaseHarnessAdapter(BaseNativeStoreReader, Generic[SpecT], ABC):
     ) -> ResolvedLaunchSpec:
         _ = launch, dry_run
         return spec
-
-    def consumed_by_harness(
-        self,
-        runtime_root: Path,
-        parent_spawn_id: str,
-        *,
-        on_read: Callable[[Path, str | None], None] | None = None,
-    ) -> frozenset[str]:
-        _ = runtime_root, parent_spawn_id, on_read
-        return frozenset()
-
-    def blocking_command_hold(self) -> AbstractContextManager[None]:
-        return nullcontext()
-
-    def idle_mod_dir(self) -> str | None:
-        return None
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()

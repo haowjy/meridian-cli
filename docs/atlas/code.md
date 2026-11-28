@@ -88,7 +88,8 @@ itself. `launch/process/` runs a primary in the foreground, under a terminal it 
 `lib/harness/`: everything harness-specific. Each harness has one adapter, its native store
 reader, its projections (how Meridian's policy becomes the harness's flags and config) and
 its connection (`connections/`). Everything outside reaches a harness through the contract in
-`adapter.py` and the registry. A new harness is one adapter plus registration. Pi's own
+`adapter.py` and the registry, or, for what short-lived commands ask, `command_ports.py`.
+A new harness is one adapter plus registration. Pi's own
 completion engine (`pi_drain.py` and its `pi_*` parts) lives here too; streaming reaches it
 through the connection's `drain_plan`.
 

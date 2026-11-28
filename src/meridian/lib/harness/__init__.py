@@ -58,9 +58,10 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "system prompt file, settings file, report output path)"
     ),
     (
-        "adapter consumed_by_harness() and blocking_command_hold() (only when the harness "
-        "delivers child results itself or runs Meridian commands in shell tasks it can "
-        "background, as Pi does)"
+        "src/meridian/lib/harness/command_ports.py::_MODULES and a light COMMAND_PORTS "
+        "module (only when the harness delivers child results itself, runs Meridian "
+        "commands in shell tasks it can background, or ships an idle mod, as Pi and "
+        "Claude do; short-lived commands read these without loading any adapter)"
     ),
     (
         "src/meridian/lib/ops/session_repair.py::_candidate_dirs() "

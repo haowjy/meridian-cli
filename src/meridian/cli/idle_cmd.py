@@ -316,9 +316,9 @@ def cmd_idle_mod_path() -> None:
 
     try:
         from meridian.lib.core.types import HarnessId
-        from meridian.lib.harness.registry import get_default_harness_registry
+        from meridian.lib.harness.command_ports import idle_mod_dir
 
-        mod_dir = get_default_harness_registry().get(HarnessId.CLAUDE).idle_mod_dir()
+        mod_dir = idle_mod_dir(HarnessId.CLAUDE)
         if mod_dir is None:
             raise FileNotFoundError("bundled Claude idle mod was not found")
         print(mod_dir)

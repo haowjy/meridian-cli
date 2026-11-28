@@ -17,13 +17,17 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 
 ## Rules
 
-- **Outside `lib/harness/`, a harness is reached through `adapter.py` and the registry.**
+- **Outside `lib/harness/`, a harness is reached through `adapter.py`, the registry and
+  `command_ports.py`.**
   `adapter.py` is the contract (protocols and the types an adapter returns);
   `adapter_base.py` holds the defaults adapters build on. Code elsewhere asks the adapter
-  for what it needs (transcript reads, search freshness, the consumption record, the
-  blocking-command hold, launch paths, the idle mod) and gets the neutral value from a
-  harness that has none; it never imports a harness's own module, `adapter_base` or
-  `legacy_native_stores` (`harness_specific_import_violations` in `dev/lints.py`; its
+  for what it needs (transcript reads, search freshness, launch paths) and gets the
+  neutral value from a harness that has none. What short-lived commands (`spawn wait`,
+  `spawn collect`, `idle mod-path`) need, the consumption record, the blocking-command
+  hold and the idle mod, comes from `command_ports.py` instead: a harness declares it in a
+  light module listed there, so those commands load no adapter (building the registry
+  imports every harness, about 100 ms). Either way the caller never imports a harness's
+  own module, `adapter_base` or `legacy_native_stores` (`harness_specific_import_violations` in `dev/lints.py`; its
   allowlist names who retires each exception).
 
 - **Terminal events are harness-aware.** `event_type` is not globally unique, so qualify

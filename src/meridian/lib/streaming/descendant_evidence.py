@@ -9,7 +9,7 @@ from pathlib import Path
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.harness.command_ports import consumed_launches
 from meridian.lib.state import spawn_store
 from meridian.lib.state.history_index import (
     INITIALIZATION_TIMEOUT,
@@ -151,7 +151,7 @@ class ReconciledDescendantEvidence:
         if not owed:
             return ()
         parent = str(self._root_spawn_id)
-        taken = get_default_harness_registry().consumed_launches(self._runtime_root, parent)
+        taken = consumed_launches(self._runtime_root, parent)
         taken |= leased_launches(self._runtime_root, (parent,))
         unread: list[FinishedChild] = []
         for key in owed:

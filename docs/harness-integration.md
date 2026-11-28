@@ -51,7 +51,8 @@ them when it needs the behaviour: `HarnessConfig` in `config/harness_models.py` 
 listing in `ops/session_repair.py`. The name branches left in `launch/`, such as Pi's
 session role and drain coordinator or OpenCode's version env, are behaviour only that
 harness has. Everything else outside `lib/harness/` imports only the contract in
-`adapter.py` and asks the registry; `meridian.dev.lints` rejects importing a
+`adapter.py` and asks the registry, or `command_ports.py` for what short-lived commands
+need; `meridian.dev.lints` rejects importing a
 harness's own module, `adapter_base` or `legacy_native_stores` from there. `legacy_native_stores.SUPPORTED` is a closed list of the harnesses
 older builds wrote chats for; a new harness never joins it. Do not add another harness-name list or
 `== "claude"` branch outside `lib/harness/`; give the adapter a capability instead.

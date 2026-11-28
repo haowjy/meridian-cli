@@ -527,10 +527,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             }
         )
 
-    def idle_mod_dir(self) -> str | None:
-        resolution = resolve_claude_runtime(plugin_names=("meridian-idle",))
-        return resolution.plugin_dirs[0] if resolution.plugin_dirs else None
-
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         normalized_effort = None if run.effort is None else str(run.effort).strip()
         continue_session_id = (run.continue_harness_session_id or "").strip() or None

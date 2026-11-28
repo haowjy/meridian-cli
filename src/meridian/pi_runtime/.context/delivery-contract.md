@@ -85,7 +85,7 @@ the missing acknowledgement or delete the receipt to force readiness. Native
 session admission and disk writes cannot guarantee atomic exactly-once delivery
 across a process crash.
 
-Python's `HarnessRegistry.consumed_launches` (CLI observations from
+Python's `harness/command_ports.consumed_launches` (CLI observations from
 `state/spawn_observations.py`, Pi's receipts and dismissals from
 `lib/harness/pi_private_state.py`) and the watcher independently read
 admission receipts, CLI observations and dismissals across all owned parent

@@ -3,7 +3,7 @@
 Keep harness completion policy behind the drain coordinator, not in `SpawnManager` or
 the generic drain loop, and add no harness branches here. Harness data comes through the
 registry: `descendant_evidence.py` reads the `spawn collect` consumption record with
-`HarnessRegistry.consumed_launches`. A native task source or resident backend
+`command_ports.consumed_launches`. A native task source or resident backend
 selects the shared hold; otherwise the connection's `drain_plan(DrainPlanContext)` may
 return its own plan (Pi's completion engine, in `lib/harness/pi_drain.py`). The plan factory
 injects delivery and descendant cleanup capabilities through `DrainPlanContext` rather than
