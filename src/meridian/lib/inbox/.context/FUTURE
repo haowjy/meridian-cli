@@ -32,7 +32,7 @@ Each is judged not worth a change yet. Revisit when the condition in it shows up
 - **Prune runs in the foreground** of the day's first `meridian inbox` command, after its
   output; a caller that reads to end of file waits for that pass.
 - **The notice names this machine by its own name.** An offer to a session on another
-  machine prints `meridian inbox take m412 --machine <this machine's name>`. A machine
+  machine prints `meridian inbox read|take m412 --machine <this machine's name>`. A machine
   that saved this one under another name, or not at all, can't run it as printed; the
   caller block's sender frame is resolved by machine ID, the notice text is not.
 - **A sender on another machine has no `agent`.** The caller block of a machine call
@@ -49,4 +49,4 @@ Each is judged not worth a change yet. Revisit when the condition in it shows up
   address. `inbox read` says it has no reply address.
 - **The offer notice's command is only right where this build runs.** A session on a
   machine that runs an older Meridian, or a harness whose `meridian` on `PATH` is older,
-  is told to run `meridian inbox take … --machine …` and has no such command.
+  is told to run `meridian inbox read|take … --machine …` and has no such command.

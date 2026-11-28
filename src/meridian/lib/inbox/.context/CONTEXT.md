@@ -183,8 +183,9 @@ the other machine's own `meridian` runs the same command on its own files. Nothi
   acted. `meridian message` reads its answers from another machine the same way.
 - **`offer` runs where the message is.** Its session may be on another machine
   (`<machine>/<id>`): the notice then goes out as an ordinary cross-machine `message`,
-  names `m412 on <this machine>` and gives `meridian inbox take m412 --machine <this machine>`
-  on a line of its own, unquoted (Claude's delivery drops backticks).
+  names `m412 on <this machine>` and gives `meridian inbox read m412 --machine <this machine>`
+  and `meridian inbox take m412 --machine <this machine>`, each on a line of its own,
+  unquoted (Claude's delivery drops backticks).
   What that machine reports decides the refusals: `spawn show --json` gives the kind (it
   leaves a child's out, so "no kind" is "not a primary"); `spawn list --global --json`
   gives the project ID and is asked only when the message has a project, and a session

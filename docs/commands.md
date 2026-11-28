@@ -329,7 +329,7 @@ The files are under `~/.meridian/machine/inbox/`, one inbox per machine; a
 | `meridian inbox read ID [--all]` | Prints one message and the command that answers it. Changes nothing. |
 | `meridian inbox take ID [--all]` | Claims the message, then prints it. A message has one taker; the same taker asking again succeeds. |
 | `meridian inbox release ID` | Gives a claim back. The message is waiting again. |
-| `meridian inbox offer ID SESSION` | Sends a running primary session a fixed notice that the message looks like its own, and records the offer. The session takes the message itself. |
+| `meridian inbox offer ID SESSION` | Sends a running primary session a fixed notice that the message looks like its own, and records the offer. The notice gives the `read` command to look first and the `take` command to claim it; the session runs them itself. |
 
 **Filing.** `meridian message inbox` records who sent it: the calling session's chat ID,
 project and agent, or `terminal` when no session runs the command. The reply address is
@@ -401,8 +401,9 @@ meridian inbox take m412 --machine jimyao-raspberrypi
   the message and name the session as `<machine>/<id>`. Typed on `jimyao-raspberrypi`,
   which holds `m412`, for a session on `jimyao-minibox`:
   `meridian inbox offer m412 jimyao-minibox/c2041`. The notice that session gets names
-  `m412 on jimyao-raspberrypi` and gives it the command
-  `meridian inbox take m412 --machine jimyao-raspberrypi`, on a line of its own. The same
+  `m412 on jimyao-raspberrypi` and gives it the commands
+  `meridian inbox read m412 --machine jimyao-raspberrypi` and
+  `meridian inbox take m412 --machine jimyao-raspberrypi`, each on a line of its own. The same
   refusals hold, from what the session's machine reports. `offer m412 <machine>/<id> --machine <holder>` is
   refused, because a call can't reach a third machine.
 - **An older Meridian there** refuses with a kind: `version` when it can't take calls

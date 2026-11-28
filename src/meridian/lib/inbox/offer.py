@@ -75,7 +75,7 @@ def taker_running(claim: Claim, here: MachineIdentity | None, project_root: Path
 def notice(message_id: str, message: Message, holder: str | None = None) -> str:
     """The fixed text an offered session receives. It never carries the message text.
     *holder* is this machine's name when the session is on another one, which then has to
-    name the machine to take the message."""
+    name the machine to read or take the message."""
 
     name = f"{message_id} on {holder}" if holder else message_id
     about = [name, f"from {shown(message.sender.label())}"]
@@ -85,12 +85,15 @@ def notice(message_id: str, message: Message, holder: str | None = None) -> str:
     if message.project is not None:
         line += f" (project {shown(message.project)})"
     where = f"the inbox of {holder}" if holder else "this machine's inbox"
-    take = f"meridian inbox take {message_id}" + (f" --machine {holder}" if holder else "")
-    # The command has a line to itself and no quoting: Claude's delivery drops backticks.
+    machine = f" --machine {holder}" if holder else ""
+    # Each command has a line to itself and no quoting: Claude's delivery drops backticks.
     return (
         f"A message is waiting in {where} and looks like yours: {line}.\n"
-        f"To claim it and print it, run: {take}\n"
-        "If it isn't yours, do nothing and it stays for someone else."
+        f"To read it without claiming it, run: meridian inbox read {message_id}{machine}\n"
+        f"To claim it and print it, run: meridian inbox take {message_id}{machine}\n"
+        "An unfamiliar sender or project doesn't mean it isn't yours: if you aren't sure, "
+        "read it and decide from its text. If it isn't yours, leave it and it stays for "
+        "someone else."
     )
 
 
