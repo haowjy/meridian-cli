@@ -2,12 +2,14 @@
 
 ## Mars chooses the root; `~/.meridian/mars` retires
 
-This release needs Mars 0.41.0, which adds a user level: your own packages live in
+Meridian 0.28.1 already runs Mars 0.41.0, which has a user level: your own packages live in
 `~/.mars/mars.toml`, with its `config.toml` and store in the same folder (`MARS_HOME` moves
-it). Mars's user `config.toml` moves there from the platform config folder (`~/.config/mars/`
-on Linux); Mars reads the old file for one minor and warns with the move. Mars now chooses the
-root itself: Meridian runs it in your working directory and names its project only as where Mars's walk-up starts. Mars
-takes the nearest project `mars.toml`, else the user level for a lookup. Your home
+it). This release is Meridian's side of it. Mars's user `config.toml` moves there from where
+Mars 0.40 kept it (`~/.config/mars/`, or `$XDG_CONFIG_HOME/mars/`, on Linux;
+`~/Library/Application Support/mars/` on macOS); Mars reads the old file for one minor and
+warns with the move. Mars now chooses the root itself: Meridian runs it in your working
+directory and names its project only as where Mars's walk-up starts. Mars takes the nearest
+project `mars.toml`, else the user level for a lookup. Your home
 directory's `mars.toml` is never a project any more; Mars warns where it finds one and its
 [guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project)
 says how to move it.
@@ -22,12 +24,14 @@ says how to move it.
   harness a launch uses.
 - **Move what `~/.meridian/mars` holds.** Meridian never deletes it. While its `mars.toml`
   declares a dependency or it has a `.mars-src/`, this release still reads it (as Mars's
-  deprecated `--fallback-root`) and every command warns once, listing
-  `meridian mars --user add <source>` for each dependency with its version and filters. Run
-  those, move `.mars-src/` into your user level's `.mars-src/` and any `[settings]`, `[models]`
-  or `[agents]` into Mars's user `config.toml`, run `meridian mars --user sync`, then delete
-  `~/.meridian/mars`. When it holds nothing, `meridian doctor` says it can be deleted. The next
-  minor release stops reading it.
+  deprecated `--fallback-root`). Every command that asks Mars for agents or skills (launches,
+  `config show`, `context`, `doctor`, `meridian mars agents` and `skills`) warns once, listing `meridian mars --user add <source>` for each dependency with its version and filters,
+  and the `meridian mars` lookups also print Mars's own line that `--fallback-root` is
+  deprecated. Run the `add`s, move `.mars-src/` into your user level's
+  `.mars-src/` and any `[settings]`, `[models]` or `[agents]` into Mars's user `config.toml`,
+  and run `meridian mars --user sync`. Then delete `~/.meridian/mars`, but only once you no
+  longer need to roll back to Meridian 0.28 (see Rollback). When it holds nothing,
+  `meridian doctor` says it can be deleted. The next minor release stops reading it.
 - **Meridian's skills are read in place.** `meridian skills` reads the installed Meridian
   package only and no longer asks Mars to copy skills into `.mars/skills/`; launches read the
   bundle directly. Every passthrough command that syncs (`sync`, `add`, `link`, `upgrade`, …)
@@ -35,17 +39,26 @@ says how to move it.
   are no longer read; the next Mars minor removes them.
 - **JSON.** `meridian config show`, `meridian context` and `meridian doctor` add `mars`, the
   root Mars chose (`kind` and `path`; the user level's store and `config.toml` are in its `path`).
-  `mars_fallback`, `mars_user_root` and doctor's `mars_roots` are deprecated: they describe
-  only `~/.meridian/mars` now and go in the next minor release. `mars_root` and `mars_scope`
-  stay; with Mars unavailable they, `mars`, and doctor's `agents_dir`/`skills_dir` are `null`.
+  `mars_fallback`, `mars_user_root` and doctor's `mars_roots` are deprecated and go in the
+  next minor release: `mars_fallback`, `mars_user_root` and `mars_roots.user` describe only
+  `~/.meridian/mars`, and `mars_roots.primary` and `.scope` repeat the root Mars chose.
+  `mars_root` and `mars_scope` stay; with Mars unavailable they, `mars`, and doctor's
+  `agents_dir`/`skills_dir` are `null`.
   Doctor no longer reports `missing_skills_directories` or
   `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path` and
   `steps`), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
   (`config show` adds that error as `mars_error`).
-- **Rollback.** An older Meridian runs its own older Mars, which ignores the user level and
-  goes back to `~/.meridian/mars`, so keep that folder until you no longer need to roll back.
-  Its first sync in a project removes the user-level items the new Mars installed there
-  (they are Mars's own records); the new Mars puts them back on its next sync.
+- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages, so keep
+  that folder until you no longer need them.
+  - *To 0.28.1*, which runs Mars 0.41.0: user-level items a project sync installed stay in
+    that project. Outside a project, lookups read `~/.meridian/mars` again, so user-level items
+    are not found there, and `meridian mars --user …` addresses `~/.meridian/mars` instead of
+    `~/.mars`. Its commands run `mars provide` again, which writes copies of Meridian's skills
+    into a project's `.mars/skills/`; nothing reads them, and this release leaves them alone.
+    Its lookups print Mars's `--fallback-root` deprecation line.
+  - *To 0.28.0 or older*, which runs Mars 0.40: that Mars ignores the user level. Its first
+    sync in a project removes the user-level items the new Mars installed there (they are
+    Mars's own records); this release puts them back on its next sync.
 
 ## `meridian message` replaces `meridian spawn message`
 
