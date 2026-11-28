@@ -11,7 +11,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.logging import configure_logging, warning_cache_scope
+from meridian.lib.core.logging import configure_logging
 from meridian.lib.extensions.dispatcher import dispatch
 from meridian.lib.extensions.registry import (
     compute_manifest_hash,
@@ -93,72 +93,70 @@ async def extension_invoke(
     EB3.11: Returns structured error payload on failures.
     """
 
-    # One call is one invocation: warnings dedupe within it, as they do in one CLI run.
-    with warning_cache_scope():
-        start = time.monotonic()
-        resolved_args = args or {}
+    start = time.monotonic()
+    resolved_args = args or {}
 
-        def emit_invoked(status: str, *, code: str | None = None) -> None:
-            ids = {
-                key: value
-                for key, value in {
-                    "request_id": request_id,
-                    "work_id": work_id,
-                    "spawn_id": spawn_id,
-                }.items()
-                if value is not None
-            }
-            data: dict[str, Any] = {
-                "fqid": fqid,
-                "status": status,
-                "latency_ms": round((time.monotonic() - start) * 1000, 1),
-            }
-            if code is not None:
-                data["code"] = code
-            emit_telemetry(
-                "server",
-                "mcp.command.invoked",
-                scope="mcp.server",
-                ids=ids or None,
-                data=data,
-                severity="error" if status == "error" else "info",
-            )
-
-        registry = get_command_registry()
-        spec = registry.get(fqid)
-        if spec is None:
-            emit_invoked("error", code="not_found")
-            return {
-                "status": "error",
-                "code": "not_found",
-                "message": f"Command not found: {fqid}",
-            }
-        if ExtensionSurface.MCP not in spec.surfaces:
-            emit_invoked("error", code="surface_not_allowed")
-            return {
-                "status": "error",
-                "code": "surface_not_allowed",
-                "message": f"Command {fqid} is not available via MCP",
-            }
-
-        project_root = resolve_project_root_resolution().project_root
-        prepared = (
-            prepare_for_runtime_write(project_root)
-            if fqid in _IDENTITY_WRITING_TOOLS
-            else prepare_for_runtime_read(project_root)
+    def emit_invoked(status: str, *, code: str | None = None) -> None:
+        ids = {
+            key: value
+            for key, value in {
+                "request_id": request_id,
+                "work_id": work_id,
+                "spawn_id": spawn_id,
+            }.items()
+            if value is not None
+        }
+        data: dict[str, Any] = {
+            "fqid": fqid,
+            "status": status,
+            "latency_ms": round((time.monotonic() - start) * 1000, 1),
+        }
+        if code is not None:
+            data["code"] = code
+        emit_telemetry(
+            "server",
+            "mcp.command.invoked",
+            scope="mcp.server",
+            ids=ids or None,
+            data=data,
+            severity="error" if status == "error" else "info",
         )
-        result = await dispatch(spec, resolved_args)
-        if isinstance(result, ExtensionErrorResult):
-            emit_invoked("error", code=result.code)
-            return {
-                "status": "error",
-                "code": result.code,
-                "message": result.message,
-            }
-        emit_invoked("ok")
-        if fqid in _IDENTITY_WRITING_TOOLS:
-            result.payload["identity_created"] = prepared.authority.identity_created
-        return {"status": "ok", "result": result.payload}
+
+    registry = get_command_registry()
+    spec = registry.get(fqid)
+    if spec is None:
+        emit_invoked("error", code="not_found")
+        return {
+            "status": "error",
+            "code": "not_found",
+            "message": f"Command not found: {fqid}",
+        }
+    if ExtensionSurface.MCP not in spec.surfaces:
+        emit_invoked("error", code="surface_not_allowed")
+        return {
+            "status": "error",
+            "code": "surface_not_allowed",
+            "message": f"Command {fqid} is not available via MCP",
+        }
+
+    project_root = resolve_project_root_resolution().project_root
+    prepared = (
+        prepare_for_runtime_write(project_root)
+        if fqid in _IDENTITY_WRITING_TOOLS
+        else prepare_for_runtime_read(project_root)
+    )
+    result = await dispatch(spec, resolved_args)
+    if isinstance(result, ExtensionErrorResult):
+        emit_invoked("error", code=result.code)
+        return {
+            "status": "error",
+            "code": result.code,
+            "message": result.message,
+        }
+    emit_invoked("ok")
+    if fqid in _IDENTITY_WRITING_TOOLS:
+        result.payload["identity_created"] = prepared.authority.identity_created
+    return {"status": "ok", "result": result.payload}
 
 
 def run_server() -> None:

@@ -12,5 +12,6 @@ its trust rule with the loader that registers it.
 
 Handlers run in a worker thread so a slow operation does not stall the MCP server's
 event loop. `asyncio.to_thread` copies the caller's context, so a handler runs inside
-the caller's `warning_cache_scope()`: the CLI's invocation scope for `ext run`, a
-per-call scope in the MCP server's `extension_invoke`.
+the `warning_cache_scope()` that `cli/main.py` opens for the whole process. For
+`meridian serve` that scope spans the server's lifetime: a warning prints once per
+server, not once per call.
