@@ -70,7 +70,7 @@ def configured_agent_routing(agent: str | None) -> RuntimeOverrides:
     raw = raw_section.get(table)
     if raw is None:
         return RuntimeOverrides()
-    warn_unknown_model_keys(raw, model=_AgentRouting, source=source)
+    warn_unknown_model_keys(raw, model=_AgentRouting, source=source, file=path)
     try:
         routing = _AgentRouting.model_validate(raw)
     except ValidationError as error:

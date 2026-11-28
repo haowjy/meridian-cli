@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import (
@@ -145,6 +146,7 @@ def _dump_configured_value(value: object) -> object:
 def normalize_dynamic_sections(
     *,
     payload: dict[str, object],
+    path: Path,
 ) -> dict[str, object]:
 
     normalized: dict[str, object] = {}
@@ -155,7 +157,7 @@ def normalize_dynamic_sections(
         if descriptor.model is None:
             normalized[section_key] = raw_value
             continue
-        warn_unknown_model_keys(raw_value, model=descriptor.model, source=section_key)
+        warn_unknown_model_keys(raw_value, model=descriptor.model, source=section_key, file=path)
         try:
             validated = descriptor.model.model_validate(raw_value)
         except ValidationError as error:

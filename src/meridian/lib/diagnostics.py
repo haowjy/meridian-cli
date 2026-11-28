@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
+
+_CAPTURING: ContextVar[bool] = ContextVar("_CAPTURING", default=False)
 
 
 class _DiagnosticCapture(logging.Handler):
@@ -42,13 +45,21 @@ def capture_library_diagnostics() -> Generator[_DiagnosticCapture, None, None]:
     for handler in filtered_handlers:
         handler.addFilter(suppress_filter)
     lib_logger.addHandler(capture)
+    token = _CAPTURING.set(True)
 
     try:
         yield capture
     finally:
+        _CAPTURING.reset(token)
         lib_logger.removeHandler(capture)
         for handler in filtered_handlers:
             handler.removeFilter(suppress_filter)
 
 
-__all__ = ["capture_library_diagnostics"]
+def library_warnings_captured() -> bool:
+    """Whether a ``meridian.lib`` warning logged here would be kept off stderr."""
+
+    return _CAPTURING.get()
+
+
+__all__ = ["capture_library_diagnostics", "library_warnings_captured"]

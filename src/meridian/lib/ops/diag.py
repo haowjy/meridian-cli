@@ -19,6 +19,7 @@ from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_c
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
+from meridian.lib.hooks.config import load_hooks_config_report
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.mars import (
     check_upgrade_availability,
@@ -703,6 +704,9 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     authority = resolve_runtime_authority_for_read(payload.project_root)
     surface = build_config_surface(authority)
     project_root = surface.project_root
+    # Loading the hook rows prints their config warnings (a skipped old row, an ignored
+    # key) on stderr, where someone upgrading looks for what to clean up.
+    load_hooks_config_report(project_root, authority=authority)
     runtime_root = (
         authority.runtime_root
         if authority.runtime_root is not None and authority.runtime_root.is_dir()

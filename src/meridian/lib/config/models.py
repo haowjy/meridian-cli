@@ -1,11 +1,10 @@
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import (
     ConfigDict,
     Field,
     ValidationInfo,
     field_validator,
-    model_validator,
 )
 
 from meridian.lib.config.catalog import file_alias
@@ -24,7 +23,6 @@ from meridian.lib.core.overrides import (
     AutocompactValue,
     EffortValue,
 )
-from meridian.lib.utils.json_shapes import is_json_object
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 ADHOC_STALE_RETENTION_DAYS = 7
@@ -400,6 +398,10 @@ class PrimaryConfig(ConfigModel):
     """Primary-specific harness settings."""
 
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+    config_ignored_keys: ClassVar[dict[str, str]] = {
+        "model": "Meridian no longer reads it; delete it",
+        "harness": "Meridian no longer reads it; delete it",
+    }
 
     autocompact: Annotated[
         AutocompactValue,
@@ -454,25 +456,6 @@ class PrimaryConfig(ConfigModel):
         ),
     ] = None
     timeout: float | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _discard_deprecated_routing_fields(cls, value: object) -> object:
-        if not is_json_object(value):
-            return value
-
-        normalized = dict(value)
-        for field_name in ("model", "harness"):
-            deprecated = normalized.pop(field_name, None)
-            if deprecated is None:
-                continue
-            if not isinstance(deprecated, str):
-                raise ValueError(
-                    f"Invalid value for 'primary.{field_name}': expected str, got "
-                    f"{type(deprecated).__name__} ({deprecated!r})."
-                )
-            normalize_required_string(deprecated, source=f"primary.{field_name}")
-        return normalized
 
     @field_validator("agent", "effort", "sandbox", "approval", mode="before")
     @classmethod

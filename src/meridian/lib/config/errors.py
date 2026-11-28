@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from pydantic import BaseModel, RootModel, ValidationError
 from typing_extensions import TypeIs
 
 from meridian.lib.config.model_base import ConfigModel
+from meridian.lib.core.logging import warn_once
+from meridian.lib.diagnostics import library_warnings_captured
 from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 logger = logging.getLogger(__name__)
@@ -82,11 +85,26 @@ def config_validation_error(
     return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
 
 
+def warn_config(message: str) -> None:
+    """Warn about a config problem Meridian skips or ignores.
+
+    Config is loaded several times per command, and on every event in a long-running
+    process; the warning prints once per command (or process). One logged while library
+    diagnostics are captured never reaches stderr, so it doesn't count as printed.
+    """
+
+    if library_warnings_captured():
+        logger.warning("%s", message)
+        return
+    warn_once(("config", message), lambda: logger.warning("%s", message))
+
+
 def warn_unknown_model_keys(
     raw_value: object,
     *,
     model: type[BaseModel],
     source: str,
+    file: Path,
 ) -> None:
     """Warn for keys Pydantic would ignore, using Pydantic's own traversal.
 
@@ -99,28 +117,33 @@ def warn_unknown_model_keys(
         validated = model.model_validate(raw_value, extra="allow")
     except ValidationError:
         return
-    _warn_extras(validated, source)
+    _warn_extras(validated, source, file)
 
 
 def _is_object_root_model(value: object) -> TypeIs[RootModel[object]]:
     return isinstance(value, RootModel)
 
 
-def _warn_extras(value: object, path: str) -> None:
+def _warn_extras(value: object, path: str, file: Path) -> None:
     if _is_object_root_model(value):
-        _warn_extras(value.root, path)
+        _warn_extras(value.root, path, file)
     elif isinstance(value, BaseModel):
         model = type(value)
+        is_config = issubclass(model, ConfigModel)
+        ignored = model.config_ignored_keys if is_config else {}
         silenced = model.model_config.get("extra") == "forbid" or (
-            issubclass(model, ConfigModel) and model.config_silences_extras
+            is_config and model.config_silences_extras
         )
-        for key in () if silenced else (value.model_extra or {}):
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", path, key)
+        for key in value.model_extra or {}:
+            if key in ignored:
+                warn_config(f"Ignoring '{path}.{key}' in '{file}': {ignored[key]}.")
+            elif not silenced:
+                warn_config(f"Ignoring unknown Meridian config key '{path}.{key}' in '{file}'.")
         for name in model.model_fields:
-            _warn_extras(getattr(value, name), f"{path}.{name}")
+            _warn_extras(getattr(value, name), f"{path}.{name}", file)
     elif is_object_sequence(value):
         for index, item in enumerate(value, start=1):
-            _warn_extras(item, f"{path}[{index}]")
+            _warn_extras(item, f"{path}[{index}]", file)
     elif is_json_object(value):
         for key, item in value.items():
-            _warn_extras(item, f"{path}.{key}")
+            _warn_extras(item, f"{path}.{key}", file)

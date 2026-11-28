@@ -101,25 +101,35 @@ says how to move it. The migration script below does those steps for you.
     sync in a project removes the user-level items the new Mars installed there (they are
     Mars's own records); this release puts them back on its next sync.
 
-## `git-autosync` rows and `meridian sync conflict` are gone
+## `git-autosync` rows are skipped and `meridian sync conflict` is gone
 
 0.24.0 replaced the `git-autosync` hook with the sync daemon and kept what it removed
 working, unused, until the next minor (see
 [Git contexts sync through a daemon](#git-contexts-sync-through-a-daemon-not-the-git-autosync-hook)).
 This release removes it:
 
-- **A `[[hooks]] builtin = "git-autosync"` row is an invalid row.** Delete it; git contexts
-  sync on their own. `meridian hooks list`, `hooks check` and `hooks run` exit 1 with:
+- **A `[[hooks]] builtin = "git-autosync"` row is skipped.** Delete it; the sync daemon
+  syncs git contexts now (`meridian sync status` shows them). The other rows load and run,
+  and `meridian hooks list`, `hooks check`, `hooks run <other hook>` and `meridian doctor`
+  exit 0. Each command prints once on stderr:
 
   ```
-  error: Invalid value for 'project.hooks[1]': builtin `git-autosync` was removed; git contexts sync by themselves (see `[context.<name>] autosync`); delete this row.
+  Skipping 'project.hooks[1]' in '/path/to/meridian.toml': builtin `git-autosync` was removed; the sync daemon syncs git contexts now (see `meridian sync status`); delete this row.
   ```
 
-  Runtime dispatch logs the same text, drops the row and runs the valid ones, as it does for
-  the [removed hook names](#removed-hook-names-and-keys).
-- **`remote` and `exclude` on any `[[hooks]]` row are rejected** the same way
-  (`` `remote` was removed; it belonged to the removed `git-autosync` hook; delete it ``).
-  Delete the key.
+  Running the row itself (`meridian hooks run git-autosync`, or the name 0.28 generated
+  for it) exits 1 with `Hook 'git-autosync' not found`, since the row no longer loads.
+  Hooks fired during a spawn or session log the same line and run the other rows. The
+  `inbox.received` hook process has no stderr, so a skipped row in its user config leaves
+  no trace there.
+- **`remote` and `exclude` on a `[[hooks]]` row are ignored.** The row still loads and runs;
+  delete the key. Each prints:
+
+  ```
+  Ignoring 'project.hooks[1].remote' in '/path/to/meridian.toml': it belonged to the removed `git-autosync` hook; delete it.
+  ```
+
+  A `git-autosync` row carrying them gets only the skip warning.
 - **`meridian sync conflict list|show|resolve` are gone** and fail with
   `Unknown command "conflict"`, exit 1. `meridian sync status` shows a stopped clone, and
   `meridian sync now <context>` shows both sides of each conflicting file.
@@ -127,6 +137,19 @@ This release removes it:
   `Hook.options`.
 - **`meridian doctor --prune` no longer removes the old hook's files.** Delete any
   `~/.meridian/locks/clone-*.lock` and `~/.meridian/projects/*/autosync/` that are left.
+
+## `primary.model` and `primary.harness` warn
+
+Meridian stopped reading `[primary] model` and `[primary] harness` in 2026-05 and ignored
+them without a word; a value that wasn't a string stopped every command. Now each one,
+whatever its value, is still ignored and prints once per command, naming the file:
+
+```
+Ignoring 'primary.model' in '/path/to/meridian.toml': Meridian no longer reads it; delete it.
+```
+
+Delete the key. To choose a model or harness, set `primary.agent`, pass `--model` or
+`--harness`, or set `default_model` / `default_harness` under `[settings]` in `mars.toml`.
 
 ## `meridian message` replaces `meridian spawn message`
 
