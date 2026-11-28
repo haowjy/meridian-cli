@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Annotated, get_args
+from pathlib import Path
+from typing import Annotated, ClassVar, get_args
 
 from pydantic import (
     BaseModel,
@@ -14,7 +15,12 @@ from pydantic import (
     model_validator,
 )
 
-from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
+from meridian.lib.config.errors import (
+    config_validation_error,
+    warn_config,
+    warn_unknown_model_keys,
+)
+from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
     EVENTS,
@@ -47,15 +53,15 @@ _REMOVED_EVENT_NAMES: dict[str, HookEventName] = {
     "session.responded": "notify.your_turn",
     "session.cache_expiring": "notify.cache_expiring",
 }
-_REMOVED_BUILTINS: dict[str, str] = {
-    "git-autosync": (
-        "git contexts sync by themselves (see `[context.<name>] autosync`); delete this row"
-    ),
-}
 _REMOVED_ROW_KEYS: dict[str, str] = {
     "failure_policy": "hook failures always continue",
-    "remote": "it belonged to the removed `git-autosync` hook; delete it",
-    "exclude": "it belonged to the removed `git-autosync` hook; delete it",
+}
+# Removed builtins an old config may still name: the row is skipped with a warning that
+# says what to do.
+_SKIPPED_BUILTINS: dict[str, str] = {
+    "git-autosync": (
+        "the sync daemon syncs git contexts now (see `meridian sync status`); delete this row"
+    ),
 }
 
 
@@ -150,10 +156,14 @@ class HookWhenSpec(BaseModel):
     kind: SpawnKindTupleSpec | None = None
 
 
-class HookSpec(BaseModel):
+class HookSpec(ConfigModel):
     """Validated file representation of one configured hook."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+    config_ignored_keys: ClassVar[dict[str, str]] = {
+        "remote": "it belonged to the removed `git-autosync` hook; delete it",
+        "exclude": "it belonged to the removed `git-autosync` hook; delete it",
+    }
 
     name: NonEmptyString | None = None
     builtin: NonEmptyString | None = None
@@ -173,9 +183,6 @@ class HookSpec(BaseModel):
         row = json_object(data)
         if row is None:
             return data
-        builtin = _normalized_string(row.get("builtin"))
-        if isinstance(builtin, str) and builtin in _REMOVED_BUILTINS:
-            raise ValueError(f"builtin `{builtin}` was removed; {_REMOVED_BUILTINS[builtin]}")
         for key, instead in _REMOVED_ROW_KEYS.items():
             if key in row:
                 raise ValueError(f"`{key}` was removed; {instead}")
@@ -193,9 +200,19 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
-def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
+def normalize_hook_row(raw_value: object, *, source: str, file: Path) -> HookSpec | None:
+    """Validate one row; ``None`` for a row that is skipped with a warning."""
 
-    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
+    row = json_object(raw_value)
+    if row is not None:
+        builtin = _normalized_string(row.get("builtin"))
+        if isinstance(builtin, str) and builtin in _SKIPPED_BUILTINS:
+            warn_config(
+                f"Skipping '{source}' in '{file}': builtin `{builtin}` was removed; "
+                f"{_SKIPPED_BUILTINS[builtin]}."
+            )
+            return None
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source, file=file)
     try:
         return HookSpec.model_validate(raw_value)
     except ValidationError as error:

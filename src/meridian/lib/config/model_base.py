@@ -14,6 +14,9 @@ class ConfigModel(BaseModel):
     """Base for models carrying file-key warning policy."""
 
     config_silences_extras: ClassVar[bool] = False
+    # Keys Meridian no longer reads, each mapped to what to do instead. An old file may still
+    # carry one, whatever its value: it warns with that advice and is ignored.
+    config_ignored_keys: ClassVar[dict[str, str]] = {}
 
 
 def normalize_required_string(raw: str, *, source: str) -> str:

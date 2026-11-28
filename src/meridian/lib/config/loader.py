@@ -1,4 +1,3 @@
-import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +16,7 @@ from meridian.lib.config.dynamic_sections import (
 from meridian.lib.config.errors import (
     config_validation_error,
     validation_error_path,
+    warn_config,
     warn_unknown_model_keys,
 )
 from meridian.lib.config.harness_models import HarnessProfileConfig, PiHarnessProfileConfig
@@ -35,8 +35,6 @@ from meridian.lib.config.project_root import (
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
 from meridian.lib.config.user_only import USER_ONLY_SECTIONS, is_user_config_file, user_config_path
 from meridian.lib.utils.json_shapes import is_json_object
-
-logger = logging.getLogger(__name__)
 
 _LEGACY_AGENTS_SECTION = "agents"
 _FLATTENED_MODEL_SECTIONS = frozenset({"defaults", "spawn", "timeouts"})
@@ -101,6 +99,7 @@ def _map_catalog_table(
     *,
     table_path: tuple[str, ...],
     target: dict[str, object],
+    path: Path,
 ) -> None:
 
     for key, value in raw_value.items():
@@ -114,13 +113,12 @@ def _map_catalog_table(
                 cast("dict[str, object]", value),
                 table_path=(*table_path, key),
                 target=target,
+                path=path,
             )
             continue
 
-        logger.warning(
-            "Ignoring unknown Meridian config key '%s'.",
-            ".".join((*table_path, key)),
-        )
+        key_path = ".".join((*table_path, key))
+        warn_config(f"Ignoring unknown Meridian config key '{key_path}' in '{path}'.")
 
 
 def _nested_model_type(annotation: object) -> type[ConfigModel] | None:
@@ -178,36 +176,31 @@ def _normalize_toml_payload_values(
             raise _legacy_agents_section_error(path=path)
         if key in USER_ONLY_SECTIONS:
             if not is_user_config_file(path):
-                logger.warning(
-                    "Ignoring [%s] in '%s': it is read from '%s' only.",
-                    key,
-                    path,
-                    user_config_path(),
+                warn_config(
+                    f"Ignoring [{key}] in '{path}': it is read from '{user_config_path()}' only."
                 )
             continue
         if key in DYNAMIC_SECTION_DESCRIPTORS:
-            section = normalize_dynamic_sections(
-                payload={key: raw_value},
-            )
+            section = normalize_dynamic_sections(payload={key: raw_value}, path=path)
             normalized = merge_dynamic_sections(normalized, section)
             dynamic = merge_dynamic_sections(dynamic, section)
             continue
 
         section_model = _section_model(key)
         if section_model is not None:
-            warn_unknown_model_keys(raw_value, model=section_model, source=key)
+            warn_unknown_model_keys(raw_value, model=section_model, source=key, file=path)
             normalized[key] = raw_value
             continue
 
         if key in _FLATTENED_MODEL_SECTIONS:
             if not is_json_object(raw_value):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
-            _map_catalog_table(raw_value, table_path=(key,), target=normalized)
+            _map_catalog_table(raw_value, table_path=(key,), target=normalized, path=path)
             continue
 
         option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
         if option is None:
-            logger.warning("Ignoring unknown Meridian config key '%s'.", key)
+            warn_config(f"Ignoring unknown Meridian config key '{key}' in '{path}'.")
             continue
 
         coerced = parse_toml_scalar(
