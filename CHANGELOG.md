@@ -6,6 +6,14 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.28.4] - 2026-11-28
+
+### Added
+- `meridian idle activity turn_active|idle --harness <h>`: the call a harness runtime makes to record a primary's turn edge. `idle arm` records `idle` too; a failure to record it never fails the arm and shows as `activity_error` in the arm's reply.
+
+### Fixed
+- `meridian spawn list --json` and `spawn show --json` now say whether every running primary is mid-turn: `activity` is `turn_active` from the start of each turn to its end, whatever started it (a typed prompt, a wake, a peer message, a task notification), and `idle` between turns. Claude and agy primaries reported nothing before, and a Pi primary read `idle` even while it worked. A running primary whose harness has reported nothing yet (one an older build launched) shows `unknown`. Turning idle notifications off no longer turns this off.
+
 ## [0.28.3] - 2026-11-28
 
 ### Fixed
