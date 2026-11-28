@@ -4,12 +4,12 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.ops.work_attachment import resolve_work_id_argument
 from meridian.lib.ops.work_membership import (
     active_session_work_ids,
@@ -611,12 +611,6 @@ def work_sessions_sync(
     )
 
 
-work_dashboard = async_from_sync(work_dashboard_sync)
-work_list = async_from_sync(work_list_sync)
-work_show = async_from_sync(work_show_sync)
-work_sessions = async_from_sync(work_sessions_sync)
-
-
 __all__ = [
     "WorkDashboardInput",
     "WorkDashboardItem",
@@ -630,13 +624,9 @@ __all__ = [
     "WorkSessionsOutput",
     "WorkShowInput",
     "WorkShowOutput",
-    "work_dashboard",
     "work_dashboard_sync",
     "work_dir_display",
-    "work_list",
     "work_list_sync",
-    "work_sessions",
     "work_sessions_sync",
-    "work_show",
     "work_show_sync",
 ]

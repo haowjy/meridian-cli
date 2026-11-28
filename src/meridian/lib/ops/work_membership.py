@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.state import session_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.spawn.model import SpawnRecord

@@ -17,10 +17,10 @@ from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
 from meridian.cli.machine_forward import forward_if_remote
 from meridian.cli.utils import cli_project_root_posix
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.machines.caller import require_project_or_global
 from meridian.lib.platform.python_module import module_argv
 
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 @contextmanager
 def _hint_gone_directory(file_path: str | None) -> Generator[None]:
     """A transcript read that finds its recorded path missing says how to relocate."""
-    from meridian.lib.core.native_identity import NativeSessionUnavailable
     from meridian.lib.ops.relocate_gate import with_read_hint
+    from meridian.lib.state.native_identity import NativeSessionUnavailable
 
     try:
         yield
@@ -611,7 +611,7 @@ def register_session_commands(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="session",
         handlers=handlers,
         command_help_epilogues={

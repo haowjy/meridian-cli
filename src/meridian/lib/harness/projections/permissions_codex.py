@@ -14,6 +14,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from meridian.lib.core.permission_policy import (
+    Allow,
+    ApprovalMode,
+    EffectivePolicy,
+    EnforcementReport,
+    Hosts,
+    NetworkProjection,
+    PermissionPolicy,
+    ReportLine,
+    ReportStatus,
+    SandboxMode,
+    complete_report,
+    network_policy_element,
+    platform_element,
+    rule_element,
+)
+from meridian.lib.core.tools import PLATFORM_ORIGIN, ToolRule, could_refuse, unscoped_action
 from meridian.lib.harness.codex_rules import (
     RULES_FILES,
     codex_rules_files,
@@ -32,23 +49,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
     extension_rules,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import (
-    Allow,
-    ApprovalMode,
-    EffectivePolicy,
-    EnforcementReport,
-    Hosts,
-    NetworkProjection,
-    PermissionPolicy,
-    ReportLine,
-    ReportStatus,
-    SandboxMode,
-    complete_report,
-    network_policy_element,
-    platform_element,
-    rule_element,
-)
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule, could_refuse, unscoped_action
 
 _APPROVAL_POLICY_BY_MODE: dict[ApprovalMode, str | None] = {
     "default": None,

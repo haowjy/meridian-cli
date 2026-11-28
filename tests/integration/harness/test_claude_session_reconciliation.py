@@ -8,9 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import project_slug, reconcile_tui_trampoline_session_id
+from meridian.lib.state.native_identity import NativeIdentity
 
 
 @pytest.fixture(autouse=True)

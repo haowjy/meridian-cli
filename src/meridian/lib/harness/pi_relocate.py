@@ -16,13 +16,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.native_identity import (
+from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
+from meridian.lib.harness.pi_identity import read_header, resolve_session_file
+from meridian.lib.state.native_identity import (
     NativeEntryMismatch,
     NativeKeyFields,
     NativeSessionUnavailable,
 )
-from meridian.lib.harness.adapter import NativeRelocation, NativeRelocationResult
-from meridian.lib.harness.pi_identity import read_header, resolve_session_file
 
 _HEADER_VERSION = 3
 

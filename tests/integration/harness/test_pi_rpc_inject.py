@@ -125,6 +125,10 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         def native_task_source(self) -> None:
             return None
 
+        def drain_plan(self, context: object) -> None:
+            _ = context
+            return None
+
         def __init__(self) -> None:
             self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
 

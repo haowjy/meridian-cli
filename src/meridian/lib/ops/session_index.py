@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.loader import load_config
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.ops.session_search_index import SearchProjection, SearchStatus
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex
@@ -90,6 +90,3 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
         pending_sources=len(pending),
         **search,
     )
-
-
-session_index = async_from_sync(session_index_sync)

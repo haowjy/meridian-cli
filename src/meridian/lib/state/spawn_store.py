@@ -16,13 +16,13 @@ import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import (
+    is_active_spawn_status as _is_active_spawn_status,
+)
 from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.core.spawn_lifecycle import (
-    is_active_spawn_status as _is_active_spawn_status,
-)
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
@@ -81,6 +81,8 @@ from meridian.lib.state.spawn_aggregate import (
     sync_retirement_parents,
 )
 from meridian.lib.state.spawn_observations import clear_wait_pin
+from meridian.lib.telemetry.lifecycle import LifecycleEvent, next_spawn_sequence
+from meridian.lib.telemetry.observers import notify_observers
 from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
@@ -610,11 +612,6 @@ def update_spawn(
     )
     if not isinstance(outcome, Applied):
         return
-    from meridian.lib.core.telemetry import (
-        LifecycleEvent,
-        next_spawn_sequence,
-        notify_observers,
-    )
 
     record = outcome.after
     notify_observers(

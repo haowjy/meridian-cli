@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.idle.delivery import row_session
 from meridian.lib.ops.spawn.models import SpawnIdle

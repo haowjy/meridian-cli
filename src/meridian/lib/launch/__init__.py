@@ -27,14 +27,13 @@ if TYPE_CHECKING:
         SurfacePolicyInput,
         resolve_launch_policy,
     )
-    from meridian.lib.launch.process import ProcessOutcome, run_harness_process
+    from meridian.lib.launch.process.runner import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
     )
     from meridian.lib.launch.types import (
         LaunchRequest,
         LaunchResult,
-        PrimarySessionMetadata,
         SessionIntent,
         SessionMode,
         build_primary_prompt,
@@ -92,7 +91,7 @@ def launch_primary(
     from meridian.lib.autosync.clones import clone_launch_warning, enclosing_clone
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
-    from meridian.lib.core.context import resolve_runtime_context
+    from meridian.lib.context.runtime import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 
     from .context import (
@@ -103,7 +102,7 @@ def launch_primary(
     )
     from .cwd import inheritable_task_dir
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
-    from .process import run_harness_process
+    from .process.runner import run_harness_process
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
@@ -288,7 +287,6 @@ def __getattr__(name: str) -> Any:
     mapping: dict[str, tuple[str, str]] = {
         "LaunchRequest": (".types", "LaunchRequest"),
         "LaunchResult": (".types", "LaunchResult"),
-        "PrimarySessionMetadata": (".types", "PrimarySessionMetadata"),
         "ProcessOutcome": (".process", "ProcessOutcome"),
         "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
         "PreparedPolicySurface": (".context", "PreparedPolicySurface"),
@@ -328,7 +326,6 @@ __all__ = [
     "LaunchResult",
     "PreparedLaunchSurface",
     "PreparedPolicySurface",
-    "PrimarySessionMetadata",
     "ProcessOutcome",
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",

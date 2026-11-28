@@ -11,7 +11,7 @@ from typing import Any
 import structlog
 
 from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.continue_launch import ContinueHold
@@ -29,7 +29,6 @@ from meridian.lib.state.spawn.model import (
 from ..runtime import OperationRuntime, resolve_runtime_root, runtime_context
 from .execute_bg import (
     BackgroundWorkerLaunchRequest,
-    _background_worker_main,
     _build_background_worker_command,
     _cleanup_background_runtime_artifacts,
     _persist_bg_worker_request,
@@ -641,12 +640,6 @@ def execute_spawn_blocking(
                 ),
             ),
         )
-
-    # Backward-compat __main__ entry: forwards to the background worker main
-    # (which now lives in execute_bg.py). Queued spawns launched with the old
-    # `python -m meridian.lib.ops.spawn.execute` command still work.
-    if __name__ == "__main__":
-        raise SystemExit(_background_worker_main())
 
 
 __all__ = [

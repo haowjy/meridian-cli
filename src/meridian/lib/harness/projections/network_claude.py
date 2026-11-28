@@ -4,7 +4,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     Allow,
     EffectivePolicy,
     Host,

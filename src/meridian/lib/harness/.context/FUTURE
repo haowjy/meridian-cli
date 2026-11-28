@@ -23,3 +23,7 @@
   spawned and primary callers reconstruct the final environment differently. Accept
   a read-only mapping and return all changes in one overlay, applied through a shared
   launch helper.
+
+- `pi_drain.py` and `pi_quiescence.py`: establish a paired native lifecycle
+  signal before supporting arbitrary branch-summary work; queue updates and
+  retry telemetry cannot establish busy or idle on their own.

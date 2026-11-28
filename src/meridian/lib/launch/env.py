@@ -6,11 +6,11 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.connections.base import PiSessionRole
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.child_env import ALLOWED_CHILD_ENV_KEYS
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 

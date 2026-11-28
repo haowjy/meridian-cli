@@ -18,13 +18,11 @@ class OpDeclaration:
     command_id: str
     summary: str
     handler: str
-    sync_handler: str | None
     input_type: str
     output_type: str
     cli_group: str | None = None
     cli_name: str | None = None
     surfaces: frozenset[ExtensionSurface] = frozenset({ExtensionSurface.CLI, ExtensionSurface.MCP})
-    first_party: bool = True
 
     @property
     def fqid(self) -> str:
@@ -32,16 +30,14 @@ class OpDeclaration:
 
     @cached_property
     def resolved(self) -> ExtensionCommandSpec:
-        return ExtensionCommandSpec.from_op(
+        return ExtensionCommandSpec(
             extension_id=self.extension_id,
             command_id=self.command_id,
             summary=self.summary,
             handler=_binding(self.handler),
-            sync_handler=_binding(self.sync_handler) if self.sync_handler else None,
-            input_type=_binding(self.input_type),
-            output_type=_binding(self.output_type),
+            args_schema=_binding(self.input_type),
+            result_schema=_binding(self.output_type),
             cli_group=self.cli_group,
             cli_name=self.cli_name,
             surfaces=self.surfaces,
-            first_party=self.first_party,
         )

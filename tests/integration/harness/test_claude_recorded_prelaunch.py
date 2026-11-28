@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeIdentity, NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.state.native_identity import NativeIdentity, NativeSessionUnavailable
 from tests.support.launch_paths import launch_paths
 
 

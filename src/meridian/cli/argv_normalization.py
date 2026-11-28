@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.types import SpawnId
+from meridian.lib.state.caller import caller_spawn_id
 
 SELF_FORK_REF_SENTINEL = "__SELF__"
 SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})

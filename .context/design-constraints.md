@@ -65,8 +65,8 @@ deprecation warning, and no test reads state written by a real older build.
 launch (`lib/state/liveness.py`, `signal_with_birth`). The launch gate holds a child
 until its scope is recorded (`lib/platform/launch_gate.py`). A held launch lock can't
 be claimed, so cancel signals the runner instead of starting or claiming the work
-(`lib/core/spawn_service.py`). A sandboxed caller can't launch a less-confined child
-(`lib/core/caller_boundary.py`). Details: `lib/core/.context/cancel.md`, the KB's
+(`lib/spawn/service.py`). A sandboxed caller can't launch a less-confined child
+(`lib/core/caller_boundary.py`). Details: `lib/spawn/.context/cancel.md`, the KB's
 `launch/process-scope.md` and `permissions/sandbox-projection.md`.
 
 **Checked by** `tests/platform/test_launch_gate.py`, `test_launch_gate_review.py` and
@@ -88,14 +88,13 @@ caller is refused.
 **How.** `MERIDIAN_SECRET_*` variables never reach a child
 (`env_registry.py`, `lib/launch/env.py`) or a guardrail script
 (`lib/safety/guardrails.py`). Secret-looking arguments are redacted before a command is
-stored (`redact_primary_command`), and telemetry passes through `RedactionPipeline`
-(`lib/extensions/observability.py`). `--from` and `--continue` pass references and
+stored (`redact_primary_command`). `--from` and `--continue` pass references and
 report text, never another session's transcript (`lib/core/context_ref.py`). Turn text
 reaches a notification only when `notify.include_messages` is set.
 
 **Checked by** `tests/integration/harness/test_child_env_boundary.py`, the redaction
 case in `test_pi_integration.py`, and `tests/unit/idle/`.
 
-**Gaps.** Nothing checks guardrail stripping, `config show` redaction or
-`RedactionPipeline`. Idle excerpts sit in plain text in the idle state file, a second
+**Gaps.** Nothing checks guardrail stripping or `config show` redaction. Telemetry has
+no redaction pass: what an event records is up to its emitter. Idle excerpts sit in plain text in the idle state file, a second
 copy of turn text beside the harness's own.

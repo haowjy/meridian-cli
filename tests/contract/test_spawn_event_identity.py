@@ -2,7 +2,7 @@
 
 import uuid
 
-from meridian.lib.core.lifecycle import generate_event_id
+from meridian.lib.spawn.lifecycle import generate_event_id
 
 
 def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:

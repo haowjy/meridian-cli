@@ -16,9 +16,7 @@ from meridian.lib.bootstrap.services import (
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.domain import TerminalSpawnStatus
-from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.spawn_lifecycle import parse_terminal_status
+from meridian.lib.core.domain import TerminalSpawnStatus, parse_terminal_status
 from meridian.lib.core.types import launched_harnesses
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry, get_process_ports
@@ -32,11 +30,13 @@ from meridian.lib.launch.resolve import (
     resolve_startup_timeout_seconds,
 )
 from meridian.lib.launch.session_scope import session_scope, warm_close_imports
+from meridian.lib.launch.spawn_prepare import prepare_spawn
 from meridian.lib.launch.streaming_runner import run_streaming_spawn
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.native_identity import NativeIdentityError
 
 
 async def streaming_serve(
@@ -96,7 +96,9 @@ async def streaming_serve(
 
     # Prepare before creating a row so invalid requests leave no spawn state.
     with LaunchSlot() as launch_lock:
-        prepared = await spawn_service.prepare_spawn(
+        prepared = await prepare_spawn(
+            spawn_service.lifecycle,
+            spawn_service.runtime_root,
             request=spawn_req,
             runtime=launch_runtime,
             harness_registry=get_default_harness_registry(),

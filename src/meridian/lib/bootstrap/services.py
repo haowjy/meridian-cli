@@ -14,11 +14,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
 )
-from meridian.lib.service_context import (
-    ApplicationContext,
-    ApplicationServices,
-    ExtensionEntryPoint,
-)
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
     nearest_ancestor_project_marker,
@@ -27,8 +22,8 @@ from meridian.lib.state.project_identity import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.core.spawn_service import SpawnApplicationService
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+    from meridian.lib.spawn.service import SpawnApplicationService
 
 
 @dataclass(frozen=True)
@@ -67,19 +62,6 @@ def _materialization_notice(authority: RuntimeAuthoritySnapshot) -> str | None:
     if nearest_marker is not None:
         notice += f" (nearest project: {nearest_marker.as_posix()})"
     return notice
-
-
-def _application_context_from_runtime(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-) -> ApplicationContext:
-
-    authority = getattr(prepared, "authority", None)
-    return ApplicationContext(
-        project_root=prepared.project_root,
-        runtime_root=prepared.runtime_root,
-        config=prepared.config,
-        authority=authority,
-    )
 
 
 def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
@@ -181,9 +163,15 @@ def build_spawn_lifecycle_service_from_roots(
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnLifecycleService:
 
-    from meridian.lib.core.lifecycle import create_lifecycle_service
+    if lifecycle is not None:
+        return lifecycle
+    from meridian.lib.hooks.dispatch import get_hook_dispatcher
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 
-    return lifecycle or create_lifecycle_service(project_root, runtime_root)
+    dispatcher = get_hook_dispatcher(project_root, runtime_root)
+    return SpawnLifecycleService(
+        runtime_root, hooks=[dispatcher] if dispatcher is not None else None
+    )
 
 
 def build_spawn_application_service_from_roots(
@@ -193,7 +181,7 @@ def build_spawn_application_service_from_roots(
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnApplicationService:
 
-    from meridian.lib.core.spawn_service import SpawnApplicationService
+    from meridian.lib.spawn.service import SpawnApplicationService
 
     lifecycle_service = build_spawn_lifecycle_service_from_roots(
         project_root,
@@ -201,15 +189,3 @@ def build_spawn_application_service_from_roots(
         lifecycle=lifecycle,
     )
     return SpawnApplicationService(runtime_root, lifecycle_service)
-
-
-def build_extension_entrypoint(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-    *,
-    lifecycle: SpawnLifecycleService | None = None,
-) -> ExtensionEntryPoint:
-
-    return ExtensionEntryPoint(
-        context=_application_context_from_runtime(prepared),
-        services=ApplicationServices(lifecycle=lifecycle),
-    )

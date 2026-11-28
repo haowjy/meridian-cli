@@ -15,10 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.relocate_prompt import RelocateStop
-from meridian.lib.core.caller import caller_in
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.permission_policy import EnforcementReport, format_report_lines
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.core.util import FormatContext
@@ -57,8 +56,9 @@ from meridian.lib.ops.relocate_gate import (
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
-from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.caller import caller_in
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.work_state import slugify

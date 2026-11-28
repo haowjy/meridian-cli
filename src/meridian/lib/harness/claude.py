@@ -12,18 +12,10 @@ import structlog
 
 from meridian.lib.config.loader import load_launch_config
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import (
-    LaunchIntent,
-    NativeIdentity,
-    NativeIdentityError,
-    NativeKey,
-    NativeKeyFields,
-    NativeObservationBatch,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-    NativeStoreMove,
-    Operation,
-    PostExit,
+from meridian.lib.core.permission_policy import (
+    CONSTRAINED_SANDBOX_MODES,
+    NetworkPolicy,
+    network_allows_local_services,
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -115,10 +107,18 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.policy import (
-    CONSTRAINED_SANDBOX_MODES,
-    NetworkPolicy,
-    network_allows_local_services,
+from meridian.lib.state.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeIdentityError,
+    NativeKey,
+    NativeKeyFields,
+    NativeObservationBatch,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+    NativeStoreMove,
+    Operation,
+    PostExit,
 )
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 

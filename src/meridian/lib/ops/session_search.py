@@ -10,11 +10,9 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from meridian.lib.core.caller import same_runtime_root
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
-    async_from_sync,
     resolve_project_authority,
     resolve_roots_for_read,
     resolve_runtime_authority_for_read,
@@ -29,6 +27,7 @@ from meridian.lib.ops.session_transcript import (
     build_session_log_command,
     read_session_transcript,
 )
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.history_index import (
     INITIALIZATION_TIMEOUT,
     QUERY_TIMEOUT,
@@ -504,15 +503,11 @@ def session_search_sync(
     return _search_corpus(payload, query=query)
 
 
-session_search = async_from_sync(session_search_sync)
-
-
 __all__ = [
     "SessionSearchInput",
     "SessionSearchMatch",
     "SessionSearchOutput",
     "SubsetSearchStep",
     "iter_session_subset_search",
-    "session_search",
     "session_search_sync",
 ]

@@ -16,7 +16,6 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -34,6 +33,7 @@ from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Bound, Conflict
+from meridian.lib.state.native_identity import NativeKeyFields
 from tests.support.launch_paths import launch_paths
 
 
@@ -300,7 +300,9 @@ def test_binding_mirrors_only_the_first_identity(
             assert isinstance(conflict, Conflict)
             assert conflict.kept.session_id == "first"
         assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
-        assert session_store.get_session_harness_id(tmp_path, chat_id) == "first"
+        record = session_store.chat_record(tmp_path, chat_id)
+        assert record is not None
+        assert record.harness_session_id == "first"
     finally:
         session_store.stop_session(tmp_path, chat_id)
 
@@ -319,12 +321,12 @@ def test_native_observer_acks_each_publication_and_dies_with_its_block(
 ) -> None:
     from types import SimpleNamespace
 
-    from meridian.lib.core.native_identity import (
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.native_identity import (
         NativeKey,
         NativeObservation,
         NativeObservationBatch,
     )
-    from meridian.lib.state import spawn_store
 
     def observers() -> list[threading.Thread]:
         return [t for t in threading.enumerate() if t.name.startswith("meridian-native-observer")]

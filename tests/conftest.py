@@ -199,7 +199,7 @@ def _reset_process_telemetry_state(monkeypatch: pytest.MonkeyPatch) -> None:
     make order matter.
     """
 
-    import meridian.lib.core.telemetry as core_telemetry
+    import meridian.lib.telemetry.lifecycle as core_telemetry
     import meridian.lib.telemetry.observers as telemetry_observers
     import meridian.lib.telemetry.router as telemetry_router
 

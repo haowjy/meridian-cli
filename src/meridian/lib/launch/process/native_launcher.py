@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform.launch_gate import LaunchGate, ProcessIdentity
+from meridian.lib.platform.signals import SignalCallbackReceiver, signal_coordinator
 
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,

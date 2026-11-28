@@ -4,7 +4,7 @@ Contracts, wait scoping and delivery: [.context/CONTEXT.md](.context/CONTEXT.md)
 
 ## Rules
 
-- **Resolve before persist** ([../AGENTS.md](../AGENTS.md)): in `api.py`, runtime
+- **Resolve before persist** ([../AGENTS.md](../AGENTS.md)): in `create.py`, runtime
   materialization waits until the resolved request's sandbox passes the caller guardrail,
   for every caller kind.
 - **Foreground and background converge at `launch_prepared_spawn()`**, which owns

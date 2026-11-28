@@ -21,16 +21,17 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.launch_paths import launch_paths
+from tests.support.spawn_manager import active_connection
 
 
 def _build_config(spawn_id: SpawnId, project_root: Path) -> ConnectionConfig:
     return ConnectionConfig(
-        launch=launch_paths(resolve_runtime_paths(project_root).root_dir, spawn_id),
+        launch=launch_paths(resolve_project_runtime_root_for_write(project_root), spawn_id),
         harness_id=HarnessId.CODEX,
         prompt="hello",
         control_root=project_root,
@@ -65,7 +66,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
 
     class FakeControlSocketServer:
         def __init__(self, socket_path: Path, route: object) -> None:
@@ -120,6 +121,10 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
             _ = semantics
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -201,7 +206,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
     await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
 
     try:
-        connection = cast("Any", manager.get_connection(spawn_id))
+        connection = cast("Any", active_connection(manager, spawn_id))
         assert connection is not None
         assert connection.capabilities.supports_runtime_hitl is True
 
@@ -220,7 +225,7 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
 
     class FakeControlSocketServer:
         def __init__(self, socket_path: Path, route: object) -> None:
@@ -275,6 +280,10 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
             _ = semantics
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -357,7 +366,7 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
     await manager.start_spawn(config, _build_spec())
 
     try:
-        connection = cast("Any", manager.get_connection(spawn_id))
+        connection = cast("Any", active_connection(manager, spawn_id))
         assert connection is not None
         assert connection.capabilities.supports_runtime_hitl is True
 

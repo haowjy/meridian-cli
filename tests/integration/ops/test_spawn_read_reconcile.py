@@ -12,7 +12,8 @@ from typing import Any
 
 import psutil
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.read as spawn_read
+import meridian.lib.ops.spawn.wait as spawn_wait
 from meridian.lib.ops.spawn.models import (
     SpawnListInput,
     SpawnShowInput,
@@ -92,19 +93,19 @@ def test_dead_runner_with_reused_pid_is_not_running(tmp_path: Path) -> None:
         )
         (runtime_root / "spawns" / "p1" / "launch.lock").touch()
 
-        output = spawn_api.spawn_show_sync(
+        output = spawn_read.spawn_show_sync(
             SpawnShowInput(spawn_id="p1", project_root=project_root.as_posix())
         )
 
         assert output.status == "failed"
         assert output.failure_reason == "crashed"
-        listed = spawn_api.spawn_list_sync(
+        listed = spawn_read.spawn_list_sync(
             SpawnListInput(statuses=(), project_root=project_root.as_posix())
         )
         assert [(row.spawn_id, row.status) for row in listed.spawns] == [("p1", "failed")]
-        stats = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=project_root.as_posix()))
+        stats = spawn_read.spawn_stats_sync(SpawnStatsInput(project_root=project_root.as_posix()))
         assert stats.failed == 1
-        waited = spawn_api.spawn_wait_sync(
+        waited = spawn_wait.spawn_wait_sync(
             SpawnWaitInput(spawn_ids=("p1",), project_root=project_root.as_posix())
         )
         assert [(row.spawn_id, row.status) for row in waited.spawns] == [("p1", "failed")]

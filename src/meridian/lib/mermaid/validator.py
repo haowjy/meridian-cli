@@ -13,11 +13,11 @@ import json
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.mermaid.scanner import DiagramTarget, collect_targets
+from meridian.lib.mermaid.scanner import DiagramTarget
 
 BUNDLE_PATH = Path(__file__).parent / "mermaid-validator.bundle.js"
 
@@ -25,14 +25,6 @@ BUNDLE_PATH = Path(__file__).parent / "mermaid-validator.bundle.js"
 TIMEOUT_SECS = 10
 
 ValidationTier = Literal["python", "js"]
-
-
-class NodeNotFoundError(RuntimeError):
-    """Raised when node is not available on PATH."""
-
-
-class BundleNotFoundError(EnvironmentError):
-    """Raised when the JS bundle is missing (packaging error)."""
 
 
 @dataclass
@@ -54,14 +46,6 @@ class BlockResult:
     error: str | None = None
     diagram_type: str | None = None
     tier: ValidationTier = "python"
-
-
-@dataclass
-class ScanOptions:
-    """Options for scanning files."""
-
-    exclude: list[str] = field(default_factory=lambda: [])
-    depth: int | None = None
 
 
 @dataclass
@@ -90,37 +74,14 @@ def detect_tier() -> ValidationTier:
     return "js"
 
 
-def validate_path(
-    path: Path,
-    *,
-    opts: ScanOptions | None = None,
-) -> MermaidValidationResult:
-    path = path.resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"Path not found: {path}")
+def validate_targets(path: Path, targets: list[DiagramTarget]) -> MermaidValidationResult:
+    """Validate *targets*, the diagrams collected under the resolved *path*."""
 
-    opts = opts or ScanOptions()
-
-    # Determine scan root.
-    root = path if path.is_dir() else path.parent
-
-    # Collect all Mermaid targets (markdown fenced blocks + standalone files).
-    targets = collect_targets(
-        path,
-        root,
-        depth=opts.depth,
-        exclude=opts.exclude if opts.exclude else None,
-    )
-
-    # Detect available tier.
     tier = detect_tier()
-
-    # Validate all blocks.
-    results: list[BlockResult] = []
-    for target in targets:
-        result = _validate_block_js(target) if tier == "js" else _validate_block_python(target)
-        results.append(result)
-
+    results = [
+        _validate_block_js(target) if tier == "js" else _validate_block_python(target)
+        for target in targets
+    ]
     valid_count = sum(1 for result in results if result.valid)
     invalid_count = len(results) - valid_count
 
@@ -375,12 +336,9 @@ def _validate_block_js(target: DiagramTarget) -> BlockResult:
 
 __all__ = [
     "BlockResult",
-    "BundleNotFoundError",
     "MermaidValidationResult",
-    "NodeNotFoundError",
-    "ScanOptions",
     "ValidationError",
     "ValidationTier",
     "detect_tier",
-    "validate_path",
+    "validate_targets",
 ]

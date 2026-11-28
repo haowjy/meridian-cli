@@ -241,9 +241,9 @@ async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
     run_fails: bool,
 ) -> None:
     from meridian.cli import streaming_serve as serve
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
     from meridian.lib.harness.pi import PiAdapter
     from meridian.lib.launch.native_run import NativeRunOutcome
+    from meridian.lib.state.native_identity import NativeEntryMismatch, NativeKeyFields
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
     install_boundary_shim(pi_runtime, "same")
@@ -422,11 +422,10 @@ async def test_rpc_post_attempt_boundary(
     from dataclasses import replace
     from types import MappingProxyType
 
-    from meridian.lib.core.domain import Spawn
+    from meridian.lib.core.domain import PrimarySessionMetadata, Spawn
     from meridian.lib.core.types import ModelId, SpawnId
     from meridian.lib.launch.session_scope import session_scope
     from meridian.lib.launch.streaming_runner import execute_with_streaming
-    from meridian.lib.launch.types import PrimarySessionMetadata
 
     root = pi_runtime
     install_boundary_shim(root, shape)

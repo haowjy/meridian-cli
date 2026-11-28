@@ -4,7 +4,7 @@
   `native-transcript.jsonl`. Preserve old ZIP compatibility; do not invent
   descriptors for restored records.
 
-- process_scope_projection.py callers in core/spawn_service.py and core/process_cleanup.py:
+- process_scope_projection.py callers in spawn/service.py and spawn/cleanup.py:
   move synchronous projection reads off the async event-loop thread with
   `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block
   the loop for up to that bound when a projection writer is wedged.

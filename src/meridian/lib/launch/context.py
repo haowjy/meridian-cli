@@ -26,18 +26,22 @@ from meridian.lib.config.loader import (
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
+from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.context.resolver import ResolvedContextPaths, resolve_context_paths
 from meridian.lib.core.caller_boundary import (
     CALLER_BOUNDARY_ENV,
     CallerBoundary,
     current_pid_namespace,
 )
-from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.context_ref import ContextRef, render_context_refs
 from meridian.lib.core.execution_policy import NativeConfig
-from meridian.lib.core.native_identity import PrecreatedSession
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.permission_policy import (
+    EnforcementReport,
+    PermissionPolicy,
+    build_permission_policy,
+)
+from meridian.lib.core.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import (
@@ -47,6 +51,7 @@ from meridian.lib.harness.bundle import (
     project_effective_policy,
 )
 from meridian.lib.inbox.count import launch_line
+from meridian.lib.launch.child_env import validate_child_env_keys
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PreparedLaunchContent,
@@ -70,12 +75,8 @@ from meridian.lib.launch.workspace_projection import (
 )
 from meridian.lib.ops.mars import MarsAgentInventory
 from meridian.lib.platform import IS_POSIX
-from meridian.lib.safety.policy import (
-    EnforcementReport,
-    PermissionPolicy,
-    build_permission_policy,
-)
 from meridian.lib.state import work_repository
+from meridian.lib.state.native_identity import PrecreatedSession
 from meridian.lib.state.paths import (
     LaunchPaths,
     load_context_config,
@@ -88,7 +89,6 @@ from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.user_paths import ensure_project_lifetime_lock
 from meridian.lib.streaming.control_socket import socket_directory
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 from meridian.plugin_api.git import resolve_clone_path
 from meridian.plugin_api.types import SpawnKind
 
@@ -364,6 +364,25 @@ class TaskContextInputs:
 
     reference_items: tuple[ReferenceItem, ...]
     prior_output: str
+
+
+def _config_overrides(config: MeridianConfig | None, *, primary: bool) -> RuntimeOverrides:
+    """The config layer: a primary takes the ``[primary]`` table, a spawn only the rearm budget."""
+
+    if config is None:
+        return RuntimeOverrides()
+    if not primary:
+        return RuntimeOverrides(resident_rearm_budget=config.resident_rearm_budget)
+    return RuntimeOverrides(
+        agent=config.primary.agent,
+        effort=config.primary.effort,
+        sandbox=config.primary.sandbox,
+        approval=config.primary.approval,
+        autocompact=config.primary.autocompact,
+        autocompact_pct=config.primary.autocompact_pct,
+        timeout=config.primary.timeout,
+        resident_rearm_budget=config.resident_rearm_budget,
+    )
 
 
 def resolve_task_context_inputs(
@@ -885,10 +904,9 @@ def compile_prepared_policy_surface(
         if runtime.has_runtime_override_snapshot
         else RuntimeOverrides.from_env()
     )
-    if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
-        config_overrides = RuntimeOverrides.from_config(config)
-    else:
-        config_overrides = RuntimeOverrides.from_spawn_config(config)
+    config_overrides = _config_overrides(
+        config, primary=runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    )
 
     resolved_policy = resolve_launch_policy(
         SurfacePolicyInput(

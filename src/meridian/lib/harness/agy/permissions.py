@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.permission_policy import ReportLine, rule_element
 from meridian.lib.harness.agy.state import user_settings_path
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import ReportLine, rule_element
 
 # ``agy`` ignores ``ask`` under ``--dangerously-skip-permissions`` (approval ``never``).
 _ASK_IGNORED = "agy ignores ask rules under --dangerously-skip-permissions"

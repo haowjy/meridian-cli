@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.logging import warn_once
-from meridian.lib.core.native_identity import BindSource, NativeKey, NativeKeyFields
 from meridian.lib.core.types import (
     HarnessSessionId,
     OptionalPersistedChatId,
@@ -17,6 +16,7 @@ from meridian.lib.core.types import (
     PersistedChatId,
 )
 from meridian.lib.state.native_binding import Conflict, bind, relocate_key
+from meridian.lib.state.native_identity import BindSource, NativeKey, NativeKeyFields
 from meridian.lib.state.paths import rebase_path
 
 HISTORICAL_GENERATION_PREFIX = "historical-"

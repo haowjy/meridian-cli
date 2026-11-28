@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.event_store import utc_now_iso

@@ -11,12 +11,6 @@ import psutil
 from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import (
-    BindSource,
-    NativeEntryMismatch,
-    NativeKeyFields,
-    NativeSessionUnavailable,
-)
 from meridian.lib.core.refs import is_chat_id
 from meridian.lib.core.types import (
     ChatId,
@@ -38,6 +32,12 @@ from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.machine_ids import allocate
 from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
+from meridian.lib.state.native_identity import (
+    BindSource,
+    NativeEntryMismatch,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+)
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.session_fold import (
     ConversationModelSelection as ConversationModelSelection,
@@ -1219,14 +1219,6 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
 
     record = chat_record(runtime_root, chat_id)
     return record.active_work_id if record else None
-
-
-def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
-
-    record = chat_record(runtime_root, chat_id)
-    if record is None:
-        return None
-    return record.harness_session_id
 
 
 def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:

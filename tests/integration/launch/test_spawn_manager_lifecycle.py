@@ -23,7 +23,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -33,6 +33,7 @@ from meridian.lib.telemetry import init_telemetry
 from tests.support.async_determinism import assert_still_pending
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch_paths import launch_paths
+from tests.support.spawn_manager import active_connection
 
 
 def _build_config(
@@ -43,7 +44,7 @@ def _build_config(
 ) -> ConnectionConfig:
     pi_session_role = "spawned" if harness_id is HarnessId.PI else None
     return ConnectionConfig(
-        launch=launch_paths(resolve_runtime_paths(project_root).root_dir, spawn_id),
+        launch=launch_paths(resolve_project_runtime_root_for_write(project_root), spawn_id),
         harness_id=harness_id,
         prompt="hello",
         control_root=project_root,
@@ -76,6 +77,10 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
             return HarnessId.CODEX
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -134,7 +139,7 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
         await start_task
 
     assert connection_stopped.is_set()
-    assert manager.get_connection(spawn_id) is None
+    assert active_connection(manager, spawn_id) is None
 
 
 @pytest.mark.asyncio
@@ -143,7 +148,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     cleanup_started = asyncio.Event()
     release_cleanup = asyncio.Event()
 
@@ -190,6 +195,10 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             _ = semantics
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -265,7 +274,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         assert completion_before_cleanup_release.error == "connection_closed_without_terminal_event"
 
         # Session cleanup removes live connection before cleanup fully drains.
-        assert manager.get_connection(spawn_id) is None
+        assert active_connection(manager, spawn_id) is None
 
         with pytest.raises(TransportDead, match=f"Spawn {spawn_id} is not active"):
             await manager.deliver(spawn_id, "late message", source="test")
@@ -286,7 +295,7 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
     sink = RecordingTelemetrySink()
     init_telemetry(sink=sink)
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     spawn_id = SpawnId("p-drop")
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
 
@@ -296,6 +305,10 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
             return HarnessId.CODEX
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -353,7 +366,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     spawn_id = start_spawn(
         runtime_root,
         chat_id="c1",
@@ -374,7 +387,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
 
     monkeypatch.setattr(
         spawn_manager_module,
-        "terminate_recorded_spawn_scope",
+        "terminate_spawn_scopes",
         _record_reap,
         raising=False,
     )
@@ -385,6 +398,10 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
             return HarnessId.CODEX
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property
@@ -474,7 +491,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
-    runtime_root = resolve_runtime_paths(project_root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
 
     class FakeControlSocketServer:
         def __init__(self, socket_path: Path, route: object) -> None:
@@ -525,6 +542,10 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             _ = semantics
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property

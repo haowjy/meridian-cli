@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.control as spawn_control
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.report import extract_or_fallback_report
@@ -32,6 +32,7 @@ from tests.support.resident_drain import (
     resident_event,
     start_manager,
 )
+from tests.support.spawn_manager import active_connection
 
 
 @pytest.mark.asyncio
@@ -226,7 +227,7 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
@@ -251,7 +252,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert connection.fake_resident_backend.awaiting_done_values[-1] is True
 
         spawn_store.finalize_spawn(
@@ -316,7 +317,7 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert connection.fake_resident_backend.awaiting_done_values[-1] is True
     finally:
         await manager.stop_spawn(spawn_id)
@@ -440,7 +441,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
 
         await determinism.sleep(0.18)
 
-        result = spawn_api.spawn_rearm_sync(
+        result = spawn_control.spawn_rearm_sync(
             SpawnRearmInput(spawn_id=str(spawn_id), reason="p2 is still running"),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
