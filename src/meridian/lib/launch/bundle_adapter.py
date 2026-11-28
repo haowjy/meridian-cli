@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
 # First Mars release whose launch bundle takes ``--provided-root`` (every request sends it, so an
 # agent shipped in the wheel resolves) and reports ``agent_not_found`` and ``agent_renamed``.
-_MARS_BUNDLE_MIN_VERSION = "0.40.1"
+_MARS_BUNDLE_MIN_VERSION = "0.41.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
