@@ -414,7 +414,8 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         profile_warning = (
             f"Configured agent profile '{agent}' is unavailable; running without an agent profile."
         )
-        routing, alias_catalog, bundle_result = ask_for_bundle(None)
+        agent = None
+        routing, alias_catalog, bundle_result = ask_for_bundle(agent)
     profile = (
         parse_agent_profile(Path(bundle_result.agent_source_path).expanduser())
         if bundle_result.agent_source_path is not None
@@ -422,8 +423,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     )
 
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
-    full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
-    base_resolved = resolve(*full_layers)
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
@@ -555,7 +554,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         resolved_model=resolved_model,
         resolved_harness=resolved_harness,
         routing_model=model_selection.selected_model_token,
-        routing_agent=base_resolved.agent,
+        routing_agent=agent,
         execution_policy=resolved_execution_policy,
         warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
