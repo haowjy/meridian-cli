@@ -191,7 +191,7 @@ function touched($: EngineInterface, s: State): void {
   void s.lastActivity.catch(() => undefined)
 }
 
-function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
+function enqueue<T>(s: State, task: () => Promise<T>): Promise<T | undefined> {
   const run = s.queue.then(task).catch(() => undefined)
   s.queue = run
   return run
