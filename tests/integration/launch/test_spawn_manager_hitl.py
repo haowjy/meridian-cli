@@ -123,6 +123,10 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def native_task_source(self) -> None:
             return None
 
+        def drain_plan(self, context: object) -> None:
+            _ = context
+            return None
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -276,6 +280,10 @@ async def test_spawn_manager_opencode_hitl_requests_auto_rejected_for_spawned_ag
             _ = semantics
 
         def native_task_source(self) -> None:
+            return None
+
+        def drain_plan(self, context: object) -> None:
+            _ = context
             return None
 
         @property

@@ -42,7 +42,7 @@ stateDiagram-v2
 - `hold.json` (a checkpoint between turns) and `rearms.jsonl` (rearms granted) are side files
   in the launch directory, because spawn rows refuse unknown fields.
 - Pi doesn't use this hold. It waits for its descendants to go quiet
-  (`pi_completion_profile.py`, `pi_drain.py`). `--timeout` is a separate absolute ceiling over
+  (`lib/harness/pi_completion_profile.py`, `lib/harness/pi_drain.py`). `--timeout` is a separate absolute ceiling over
   both.
 - Change this diagram with `decide` in `hold_state.py`.
 

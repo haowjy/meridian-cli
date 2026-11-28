@@ -27,9 +27,9 @@ from meridian.lib.harness.pi_private_state import (
     read_pi_consumption_state,
     read_pi_private_doc,
 )
+from meridian.lib.harness.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 _Model = TypeVar("_Model", bound=BaseModel)
 

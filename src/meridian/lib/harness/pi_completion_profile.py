@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
 from meridian.lib.harness.injected_marker import marked
+from meridian.lib.harness.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import consume_spawn_signal
 from meridian.lib.streaming.completion_contracts import (
@@ -21,10 +22,9 @@ from meridian.lib.streaming.completion_contracts import (
     WorkAssessment,
 )
 from meridian.lib.streaming.drain_policy import (
+    DrainAction,
     DrainPolicy,
-    PiRpcQuiescenceDrainPolicy,
 )
-from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
@@ -75,6 +75,20 @@ class PiCompletionCleanupPort(Protocol):
     cancel_descendants: Callable[[str], Awaitable[None]] | None
 
     def prepare_child_timeout(self, telemetry: ChildTimeoutTelemetry) -> None: ...
+
+
+class PiRpcQuiescenceDrainPolicy:
+    """Pi spawned-session policy: wait for quiescence before terminating."""
+
+    def __init__(self, *, quiescence_check: Callable[[], bool]) -> None:
+        self._quiescence_check = quiescence_check
+
+    def classify(self, outcome: TerminalEventOutcome) -> DrainAction:
+        if outcome.status != "succeeded":
+            return DrainAction(terminate=True, emit_turn_boundary=False)
+        if self._quiescence_check():
+            return DrainAction(terminate=True, emit_turn_boundary=False)
+        return DrainAction(terminate=False, emit_turn_boundary=True)
 
 
 class PiCompletionProfile:
@@ -655,4 +669,9 @@ def _terminal_outcome(
     return TerminalEventOutcome(status=status, exit_code=exit_code, error=error)
 
 
-__all__ = ["ChildTimeoutTelemetry", "PiCompletionProfile", "PiOutstandingWork"]
+__all__ = [
+    "ChildTimeoutTelemetry",
+    "PiCompletionProfile",
+    "PiOutstandingWork",
+    "PiRpcQuiescenceDrainPolicy",
+]

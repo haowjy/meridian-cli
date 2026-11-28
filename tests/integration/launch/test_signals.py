@@ -85,6 +85,10 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def native_task_source(self) -> None:
             return None
 
+        def drain_plan(self, context: object) -> None:
+            _ = context
+            return None
+
         @property
         def resident_backend(self) -> None:
             return None

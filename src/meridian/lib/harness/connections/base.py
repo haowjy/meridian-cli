@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.streaming.completion_contracts import NativeTaskSource
+    from meridian.lib.streaming.drain_coordinator import DrainPlan
+    from meridian.lib.streaming.drain_plan_factory import DrainPlanContext
 
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
 
@@ -363,6 +365,12 @@ class HarnessConnection(Generic[SpecT], ABC):
         return not self.health()
 
     def native_task_source(self) -> NativeTaskSource | None:
+        return None
+
+    def drain_plan(self, context: DrainPlanContext) -> DrainPlan | None:
+        """A harness's own completion engine, used when it has no native task source
+        or resident backend; None keeps the single-turn baseline."""
+        _ = context
         return None
 
     @property
