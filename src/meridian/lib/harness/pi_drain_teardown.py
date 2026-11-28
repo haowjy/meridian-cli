@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,10 +8,9 @@ from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.streaming.drain_teardown import TeardownReport
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+    from meridian.lib.harness.connections.base import HarnessConnection
+    from meridian.lib.streaming.drain_plan_factory import EmitEvent
     from meridian.lib.streaming.spawn_session import DrainOutcome
-
-EmitEvent = Callable[[SpawnId, "RawHarnessEvent"], None]
 
 
 @dataclass(frozen=True)
@@ -71,4 +69,4 @@ class PiDrainSessionTeardown:
         )
 
 
-__all__ = ["EmitEvent", "PiDrainSessionTeardown"]
+__all__ = ["PiDrainSessionTeardown"]

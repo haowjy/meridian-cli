@@ -10,18 +10,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.pi_disk_watcher import PiDiskWatcher
 from meridian.lib.harness.pi_private_state import (
     DELIVERY_RECEIPTS_FILENAME,
     DeliveryObservations,
     DeliveryReceipts,
 )
-from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
-from meridian.lib.streaming.completion_contracts import EvidenceFailure
-from meridian.lib.streaming.disk_watcher import PiDiskWatcher
-from meridian.lib.streaming.pi_work_ledger import (
+from meridian.lib.harness.pi_work_ledger import (
     PiPrivateWorkLedger,
     PiPrivateWorkSnapshot,
 )
+from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
+from meridian.lib.streaming.completion_contracts import EvidenceFailure
 
 
 @dataclass

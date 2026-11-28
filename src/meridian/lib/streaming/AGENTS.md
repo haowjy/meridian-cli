@@ -1,9 +1,11 @@
 # Streaming runtime
 
 Keep harness completion policy behind the drain coordinator, not in `SpawnManager` or
-the generic drain loop. A native task source or resident backend selects the shared hold;
-otherwise Pi selects its own completion profile in `drain_plan_factory.py`. The plan factory injects delivery and descendant
-cleanup capabilities into policy rather than letting policy construct application services.
+the generic drain loop, and name no harness here. A native task source or resident backend
+selects the shared hold; otherwise the connection's `drain_plan(DrainPlanContext)` may
+return its own plan (Pi's completion engine, in `lib/harness/pi_drain.py`). The plan factory
+injects delivery and descendant cleanup capabilities through `DrainPlanContext` rather than
+letting policy construct application services.
 
 The hold's lifecycle is the pure `decide(state, facts)` table in `hold_state.py` and its
 folds. Add behavior there rather than adding flags to the I/O shell. Its rationale is in
@@ -28,4 +30,4 @@ queue is full, or the subscriber can hang forever. Do not share a manager across
 event loops; its session registry is not thread-safe.
 
 See [runtime context](.context/CONTEXT.md) for lifecycle and socket contracts and
-[Pi drain](.context/pi-drain.md) for Pi quiescence.
+[Pi drain](../harness/.context/pi-drain.md) for Pi quiescence.

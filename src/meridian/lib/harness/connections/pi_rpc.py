@@ -7,7 +7,7 @@ import time
 from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Final, NamedTuple, cast
+from typing import TYPE_CHECKING, Final, NamedTuple, cast
 
 from meridian.lib.core.delivery import DeliveryKind, DeliveryRefused, TransportDead
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
@@ -54,6 +54,10 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+
+if TYPE_CHECKING:
+    from meridian.lib.streaming.drain_coordinator import DrainPlan
+    from meridian.lib.streaming.drain_plan_factory import DrainPlanContext
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +186,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
         return None if self._child is None else self._child.scope_snapshot
+
+    def drain_plan(self, context: DrainPlanContext) -> DrainPlan:
+        # pi_drain imports this module (via pi_completion_profile); import it late.
+        from meridian.lib.harness.pi_drain import build_pi_drain_plan
+
+        return build_pi_drain_plan(self, context)
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         if self._state != "created":
