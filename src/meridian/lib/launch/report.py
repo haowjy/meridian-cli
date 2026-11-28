@@ -3,9 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.spawn_lifecycle import DurableReportEvidence, classify_durable_report_text
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.spawn_report import DurableReportEvidence, classify_durable_report_text
 
 ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 

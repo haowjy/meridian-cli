@@ -5,7 +5,7 @@ any project; selectors, native IDs and legacy IDs look in the current project. A
 target carries its runtime root and project root (a row's `control_root`; that directory may
 be gone, which only commands that work in it refuse). The caller's spawn ID is meaningful
 only in its own root: anything keyed by "the caller" asks `RuntimeContext.caller_in(root)`
-or `core/caller.py` and gets none for another root, so no observation, pin or owed result
+or `state/caller.py` and gets none for another root, so no observation, pin or owed result
 is written there. `-C` into another project still removes the caller's project-scoped
 variables for the whole invocation (`cli/main.py`); `--continue` of a claimed ID in another
 project re-runs the command under `-C` (`cli/continue_reentry.py`) rather than trying to

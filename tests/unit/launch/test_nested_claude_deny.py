@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from meridian.lib.catalog.mars_cli import MarsRoot
+from meridian.lib.core.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_claude import project_claude_settings_json
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding, ResolvedLaunchSpec
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.ops import mars as mars_ops
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import (
     build_launch_context,

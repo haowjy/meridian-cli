@@ -18,17 +18,16 @@ from meridian.lib.core.overrides import (
     normalize_execution_policy_fields,
     resolve,
 )
-from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
-from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.ops.mars import MarsAgentInventory
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     CONSTRAINED_SANDBOX_MODES,
     SandboxDerivedNetwork,
     resolve_network_policy,
 )
-from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
+from meridian.lib.core.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
+from meridian.lib.core.types import PLUGIN_HOSTED, HarnessId
+from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.ops.mars import MarsAgentInventory
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -422,7 +421,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         else None
     )
 
-    profile_overrides = RuntimeOverrides.from_agent_profile(profile)
+    profile_overrides = RuntimeOverrides(
+        resident_rearm_budget=None if profile is None else profile.resident_rearm_budget
+    )
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness

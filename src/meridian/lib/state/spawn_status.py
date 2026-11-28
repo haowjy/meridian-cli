@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, is_active_spawn_status
 from meridian.lib.state.json_doc import read_model
 from meridian.lib.state.launch_lock import (
     Busy,

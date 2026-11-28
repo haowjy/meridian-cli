@@ -14,16 +14,16 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.core.native_identity import (
-    NativeKeyFields,
-    NativeSessionUnavailable,
-    NativeStoreMove,
-)
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_store
+from meridian.lib.state.native_identity import (
+    NativeKeyFields,
+    NativeSessionUnavailable,
+    NativeStoreMove,
+)
 from meridian.lib.state.paths import rebase_path
 from meridian.lib.state.session_fold import PathMove, SessionRecord, SessionRelocateEvent
 

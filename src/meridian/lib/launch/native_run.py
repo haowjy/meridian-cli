@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from meridian.lib.core.native_identity import (
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.launch.session_scope import SessionAttempt
+from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.native_binding import Conflict
+from meridian.lib.state.native_identity import (
     BindSource,
     NativeEntryMismatch,
     NativeIdentity,
@@ -22,12 +28,6 @@ from meridian.lib.core.native_identity import (
     NativeObservationBatch,
     PostExit,
 )
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
-from meridian.lib.launch.session_scope import SessionAttempt
-from meridian.lib.state import session_identity, session_store, spawn_store
-from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 if TYPE_CHECKING:

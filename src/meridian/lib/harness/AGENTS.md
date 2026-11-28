@@ -40,6 +40,10 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
   `project_launch_env()`.
 - **Spawn-owned journals** write through the published-spawn artifact seam, so a late write
   can't recreate a deleted spawn directory.
+- **Pi's completion engine lives here** (`pi_drain.py`, `pi_completion_profile.py`,
+  `pi_quiescence.py`, `pi_work_ledger.py`, `pi_lifecycle_tracker.py`, `pi_disk_watcher.py`,
+  `pi_drain_teardown.py`), built on `lib/streaming/`'s completion contracts; production code reaches it only
+  through `PiRpcConnection.drain_plan`. Rules: [Pi drain](.context/pi-drain.md).
 - **Pi usage is per assistant message**: fold each `message_end` once, because
   `agent_end.messages` repeats history.
 - **Launch finalization owns `report.md` and `stderr.log`.** Harnesses expose evidence and
@@ -49,7 +53,7 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 
 ## `agy/` is hosted by its plugin
 
-Meridian never runs Antigravity. `plugin_hosted.PLUGIN_HOSTED` is the one list of such harnesses;
+Meridian never runs Antigravity. `core/types.PLUGIN_HOSTED` is the one list of such harnesses;
 `HarnessId.launched_by_meridian` derives from it. Because Meridian may not exec it, a launch that
 names it **prints** the command (`meridian agy`, `--harness agy`, `--continue <agy chat>`);
 shortcut names, `--harness` help and streaming serve ask this. The harness's plugin writes the session's row and no Meridian runner exists, so
@@ -238,6 +242,6 @@ every file in `HARNESS_EXTENSION_TOUCHPOINTS`.
 ## Depth
 
 [.context/CONTEXT.md](.context/CONTEXT.md) holds contracts, approval routing and the
-terminal event table. See also [adapter-notes.md](.context/adapter-notes.md),
+terminal event table. See also [adapter-notes.md](.context/adapter-notes.md), [pi-drain.md](.context/pi-drain.md),
 [session-transcripts.md](.context/session-transcripts.md) and
 [pi-integration.md](.context/pi-integration.md).

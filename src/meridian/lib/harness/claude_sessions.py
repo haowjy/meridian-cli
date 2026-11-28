@@ -13,13 +13,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import (
+from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform.atomic import atomic_replace, atomic_symlink
+from meridian.lib.state.native_identity import (
     NativeEntryMismatch,
     NativeKeyFields,
     NativeSessionUnavailable,
 )
-from meridian.lib.platform import IS_WINDOWS, get_home_path
-from meridian.lib.platform.atomic import atomic_replace, atomic_symlink
 from meridian.lib.utils.json_shapes import loads_json_object
 
 logger = logging.getLogger(__name__)

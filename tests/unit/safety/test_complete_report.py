@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from meridian.lib.safety.policy import PermissionPolicy, ReportLine, complete_report, rule_element
-from meridian.lib.tools import PROJECT_ORIGIN, ToolRule
+from meridian.lib.core.permission_policy import (
+    PermissionPolicy,
+    ReportLine,
+    complete_report,
+    rule_element,
+)
+from meridian.lib.core.tools import PROJECT_ORIGIN, ToolRule
 
 
 def test_mars_note_joins_a_line_the_compile_already_marked_partial() -> None:

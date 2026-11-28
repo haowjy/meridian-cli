@@ -40,9 +40,9 @@ import json
 import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 row = spawn_store.get_spawn(root, os.environ['SOURCE_SPAWN_ID'])
 assert row is not None and row.chat_id and row.harness_session_id
 fields = ('chat_id', 'harness', 'harness_session_id', 'model', 'agent', 'work_id', 'prompt')
@@ -72,11 +72,11 @@ import json
 import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 out = Path(os.environ['FORK_OUTPUT'])
 meta = json.loads((out / 'source-meta.json').read_text())
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 for ref in (os.environ['SOURCE_SPAWN_ID'], os.environ['SOURCE_CHAT_ID']):
     doc = json.loads((out / f'{ref}.json').read_text())
     assert doc['spawn_id'] != os.environ['SOURCE_SPAWN_ID']
@@ -165,8 +165,8 @@ for HARNESS in claude codex opencode; do
 import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 seed = spawn_store.get_spawn(root, os.environ['SEED_ID'])
 fork = spawn_store.get_spawn(root, os.environ['FORK_ID'])
 assert seed is not None and fork is not None
@@ -193,8 +193,8 @@ import json
 import os
 from pathlib import Path
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 doc = json.loads((Path(os.environ['FORK_OUTPUT']) / 'raw.json').read_text())
 assert doc['forked_from'] == os.environ['SOURCE_CHAT_ID']
 row = spawn_store.get_spawn(root, doc['spawn_id'])
@@ -214,9 +214,9 @@ import json
 import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 before = json.loads((Path(os.environ['FORK_OUTPUT']) / 'source-meta.json').read_text())
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 row = spawn_store.get_spawn(root, os.environ['SOURCE_SPAWN_ID'])
 assert row is not None
 assert {field: getattr(row, field) for field in before} == before
@@ -243,8 +243,8 @@ MISSING_ID="$(uv run python - <<'PY'
 import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+root = resolve_project_runtime_root_for_write(Path(os.environ['MERIDIAN_PROJECT_DIR']))
 sid = spawn_store.start_spawn(root, chat_id='c900001', model=os.environ['FORK_MODEL'],
     agent='reviewer', harness=os.environ['FORK_HARNESS'], prompt='Unbound fixture',
     harness_session_id=None)

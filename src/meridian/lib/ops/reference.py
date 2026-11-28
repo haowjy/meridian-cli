@@ -5,9 +5,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.plugin_hosted import native_store
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -18,6 +16,8 @@ from meridian.lib.ops.reference_recovery import (
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.caller import same_runtime_root
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
 

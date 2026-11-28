@@ -10,7 +10,7 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import mermaid_app
 from meridian.cli.invocation import get_global_options
-from meridian.lib.mermaid.validator import ScanOptions, detect_tier, validate_path
+from meridian.lib.mermaid.validator import detect_tier
 
 
 @mermaid_app.default
@@ -73,47 +73,31 @@ def cmd_mermaid_check(
     ] = None,
 ) -> None:
     """Check mermaid diagram syntax. Exit 0 if clean, exit 1 if errors found."""
+    from meridian.lib.mermaid.check import check_path
     from meridian.lib.mermaid.report import format_check_output
-    from meridian.lib.mermaid.scanner import collect_targets
     from meridian.lib.mermaid.serializer import serialize_check
-    from meridian.lib.mermaid.style import get_all_categories, run_style_checks
-    from meridian.lib.mermaid.style.types import CheckResult, StyleCheckOptions
+    from meridian.lib.mermaid.style import get_all_categories
+    from meridian.lib.mermaid.style.types import StyleCheckOptions
 
     resolved = path.resolve()
     if not resolved.exists():
         print(f"Error: path not found: {path}", file=sys.stderr)
         raise SystemExit(2)
 
-    opts = ScanOptions(
-        exclude=exclude or [],
-        depth=depth,
-    )
-    result = validate_path(resolved, opts=opts)
-
     disabled_categories = _parse_disabled_categories(disable)
     known_categories = {category.id for category in get_all_categories()}
     for category in sorted(disabled_categories - known_categories):
         print(f"unknown warning category: {category}", file=sys.stderr)
 
-    style_options = StyleCheckOptions(
-        enabled=not no_style,
-        strict=strict,
-        disabled_categories=disabled_categories,
-    )
-
-    root = resolved if resolved.is_dir() else resolved.parent
-    targets = collect_targets(
+    check_result = check_path(
         resolved,
-        root,
-        depth=opts.depth,
-        exclude=opts.exclude if opts.exclude else None,
-    )
-    active_warnings, suppressed_warnings = run_style_checks(targets, result.results, style_options)
-    check_result = CheckResult(
-        validation=result,
-        warnings=active_warnings,
-        suppressed_warnings=suppressed_warnings,
-        style_options=style_options,
+        depth=depth,
+        exclude=exclude,
+        style=StyleCheckOptions(
+            enabled=not no_style,
+            strict=strict,
+            disabled_categories=disabled_categories,
+        ),
     )
 
     effective_fmt = "json" if get_global_options().output.format == "json" else fmt

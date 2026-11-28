@@ -326,6 +326,8 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
     import json
     from pathlib import Path
 
+    from meridian.lib.core.permission_policy import PermissionPolicy, PlatformCommand, PlatformRule
+    from meridian.lib.core.tools import ToolRule
     from meridian.lib.harness.opencode_backend import OpenCodeVersion
     from meridian.lib.harness.projections.permissions_opencode import (
         compile_opencode_permissions,
@@ -333,8 +335,6 @@ def test_launch_config_binds_compiled_permissions_to_reserved_agent(version: str
     from meridian.lib.harness.projections.project_opencode_config import (
         project_opencode_launch_config,
     )
-    from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand, PlatformRule
-    from meridian.lib.tools import ToolRule
 
     config = {
         "theme": "native",

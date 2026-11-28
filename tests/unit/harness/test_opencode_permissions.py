@@ -17,12 +17,12 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.permission_policy import PermissionPolicy, PlatformCommand, PlatformRule
+from meridian.lib.core.tools import STRICTNESS, ToolAction, ToolRule, strictest
 from meridian.lib.harness.opencode_backend import OpenCodeVersion
 from meridian.lib.harness.projections.permissions_opencode import compile_opencode_permissions
 from meridian.lib.harness.projections.project_opencode_config import _project_v1_permissions
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand, PlatformRule
-from meridian.lib.tools import STRICTNESS, ToolAction, ToolRule, strictest
 
 _FIXTURES = json.loads(
     (Path(__file__).parents[2] / "fixtures" / "tool_policy_cases.json").read_text()

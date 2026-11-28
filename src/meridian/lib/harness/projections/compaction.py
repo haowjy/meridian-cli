@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from meridian.lib.core.permission_policy import EnforcementReport, ReportLine
 from meridian.lib.harness.projections.native_config import (
     CODEX_CONFIG_AUTO_COMPACT_TOKEN_LIMIT_KEY,
     CODEX_CONFIG_POST_TURN_COMPACT_THRESHOLD_PERCENT_KEY,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import EnforcementReport, ReportLine
 
 CLAUDE_AUTOCOMPACT_MIN_TOKENS = 100_000
 CLAUDE_AUTOCOMPACT_MAX_TOKENS = 1_000_000

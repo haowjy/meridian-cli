@@ -8,7 +8,6 @@ from collections.abc import Generator, Iterable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.native_witness import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.harness.opencode_transcript import (
     connect_readonly,
@@ -18,6 +17,7 @@ from meridian.lib.harness.opencode_transcript import (
     iter_v2_session_events,
     v2_message_event,
 )
+from meridian.lib.state.native_identity import NativeKey
 
 OpenCodeWitness = OpenCodeV1Witness | OpenCodeV2Witness
 

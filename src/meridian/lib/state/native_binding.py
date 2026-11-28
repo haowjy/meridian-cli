@@ -3,7 +3,7 @@ from typing import Literal
 
 import structlog
 
-from meridian.lib.core.native_identity import BindSource, NativeKeyFields
+from meridian.lib.state.native_identity import BindSource, NativeKeyFields
 
 
 @dataclass(frozen=True)

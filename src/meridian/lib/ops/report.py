@@ -3,12 +3,11 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.locate import RunTarget, resolve_spawn_target
 from meridian.lib.ops.runtime import (
-    async_from_sync,
     resolve_runtime_root_for_read,
     runtime_context,
 )
@@ -199,7 +198,3 @@ def report_search_sync(
             break
 
     return ReportSearchOutput(results=tuple(matches))
-
-
-report_show = async_from_sync(report_show_sync)
-report_search = async_from_sync(report_search_sync)

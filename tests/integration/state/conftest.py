@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.spawn.reaper import reconcile_active_spawn
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-from meridian.lib.state.reaper import reconcile_active_spawn
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import LaunchMode, SpawnRecord
 from tests.support.launch_paths import launch_paths
 
@@ -16,7 +16,7 @@ _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
 
 def _state_root(tmp_path: Path) -> Path:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
 
@@ -121,7 +121,7 @@ def fake_managed_primary_birth_liveness(
         return live_pids(pid) if callable(live_pids) else pid in live_pids
 
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        "meridian.lib.spawn.managed_primary.is_process_alive_with_birth",
         _is_alive,
     )
 
@@ -150,9 +150,9 @@ def recording_managed_primary_terminations(monkeypatch) -> list[int]:
             skip_reason=None,
         )
 
-    monkeypatch.setattr("meridian.lib.state.managed_primary._terminate_pid", _terminate)
+    monkeypatch.setattr("meridian.lib.spawn.managed_primary._terminate_pid", _terminate)
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _terminate_scope,
     )
     return terminated_pids
@@ -193,7 +193,7 @@ def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
         )
 
     monkeypatch.setattr(target, _cleanup)
-    if target == "meridian.lib.core.process_cleanup.terminate_tree_sync":
+    if target == "meridian.lib.spawn.cleanup.terminate_tree_sync":
 
         def _cleanup_claimed(scope, *, grace_seconds: float, reason: str):
             calls.append(scope.root_pid)
@@ -209,7 +209,7 @@ def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
             )
 
         monkeypatch.setattr(
-            "meridian.lib.core.process_cleanup.terminate_scope_sync",
+            "meridian.lib.spawn.cleanup.terminate_scope_sync",
             _cleanup_claimed,
         )
     return calls

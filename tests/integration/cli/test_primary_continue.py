@@ -20,7 +20,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
-from meridian.lib.launch.process import ProcessOutcome
+from meridian.lib.launch.process.runner import ProcessOutcome
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
@@ -348,7 +348,9 @@ def test_primary_continue_does_not_inherit_ambient_work(
             resolved_harness_session_id="00000000-0000-4000-8000-000000000045",
         )
 
-    monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
+    monkeypatch.setattr(
+        "meridian.lib.launch.process.runner.run_harness_process", run_harness_process
+    )
     maintained: list[str] = []
 
     def maintain_history(project: Path, primary_spawn_id: str) -> None:
@@ -672,8 +674,8 @@ def test_fork_old_harness_generation_preserves_selected_history(
     _run_primary_continue(project_root, continue_ref=None, fork_ref="older-native", dry_run=True)
     assert original is not None
     assert requests[0].session.forked_from_history_id == original.history_id
+    from meridian.lib.core.domain import PrimarySessionMetadata
     from meridian.lib.launch.session_scope import session_scope
-    from meridian.lib.launch.types import PrimarySessionMetadata
 
     with session_scope(
         launch_slot=LaunchSlot(),

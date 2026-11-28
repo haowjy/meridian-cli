@@ -15,12 +15,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.native_identity import (
-    InvalidNativeSession,
-    NativeKeyFields,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-)
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
@@ -38,9 +32,14 @@ from meridian.lib.ops.legacy_native_import import (
     retained_chat_facts,
 )
 from meridian.lib.ops.locate import ChatHit, Located, Untracked, locate
-from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Conflict
+from meridian.lib.state.native_identity import (
+    InvalidNativeSession,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.state.session_binding import session_bindings
 
 MAX_LISTED = 20
@@ -389,13 +388,9 @@ def _bind(
     )
 
 
-session_repair = async_from_sync(repair_session_reference_sync)
-
-
 __all__ = [
     "RepairCandidate",
     "SessionRepairInput",
     "SessionRepairOutput",
     "repair_session_reference_sync",
-    "session_repair",
 ]

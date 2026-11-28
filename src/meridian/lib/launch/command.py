@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import cast
 
 from meridian.lib.core.execution_policy import NativeConfig
+from meridian.lib.core.permission_policy import PermissionPolicy
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import PermissionPolicy
 
 
 def normalize_system_prompt_passthrough_args(

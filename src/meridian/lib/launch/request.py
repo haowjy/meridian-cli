@@ -8,11 +8,11 @@ from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.permission_policy import EnforcementReport
+from meridian.lib.core.tools import ToolRule
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
-from meridian.lib.safety.policy import EnforcementReport
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
-from meridian.lib.tools import ToolRule
 
 
 def _empty_template_vars() -> dict[str, str]:

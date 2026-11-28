@@ -77,6 +77,10 @@ class _ClaudeSeedPersistenceConnection:
     def native_task_source(self) -> None:
         return None
 
+    def drain_plan(self, context: object) -> None:
+        _ = context
+        return None
+
     @property
     def resident_backend(self) -> None:
         return None
@@ -156,6 +160,10 @@ class _UnboundOpenCodeConnection:
     def native_task_source(self) -> None:
         return None
 
+    def drain_plan(self, context: object) -> None:
+        _ = context
+        return None
+
     @property
     def resident_backend(self) -> None:
         return None
@@ -229,6 +237,10 @@ class _OpenCodeConnectSessionConnection:
         _ = semantics
 
     def native_task_source(self) -> None:
+        return None
+
+    def drain_plan(self, context: object) -> None:
+        _ = context
         return None
 
     @property
@@ -524,8 +536,8 @@ async def test_streaming_claude_exec_receives_prebound_identity(
     import json
     import shlex
 
+    from meridian.lib.core.domain import PrimarySessionMetadata
     from meridian.lib.launch.session_scope import session_scope
-    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.state import session_store
     from tests.support.executables import prepend_fake_executables
 

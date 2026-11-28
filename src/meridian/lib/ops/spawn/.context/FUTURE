@@ -1,7 +1,7 @@
 # Spawn follow-ups
 
 - The `work_id` column in `spawn list` reports the row's chat *current* work item
-  (`_chat_work_ids` in `api.py`), while `--work` filters on spawn membership via
+  (`_chat_work_ids` in `read.py`), while `--work` filters on spawn membership via
   `spawn_work_id` in `ops/work_membership.py`. They disagree for finished primaries
   whose session switched items: `--primary --view all` can show a row whose
   `work_id` is another item, and `--work <that item>` returns nothing. Jimmy owns
@@ -11,7 +11,7 @@
   a typo; decide whether list should validate the work id, including the case of
   a work item that has since been deleted. Record the outcome here.
 
-- Untangle in the rewrite: `api.py` renews a wait lease on every poll, even
+- Untangle in the rewrite: `wait.py` renews a wait lease on every poll, even
   though the lease lasts at least 30 seconds and polling defaults to 0.25 seconds.
   Renew when the pending set changes or a portion of the lease has elapsed.
 - Untangle in the rewrite (#943): src/meridian/lib/ops/spawn/execute.py:370-453 starts a background worker in a new session, drops its Popen handle and does not wait; spawn.create is also reachable from the long-lived server. setsid does not reparent a child while that parent lives. A temporary stdlib subprocess probe observed the exited child as a zombie until a subprocess cleanup pass. Give a long-lived launcher an asynchronous child-reaping owner while retaining immediate background return and launch-lock handoff.

@@ -22,18 +22,18 @@ from uuid import UUID
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import (
-    InvalidNativeSession,
-    NativeKeyFields,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-)
 from meridian.lib.core.types import ChatId
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.native_binding import Conflict
+from meridian.lib.state.native_identity import (
+    InvalidNativeSession,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths
 from meridian.lib.state.retention_archive import read_archived_member, read_receipts
 from meridian.lib.state.session_binding import session_bindings

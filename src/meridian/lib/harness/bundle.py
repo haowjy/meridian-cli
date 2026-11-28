@@ -7,6 +7,12 @@ from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
 
 from meridian.lib.core.delivery import MessageRoute
+from meridian.lib.core.permission_policy import (
+    UNENFORCED_POLICY,
+    EffectivePolicy,
+    EnforcementReport,
+    PermissionPolicy,
+)
 from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
@@ -21,12 +27,6 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
-from meridian.lib.safety.policy import (
-    UNENFORCED_POLICY,
-    EffectivePolicy,
-    EnforcementReport,
-    PermissionPolicy,
-)
 from meridian.lib.state.paths import LaunchPaths
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)

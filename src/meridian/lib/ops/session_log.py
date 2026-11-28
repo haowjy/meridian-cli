@@ -5,10 +5,9 @@ from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import ToolCall
-from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_log_render import render_session_log
 from meridian.lib.ops.session_render import (
     SessionWindow,
@@ -511,15 +510,11 @@ def session_log_sync(
     return select_session_log_window(parsed, payload)
 
 
-session_log = async_from_sync(session_log_sync)
-
-
 __all__ = [
     "SessionLogEntry",
     "SessionLogEntryMessage",
     "SessionLogInput",
     "SessionLogOutput",
     "select_session_log_window",
-    "session_log",
     "session_log_sync",
 ]

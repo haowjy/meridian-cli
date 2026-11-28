@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from meridian.lib.state.managed_primary import terminate_managed_primary_processes
+from meridian.lib.spawn.managed_primary import terminate_managed_primary_processes
 from meridian.lib.state.primary_meta import PrimaryMetadata
 
 
@@ -37,7 +37,7 @@ def test_terminate_managed_primary_processes_skips_birth_mismatch(monkeypatch) -
 
     monkeypatch.setattr("meridian.lib.state.liveness.psutil.pid_exists", lambda pid: True)
     monkeypatch.setattr("meridian.lib.state.liveness.psutil.Process", _FakeProcess)
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    monkeypatch.setattr("meridian.lib.spawn.managed_primary.psutil.Process", _FakeProcess)
 
     signaled = terminate_managed_primary_processes(
         metadata,

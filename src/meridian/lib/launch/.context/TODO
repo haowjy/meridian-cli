@@ -1,4 +1,4 @@
 - Make dry-run runtime roots optional. Preparation and binding must skip runtime
   path derivations until an execution path proves a materialized root. Remove
   `get_dry_run_preview_root` and its callers in `plan.py`, `ops/spawn/prepare.py`
-  and `ops/spawn/api.py`.
+  and `ops/spawn/create.py`.

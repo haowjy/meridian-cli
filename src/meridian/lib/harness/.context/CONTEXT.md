@@ -26,7 +26,7 @@ not hide it. Pi's `agent_end`
 is an attempt outcome, not completion: settlement, native idle and quiescence must all
 hold. Pi remains alive for child completion and notifications, so process exit cannot
 signal completion. Resident Codex and OpenCode also wait for persisted descendants.
-See [Pi drain](../../streaming/.context/pi-drain.md), [Pi integration](pi-integration.md)
+See [Pi drain](pi-drain.md), [Pi integration](pi-integration.md)
 and [transport contracts](../connections/.context/CONTEXT.md).
 
 ## Message delivery

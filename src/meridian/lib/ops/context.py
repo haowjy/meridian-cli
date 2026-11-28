@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
@@ -10,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.context.resolver import (
     ResolvedContext as ResolvedContextEntry,
 )
@@ -18,9 +18,8 @@ from meridian.lib.context.resolver import (
     context_env_key,
     resolve_context_paths,
 )
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
 from meridian.lib.launch.session_links import execution_link_chat, republish_chat_links
@@ -325,17 +324,6 @@ def resolve_active_work_scope(
     return resolved.work_scope
 
 
-def resolve_active_work_scope_dir(
-    project_root: Path,
-    runtime_root: Path,
-    *,
-    chat_id: str | None = None,
-) -> Path | None:
-
-    scope = resolve_active_work_scope(project_root, runtime_root, chat_id=chat_id)
-    return scope.root if scope is not None else None
-
-
 def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
     """Join a relative path under scope_dir, rejecting escapes."""
 
@@ -447,18 +435,6 @@ def _refresh_session_task_links(
         )
 
 
-async def task_dir(input: TaskDirInput) -> TaskDirOutput:
-    return await asyncio.to_thread(task_dir_sync, input)
-
-
-async def task_dir_set(input: TaskDirSetInput) -> TaskDirMutationOutput:
-    return await asyncio.to_thread(task_dir_set_sync, input)
-
-
-async def task_dir_clear(input: TaskDirClearInput) -> TaskDirMutationOutput:
-    return await asyncio.to_thread(task_dir_clear_sync, input)
-
-
 def context_sync(input: ContextInput) -> ContextOutput:
     from meridian.lib.ops.sync_daemon import project_sync_summaries
 
@@ -531,11 +507,6 @@ def context_dir_sync(name: str) -> str:
     return path.as_posix() if path is not None else ""
 
 
-async def context(input: ContextInput) -> ContextOutput:
-
-    return await asyncio.to_thread(context_sync, input)
-
-
 def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
 
     _ = input
@@ -574,21 +545,6 @@ def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
     return WorkRootOutput(work_root=resolved_paths.work_root.as_posix())
 
 
-async def work_current(input: WorkCurrentInput) -> WorkCurrentOutput:
-
-    return await asyncio.to_thread(work_current_sync, input)
-
-
-async def work_root(input: WorkRootInput) -> WorkRootOutput:
-
-    return await asyncio.to_thread(work_root_sync, input)
-
-
-async def work_path(input: WorkPathInput) -> WorkPathOutput:
-
-    return await asyncio.to_thread(work_path_sync, input)
-
-
 __all__ = [
     "ContextEntryOutput",
     "ContextInput",
@@ -604,20 +560,12 @@ __all__ = [
     "WorkPathOutput",
     "WorkRootInput",
     "WorkRootOutput",
-    "context",
     "context_sync",
     "resolve_active_work_scope",
-    "resolve_active_work_scope_dir",
-    "task_dir",
-    "task_dir_clear",
     "task_dir_clear_sync",
-    "task_dir_set",
     "task_dir_set_sync",
     "task_dir_sync",
-    "work_current",
     "work_current_sync",
-    "work_path",
     "work_path_sync",
-    "work_root",
     "work_root_sync",
 ]

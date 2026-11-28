@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast, runtime_chec
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.common import (
@@ -18,6 +17,7 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.native_identity import NativeKey
 
 if TYPE_CHECKING:
     from pydantic import JsonValue
