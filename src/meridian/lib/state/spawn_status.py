@@ -22,6 +22,7 @@ from meridian.lib.state.launch_lock import (
 )
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.spawn.legacy import warn_unrepaired_spawn_row
 from meridian.lib.state.spawn.model import CancelIntent, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     QuarantinedChatIdStatus,
@@ -171,6 +172,8 @@ def _read_current(runtime_root: Path, spawn_id: str) -> tuple[SpawnRecord | None
             return derive(runtime_root, row), is_active_spawn_status(row.status)
         if lock_free is False:
             return row, False
+    if row.record_mode != "historical":
+        warn_unrepaired_spawn_row(spawns_dir / spawn_id / "state.json")
     if not is_active_spawn_status(row.status) or legacy_runner_alive(row):
         return row, False
     return derive(runtime_root, row), True

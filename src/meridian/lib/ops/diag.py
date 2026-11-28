@@ -44,7 +44,8 @@ from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_fold import UnsupportedSessionFormat
 from meridian.lib.state.session_store import cleanup_stale_sessions
-from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+from meridian.lib.state.spawn.legacy_rows import MARKER as LEGACY_ROWS_MARKER
+from meridian.lib.state.spawn.legacy_rows import LegacyRow, repair_legacy_spawn_rows
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.user_paths import get_user_home
@@ -116,6 +117,7 @@ class DoctorOutput(BaseModel):
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
     legacy_pi_sessions: str | None = None
+    legacy_spawn_rows: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
     # The sync daemon, when this project has git contexts.
     autosync: str | None = None
@@ -166,6 +168,8 @@ class DoctorOutput(BaseModel):
         result = kv_block(pairs)
         if self.legacy_pi_sessions:
             result += f"\nlegacy_pi_sessions: {self.legacy_pi_sessions}"
+        if self.legacy_spawn_rows:
+            result += f"\nlegacy_spawn_rows: {self.legacy_spawn_rows}"
         for warning in self.warnings:
             result += f"\nwarning: {warning.code}: {warning.message}"
         for candidate in self.adhoc_project_dirs:
@@ -199,6 +203,7 @@ class LocalReport:
     warnings: tuple[DoctorWarning, ...] = ()
     repaired: tuple[str, ...] = ()
     legacy_pi_sessions: str | None = None
+    legacy_spawn_rows: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
 
 
@@ -234,6 +239,21 @@ def _check_legacy_worktree_temp(runtime_root: Path) -> DoctorWarning | None:
             "Legacy worktree-temp directory exists and is no longer used. Safe to delete manually."
         ),
         payload={"path": legacy_temp_dir.as_posix()},
+    )
+
+
+def _legacy_rows_summary(rewritten: tuple[LegacyRow, ...]) -> str | None:
+    if not rewritten:
+        return None
+    counts = {
+        kind: sum(kind in row.kinds for row in rewritten) for kind in ("v2", "dogfood", "lockless")
+    }
+    shown = ", ".join(row.spawn_id for row in rewritten[:10])
+    more = f" and {len(rewritten) - 10} more" if len(rewritten) > 10 else ""
+    return (
+        f"rewrote {len(rewritten)} spawn row(s) an older Meridian wrote in the current format ("
+        + ", ".join(f"{kind}: {count}" for kind, count in counts.items() if count)
+        + f"): {shown}{more}"
     )
 
 
@@ -365,11 +385,15 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
             except UnsupportedSessionFormat as exc:
                 logger.debug("legacy_pi_recovery_skipped", error=str(exc))
         with suppress(Exception):
-            dogfood = migrate_dogfood_spawn_rows(runtime_root)
-            if dogfood.failed:
-                logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
-            if dogfood.index_rearm_warning:
-                logger.warning("dogfood_index_rearm_failed", warning=dogfood.index_rearm_warning)
+            if not (runtime_root / LEGACY_ROWS_MARKER).exists():
+                legacy = repair_legacy_spawn_rows(runtime_root)
+                if legacy.failed:
+                    logger.warning(
+                        "legacy_spawn_rows_failed",
+                        failed={row.spawn_id: row.reason for row in legacy.failed},
+                    )
+                if legacy.index_rearm_warning:
+                    logger.warning("dogfood_index_rearm_failed", warning=legacy.index_rearm_warning)
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
@@ -431,29 +455,76 @@ def _doctor_local(
                 f"; inspect one with `meridian session repair cN` (e.g. {pi_recovery.unbound[0]})"
             )
 
-    dogfood = migrate_dogfood_spawn_rows(runtime_root)
-    if dogfood.migrated:
+    # Unlike the startup pass, doctor ignores the marker: the read warning sends people here.
+    legacy = repair_legacy_spawn_rows(runtime_root)
+    if any(row.dogfood for row in (*legacy.rewritten, *legacy.deferred, *legacy.unsettled)):
         repaired.append("dogfood_spawn_rows")
-    if dogfood.failed:
+    if any(not row.dogfood for row in legacy.rewritten):
+        repaired.append("legacy_spawn_rows")
+    legacy_rows_summary = _legacy_rows_summary(legacy.rewritten)
+    dogfood_failed = tuple(row for row in legacy.failed if row.dogfood)
+    if dogfood_failed:
         warnings.append(
             DoctorWarning(
                 code="dogfood_spawn_rows_failed",
                 message=(
-                    f"{len(dogfood.failed)} dogfood spawn row(s) could not be migrated "
+                    f"{len(dogfood_failed)} dogfood spawn row(s) could not be migrated "
                     "and stay quarantined: "
-                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood.failed)
+                    + "; ".join(f"{row.spawn_id} ({row.reason})" for row in dogfood_failed)
                 ),
                 payload={
-                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
-                    "reasons": dict(dogfood.failed),
+                    "spawn_ids": [row.spawn_id for row in dogfood_failed],
+                    "reasons": {row.spawn_id: row.reason for row in dogfood_failed},
                 },
             )
         )
-    if dogfood.index_rearm_warning:
+    legacy_failed = tuple(row for row in legacy.failed if not row.dogfood)
+    if legacy_failed:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_failed",
+                message=(
+                    f"{len(legacy_failed)} spawn row(s) an older Meridian wrote could not be "
+                    "rewritten in the current format and were left as they are: "
+                    + "; ".join(f"{row.spawn_id} ({row.reason})" for row in legacy_failed)
+                ),
+                payload={
+                    "spawn_ids": [row.spawn_id for row in legacy_failed],
+                    "reasons": {row.spawn_id: row.reason for row in legacy_failed},
+                },
+            )
+        )
+    if legacy.deferred:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_deferred",
+                message=(
+                    f"{len(legacy.deferred)} spawn row(s) an older Meridian wrote may still "
+                    "have a runner from that build; run `meridian doctor` again after it "
+                    "exits to rewrite them: " + ", ".join(row.spawn_id for row in legacy.deferred)
+                ),
+                payload={"spawn_ids": [row.spawn_id for row in legacy.deferred]},
+            )
+        )
+    if legacy.unsettled:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_unsettled",
+                message=(
+                    f"{len(legacy.unsettled)} spawn row(s) an older Meridian wrote are still "
+                    "active with no outcome, and their runner is gone; Meridian does not "
+                    "record an outcome for them on its own. `meridian spawn cancel <id>` "
+                    "records it, and the next `meridian doctor` finishes the rewrite: "
+                    + ", ".join(row.spawn_id for row in legacy.unsettled)
+                ),
+                payload={"spawn_ids": [row.spawn_id for row in legacy.unsettled]},
+            )
+        )
+    if legacy.index_rearm_warning:
         warnings.append(
             DoctorWarning(
                 code="dogfood_index_rearm_failed",
-                message=dogfood.index_rearm_warning,
+                message=legacy.index_rearm_warning,
             )
         )
 
@@ -623,6 +694,7 @@ def _doctor_local(
         warnings=tuple(warnings),
         repaired=tuple(repaired),
         legacy_pi_sessions=legacy_pi_summary,
+        legacy_spawn_rows=legacy_rows_summary,
         killed_orphan_spawns=killed_orphan_spawns,
     )
 
@@ -834,6 +906,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         warnings=tuple(warnings),
         repaired=repaired,
         legacy_pi_sessions=local_report.legacy_pi_sessions,
+        legacy_spawn_rows=local_report.legacy_spawn_rows,
         killed_orphan_spawns=local_report.killed_orphan_spawns,
         autosync=autosync_status,
     )

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any, cast
+
+from meridian.lib.core.logging import warn_once
+
+logger = logging.getLogger(__name__)
 
 # Discard only listed legacy fields; unknown fields must fail closed.
 RETIRED_LEGACY_FIELDS: frozenset[str] = frozenset({"revision"})
@@ -71,6 +77,18 @@ _FLAT_FIELDS = (
     _COMMON_FIELDS | set(_RUNNER_EXIT_FIELDS) | set(_TERMINAL_FIELDS) | RETIRED_LEGACY_FIELDS
 )
 _NESTED_FIELDS = _COMMON_FIELDS | {"runner_exit", "terminal"} | RETIRED_LEGACY_FIELDS
+
+
+def warn_unrepaired_spawn_row(state_path: Path) -> None:
+    """Once per process: a row an older build wrote that the one-time rewrite has not reached."""
+    warn_once(
+        ("legacy-spawn-row",),
+        lambda: logger.warning(
+            "%s is a spawn row in a format an older Meridian wrote; `meridian doctor` "
+            "rewrites such rows in the current format and lists any it cannot.",
+            state_path,
+        ),
+    )
 
 
 class LegacySpawnStateUpgradeError(ValueError):
@@ -207,4 +225,5 @@ __all__ = [
     "RETIRED_LEGACY_FIELDS",
     "LegacySpawnStateUpgradeError",
     "upgrade_legacy_spawn_state",
+    "warn_unrepaired_spawn_row",
 ]

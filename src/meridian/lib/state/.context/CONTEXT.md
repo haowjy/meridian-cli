@@ -67,6 +67,32 @@ defer import without a marker, and restored historical records stay inert. OpenC
 validation opens the live database read-only; SQLite may touch WAL shared-memory
 read marks, but not native source bytes.
 
+### One-time rewrite of old spawn rows
+
+`spawn/legacy_rows.py` rewrites rows older builds wrote in the format this build writes:
+v2 rows (0.3.42 and older) become v3, dogfood flat boundary fields fold into v3, and a
+finished row without `launch.lock` (before 0.10.18) gets one. The readers for all three
+stay, for rows the pass has not reached. A rewritten row keeps only the fields it had
+(`exclude_unset`), so every build from 0.3.43 reads it, and it must read back equal to the
+in-memory upgrade before it replaces the file. Each row is re-read under the history gate
+(shared) and its spawn lock, written atomically, and marked in `HistoryChanges`; content
+goes before the lock file, so a crash between them leaves a v3 lockless row the next pass
+finishes. A newer build's row and a restored historical row are never touched.
+
+Two rows wait. One whose old runner may be alive keeps its bytes (a v2 runner cannot read
+v3; a dogfood row is still rewritten, since its runner reads the result) and blocks the
+marker. An active lockless row whose runner is gone keeps no lock: crash repair and
+`doctor --kill-orphans` refuse to finalize lockless rows on PID evidence, and a free lock
+would hand them that authority. A cancel naming it records the outcome; doctor then adds
+the lock. These rows do not block the marker, because no later pass would change them.
+
+`legacy-spawn-rows-v1.json` in the runtime root marks a pass with nothing failed or
+deferred. The startup background pass runs only without it; `meridian doctor` always runs,
+because the once-per-process read warning sends people there. The chat journal's
+`harness_session_ids` arrays are not rewritten: no release wrote one with an ID in it
+(only `[]` inside 0.5.0 to 0.6.7 `historical_import` records), so they carry nothing, and
+rewriting an append-only journal other builds append to is not worth an empty key.
+
 ### Conversation model selections
 
 `session_store` projects `model_selection` events separately from session liveness

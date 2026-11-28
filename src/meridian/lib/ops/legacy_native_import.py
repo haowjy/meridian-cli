@@ -22,6 +22,7 @@ from uuid import UUID
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from meridian.lib.core.logging import warn_once
 from meridian.lib.core.native_identity import (
     InvalidNativeSession,
     NativeKeyFields,
@@ -190,6 +191,22 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
             chat.chat_id: chat for chat in list_all_session_records(runtime_root)
         }
         report = report_legacy_native_import(runtime_root, records=list(records.values()))
+        # Chats with a native session ID but no store: only older builds wrote those.
+        found = sum(
+            counts[reason]
+            for counts in report.counts.values()
+            for reason in ("imported", "missing", "ambiguous", "ambiguous_id")
+        )
+        if found:
+            warn_once(
+                ("legacy-native-import", runtime_root),
+                lambda: print(
+                    f"warning: found {found} chat(s) in {runtime_root / 'sessions.jsonl'} that "
+                    "an older Meridian recorded without their native session store; "
+                    "importing their native session bindings once",
+                    file=sys.stderr,
+                ),
+            )
         if report.bindings:
             # Native validation can be slow. Recheck identity under the sessions lock
             # without holding it over native I/O or the spawn scan. Read only the
