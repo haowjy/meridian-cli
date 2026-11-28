@@ -25,9 +25,10 @@ from meridian.lib.platform import get_home_path
 from meridian.lib.platform.python_module import installed_executable
 from meridian.lib.state.user_paths import get_user_home
 
-# First Mars release with a user level: Mars chooses the root, takes ``--user`` and
+# 0.41.0 added the user level: Mars chooses the root, takes ``--user`` and
 # ``mars sync --provided-root``, and reports ``agent_not_found`` and ``agent_renamed``.
-MARS_MIN_VERSION = "0.41.0"
+# 0.41.1 is the first whose ``validate`` takes ``--provided-root``.
+MARS_MIN_VERSION = "0.41.1"
 MARS_UPGRADE_HINT = (
     f"Meridian requires mars >= {MARS_MIN_VERSION}. Upgrade Meridian (for uv tools: "
     "uv tool upgrade meridian-cli); Meridian prefers its bundled Mars over PATH."
@@ -128,8 +129,20 @@ def provided_dir() -> Path:
 
 # The Mars commands that run a project sync, each taking the host layer
 # (``--provided-root HOST@VERSION=DIR``), as Mars's ``docs/cli/commands.md`` lists them.
+# ``validate`` is a sync that writes nothing.
 MARS_SYNCING_COMMANDS = frozenset(
-    {"sync", "add", "remove", "upgrade", "repair", "rename", "override", "adopt", "link"}
+    {
+        "sync",
+        "add",
+        "remove",
+        "upgrade",
+        "repair",
+        "rename",
+        "override",
+        "adopt",
+        "link",
+        "validate",
+    }
 )
 
 
