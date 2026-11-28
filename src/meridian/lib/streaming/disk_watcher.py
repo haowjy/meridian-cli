@@ -140,9 +140,6 @@ class PiDiskWatcher:
             self._state_changed.set()
         return changed
 
-    def has_tracked_bash_bg(self) -> bool:
-        return self._ledger.tracked_bash_bg()
-
     def evidence_failure(self) -> EvidenceFailure | None:
         return self._ledger.evidence_failure()
 

@@ -18,8 +18,6 @@ class OutputSink(Protocol):
         kind: str | None = None,
     ) -> None: ...
 
-    def heartbeat(self, message: str) -> None: ...
-
     def event(self, payload: dict[str, Any]) -> None: ...
 
 
@@ -42,9 +40,6 @@ class NullSink:
         kind: str | None = None,
     ) -> None:
         _ = (message, exit_code, name, kind)
-
-    def heartbeat(self, message: str) -> None:
-        _ = message
 
     def event(self, payload: dict[str, Any]) -> None:
         _ = payload

@@ -124,9 +124,6 @@ class PiQuiescenceTracker:
         if self._disk_watcher is not None:
             await self._disk_watcher.wait_for_change()
 
-    def has_tracked_bash_bg(self) -> bool:
-        return self._ledger.tracked_bash_bg()
-
     def evidence_failure(self) -> EvidenceFailure | None:
         return self._ledger.evidence_failure()
 
@@ -136,6 +133,3 @@ class PiQuiescenceTracker:
         correlated_bash_ids: frozenset[str] = frozenset(),
     ) -> PiPrivateWorkSnapshot:
         return self._ledger.blocker_snapshot(correlated_bash_ids=correlated_bash_ids)
-
-    def _no_pending_disk_notifications(self) -> bool:
-        return not self.private_work_snapshot().pending_disk_notification

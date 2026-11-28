@@ -139,9 +139,6 @@ class TextSink:
         _ = (exit_code, name, kind)
         print(f"error: {message}", file=self._stderr)
 
-    def heartbeat(self, message: str) -> None:
-        print(message, file=self._stderr, flush=True)
-
     def event(self, payload: dict[str, Any]) -> None:
         if not self._emit_events:
             return
@@ -204,13 +201,6 @@ class JsonSink:
         print(
             json.dumps(_to_json_value(payload), separators=(",", ":")),
             file=self._stderr,
-        )
-
-    def heartbeat(self, message: str) -> None:
-        print(
-            json.dumps({"heartbeat": message}, separators=(",", ":")),
-            file=self._stderr,
-            flush=True,
         )
 
     def event(self, payload: dict[str, Any]) -> None:

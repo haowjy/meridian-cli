@@ -322,17 +322,6 @@ def resolve_active_work_scope(
     return resolved.work_scope
 
 
-def resolve_active_work_scope_dir(
-    project_root: Path,
-    runtime_root: Path,
-    *,
-    chat_id: str | None = None,
-) -> Path | None:
-
-    scope = resolve_active_work_scope(project_root, runtime_root, chat_id=chat_id)
-    return scope.root if scope is not None else None
-
-
 def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
     """Join a relative path under scope_dir, rejecting escapes."""
 
@@ -601,7 +590,6 @@ __all__ = [
     "context",
     "context_sync",
     "resolve_active_work_scope",
-    "resolve_active_work_scope_dir",
     "task_dir",
     "task_dir_clear",
     "task_dir_clear_sync",

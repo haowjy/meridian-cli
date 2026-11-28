@@ -44,9 +44,6 @@ class PiPrivateWorkLedger:
         self._consumed = consumed
         self._unobserved_messages = unobserved_messages
 
-    def tracked_bash_bg(self) -> bool:
-        return any(r.is_tracked and r.is_background and r.status == "running" for r in self._bash)
-
     def record_read_failure(self, path: Path, detail: str) -> bool:
         failure = EvidenceFailure(code="pi_private_work_read_failed", detail=f"{path}: {detail}")
         changed = self._read_failures.get(path) != failure
