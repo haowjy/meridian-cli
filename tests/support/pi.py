@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from meridian.lib.core.delivery import DeliveryKind
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import pi_completion_profile as profile_module
+from meridian.lib.harness import pi_drain as drain_module
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -22,16 +24,17 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
+from meridian.lib.harness.pi_completion_profile import PiRpcQuiescenceDrainPolicy
+from meridian.lib.harness.pi_drain import PiDrainCoordinator, build_pi_drain_plan
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.spawn_signals import write_spawn_signal
-from meridian.lib.streaming import pi_completion_profile as profile_module
-from meridian.lib.streaming import pi_drain as drain_module
 from meridian.lib.streaming.control_socket import ControlSocketServer
-from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.drain_coordinator import DrainPlan
+from meridian.lib.streaming.drain_plan_factory import DrainPlanContext
+from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import FakeClock, wait_until
 from tests.support.launch_paths import launch_paths
@@ -72,6 +75,9 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def harness_id(self) -> HarnessId:
         return HarnessId.PI
+
+    def drain_plan(self, context: DrainPlanContext) -> DrainPlan:
+        return build_pi_drain_plan(self, context)
 
     @property
     def spawn_id(self) -> SpawnId:

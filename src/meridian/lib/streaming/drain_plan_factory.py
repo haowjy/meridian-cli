@@ -1,30 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
-from meridian.lib.core.delivery import DeliveryError, DeliveryKind
-from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.core.delivery import DeliveryKind
+from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.streaming.drain_coordinator import DrainPlan
-from meridian.lib.streaming.drain_policy import (
-    PiRpcQuiescenceDrainPolicy,
-    SingleTurnDrainPolicy,
-)
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_drain_teardown import EmitEvent, PiDrainSessionTeardown
+from meridian.lib.streaming.drain_policy import SingleTurnDrainPolicy
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import (
         ConnectionConfig,
         HarnessConnection,
+        RawHarnessEvent,
     )
+
+EmitEvent = Callable[[SpawnId, "RawHarnessEvent"], None]
 
 
 class SerializedDeliver(Protocol):
@@ -34,12 +30,23 @@ class SerializedDeliver(Protocol):
 
 
 class DescendantCancellationService(Protocol):
-    """Application-service capability needed by Pi tracked-child cleanup."""
+    """Application-service capability needed by tracked-child cleanup."""
 
     def cancel_descendants(self, root_id: SpawnId | str) -> Awaitable[set[str]]: ...
 
 
 BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationService]
+
+
+@dataclass(frozen=True)
+class DrainPlanContext:
+    """What a connection's own drain plan may use (`HarnessConnection.drain_plan`)."""
+
+    launch: LaunchPaths
+    config: ConnectionConfig
+    emit_event: EmitEvent
+    deliver: SerializedDeliver
+    cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]]
 
 
 def build_drain_plan(
@@ -53,35 +60,10 @@ def build_drain_plan(
     build_spawn_application_service: BuildSpawnApplicationService,
 ) -> DrainPlan:
 
-    runtime_root = launch.runtime_root
     spawn_id = launch.spawn_id
 
-    def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        emit_event(
-            spawn_id,
-            build_pi_phase_event(
-                spawn_id,
-                receiver,
-                phase,
-                session_role=session_role,
-                **payload,
-            ),
-        )
-
-    async def _cancel_pi_descendants(
-        reason: str,
-    ) -> None:
-        del reason
-        service = build_spawn_application_service(project_root, runtime_root)
-        await service.cancel_descendants(spawn_id)
-
-    async def _send_pi_done_nudge(message: str) -> None:
-        # The Pi drain proceeds whether or not the nudge arrives.
-        with suppress(DeliveryError):
-            await deliver(spawn_id, message, source="pi_done_nudge")
-
     async def _cancel_descendants(root_id: SpawnId) -> set[str]:
-        service = build_spawn_application_service(project_root, runtime_root)
+        service = build_spawn_application_service(project_root, launch.runtime_root)
         return await service.cancel_descendants(root_id)
 
     resident_backend = receiver.resident_backend
@@ -108,37 +90,21 @@ def build_drain_plan(
             accepted_signals=coordinator.accepted_signals,
         )
 
-    if receiver.harness_id is HarnessId.PI:
-        coordinator = PiDrainCoordinator.for_connection(
+    own_plan = receiver.drain_plan(
+        DrainPlanContext(
             launch=launch,
-            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-            session_role=config.pi_session_role,
-            child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
-            emit_phase=_emit_pi_phase,
-            cancel_descendants=_cancel_pi_descendants,
-            send_done_nudge=_send_pi_done_nudge,
+            config=config,
+            emit_event=emit_event,
+            deliver=deliver,
+            cancel_descendants=_cancel_descendants,
         )
-        return DrainPlan(
-            coordinator=coordinator,
-            policy=PiRpcQuiescenceDrainPolicy(
-                quiescence_check=coordinator.is_quiescent,
-            ),
-            raw_terminal_frames_authoritative=False,
-            on_policy_selected=coordinator.set_policy,
-            aux_wake=coordinator,
-            handle_aux_wake=coordinator.handle_aux_wake,
-            finalizer=coordinator,
-            teardown=PiDrainSessionTeardown(
-                spawn_id=spawn_id,
-                emit_event=emit_event,
-            ),
-            # Pi has no rearm window: quiescence, not a deadline, ends its wait.
-            accepted_signals=frozenset({"done"}),
-        )
+    )
+    if own_plan is not None:
+        return own_plan
 
     # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline and
     # consume no completion signals.
     return DrainPlan()
 
 
-__all__ = ["build_drain_plan"]
+__all__ = ["DrainPlanContext", "EmitEvent", "build_drain_plan"]

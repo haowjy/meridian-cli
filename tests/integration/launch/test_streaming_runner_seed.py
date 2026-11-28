@@ -77,6 +77,10 @@ class _ClaudeSeedPersistenceConnection:
     def native_task_source(self) -> None:
         return None
 
+    def drain_plan(self, context: object) -> None:
+        _ = context
+        return None
+
     @property
     def resident_backend(self) -> None:
         return None
@@ -156,6 +160,10 @@ class _UnboundOpenCodeConnection:
     def native_task_source(self) -> None:
         return None
 
+    def drain_plan(self, context: object) -> None:
+        _ = context
+        return None
+
     @property
     def resident_backend(self) -> None:
         return None
@@ -229,6 +237,10 @@ class _OpenCodeConnectSessionConnection:
         _ = semantics
 
     def native_task_source(self) -> None:
+        return None
+
+    def drain_plan(self, context: object) -> None:
+        _ = context
         return None
 
     @property

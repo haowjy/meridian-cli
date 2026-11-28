@@ -112,6 +112,10 @@ class _ReportThenHangConnection:
     def native_task_source(self) -> None:
         return None
 
+    def drain_plan(self, context: object) -> None:
+        _ = context
+        return None
+
     @property
     def resident_backend(self) -> object:
         return self._resident_backend
@@ -230,6 +234,10 @@ class _OpenCodeTerminalWithScopeConnection:
         _ = semantics
 
     def native_task_source(self) -> None:
+        return None
+
+    def drain_plan(self, context: object) -> None:
+        _ = context
         return None
 
     @property
@@ -360,6 +368,10 @@ class _ResidentDeadlineConnection:
         _ = semantics
 
     def native_task_source(self) -> None:
+        return None
+
+    def drain_plan(self, context: object) -> None:
+        _ = context
         return None
 
     @property

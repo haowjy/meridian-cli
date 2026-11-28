@@ -4,13 +4,33 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.core.delivery import DeliveryError
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
+from meridian.lib.harness.pi_completion_profile import (
+    PI_MICRO_DRAIN_TIMEOUT_SECONDS as PI_MICRO_DRAIN_TIMEOUT_SECONDS,
+)
+from meridian.lib.harness.pi_completion_profile import (
+    ChildTimeoutTelemetry,
+    EmitPiPhase,
+    PiCompletionProfile,
+    PiOutstandingWork,
+    PiRpcQuiescenceDrainPolicy,
+    SendPiDoneNudge,
+)
+from meridian.lib.harness.pi_drain_teardown import PiDrainSessionTeardown
+from meridian.lib.harness.pi_lifecycle_tracker import PiLifecycleTracker
+from meridian.lib.harness.pi_quiescence import PiQuiescenceTracker
+from meridian.lib.harness.pi_work_ledger import (
+    PiPrivateWorkLedger,
+    PiPrivateWorkSnapshot,
+)
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_ownership import is_owed_child
@@ -32,6 +52,7 @@ from meridian.lib.streaming.descendant_evidence import (
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
+    DrainPlan,
     DrainTerminalDecision,
     ReportStep,
 )
@@ -39,27 +60,12 @@ from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
 )
-from meridian.lib.streaming.pi_completion_profile import (
-    PI_MICRO_DRAIN_TIMEOUT_SECONDS as PI_MICRO_DRAIN_TIMEOUT_SECONDS,
-)
-from meridian.lib.streaming.pi_completion_profile import (
-    ChildTimeoutTelemetry,
-    EmitPiPhase,
-    PiCompletionProfile,
-    PiOutstandingWork,
-    SendPiDoneNudge,
-)
-from meridian.lib.streaming.pi_lifecycle_tracker import PiLifecycleTracker
-from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
-from meridian.lib.streaming.pi_work_ledger import (
-    PiPrivateWorkLedger,
-    PiPrivateWorkSnapshot,
-)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.harness.semantics import NormalizedHarnessEvent
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+    from meridian.lib.streaming.drain_plan_factory import DrainPlanContext
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
@@ -635,7 +641,62 @@ class PiDrainCoordinator:
         return self._profile.classify_outstanding_work()
 
 
-__all__ = ["PiDrainCoordinator"]
+def build_pi_drain_plan(
+    receiver: HarnessConnection[ResolvedLaunchSpec],
+    context: DrainPlanContext,
+) -> DrainPlan:
+    spawn_id = context.launch.spawn_id
+
+    def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        context.emit_event(
+            spawn_id,
+            pi_lifecycle.build_pi_phase_event(
+                spawn_id,
+                receiver,
+                phase,
+                session_role=session_role,
+                **payload,
+            ),
+        )
+
+    async def _cancel_pi_descendants(reason: str) -> None:
+        del reason
+        await context.cancel_descendants(spawn_id)
+
+    async def _send_pi_done_nudge(message: str) -> None:
+        # The Pi drain proceeds whether or not the nudge arrives.
+        with suppress(DeliveryError):
+            await context.deliver(spawn_id, message, source="pi_done_nudge")
+
+    coordinator = PiDrainCoordinator.for_connection(
+        launch=context.launch,
+        receiver=receiver,
+        session_role=context.config.pi_session_role,
+        child_wave_timeout_seconds=context.config.pi_child_wave_timeout_seconds,
+        emit_phase=_emit_pi_phase,
+        cancel_descendants=_cancel_pi_descendants,
+        send_done_nudge=_send_pi_done_nudge,
+    )
+    return DrainPlan(
+        coordinator=coordinator,
+        policy=PiRpcQuiescenceDrainPolicy(
+            quiescence_check=coordinator.is_quiescent,
+        ),
+        raw_terminal_frames_authoritative=False,
+        on_policy_selected=coordinator.set_policy,
+        aux_wake=coordinator,
+        handle_aux_wake=coordinator.handle_aux_wake,
+        finalizer=coordinator,
+        teardown=PiDrainSessionTeardown(
+            spawn_id=spawn_id,
+            emit_event=context.emit_event,
+        ),
+        # Pi has no rearm window: quiescence, not a deadline, ends its wait.
+        accepted_signals=frozenset({"done"}),
+    )
+
+
+__all__ = ["PiDrainCoordinator", "build_pi_drain_plan"]
 
 
 def _replace_terminal(
