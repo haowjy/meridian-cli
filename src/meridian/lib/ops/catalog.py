@@ -6,7 +6,6 @@ from meridian.lib.catalog.model_aliases import run_mars_models_catalog
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import ModelId
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync
 
 
 class ModelsListInput(BaseModel):
@@ -231,6 +230,3 @@ def models_list_sync(payload: ModelsListInput) -> ModelsListOutput:
         if (model := _mars_catalog_entry_to_model(entry)) is not None
     ]
     return ModelsListOutput(models=tuple(catalog_models))
-
-
-models_list = async_from_sync(models_list_sync)

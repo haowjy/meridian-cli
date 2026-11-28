@@ -1,7 +1,7 @@
 # Extensions
 
 Extensions expose registered Meridian operations through the CLI and MCP from a
-single `ExtensionCommandSpec`. Both adapters invoke commands in process through
+single declaration in `src/meridian/lib/ops/commands.py`. Both adapters invoke commands in process through
 the shared dispatcher.
 
 ## `meridian ext` CLI
@@ -77,8 +77,9 @@ Takes no arguments. It returns the same discovery fields as
 ```
 
 Only `fqid` is required. `args` defaults to `{}`; the remaining fields provide
-optional tracing context. Commands run in process through the same registry,
-validation, capability, and error pipeline used by the CLI.
+optional tracing context, recorded in the server's telemetry. Commands run in
+process through the same registry, validation, capability, and error pipeline
+used by `meridian ext run`.
 
 Success returns `{"status": "ok", "result": ...}`. Errors return
 `{"status": "error", "code": "...", "message": "..."}`. Common error codes

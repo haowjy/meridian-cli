@@ -14,7 +14,7 @@ from meridian.cli.hooks_authority import (
 )
 from meridian.cli.invocation import Emitter, emit
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.hooks.types import HookEventName
 from meridian.lib.ops.hooks import (
     HookCheckInput,
@@ -91,7 +91,7 @@ def register_hooks_commands(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="hooks",
         handlers=handlers,
         command_help_epilogues={

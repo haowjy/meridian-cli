@@ -33,7 +33,7 @@ from meridian.lib.ops.relocate_gate import (
     harness_cwd,
     moved_root,
 )
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.platform.atomic import atomic_symlink
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_repository
@@ -652,6 +652,3 @@ def session_relocate_sync(payload: SessionRelocateInput) -> SessionRelocateOutpu
         rerun += f" --native {shlex.quote(payload.native)}"
     refusals = _apply(request, plan, move, rerun)
     return _output(request, plan, refusals, dry_run=False, bare=bare)
-
-
-session_relocate = async_from_sync(session_relocate_sync)

@@ -13,7 +13,7 @@ from meridian.cli.utils import (
     resolve_cli_observer_context,
     resolve_cli_project_root,
 )
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.machines.caller import require_own_session
 from meridian.lib.ops.report import (
     ReportSearchInput,
@@ -87,7 +87,7 @@ def register_report_commands(app: Any) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="report",
         handlers=handlers,
         command_help_epilogues={

@@ -35,7 +35,6 @@ from meridian.lib.ops.config_surface import (
 )
 from meridian.lib.ops.runtime import (
     RuntimeAuthoritySnapshot,
-    async_from_sync,
     resolve_runtime_authority_for_read,
 )
 from meridian.lib.state.paths import (
@@ -672,10 +671,3 @@ def config_reset_sync(payload: ConfigResetInput) -> ConfigResetOutput:
         key=option.canonical_key,
         removed=edit_result.removed,
     )
-
-
-config_init = async_from_sync(config_init_sync)
-config_show = async_from_sync(config_show_sync)
-config_set = async_from_sync(config_set_sync)
-config_get = async_from_sync(config_get_sync)
-config_reset = async_from_sync(config_reset_sync)

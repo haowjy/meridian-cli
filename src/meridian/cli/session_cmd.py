@@ -20,7 +20,7 @@ from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.machines.caller import require_project_or_global
 from meridian.lib.platform.python_module import module_argv
 
@@ -611,7 +611,7 @@ def register_session_commands(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="session",
         handlers=handlers,
         command_help_epilogues={

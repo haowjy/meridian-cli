@@ -38,7 +38,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.harness.pi_private_state import hold_pi_bash
 from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.request import NetworkOverrides
@@ -1524,7 +1524,7 @@ def register_spawn_commands(app: App) -> None:
     }
     registered = register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="spawn",
         handlers=handlers,
         command_help_epilogues={

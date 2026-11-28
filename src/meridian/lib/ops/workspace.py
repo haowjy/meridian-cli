@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import has_project_marker
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync, resolve_project_authority
+from meridian.lib.ops.runtime import resolve_project_authority
 from meridian.lib.platform.atomic import atomic_write_text
 
 _WORKSPACE_TEMPLATE = """# Workspace topology — local path overrides and additions.
@@ -165,12 +165,8 @@ def workspace_init_sync(payload: WorkspaceInitInput) -> WorkspaceInitOutput:
     )
 
 
-workspace_init = async_from_sync(workspace_init_sync)
-
-
 __all__ = [
     "WorkspaceInitInput",
     "WorkspaceInitOutput",
-    "workspace_init",
     "workspace_init_sync",
 ]

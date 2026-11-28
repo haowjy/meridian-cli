@@ -698,20 +698,6 @@ def spawn_create_sync(
     )
 
 
-async def spawn_create(
-    payload: SpawnCreateInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-) -> SpawnActionOutput:
-    return await asyncio.to_thread(
-        spawn_create_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-    )
-
-
 def _filter_listed(payload: SpawnListInput, spawns: list[SpawnRecord]) -> list[SpawnRecord]:
     """Apply the list's status, model, profile and primary filters."""
 
@@ -937,16 +923,6 @@ def spawn_list_sync(
     )
 
 
-async def spawn_list(
-    payload: SpawnListInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnListOutput:
-    return await asyncio.to_thread(spawn_list_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
-
-
 def spawn_children_sync(
     payload: SpawnChildrenInput,
     ctx: RuntimeContext | None = None,
@@ -995,22 +971,6 @@ def spawn_children_sync(
         for row in children
     )
     return SpawnListOutput(spawns=entries, text_view="children")
-
-
-async def spawn_children(
-    payload: SpawnChildrenInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnListOutput:
-    return await asyncio.to_thread(
-        spawn_children_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-        prepared=prepared,
-    )
 
 
 def spawn_stats_sync(
@@ -1140,16 +1100,6 @@ def spawn_stats_sync(
     )
 
 
-async def spawn_stats(
-    payload: SpawnStatsInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnStatsOutput:
-    return await asyncio.to_thread(spawn_stats_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
-
-
 def spawn_show_sync(
     payload: SpawnShowInput,
     ctx: RuntimeContext | None = None,
@@ -1242,28 +1192,6 @@ def spawn_status_sync(
     )
 
 
-async def spawn_show(
-    payload: SpawnShowInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnDetailOutput:
-    return await asyncio.to_thread(spawn_show_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
-
-
-async def spawn_status(
-    payload: SpawnStatusInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnDetailOutput:
-    return await asyncio.to_thread(
-        spawn_status_sync, payload, ctx=ctx, sink=sink, prepared=prepared
-    )
-
-
 def spawn_subagents_sync(
     payload: SpawnSubagentsInput,
     ctx: RuntimeContext | None = None,
@@ -1308,22 +1236,6 @@ def spawn_subagents_sync(
     if not agents and not payload.all:
         empty = "no_current_agent" if agent is None else "no_declared_agents"
     return SpawnSubagentsOutput(agents=agents, empty=empty)
-
-
-async def spawn_subagents(
-    payload: SpawnSubagentsInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnSubagentsOutput:
-    return await asyncio.to_thread(
-        spawn_subagents_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-        prepared=prepared,
-    )
 
 
 def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutput:
@@ -1720,22 +1632,6 @@ def spawn_cancel_all_sync(
     )
 
 
-async def spawn_cancel_all(
-    payload: SpawnCancelAllInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
-) -> SpawnCancelAllOutput:
-    return await asyncio.to_thread(
-        spawn_cancel_all_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-        prepared=prepared,
-    )
-
-
 def spawn_cancel_sync(
     payload: SpawnCancelInput,
     ctx: RuntimeContext | None = None,
@@ -1744,16 +1640,6 @@ def spawn_cancel_sync(
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     return asyncio.run(_spawn_cancel_impl(payload, ctx=ctx, sink=sink, prepared=prepared))
-
-
-async def spawn_cancel(
-    payload: SpawnCancelInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
-) -> SpawnActionOutput:
-    return await _spawn_cancel_impl(payload, ctx=ctx, sink=sink, prepared=prepared)
 
 
 def _spawn_is_terminal(status: str) -> bool:
@@ -2330,16 +2216,6 @@ def spawn_wait_sync(
         )
 
 
-async def spawn_wait(
-    payload: SpawnWaitInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnWaitMultiOutput:
-    return await asyncio.to_thread(spawn_wait_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
-
-
 def _source_spawn_for_follow_up(
     payload_spawn_id: str,
     project_root: Path,
@@ -2664,20 +2540,6 @@ def spawn_fork_sync(
     )
 
 
-async def spawn_fork(
-    payload: SpawnForkInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-) -> SpawnActionOutput:
-    return await asyncio.to_thread(
-        spawn_fork_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-    )
-
-
 def spawn_continue_sync(
     payload: SpawnContinueInput,
     ctx: RuntimeContext | None = None,
@@ -2790,17 +2652,3 @@ def spawn_continue_sync(
             update={"warning": _merge_warnings(result.warning, redirect_notice)}
         )
     return _with_command(result, "spawn.continue")
-
-
-async def spawn_continue(
-    payload: SpawnContinueInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-) -> SpawnActionOutput:
-    return await asyncio.to_thread(
-        spawn_continue_sync,
-        payload,
-        ctx=ctx,
-        sink=sink,
-    )

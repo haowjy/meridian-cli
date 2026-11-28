@@ -10,7 +10,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, current_output_sink, emit
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.ops.context import (
     TaskDirClearInput,
     TaskDirInput,
@@ -51,7 +51,7 @@ def register_task_dir_commands(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="task-dir",
         handlers=handlers,
         default_handler=partial(_task_dir_query, emit),

@@ -6,26 +6,25 @@ CLI and MCP without duplicating routing logic.
 ## Architecture
 
 ```text
-ExtensionCommandSpec
+OpDeclaration (src/meridian/lib/ops/commands.py)
         │
         ▼
-ExtensionCommandRegistry
+ExtensionCommandRegistry ──▶ direct CLI routes (cli_group / cli_name)
         ├──▶ CLI: meridian ext run / ext list / ext commands
         └──▶ MCP: extension_invoke / extension_list_commands
 ```
 
-`ExtensionCommandDispatcher` applies trust, surface, argument, capability, and
-error handling before it calls a handler. Handlers receive the same
-`(args, context, services)` signature from either adapter.
+Both adapters call `dispatch()` (`lib/extensions/dispatcher.py`), which validates
+the arguments against the input model, checks capabilities, and runs the
+handler in a worker thread. A direct CLI route calls the same function itself.
 
-## Op-style specs
+## Declaring an operation
 
-Use `ExtensionCommandSpec.from_op()` when an existing async operation accepts a
-Pydantic input model and returns a result model:
+An operation is one synchronous function that takes its Pydantic input model and
+returns its output model:
 
 ```python
 from pydantic import BaseModel, Field
-from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 
 
 class CheckInput(BaseModel):
@@ -36,93 +35,53 @@ class CheckOutput(BaseModel):
     valid: bool
 
 
-async def check(input: CheckInput) -> CheckOutput:
+def check_sync(payload: CheckInput) -> CheckOutput:
     return CheckOutput(valid=True)
+```
 
+Register it with an `OpDeclaration` in `src/meridian/lib/ops/commands.py`. The
+declaration names the function and models as `module:attribute` strings, so CLI
+startup does not import the implementation:
 
-SPEC = ExtensionCommandSpec.from_op(
-    handler=check,
-    sync_handler=None,
-    input_type=CheckInput,
-    output_type=CheckOutput,
+```python
+OpDeclaration(
     extension_id="meridian.example",
     command_id="check",
     summary="Check an example path",
+    handler="meridian.lib.ops.example:check_sync",
+    input_type="meridian.lib.ops.example:CheckInput",
+    output_type="meridian.lib.ops.example:CheckOutput",
     surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.MCP}),
-    first_party=True,
 )
 ```
 
-The factory wraps the typed operation in the extension handler protocol. Supply
-`sync_handler` only when a direct CLI route needs a synchronous operation.
+The dispatcher returns the output's `to_wire()` when it has one, otherwise its
+`model_dump()`. A handler may return an `ExtensionErrorResult` to report a
+specific error code; prefer that over raising, since an unhandled exception
+becomes `handler_error`. Async work stays inside the handler: run it with
+`asyncio.run`, which is safe because the handler is never on the server's event
+loop.
 
-## Direct specs
+## Surfaces and capabilities
 
-Use the constructor when the handler needs invocation context or services:
-
-```python
-from typing import Any
-from meridian.lib.extensions.context import ExtensionCommandServices, ExtensionInvocationContext
-from meridian.lib.extensions.types import (
-    ExtensionCommandSpec,
-    ExtensionErrorResult,
-    ExtensionJSONResult,
-    ExtensionResult,
-    ExtensionSurface,
-)
-
-
-async def handler(
-    args: dict[str, Any],
-    context: ExtensionInvocationContext,
-    services: ExtensionCommandServices,
-) -> ExtensionResult:
-    if services.resolved_project_root() is None:
-        return ExtensionErrorResult(code="service_unavailable", message="project root missing")
-    return ExtensionJSONResult(payload={"request_id": context.request_id})
-
-
-SPEC = ExtensionCommandSpec(
-    extension_id="meridian.example",
-    command_id="inspect",
-    summary="Inspect example state",
-    args_schema=InspectArgs,
-    result_schema=InspectResult,
-    handler=handler,
-    surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.MCP}),
-    first_party=True,
-)
-```
-
-Handlers may return `ExtensionJSONResult`, `ExtensionErrorResult`, or a `dict`
-(which the dispatcher wraps as JSON). Other return values become
-`{"result": value}`. Prefer a specific `ExtensionErrorResult` over raising;
-unhandled exceptions become `handler_error`.
-
-## Surfaces, trust, and capabilities
-
-`ExtensionSurface` has two active values: `CLI` and `MCP`. Omit `surfaces` to
-expose a spec on both, or supply a subset such as MCP-only:
+`ExtensionSurface` has two values: `CLI` and `MCP`. Omit `surfaces` to expose an
+operation on both, or supply a subset such as MCP-only:
 
 ```python
 surfaces=frozenset({ExtensionSurface.MCP})
 ```
 
-Only first-party commands may use either surface. Third-party commands are not
-yet supported by the registry or dispatcher.
-
-CLI and MCP invocations have no capabilities by default. A driving adapter must
-explicitly grant any `required_capabilities` through
-`ExtensionInvocationContextBuilder.with_capabilities()`.
+CLI and MCP invocations grant no capabilities. A command that sets
+`required_capabilities` fails with `capability_missing` unless its caller passes
+the capability to `dispatch()`.
 
 ## Registration
 
-Register first-party specs in `src/meridian/lib/extensions/first_party.py`.
-Registration rejects duplicate fqids, duplicate direct CLI routes, incomplete
-`cli_group`/`cli_name` pairs, and non-first-party specs on active surfaces.
+Registration rejects duplicate fqids, duplicate direct CLI routes, and
+incomplete `cli_group`/`cli_name` pairs.
 
-Set both `cli_group` and `cli_name` to graft an op-style spec onto an existing
-CLI group. Leave both unset for commands reached only through `ext run` and MCP.
+Set both `cli_group` and `cli_name` to graft an operation onto an existing CLI
+group. Leave both unset for commands reached only through `ext run` and MCP.
 The matching `CommandDescriptor` controls agent-mode output for direct CLI
 routes.
 
