@@ -38,7 +38,9 @@ Deadlines use process-local monotonic time and do not survive a crash.
 
 ## Control socket
 
-The bounded per-user socket path avoids `sockaddr_un` path limits. A stale-socket sweep
+Control sockets live in `/tmp/meridian-<uid>/` under a hashed name, so the path stays
+far below `sockaddr_un`'s limit (104 bytes on macOS, 108 on Linux) however long the
+runtime root or `TMPDIR` is. A stale-socket sweep
 uses a datagram probe and checks file identity before unlinking: a stream probe can refuse
 a live listener with a full backlog. Uncertain errors and files belonging to other users
 are left alone. The spawn's [launch lock](../../state/launch_lock.py) prevents another

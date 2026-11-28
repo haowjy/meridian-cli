@@ -73,7 +73,8 @@ def _isolate_control_sockets() -> Iterator[Path]:
     from meridian.lib.streaming import control_socket
 
     production_root = control_socket._POSIX_SOCKET_ROOT
-    # pytest's usual temp paths can exceed sockaddr_un.sun_path on macOS.
+    # Tests that SIGKILL a runner leave endpoints behind; keep them out of the user's
+    # real /tmp/meridian-<uid>. The root stays under /tmp so socket paths stay short.
     with (
         TemporaryDirectory(prefix="meridian-test-", dir="/tmp") as root,
         pytest.MonkeyPatch.context() as patch,

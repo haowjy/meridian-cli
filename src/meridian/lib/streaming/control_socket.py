@@ -8,7 +8,6 @@ import os
 import re
 import socket
 import stat
-import sys
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -19,11 +18,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 
-# sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
-# callers can validate before asyncio reaches the less actionable bind error.
-UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
-# Runner and client processes may have different TMPDIR values; the shared
-# discovery path must not depend on either process's environment.
+# Fixed, not TMPDIR: runner and client may have different TMPDIRs, and macOS's is long
+# enough to push a socket past sun_path's 104 bytes.
 _POSIX_SOCKET_ROOT = Path("/tmp")
 # One request is one line; asyncio's 64 KiB default would cap messages far below what
 # the harnesses accept.
@@ -40,33 +36,14 @@ def socket_directory() -> Path:
     return _POSIX_SOCKET_ROOT / f"meridian-{os.getuid()}"
 
 
-def bounded_socket_path(
-    runtime_root: Path,
-    kind: Literal["app", "control"],
-    key: str | None = None,
-) -> Path:
-
-    identity = os.fsencode(runtime_root.resolve())
-    if key is not None:
-        identity += b"\0" + key.encode("utf-8")
-    digest = hashlib.sha256(identity).hexdigest()[:32]
-    path = socket_directory() / f"{kind}-{digest}.sock"
-    path_length = len(os.fsencode(path))
-    if path_length > UNIX_SOCKET_PATH_MAX_BYTES:
-        msg = (
-            f"{kind} socket path is {path_length} bytes, exceeding the platform "
-            f"limit of {UNIX_SOCKET_PATH_MAX_BYTES}: {path}"
-        )
-        raise ValueError(msg)
-    return path
-
-
 def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
 
     if IS_WINDOWS:
         return runtime_root / "spawns" / str(spawn_id) / "control.sock"
 
-    return bounded_socket_path(runtime_root, "control", str(spawn_id))
+    identity = os.fsencode(runtime_root.resolve()) + b"\0" + str(spawn_id).encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()[:32]
+    return socket_directory() / f"control-{digest}.sock"
 
 
 def prepare_socket_directory(path: Path) -> None:
@@ -286,9 +263,7 @@ def _parse_sender(value: object) -> MessageSender | None | Literal[False]:
 
 
 __all__ = [
-    "UNIX_SOCKET_PATH_MAX_BYTES",
     "ControlSocketServer",
-    "bounded_socket_path",
     "control_socket_path",
     "prepare_socket_directory",
     "socket_directory",

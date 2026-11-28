@@ -29,6 +29,10 @@ _ROUTE_NOTE = (
 
 
 def _post(inbox: Path, text: str) -> None:
+    # Claude bound this path itself. One the platform can't address fails connect() below
+    # with a message naming it, so it gets no length check here.
+    if not inbox.is_absolute():
+        raise DeliveryRefused(f"Claude published a relative inbox path, {inbox}")
     wire_message = (
         json.dumps(
             {"type": "user", "message": {"role": "user", "content": text}},
@@ -45,7 +49,9 @@ def _post(inbox: Path, text: str) -> None:
         except OSError as exc:
             if exc.errno in {errno.ENOENT, errno.ECONNREFUSED}:
                 raise TransportDead("Claude's inbox is gone") from exc
-            raise DeliveryRefused(f"Could not reach Claude's inbox: {exc.strerror or exc}") from exc
+            raise DeliveryRefused(
+                f"Could not reach Claude's inbox at {inbox}: {exc.strerror or exc}"
+            ) from exc
         client.sendall(wire_message)
 
         try:

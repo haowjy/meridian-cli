@@ -147,19 +147,6 @@ def test_writer_records_messaging_socket_without_token(tmp_path, monkeypatch):
     batch = read_observations(path, nonce="nonce", pid=os.getppid(), cursor=0)
     assert [item.key.session_id for item in batch.observations] == ["entry"]
 
-    relative = tmp_path / "relative-socket.jsonl"
-    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "relative.sock")
-    _record(
-        monkeypatch,
-        relative,
-        hook_event_name="SessionStart",
-        session_id="entry",
-        transcript_path=str(tmp_path / "entry.jsonl"),
-        source="startup",
-    )
-    unusable = json.loads(next(line for line in relative.read_text().splitlines() if line))
-    assert "messaging_socket" not in unusable
-
 
 def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     path = tmp_path / "observations.jsonl"
@@ -191,23 +178,31 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     foreign = tmp_path / "foreign.sock"
     latest = tmp_path / "latest.sock"
     ignored_version = tmp_path / "ignored-version.sock"
+    # Past the platform's socket address limit: kept, so the send names the problem.
+    too_long = Path("/tmp") / ("x" * 200) / "claude.sock"
     lines = [
         record("first", socket_path=first, recorded_at=1.0),
         record("foreign", record_pid=pid + 1, socket_path=foreign),
         record("without-socket"),
         record("latest", socket_path=latest, recorded_at=2.0),
-        record("invalid-socket", socket_path=Path("relative.sock"), recorded_at=3.0),
+        record("too-long", record_pid=pid + 3, socket_path=too_long),
+        {
+            **record("misnamed", record_pid=pid + 4, socket_path=latest),
+            "transcript_path": str(tmp_path / "other.jsonl"),
+        },
         record("future", socket_path=ignored_version, version=3),
-        {**record("wrong-type-socket"), "messaging_socket": 123, "recorded_at": "soon"},
     ]
     path.write_bytes(b"\n".join(json.dumps(line).encode() for line in lines) + b'\n{"v":2')
 
     assert latest_messaging_socket(path, pid=pid) == latest
     assert latest_messaging_socket(path, pid=pid + 2) is None
+    assert latest_messaging_socket(path, pid=pid + 3) == too_long
+    # A record whose identity is rejected gives its pid no inbox either.
+    assert latest_messaging_socket(path, pid=pid + 4) is None
     assert [
         item.key.session_id
         for item in read_observations(path, nonce="nonce", pid=pid, cursor=0).observations
-    ] == ["first", "without-socket", "latest", "invalid-socket", "wrong-type-socket"]
+    ] == ["first", "without-socket", "latest"]
 
 
 def test_hook_does_not_recreate_deleted_spawn_parent(tmp_path, monkeypatch):
