@@ -323,8 +323,17 @@ def test_harness_exit_gives_eof_before_stop(pty_output: bool, tmp_path: Path) ->
                 assert all(link == "/dev/null" or link in pipes for link in links), links
         os.write(input_fd, b"quit\n")
         if pty_output:
-            # The actual relay waits for PTY EOF before reaping and sending stop.
-            assert completed.result(timeout=5).exit_code == 0
+            # The relay waits for PTY EOF before reaping and sending stop, then restores
+            # the caller's tty with TCSADRAIN. On macOS that waits until this master is
+            # read, as a real terminal always reads it.
+            deadline = time.monotonic() + 5
+            while not completed.done():
+                assert time.monotonic() < deadline, "PTY wait did not finish"
+                # EIO once the relay closes its copy of the terminal (Linux).
+                if select.select([master], [], [], 0.1)[0]:
+                    with suppress(OSError):
+                        os.read(master, 4096)
+            assert completed.result().exit_code == 0
         else:
             assert process is not None
             process.wait(timeout=5)

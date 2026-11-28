@@ -6,6 +6,16 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.28.3] - 2026-11-28
+
+### Fixed
+- `meridian message` to a Claude primary no longer loses Claude's inbox when its socket path is longer than the platform's Unix socket limit (104 bytes on macOS). Meridian used to drop such a path with no error, so the session looked unreachable. It now records the path Claude bound, and a send to a path Meridian can't use (too long, or relative) fails with an error that names the path. Real Claude sessions keep their inbox under 104 bytes, so this was seen only in the test suite on macOS.
+
+## [0.28.2] - 2026-11-28
+
+### Fixed
+- The notice `meridian inbox offer` sends a session now names `meridian inbox read <id>` (with `--machine <holder>` for a message on another machine) beside `meridian inbox take <id>`, so a session can check the text before it claims. It also says an unfamiliar sender or project is a reason to read, not to decline. The notice still carries no message text.
+
 ## [0.28.1] - 2026-11-28
 
 ### Upgrade notes
