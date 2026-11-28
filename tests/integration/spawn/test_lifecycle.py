@@ -9,9 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pytest
 
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.spawn.lifecycle import LifecycleEvent, SpawnLifecycleService
+from meridian.lib.core.domain import PrimarySessionMetadata
+from meridian.lib.spawn.lifecycle import LifecycleEvent, SpawnLifecycleService, SpawnReservation
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 

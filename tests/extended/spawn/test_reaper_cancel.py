@@ -15,11 +15,11 @@ import psutil
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.outcome import ExecutionTerminalFacts
 from meridian.lib.spawn.service import SpawnApplicationService
 from meridian.lib.state import spawn_store, spawn_tree
 from meridian.lib.state.launch_lock import acquire

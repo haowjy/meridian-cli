@@ -11,10 +11,9 @@ from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import PrimarySessionMetadata, Spawn
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.sink import OutputSink
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import ModelId
 from meridian.lib.launch.continue_launch import ContinueHold
@@ -22,9 +21,9 @@ from meridian.lib.launch.fork import fork_usage_seed
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
+from meridian.lib.spawn.lifecycle import SpawnReservation
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import (

@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from meridian.lib.core.domain import PrimarySessionMetadata
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.harness.model_observation import observe_session_model
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.platform.tmux import resolve_tmux_target
 from meridian.lib.spawn.cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.state import spawn_store

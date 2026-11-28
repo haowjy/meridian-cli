@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.domain import PrimarySessionMetadata
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -37,7 +37,8 @@ from meridian.lib.launch.native_run import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
-from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.spawn.lifecycle import SpawnReservation
+from meridian.lib.spawn.outcome import ExecutionTerminalFacts
 from meridian.lib.spawn.service import SpawnApplicationService
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.native_identity import NativeIdentityError

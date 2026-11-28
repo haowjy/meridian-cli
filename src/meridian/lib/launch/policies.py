@@ -24,9 +24,8 @@ from meridian.lib.core.permission_policy import (
     resolve_network_policy,
 )
 from meridian.lib.core.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import PLUGIN_HOSTED, HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
 from meridian.lib.harness.registry import HarnessRegistry
 
 from . import bundle_adapter
@@ -425,7 +424,9 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         else None
     )
 
-    profile_overrides = RuntimeOverrides.from_agent_profile(profile)
+    profile_overrides = RuntimeOverrides(
+        resident_rearm_budget=None if profile is None else profile.resident_rearm_budget
+    )
     full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
 

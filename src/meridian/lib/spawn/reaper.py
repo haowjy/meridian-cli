@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TypedDict
 
 import structlog
 
@@ -20,9 +19,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-from meridian.lib.platform.process_scope.posix import is_pgid_reachable
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
-from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
@@ -46,28 +43,6 @@ from meridian.lib.state.spawn_status import (
     claim_dead_launch,
     legacy_runner_alive,
 )
-
-
-class ScopeLiveness(TypedDict):
-    """Best-effort liveness projection for a process containment scope."""
-
-    root_alive: bool
-    pgid_reachable: bool | None
-    likely_serving: bool
-
-
-def scope_liveness(scope: ProcessScopeSnapshot) -> ScopeLiveness:
-
-    root_alive = is_process_alive(
-        scope.root_pid,
-        created_after_epoch=(scope.root_created_at_epoch or None),
-    )
-    pgid_reachable = is_pgid_reachable(scope.pgid) if scope.pgid is not None else None
-    return {
-        "root_alive": root_alive,
-        "pgid_reachable": pgid_reachable,
-        "likely_serving": root_alive or pgid_reachable is True,
-    }
 
 
 def _fallback_cleanup_scopes(

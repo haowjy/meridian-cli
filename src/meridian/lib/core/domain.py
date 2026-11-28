@@ -111,6 +111,17 @@ SkillDeliveryMode = Literal["inline", "named"]
 """How a launch delivers its loaded skills: full text, or a line naming them."""
 
 
+class PrimarySessionMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    harness: str
+    model: str
+    agent: str
+    agent_path: str
+    skills: tuple[str, ...]
+    skill_paths: tuple[str, ...]
+
+
 class SkillContent(BaseModel):
     """Loaded skill body."""
 

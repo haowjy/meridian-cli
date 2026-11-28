@@ -181,9 +181,15 @@ def build_spawn_lifecycle_service_from_roots(
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnLifecycleService:
 
-    from meridian.lib.spawn.lifecycle import create_lifecycle_service
+    if lifecycle is not None:
+        return lifecycle
+    from meridian.lib.hooks.dispatch import get_hook_dispatcher
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 
-    return lifecycle or create_lifecycle_service(project_root, runtime_root)
+    dispatcher = get_hook_dispatcher(project_root, runtime_root)
+    return SpawnLifecycleService(
+        runtime_root, hooks=[dispatcher] if dispatcher is not None else None
+    )
 
 
 def build_spawn_application_service_from_roots(

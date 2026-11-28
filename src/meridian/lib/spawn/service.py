@@ -14,17 +14,18 @@ import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
+from meridian.lib.core.domain import (
+    PrimarySessionMetadata,
+    SpawnStatus,
+    TerminalSpawnStatus,
+    TokenUsage,
+)
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.spawn_lifecycle import (
     CANCEL_GRACE_SECS,
-    ExecutionTerminalFacts,
-    ExecutionTerminalOutcome,
-    SpawnReservation,
     coerce_spawn_status,
     is_active_spawn_status,
     is_terminal_spawn_status,
-    resolve_execution_terminal_outcome,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -49,10 +50,14 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
 )
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.platform.signals import signal_to_exit_code
-from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService, SpawnReservation
 from meridian.lib.spawn.managed_primary import tear_down_dead_launch
+from meridian.lib.spawn.outcome import (
+    ExecutionTerminalFacts,
+    ExecutionTerminalOutcome,
+    resolve_execution_terminal_outcome,
+)
 from meridian.lib.state import spawn_store
 from meridian.lib.state.json_doc import write_model_once
 from meridian.lib.state.launch_lock import LaunchSlot

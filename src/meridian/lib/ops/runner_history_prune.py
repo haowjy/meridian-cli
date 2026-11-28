@@ -26,9 +26,9 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.session_target import resolve_run_sources
 from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.spawn.reaper import scope_liveness
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy
+from meridian.lib.state.liveness import scope_liveness
 from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.paths import LAUNCH_FILE_NAMES, LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection

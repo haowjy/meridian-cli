@@ -26,10 +26,10 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_eve
 from meridian.lib.idle.delivery import end_stretch_on_delivery
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
+from meridian.lib.spawn.cleanup import terminate_spawn_scopes
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import write_accepted_signals
-from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -544,7 +544,7 @@ class SpawnManager:
             record = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 return
-            terminate_recorded_spawn_scope(
+            terminate_spawn_scopes(
                 self._runtime_root,
                 record,
                 reason="stop_spawn",

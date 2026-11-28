@@ -5,7 +5,6 @@ from pathlib import Path
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
-from meridian.lib.platform.process_scope.base import CleanupResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -65,28 +64,9 @@ def active_descendants(
     ]
 
 
-def terminate_recorded_spawn_scope(
-    runtime_root: Path,
-    record: SpawnRecord,
-    *,
-    reason: str,
-    grace_seconds: float = 5.0,
-) -> list[CleanupResult]:
-
-    from meridian.lib.spawn.cleanup import terminate_spawn_scopes
-
-    return terminate_spawn_scopes(
-        runtime_root,
-        record,
-        reason=reason,
-        grace_seconds=grace_seconds,
-    )
-
-
 __all__ = [
     "active_descendants",
     "collect_descendants",
     "descendant_id_set",
     "iter_descendants_from_parent_map",
-    "terminate_recorded_spawn_scope",
 ]

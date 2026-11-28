@@ -536,8 +536,8 @@ async def test_streaming_claude_exec_receives_prebound_identity(
     import json
     import shlex
 
+    from meridian.lib.core.domain import PrimarySessionMetadata
     from meridian.lib.launch.session_scope import session_scope
-    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.state import session_store
     from tests.support.executables import prepend_fake_executables
 

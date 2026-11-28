@@ -9,7 +9,8 @@ Their package holds what runs inside the person's session: ``commands.run_comman
 for ``meridian harness-hook|harness-mcp|harness-watch <harness> ...``, and
 ``notices.send_owed_notices()`` for work a closed session left. It also says where the
 sessions live: ``state.native_store()``; the package's ``adapter.py`` reads them. Callers use
-this module and never name a harness. A new one is a package with those and a line in ``_PACKAGES``.
+this module and never name a harness. A new one is a package with those and its name in
+``core/types.PLUGIN_HOSTED``.
 ``harness-watch`` is the background command that wakes an idle session; ``harness-hook`` also
 runs at the end of every turn. Imports nothing heavy: both dispatch from ``cli/entrypoint.py``
 and the hook runs before every model call.
@@ -20,10 +21,10 @@ from __future__ import annotations
 import importlib
 from collections.abc import Sequence
 
-_COMMANDS = ("harness-hook", "harness-mcp", "harness-watch")
-_PACKAGES = {"agy": "meridian.lib.harness.agy"}
+from meridian.lib.core.types import PLUGIN_HOSTED
 
-PLUGIN_HOSTED = frozenset(_PACKAGES)
+_COMMANDS = ("harness-hook", "harness-mcp", "harness-watch")
+_PACKAGES = {name: f"meridian.lib.harness.{name}" for name in PLUGIN_HOSTED}
 
 
 def is_plugin_hosted(name: str | None) -> bool:
@@ -64,7 +65,6 @@ def send_owed_notices() -> None:
 
 
 __all__ = [
-    "PLUGIN_HOSTED",
     "is_plugin_hosted",
     "native_store",
     "run_command",

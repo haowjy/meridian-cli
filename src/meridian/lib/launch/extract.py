@@ -7,10 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.spawn_lifecycle import (
-    DurableReportEvidence,
-    classify_durable_report_text,
-)
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -20,6 +16,7 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.native_identity import NativeKey
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.permission_journal import PermissionJournal
+from meridian.lib.state.spawn_report import DurableReportEvidence, classify_durable_report_text
 
 
 class FinalizeReportKind(StrEnum):

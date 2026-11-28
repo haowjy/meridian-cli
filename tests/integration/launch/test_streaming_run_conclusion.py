@@ -2,15 +2,12 @@
 
 from pathlib import Path
 
-from meridian.lib.core.spawn_lifecycle import (
-    ExecutionTerminalFacts,
-    resolve_execution_terminal_outcome,
-)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.extract import FinalizeReportKind, enrich_finalize
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion
+from meridian.lib.spawn.outcome import ExecutionTerminalFacts, resolve_execution_terminal_outcome
 from meridian.lib.state.paths import LaunchPaths
 from tests.support.launch_paths import launch_paths
 

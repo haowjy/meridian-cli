@@ -364,6 +364,25 @@ class TaskContextInputs:
     prior_output: str
 
 
+def _config_overrides(config: MeridianConfig | None, *, primary: bool) -> RuntimeOverrides:
+    """The config layer: a primary takes the ``[primary]`` table, a spawn only the rearm budget."""
+
+    if config is None:
+        return RuntimeOverrides()
+    if not primary:
+        return RuntimeOverrides(resident_rearm_budget=config.resident_rearm_budget)
+    return RuntimeOverrides(
+        agent=config.primary.agent,
+        effort=config.primary.effort,
+        sandbox=config.primary.sandbox,
+        approval=config.primary.approval,
+        autocompact=config.primary.autocompact,
+        autocompact_pct=config.primary.autocompact_pct,
+        timeout=config.primary.timeout,
+        resident_rearm_budget=config.resident_rearm_budget,
+    )
+
+
 def resolve_task_context_inputs(
     *,
     context_refs: tuple[ContextRef, ...],
@@ -882,10 +901,9 @@ def compile_prepared_policy_surface(
         if runtime.has_runtime_override_snapshot
         else RuntimeOverrides.from_env()
     )
-    if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
-        config_overrides = RuntimeOverrides.from_config(config)
-    else:
-        config_overrides = RuntimeOverrides.from_spawn_config(config)
+    config_overrides = _config_overrides(
+        config, primary=runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    )
 
     resolved_policy = resolve_launch_policy(
         SurfacePolicyInput(

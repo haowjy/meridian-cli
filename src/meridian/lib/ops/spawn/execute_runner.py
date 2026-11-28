@@ -9,7 +9,7 @@ import structlog
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.context.runtime import RuntimeContext
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import PrimarySessionMetadata, Spawn
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     HarnessPrelaunchState,
@@ -34,7 +34,6 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.streaming_runner import execute_with_streaming
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.relocate_gate import with_relocate_hint
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot

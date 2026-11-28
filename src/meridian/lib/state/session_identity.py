@@ -147,7 +147,7 @@ def live_observer_for_chat(
     records: Iterable[SpawnRecord] | None = None,
     excluding_spawn_id: str | None = None,
 ) -> str | None:
-    from meridian.lib.spawn.reaper import scope_liveness
+    from meridian.lib.state.liveness import scope_liveness
     from meridian.lib.state.process_scope_projection import read_scope_projection
 
     if records is None:

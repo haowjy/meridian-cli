@@ -9,8 +9,8 @@ from uuid import uuid4
 import structlog
 
 from meridian.lib.context.resolved import ResolvedContext
+from meridian.lib.hooks.dispatch import get_hook_dispatcher
 from meridian.lib.launch.session_links import Execution, execution_of, publish_chat_links
-from meridian.lib.spawn.lifecycle import get_hook_dispatcher
 from meridian.lib.state import session_store, work_repository, work_store
 from meridian.lib.state.caller import caller_in
 from meridian.lib.state.paths import resolve_project_paths

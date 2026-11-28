@@ -21,11 +21,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.spawn_lifecycle import (
-    SIGNAL_STOP_BUDGET_SECS,
-    ExecutionTerminalFacts,
-    parse_terminal_status,
-)
+from meridian.lib.core.spawn_lifecycle import SIGNAL_STOP_BUDGET_SECS, parse_terminal_status
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -83,6 +79,7 @@ from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbit
 from meridian.lib.platform.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
+from meridian.lib.spawn.outcome import ExecutionTerminalFacts
 from meridian.lib.state import spawn_store
 from meridian.lib.state.native_identity import (
     NativeIdentityError,

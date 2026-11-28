@@ -317,7 +317,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
         record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
 
     monkeypatch.setattr(
-        "meridian.lib.spawn.reaper.is_process_alive",
+        "meridian.lib.state.liveness.is_process_alive",
         lambda *_args, **_kwargs: False,
     )
     alive_proc = type("AliveProc", (), {"create_time": lambda self: 100.0})()
