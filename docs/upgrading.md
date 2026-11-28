@@ -12,7 +12,7 @@ directory and names its project only as where Mars's walk-up starts. Mars takes 
 project `mars.toml`, else the user level for a lookup. Your home
 directory's `mars.toml` is never a project any more; Mars warns where it finds one and its
 [guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project)
-says how to move it.
+says how to move it. The migration script below does those steps for you.
 
 - **`meridian mars --user …` addresses the Mars user level**, forwarded as `mars --user …`,
   instead of Meridian's own project at `~/.meridian/mars`. A Mars older than 0.41.0 on `PATH`
@@ -34,27 +34,33 @@ says how to move it.
   uv run https://raw.githubusercontent.com/haowjy/meridian-cli/main/scripts/migrate-to-dot-mars.py
   ```
 
-  On its own it is a dry run: it prints each step with its real paths and changes nothing. Add
-  `--apply` to run the steps; it stops at the first one that fails and says what to fix, and a
-  re-run skips what is already done. Before it moves, rewrites or deletes anything, it copies it
-  into one backup folder per run, `~/.mars-migration-backup/<UTC timestamp>/`, which it prints at
-  the start and the end. It moves:
-  - an old Mars home project (`~/mars.toml`, `~/mars.lock`, and its store in `~/.mars`): it
-    unlinks what that project installed into harness folders, carries its dependencies into
-    the user level's `mars.toml` and `~/.mars-src` into the user level's `.mars-src/`, then
-    removes the old files;
-  - Mars 0.40's `config.toml` and `curated.toml` (from `~/.config/mars/` or
-    `$XDG_CONFIG_HOME/mars/` on Linux, `~/Library/Application Support/mars/` on macOS) into the
-    user level;
+  It needs Mars 0.41.0 or later (Meridian 0.29.0 or later bundles it). On its own it is a dry
+  run: it prints each step with its real paths and changes nothing. Add `--apply` to run the
+  steps; it stops at the first one that fails and says what to fix, and a re-run skips what is
+  already done. Before it changes anything, it copies every path it will move, rewrite or
+  delete, including the harness config files whose hook and MCP entries it unlinks, into a new
+  folder, `~/.mars-migration-backup/<UTC time>/`. A folder still named `….partial` belongs to a
+  run that stopped while copying and changed nothing. It moves:
+  - an old Mars home project (`~/mars.toml`, `~/mars.local.toml`, `~/mars.lock`, and its store
+    in `~/.mars`): it runs `mars --root ~ unlink` for each target the project's locks record,
+    carries both manifests (without `targets`, relative paths made absolute) into the user
+    level's `mars.toml` and `mars.local.toml` and `~/.mars-src` into the user level's
+    `.mars-src/`, then deletes the old files;
+  - Mars 0.40's `config.toml` and `curated.toml` into the user level, from where Mars 0.40 read
+    them: `$MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars/` or `~/.config/mars/` on Linux and
+    `~/Library/Application Support/mars/` on macOS (Mars 0.40 ignored `XDG_CONFIG_HOME` there).
+    A macOS `~/.config/mars/` file, which Mars never read, moves only into a user level that has
+    none, with a note that its settings never applied;
   - `~/.meridian/mars`: its dependencies into the user level's `mars.toml`, its `.mars-src/`
     into the user level's, and its `[settings]`, `[models]`, `[agents]` and `[skills]` into
-    Mars's user `config.toml`; then it moves the folder itself into the backup.
+    Mars's user `config.toml`; then it deletes the folder, which the backup keeps.
 
-  It honors `MARS_HOME`, stops before moving anything when a name (a dependency, a `.mars-src/`
-  item, a config key with a different value) is defined on both sides, runs
-  `mars --user sync`, and ends with what to do next: `meridian mars sync` in each project, and
-  any symlinks under `~/.local/bin` that point at a removed path. To roll back to Meridian 0.28,
-  restore `~/.meridian/mars` from the backup (see Rollback).
+  It honors `MARS_HOME`. Before changing anything it has Mars validate the files it would
+  write, and it stops when both sides hold one name (a dependency, a `.mars-src/` item, a
+  config key, `curated.toml`) with different content; the same content on both sides is kept
+  once. It then runs `mars --user sync` and ends with what to do next: `meridian mars sync` in
+  each project, and any symlink under `~/.local/bin` whose target is gone, with the
+  `ln -sfn` that points it at the user level's copy.
 - **Meridian's skills are read in place.** `meridian skills` reads the installed Meridian
   package only and no longer asks Mars to copy skills into `.mars/skills/`; launches read the
   bundle directly. Every passthrough command that syncs (`sync`, `add`, `link`, `upgrade`, …)
@@ -71,8 +77,20 @@ says how to move it.
   `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path`, with
   the same message as the lookup warning), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
   (`config show` adds that error as `mars_error`).
-- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages; after the
-  migration script ran, restore that folder from its backup first.
+- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages. After the
+  migration script ran, first restore everything it moved from its backup: the commands it
+  prints at the end, which are
+
+  ```bash
+  rm -rf ~/.mars                                    # or $MARS_HOME
+  cp -a ~/.mars-migration-backup/<UTC time>/home/. ~/
+  cp -a ~/.mars-migration-backup/<UTC time>/root/. /    # only if it has root/
+  ```
+
+  using the oldest complete backup when a run was cut short and run again; it holds the setup
+  as it was before the first run. That brings back `~/mars.toml`, `~/mars.lock`, `~/.mars-src`,
+  the old `~/.mars` store, the Mars 0.40 config files, what was unlinked from the harness
+  folders and `~/.meridian/mars`.
   - *To 0.28.1*, which runs Mars 0.41.0: user-level items a project sync installed stay in
     that project. Outside a project, lookups read `~/.meridian/mars` again, so user-level items
     are not found there, and `meridian mars --user …` addresses `~/.meridian/mars` instead of

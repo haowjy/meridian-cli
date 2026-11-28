@@ -5,38 +5,43 @@
 # ///
 """Move a Mars 0.40 / Meridian 0.28 setup into the Mars 0.41 user level (~/.mars).
 
-Run once, after installing Mars 0.41.0 or later (Meridian 0.29 bundles it):
+Run once, with Mars 0.41.0 or later installed (Meridian 0.29.0 or later bundles it):
 
     uv run https://raw.githubusercontent.com/haowjy/meridian-cli/main/scripts/migrate-to-dot-mars.py
     uv run .../migrate-to-dot-mars.py --apply
 
 Without --apply it only prints the steps, with real paths. It moves:
 
-  - a home project (~/mars.toml, ~/mars.lock): unlinks what it installed into ~/.claude,
-    ~/.agents and the other harness folders, carries its dependencies and settings (not
-    `targets`) into the user level's mars.toml, moves ~/.mars-src in, and deletes the home
-    project and its old store in ~/.mars;
-  - Mars 0.40's config.toml and curated.toml ($XDG_CONFIG_HOME/mars or ~/.config/mars on
-    Linux, ~/Library/Application Support/mars on macOS) into the user level;
-  - Meridian 0.28's ~/.meridian/mars: dependencies into mars.toml, .mars-src items into the
-    user level's, [settings]/[models]/[agents]/[skills] into config.toml; then deletes it;
+  - a home project (~/mars.toml, ~/mars.local.toml, ~/mars.lock): `mars --root ~ unlink`s each
+    target its lock records (~/.claude, ~/.agents, ...), carries both manifests (without
+    `targets`, relative paths made absolute) into the user level's mars.toml and
+    mars.local.toml, moves ~/.mars-src in, and deletes the home project and its old store;
+  - Mars 0.40's config.toml and curated.toml into the user level: from $MARS_CONFIG_DIR, else
+    $XDG_CONFIG_HOME/mars or ~/.config/mars on Linux, ~/Library/Application Support/mars on
+    macOS (Mars 0.40 ignored XDG_CONFIG_HOME there). On macOS a ~/.config/mars file, which
+    Mars never read, is moved only into a user level that has none;
+  - Meridian 0.28's ~/.meridian/mars ($MERIDIAN_HOME/mars): its dependencies into mars.toml,
+    its .mars-src items into the user level's, its [settings], [models], [agents] and [skills]
+    into config.toml; then deletes it.
 
-then runs `mars --user sync`. The user level is $MARS_HOME when set, else ~/.mars. A name both
-sides define with different content stops the run before anything changes. A re-run skips
-what is done.
+The user level is $MARS_HOME, else $MARS_CONFIG_DIR, else ~/.mars. Before changing anything the
+run has Mars read the files it would write, and it stops when both sides hold one name (a
+dependency, a .mars-src item, a setting, curated.toml) with different content. Then it runs
+`mars --user sync`. A re-run skips what is done.
 
 Backup: before changing anything, --apply copies every path it will move, rewrite or delete,
-the user level folder included, into ~/.mars-migration-backup/<UTC timestamp>/, mirroring
-paths under home in home/ (paths outside home go in root/, mirroring /).
+the user level folder included, into a new folder ~/.mars-migration-backup/<UTC time>/ (paths
+under home in home/, any others in root/), including the harness config files whose hook and
+MCP entries `unlink` removes. A folder ending in .partial did not finish; its run changed
+nothing.
 
-Roll back (to Mars 0.40 / Meridian 0.28) from that backup:
+Roll back (to Mars 0.40 / Meridian 0.28) from the oldest complete backup of this migration:
 
-    rm -rf ~/.mars                                  # or $MARS_HOME: the user level the run made
-    cp -a ~/.mars-migration-backup/<stamp>/home/. ~/
-    cp -a ~/.mars-migration-backup/<stamp>/root/. /   # only if the run made root/
+    rm -rf ~/.mars                                     # the user level ($MARS_HOME if set)
+    cp -a ~/.mars-migration-backup/<time>/home/. ~/
+    cp -a ~/.mars-migration-backup/<time>/root/. /     # only if it has root/
 
-The run prints these commands with its real paths at the end. When a run was cut short and
-run again, use the first run's backup (the oldest): it holds the setup as it was before.
+The run prints these commands with its real paths at the end.
 """
 
 from __future__ import annotations
@@ -44,9 +49,11 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -64,10 +71,27 @@ USER_LEVEL_FILES = frozenset(
     {"mars.toml", "mars.local.toml", "mars.lock", "config.toml", "curated.toml", ".mars-src"}
 )
 DEPENDENCY_TABLES = ("dependencies", "local-dependencies")
+# Tables whose entries carry a `path` relative to the manifest's folder.
+PATH_TABLES = (*DEPENDENCY_TABLES, "overrides")
 # What Meridian 0.28's root held that now belongs in the user config.toml.
 CONFIG_SECTIONS = ("settings", "models", "agents", "skills")
-# Settings a user-level mars.toml must not have.
+# The files under home where Mars 0.40 and 0.41 merge a target's hook, MCP and plugin entries
+# (`src/target/table.rs`, `mars-schema/src/hooks/targets.rs`, unchanged between them): `unlink`
+# edits them, so the backup holds them.
+ENTRY_FILES = {
+    ".claude": (".claude/settings.local.json", ".mcp.json"),
+    ".codex": (".codex/hooks.json", ".codex/config.toml"),
+    ".opencode": (".opencode/opencode.json",),
+    ".pi": (".pi/mcp.json",),
+    ".agy": (".agy/hooks.json", ".agy/mcp_config.json", ".agy/plugin.json", ".agents/plugins.json"),
+}
+# Settings a user-level manifest must not have.
 TARGET_KEYS = ("targets", "managed_root")
+
+
+def real(path: Path) -> Path:
+    """`path` with every symlink resolved, so two spellings of one folder compare equal."""
+    return Path(os.path.realpath(path))
 
 
 @dataclass(frozen=True)
@@ -75,48 +99,35 @@ class Paths:
     home: Path
     user: Path
     meridian_root: Path
-    # Where Mars 0.40 kept config.toml and curated.toml; None when that is the user level.
-    old_config: Path | None
-    # macOS: ~/.config/mars, which Mars 0.40 never read there.
-    old_config_unread: bool
+    # Where Mars 0.40 read config.toml and curated.toml.
+    old_config: Path
+    # macOS: ~/.config/mars, which Mars never read; None elsewhere.
+    unread_config: Path | None
 
 
 def locate() -> Paths:
-    home = Path.home()
-    if not home.is_absolute():
+    if not Path.home().is_absolute():
         raise SystemExit("HOME is not an absolute path; set it and run again.")
+    home = real(Path.home())
 
     def env_dir(name: str) -> Path | None:
         value = os.environ.get(name, "").strip()
-        if not value:
-            return None
-        path = Path(value).expanduser()
-        return path if path.is_absolute() else Path.cwd() / path
+        return real(Path(value).expanduser()) if value else None
 
     # Mars 0.41 reads Mars 0.40's MARS_CONFIG_DIR as MARS_HOME while MARS_HOME is unset.
     config_dir = env_dir("MARS_CONFIG_DIR")
     user = env_dir("MARS_HOME") or config_dir or home / ".mars"
     meridian_root = (env_dir("MERIDIAN_HOME") or home / ".meridian") / "mars"
-
-    unread = False
+    unread = None
     if config_dir is not None:
         old_config = config_dir
     elif sys.platform == "darwin":
         old_config = home / "Library" / "Application Support" / "mars"
-        dot_config = home / ".config" / "mars"
-        if not _has_config(old_config) and _has_config(dot_config):
-            old_config, unread = dot_config, True
+        unread = home / ".config" / "mars"
     else:
         xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
-        base = Path(xdg) if xdg and Path(xdg).is_absolute() else home / ".config"
-        old_config = base / "mars"
-    if old_config == user:
-        old_config = None
+        old_config = (real(Path(xdg)) if xdg.startswith("/") else home / ".config") / "mars"
     return Paths(home, user, meridian_root, old_config, unread)
-
-
-def _has_config(folder: Path) -> bool:
-    return (folder / "config.toml").exists() or (folder / "curated.toml").exists()
 
 
 # --- Mars ------------------------------------------------------------------------------------
@@ -135,34 +146,75 @@ def find_mars(explicit: str | None) -> Path | None:
     return Path(found) if found else None
 
 
-def mars_version(mars: Path) -> tuple[int, ...] | None:
+def mars_problem(mars: Path | None) -> str | None:
+    if mars is None:
+        return "no `mars` found beside `meridian` or on PATH; pass --mars PATH"
     try:
         out = subprocess.run(
             [str(mars), "--version"], capture_output=True, text=True, check=False, timeout=60
         ).stdout
-    except OSError:
-        return None
+    except OSError as exc:
+        return f"{mars} does not run ({exc})"
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
-    return tuple(int(part) for part in match.groups()) if match else None
+    version = tuple(int(part) for part in match.groups()) if match else None
+    if version is None or version < MIN_MARS:
+        found = ".".join(map(str, version)) if version else "unknown"
+        return f"{mars} is Mars {found}; this needs 0.41.0 or later (upgrade Meridian)"
+    return None
 
 
-def run_mars(mars: Path, *args: str, show: bool = True) -> None:
-    result = subprocess.run([str(mars), *args], capture_output=True, text=True, check=False)
+class StepError(Exception):
+    pass
+
+
+def run_mars(mars: Path, *args: str, show: bool = True, env: dict[str, str] | None = None) -> None:
+    result = subprocess.run(
+        [str(mars), *args], capture_output=True, text=True, check=False, env=env
+    )
+    output = (result.stdout + result.stderr).strip()
     if result.returncode != 0:
-        raise StepError(
-            f"`{mars} {' '.join(args)}` exited {result.returncode}:\n"
-            f"{result.stdout}{result.stderr}".rstrip()
-        )
+        raise StepError(f"`{mars} {shlex.join(args)}` exited {result.returncode}:\n{output}")
     if show:
-        for line in (result.stdout + result.stderr).strip().splitlines():
+        for line in output.splitlines():
             print(f"      {line}")
+
+
+def check_with_mars(paths: Paths, mars: Path, files: dict[str, str]) -> str | None:
+    """Why Mars cannot use these user-level files, placed in a scratch user level; None when
+    it can. `validate` reads mars.toml, mars.local.toml and config.toml and resolves what
+    `sync` would; curated.toml is copied as is, its format unchanged since Mars 0.40."""
+    if not {"mars.toml", "mars.local.toml", "config.toml"} & files.keys():
+        return None
+    with tempfile.TemporaryDirectory(prefix="migrate-to-dot-mars-") as scratch:
+        user = Path(scratch) / "home" / ".mars"
+        user.mkdir(parents=True)
+        for name, text in files.items():
+            (user / name).write_text(text, encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if key != "MARS_CONFIG_DIR"}
+        env |= {"HOME": str(user.parent), "MARS_HOME": str(user)}
+        # The source cache `sync` uses, so a dependency is not fetched again.
+        if "MARS_CACHE_DIR" not in env:
+            xdg = env.get("XDG_CACHE_HOME", "")
+            cache = (
+                paths.home / "Library" / "Caches"
+                if sys.platform == "darwin"
+                else Path(xdg)
+                if xdg.startswith("/")
+                else paths.home / ".cache"
+            )
+            env["MARS_CACHE_DIR"] = str(cache / "mars" / "cache")
+        try:
+            run_mars(mars, "--user", "validate", show=False, env=env)
+        except StepError as exc:
+            return str(exc).replace(str(user), "<user level>")
+    return None
 
 
 # --- files -----------------------------------------------------------------------------------
 
 
-class StepError(Exception):
-    pass
+def exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
 
 
 def read_text(path: Path) -> str | None:
@@ -193,7 +245,7 @@ def write_atomic(path: Path, text: str) -> None:
 def remove(path: Path) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
-    elif path.exists() or path.is_symlink():
+    elif exists(path):
         path.unlink()
 
 
@@ -224,35 +276,63 @@ def src_items(folder: Path) -> list[Path]:
 
 
 class Backup:
-    def __init__(self, home: Path, root: Path) -> None:
+    """One run's copy of everything it changes. It counts only once complete: it is written
+    as `<name>.partial/` and renamed to `<name>/` when every path is in."""
+
+    def __init__(self, home: Path) -> None:
         self.home = home
-        self.root = root
+        self.parent = home / ".mars-migration-backup"
+        self.root: Path | None = None  # set once complete
 
-    def mirror(self, path: Path) -> Path:
-        if path.is_relative_to(self.home):
-            return self.root / "home" / path.relative_to(self.home)
-        return self.root / "root" / path.relative_to(path.anchor)
+    def write(self, paths: list[Path]) -> None:
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        name, count = stamp, 1
+        while exists(self.parent / name) or exists(self.parent / f"{name}.partial"):
+            count += 1
+            name = f"{stamp}-{count}"
+        partial = self.parent / f"{name}.partial"
+        partial.mkdir(parents=True)
+        try:
+            for path in paths:
+                self._save(path, partial)
+        except BaseException:
+            shutil.rmtree(partial, ignore_errors=True)
+            raise
+        os.replace(partial, self.parent / name)
+        self.root = self.parent / name
 
-    def save(self, path: Path) -> None:
-        if not (path.exists() or path.is_symlink()):
+    def _save(self, path: Path, into: Path) -> None:
+        if not exists(path):
             return
-        dest = self.mirror(path)
+        if path.is_relative_to(self.home):
+            dest = into / "home" / path.relative_to(self.home)
+        else:
+            dest = into / "root" / path.relative_to(path.anchor)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if path.is_dir() and not path.is_symlink():
             shutil.copytree(path, dest, symlinks=True, dirs_exist_ok=True)
-        elif not (dest.exists() or dest.is_symlink()):
+        elif not exists(dest):
             shutil.copy2(path, dest, follow_symlinks=False)
 
-    def restore_commands(self, user: Path) -> list[str]:
-        commands = [f"rm -rf {user}"]
-        if (self.root / "home").exists():
-            commands.append(f"cp -a {self.root / 'home'}/. {self.home}/")
-        if (self.root / "root").exists():
-            commands.append(f"cp -a {self.root / 'root'}/. /")
-        return commands
+    def oldest(self) -> Path | None:
+        complete = [
+            path
+            for path in self.parent.glob("*")
+            if path.is_dir() and not path.name.endswith(".partial")
+        ]
+        return min(complete, default=None)
 
 
-# --- TOML merging ----------------------------------------------------------------------------
+def restore_commands(backup: Path, home: Path, user: Path) -> list[str]:
+    commands = [f"rm -rf {shlex.quote(str(user))}"]
+    if (backup / "home").exists():
+        commands.append(f"cp -a {shlex.quote(str(backup / 'home'))}/. {shlex.quote(str(home))}/")
+    if (backup / "root").exists():
+        commands.append(f"cp -a {shlex.quote(str(backup / 'root'))}/. /")
+    return commands
+
+
+# --- TOML ------------------------------------------------------------------------------------
 
 
 def is_table(value: Any) -> bool:
@@ -263,167 +343,200 @@ def plain(value: Any) -> Any:
     return value.unwrap() if isinstance(value, Item | tomlkit.TOMLDocument) else value
 
 
-def merge(dst: Any, src: Any, where: str, labels: tuple[Path, Path], problems: list[str]) -> None:
-    """Add `src`'s keys to `dst`; a key both hold with different values is a conflict."""
-    for key, value in src.items():
-        if key not in dst:
-            dst[key] = value
-        elif is_table(dst[key]) and is_table(value):
-            merge(dst[key], value, f"{where}{key}.", labels, problems)
-        elif plain(dst[key]) != plain(value):
-            problems.append(
-                f"`{where}{key}` is {plain(dst[key])!r} in {labels[0]} but "
-                f"{plain(value)!r} in {labels[1]}; make them agree (or delete one) and run again."
-            )
+def portable(doc: Any, base: Path) -> Any:
+    """`doc` as a user-level manifest: relative `path`s made absolute against `base`, and no
+    `targets`."""
+    for table in PATH_TABLES:
+        entries: Any = doc.get(table)
+        specs: list[Any] = list(entries.values()) if is_table(entries) else []
+        for spec in specs:
+            path = plain(spec.get("path")) if is_table(spec) else None
+            if isinstance(path, str) and not Path(path).expanduser().is_absolute():
+                spec["path"] = os.path.normpath(base / path)
+    settings = doc.get("settings")
+    if is_table(settings):
+        for key in TARGET_KEYS:
+            settings.pop(key, None)
+        if not settings:
+            del doc["settings"]
+    return doc
 
 
-def absolute_spec(spec: Any, base: Path) -> Any:
-    """A dependency entry with its relative `path` made absolute against `base`."""
-    if not is_table(spec):
-        return spec
-    path = plain(spec.get("path"))
-    if isinstance(path, str) and not Path(path).expanduser().is_absolute():
-        spec["path"] = os.path.normpath(base / path)
-    return spec
+@dataclass
+class Merged:
+    """One user-level file: what is there now, and the sources merged into it."""
 
+    path: Path
+    current: str | None
+    doc: Any
+    sources: list[Path] = field(default_factory=list[Path])
 
-def merge_dependencies(
-    dst: Any,
-    src: Any,
-    base: Path,
-    dst_base: Path,
-    labels: tuple[Path, Path],
-    origins: dict[tuple[str, str], Path],
-    problems: list[str],
-) -> list[str]:
-    """Carry `src`'s dependency tables into `dst`; returns the names added.
+    def add(self, src: Any, label: Path, problems: list[str]) -> None:
+        if src:
+            self.sources.append(label)
+            self._merge(self.doc, src, label, problems, "")
 
-    `labels`: the file `dst` was read from and the one `src` was; an entry an earlier call
-    added is named by its own file, kept in `origins`.
-    """
-    added: list[str] = []
-    for table in DEPENDENCY_TABLES:
-        entries = src.get(table)
-        if not is_table(entries):
-            continue
-        for name, spec in entries.items():
-            spec = absolute_spec(spec, base)
-            have = dst.get(table, {}).get(name)
-            if have is None:
-                if table not in dst:
-                    dst[table] = tomlkit.table(is_super_table=True)
-                dst[table][name] = spec
-                added.append(name)
-                origins[(table, name)] = labels[1]
-            elif absolute_spec(plain(have), dst_base) != plain(spec):
-                where = origins.get((table, name), labels[0])
+    def _merge(self, dst: Any, src: Any, label: Path, problems: list[str], where: str) -> None:
+        for key, value in src.items():
+            if key not in dst:
+                dst[key] = value
+            elif is_table(dst[key]) and is_table(value):
+                self._merge(dst[key], value, label, problems, f"{where}{key}.")
+            elif plain(dst[key]) != plain(value):
+                earlier = [str(p) for p in [self.path, *self.sources] if p != label]
                 problems.append(
-                    f"dependency `{name}` differs between {where} and {labels[1]}; "
-                    "make them agree (or remove one) and run again."
+                    f"`{where}{key}` is {plain(value)!r} in {label} but {plain(dst[key])!r} in "
+                    f"{' or '.join(earlier)}; make them agree (or delete one) and run again."
                 )
-    return added
+
+    def text(self) -> str | None:
+        """The new content, when it differs from what is there."""
+        new: str = self.doc.as_string()
+        return new if new.strip() and new != self.current else None
+
+
+def merged(path: Path, problems: list[str]) -> Merged:
+    doc = parse(path, problems)
+    return Merged(path, read_text(path), doc if doc is not None else tomlkit.document())
+
+
+def read_locks(paths: list[Path], problems: list[str]) -> dict[str, tuple[list[str], bool]]:
+    """Each target the locks record, as Mars's `LockFile::recorded_targets` reads them (item
+    outputs, the target in a package-directory key `<kind>/<name>@<target>`, and the targets
+    holding hook or MCP entries), with its outputs and whether it holds such entries. Mars
+    reads a project's `mars.lock` with its store's `machine.lock` (local targets) merged in."""
+    targets: dict[str, tuple[list[str], bool]] = {}
+    for path in filter(exists, paths):
+        try:
+            lock = tomllib.loads(path.read_text(encoding="utf-8"))
+            for key, item in lock.get("items", {}).items():
+                if "@" in key:
+                    targets.setdefault(key.rsplit("@", 1)[1], ([], False))
+                for output in item.get("outputs", []):
+                    target = targets.setdefault(output["target_root"], ([], False))
+                    target[0].append(output["dest_path"])
+            for target in lock.get("config_entries", {}):
+                targets[target] = (targets.get(target, ([], False))[0], True)
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            problems.append(f"{path} cannot be read ({exc}); fix it and run again.")
+        except (AttributeError, KeyError, TypeError) as exc:
+            problems.append(f"{path} is not a Mars lock ({exc!r}); fix it and run again.")
+    targets.pop(".mars", None)
+    return targets
 
 
 # --- the plan --------------------------------------------------------------------------------
 
 
 @dataclass
-class Step:
-    text: str
-    run: Callable[[], None]
-
-
-@dataclass
 class Plan:
-    paths: Paths
-    mars: Path | None
-    steps: list[Step] = field(default_factory=list[Step])
+    steps: list[tuple[str, Callable[[], None]]] = field(
+        default_factory=list[tuple[str, Callable[[], None]]]
+    )
     problems: list[str] = field(default_factory=list[str])
     notes: list[str] = field(default_factory=list[str])
     # Copied into the backup before the first step.
     saves: list[Path] = field(default_factory=list[Path])
-    # (removed path, the user level's copy of it): for the symlinks report.
-    replaced: list[tuple[Path, Path | None]] = field(default_factory=list[tuple[Path, Path | None]])
+    # The user-level files the run writes, by name, which Mars must read first, and the files
+    # each is built from.
+    writes: dict[str, str] = field(default_factory=dict[str, str])
+    origins: list[str] = field(default_factory=list[str])
 
     def add(self, text: str, run: Callable[[], None]) -> None:
-        self.steps.append(Step(text, run))
+        self.steps.append((text, run))
+
+    def delete(self, path: Path, why: str = "") -> None:
+        if exists(path):
+            self.saves.append(path)
+            self.add(f"delete {path}{why}", lambda: remove(path))
 
 
-def build_plan(paths: Paths, mars: Path | None) -> Plan:
-    plan = Plan(paths, mars)
+def build_plan(paths: Paths, mars: Path) -> Plan:
+    """The steps left, from what is on disk now: a re-run after any step rebuilds it."""
+    plan = Plan()
     home, user = paths.home, paths.user
-    mars_cmd = str(mars or "mars")
-    home_manifest, home_lock = home / "mars.toml", home / "mars.lock"
-    home_store, home_src = home / ".mars", home / ".mars-src"
-    has_home_project = home_manifest.exists() or home_lock.exists()
+    home_lock, home_store, home_src = home / "mars.lock", home / ".mars", home / ".mars-src"
+    home_manifests = (home / "mars.toml", home / "mars.local.toml")
+    has_home_project = exists(home_manifests[0]) or exists(home_lock)
     meridian_manifest = paths.meridian_root / "mars.toml"
 
-    # 1. Unlink the home project's targets, from what its lock records.
-    if home_lock.exists():
-        try:
-            lock = tomllib.loads(home_lock.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-            plan.problems.append(f"{home_lock} cannot be read ({exc}); fix it and run again.")
-            lock = {}
-        outputs: dict[str, list[str]] = {}
-        for item in lock.get("items", {}).values():
-            for output in item.get("outputs", []):
-                if output["target_root"] != ".mars":
-                    outputs.setdefault(output["target_root"], []).append(output["dest_path"])
-        for target, dests in sorted(outputs.items()):
-            removed = [home / target / dest for dest in sorted(dests)]
-            plan.saves += removed
-            plan.replaced += [
-                (path, user / dest) for path, dest in zip(removed, sorted(dests), strict=True)
-            ]
-            plan.add(
-                f"`{mars_cmd} --root {home} unlink {target}`: removes "
-                + ", ".join(str(path) for path in removed if path.exists() or path.is_symlink()),
-                lambda target=target: run_mars(
-                    mars_cmd_path(plan), "--root", str(home), "unlink", target, show=False
-                ),
-            )
-
-    # 2. Dependencies (and the home project's own settings) into the user level's mars.toml.
-    user_manifest = user / "mars.toml"
-    manifest_text = read_text(user_manifest)
-    manifest = parse(user_manifest, plan.problems) or tomlkit.document()
-    carried: list[str] = []
-    origins: dict[tuple[str, str], Path] = {}
-    old = parse(home_manifest, plan.problems)
-    if old is not None:
-        carried += merge_dependencies(
-            manifest, old, home, user, (user_manifest, home_manifest), origins, plan.problems
-        )
-        for table in DEPENDENCY_TABLES:
-            old.pop(table, None)
-        settings = old.get("settings")
-        if is_table(settings):
-            for key in TARGET_KEYS:
-                settings.pop(key, None)
-            if not settings:
-                del old["settings"]
-        merge(manifest, old, "", (user_manifest, home_manifest), plan.problems)
-    meridian = parse(meridian_manifest, plan.problems)
-    if meridian is not None:
-        carried += merge_dependencies(
-            manifest,
-            meridian,
-            paths.meridian_root,
-            user,
-            (user_manifest, meridian_manifest),
-            origins,
-            plan.problems,
-        )
-    new_manifest: str = manifest.as_string()
-    if new_manifest.strip() and new_manifest != manifest_text:
-        what = f"dependencies {', '.join(carried)}" if carried else "settings"
+    # 1. Unlink each target the home project's locks record. `unlink` also edits ~/mars.toml,
+    # ~/mars.local.toml and the locks, which the backup holds as they are deleted later.
+    locks = [home_lock, home_store / "machine.lock"]
+    targets = read_locks(locks, plan.problems) if has_home_project else {}
+    for target, (dests, entries) in sorted(targets.items()):
+        removed = [home / target / dest for dest in sorted(dests)]
+        plan.saves += removed
+        if entries:
+            plan.saves += [home / name for name in ENTRY_FILES.get(target, ())]
         plan.add(
-            f"write {user_manifest}, adding {what} from {home_manifest} / {meridian_manifest}",
-            lambda: write_atomic(user_manifest, new_manifest),
+            f"`{mars} --root {home} unlink {target}`: removes "
+            + (", ".join(str(path) for path in removed if exists(path)) or "no files")
+            + ("; and its hook/MCP entries in that harness's config files" if entries else ""),
+            lambda target=target: run_mars(mars, "--root", str(home), "unlink", target, show=False),
         )
-    if home_manifest.exists():
-        plan.saves.append(home_manifest)
+
+    # 2. The user level's manifests, config.toml and curated.toml.
+    manifest = merged(user / "mars.toml", plan.problems)
+    local = merged(user / "mars.local.toml", plan.problems)
+    for into, source in zip((manifest, local), home_manifests, strict=True):
+        doc = parse(source, plan.problems)
+        if doc is not None:
+            into.add(portable(doc, home), source, plan.problems)
+    meridian = parse(meridian_manifest, plan.problems)
+    deps, sections = tomlkit.document(), tomlkit.document()
+    if meridian is not None:
+        for into, keys in ((deps, DEPENDENCY_TABLES), (sections, CONFIG_SECTIONS)):
+            for key in keys:
+                if key in meridian:
+                    into[key] = meridian[key]
+        manifest.add(portable(deps, paths.meridian_root), meridian_manifest, plan.problems)
+
+    config = merged(user / "config.toml", plan.problems)
+    carried: list[Path] = []
+    curated: Path | None = None
+    for name in ("config.toml", "curated.toml"):
+        source = paths.old_config / name
+        stray = paths.unread_config / name if paths.unread_config else None
+        if stray is not None and exists(stray):
+            # Never read by Mars on macOS: it moves only into a user level that has none (or
+            # already holds it, after a cut-short run), so a later run leaves it alone.
+            if not exists(source) and (not exists(user / name) or _holds(user / name, stray)):
+                source = stray
+                plan.notes.append(
+                    f"{stray} was never read by Mars on macOS, so its settings never applied; "
+                    f"check they are still wanted in {user / name}."
+                )
+            else:
+                plan.notes.append(f"{stray} is left in place: Mars never read it on macOS.")
+        if not exists(source) or source == user / name:
+            continue
+        carried.append(source)
+        if name == "config.toml":
+            config.add(parse(source, plan.problems), source, plan.problems)
+        elif not exists(user / name):
+            curated = source
+        elif read_text(source) != read_text(user / name):
+            plan.problems.append(f"{source} and {user / name} differ; keep one and run again.")
+    config.add(sections, meridian_manifest, plan.problems)
+
+    for file in (manifest, local, config):
+        text = file.text()
+        if text is not None:
+            plan.writes[file.path.name] = text
+            plan.origins.append(f"{file.path.name} from {', '.join(map(str, file.sources))}")
+            plan.saves.append(file.path)
+            plan.add(
+                f"write {file.path} from {', '.join(map(str, file.sources))}",
+                lambda path=file.path, text=text: write_atomic(path, text),
+            )
+    if curated is not None:
+        text = read_text(curated) or ""
+        plan.writes["curated.toml"] = text
+        plan.add(
+            f"write {user / 'curated.toml'} from {curated}",
+            lambda: write_atomic(user / "curated.toml", text),
+        )
 
     # 3. `.mars-src/` items into the user level's.
     user_src = user / ".mars-src"
@@ -431,170 +544,86 @@ def build_plan(paths: Paths, mars: Path | None) -> Plan:
     for folder in (home_src, paths.meridian_root / ".mars-src"):
         for rel in src_items(folder):
             source, dest = folder / rel, user_src / rel
-            plan.replaced.append((source, user / rel))
-            other = dest if dest.exists() or dest.is_symlink() else taken.get(rel)
+            other = dest if exists(dest) else taken.get(rel)
             if other is not None and not same_tree(source, other):
                 plan.problems.append(
                     f"{source} and {other} differ; keep one (delete or rename the other) and "
                     "run again."
                 )
-                continue
-            taken.setdefault(rel, source)
-            if other is None:
+            elif other is None:
+                taken[rel] = source
                 plan.add(f"move {source} to {dest}", lambda s=source, d=dest: _move(s, d))
-            else:
-                plan.add(f"delete {source}: the same as {other}", lambda s=source: remove(s))
-    if home_src.exists():
-        plan.saves.append(home_src)
-        plan.add(f"delete {home_src}, now empty", lambda: remove(home_src))
 
-    # 4. Settings into the user level's config.toml, curated.toml beside it.
-    user_config = user / "config.toml"
-    config_text = read_text(user_config)
-    config = parse(user_config, plan.problems)
-    config_label = user_config
-    old_config = paths.old_config
-    sources: list[tuple[Path, Any]] = []
-    if old_config is not None:
-        old_file = old_config / "config.toml"
-        doc = parse(old_file, plan.problems)
-        if doc is not None:
-            plan.saves.append(old_file)
-            if config is None:
-                config, config_label = doc, old_file
-            else:
-                sources.append((old_file, doc))
-    if meridian is not None:
-        sections = tomlkit.document()
-        for key in CONFIG_SECTIONS:
-            if key in meridian:
-                sections[key] = meridian[key]
-        if sections:
-            sources.append((meridian_manifest, sections))
-    config = config or tomlkit.document()
-    for label, doc in sources:
-        merge(config, doc, "", (config_label, label), plan.problems)
-    new_config: str = config.as_string()
-    if new_config.strip() and new_config != config_text:
-        merged = [config_label] if config_label != user_config else []
-        merged += [label for label, _ in sources]
-        plan.add(
-            f"write {user_config} with the settings of {', '.join(map(str, merged))}",
-            lambda: write_atomic(user_config, new_config),
-        )
-    if old_config is not None:
-        old_curated, user_curated = old_config / "curated.toml", user / "curated.toml"
-        if old_curated.exists():
-            plan.saves.append(old_curated)
-            if not user_curated.exists():
-                plan.add(
-                    f"move {old_curated} to {user_curated}",
-                    lambda: _move(old_curated, user_curated),
-                )
-            elif same_tree(old_curated, user_curated):
-                plan.add(
-                    f"delete {old_curated}: the same as {user_curated}", lambda: remove(old_curated)
-                )
-            else:
-                plan.problems.append(
-                    f"{old_curated} and {user_curated} differ; keep one and run again."
-                )
-        if (old_config / "config.toml").exists():
-            plan.add(
-                f"delete {old_config / 'config.toml'}, now in {user_config}",
-                lambda: remove(old_config / "config.toml"),
-            )
-        if paths.old_config_unread:
-            plan.notes.append(
-                f"{old_config} was never read by Mars on macOS, so its settings never applied; "
-                f"check they are still wanted in {user_config}."
-            )
-
-    # 5. Delete the home project and its old store, then Meridian 0.28's root.
+    # 4. Delete what was carried, the home project's own files last: while they exist, a
+    # re-run still knows the store leftovers are the home project's.
+    for source in carried:
+        plan.delete(source, f", now in {user / source.name}")
+    plan.delete(home_src)
     if has_home_project:
         if home_store == user:
-            leftovers = (
-                sorted(p for p in user.iterdir() if p.name not in USER_LEVEL_FILES)
-                if user.is_dir()
-                else []
-            )
-            if leftovers:
-                plan.add(
-                    f"delete the home project's old store in {user}/: "
-                    + ", ".join(p.name for p in leftovers),
-                    lambda: _remove_all(leftovers),
-                )
-        elif home_store.exists():
-            plan.saves.append(home_store)
-            plan.add(
-                f"delete the home project's old store {home_store}", lambda: remove(home_store)
-            )
-        for path in (home_lock, home_manifest):
-            if path.exists():
-                plan.saves.append(path)
-                plan.add(f"delete {path}", lambda path=path: remove(path))
-    if paths.meridian_root.exists():
-        plan.saves.append(paths.meridian_root)
-        plan.replaced.append((paths.meridian_root, None))
-        plan.add(
-            f"delete {paths.meridian_root} (Meridian 0.28 reads only it; the backup keeps it)",
-            lambda: remove(paths.meridian_root),
-        )
+            for path in sorted(user.iterdir()):
+                if path.name not in USER_LEVEL_FILES:
+                    plan.delete(path, " (the home project's old store)")
+        else:
+            plan.delete(home_store, " (the home project's old store)")
+        for path in (home_lock, *reversed(home_manifests)):
+            plan.delete(path)
+    plan.delete(paths.meridian_root, " (Meridian 0.28 reads only it; the backup keeps it)")
 
-    # 6. Install the user level.
-    # 6. Install the user level; also when a run was cut short before its sync.
+    # 5. Install the user level; also when a run was cut short before its sync.
     moves = bool(plan.steps)
-    has_items = bool(taken) or user_src.is_dir() or user_manifest.exists() or carried
-    if has_items and (moves or not (user / "mars.lock").exists()):
-        plan.add(
-            f"`{mars_cmd} --user sync`", lambda: run_mars(mars_cmd_path(plan), "--user", "sync")
-        )
-    if moves and user.exists():
+    has_items = bool(taken) or user_src.is_dir() or exists(user / "mars.toml") or plan.writes
+    if has_items and (moves or not exists(user / "mars.lock")):
+        plan.add(f"`{mars} --user sync`", lambda: run_mars(mars, "--user", "sync"))
+    if moves:
         plan.saves.insert(0, user)
     return plan
 
 
-def mars_cmd_path(plan: Plan) -> Path:
-    if plan.mars is None:
-        raise StepError("no Mars found")
-    return plan.mars
-
-
-def _remove_all(paths: list[Path]) -> None:
-    for path in paths:
-        remove(path)
+def _holds(file: Path, part: Path) -> bool:
+    """Whether `file` already holds everything in `part`."""
+    if file.name != "config.toml":
+        return read_text(file) == read_text(part)
+    problems: list[str] = []
+    trial = merged(file, problems)
+    trial.add(parse(part, problems), part, problems)
+    return not problems and trial.text() is None
 
 
 def _move(source: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if (dest.exists() or dest.is_symlink()) and same_tree(source, dest):
+    if exists(dest) and same_tree(source, dest):
         remove(source)  # a re-run after a move that was cut short
     else:
         shutil.move(source, dest)
 
 
-def broken_links(plan: Plan, applied: bool) -> list[str]:
-    """Symlinks in ~/.local/bin into a path the run removes, with the user level's copy."""
-    bin_dir = plan.paths.home / ".local" / "bin"
+def report_links(paths: Paths, gone: list[Path]) -> None:
+    """Symlinks in ~/.local/bin whose target is missing (or in `gone`, for a dry run), with the
+    user level's installed copy to point them at where there is one."""
+    bin_dir = paths.home / ".local" / "bin"
     lines: list[str] = []
-    if not bin_dir.is_dir():
-        return lines
-    for link in sorted(bin_dir.iterdir()):
-        if not link.is_symlink():
+    for link in sorted(bin_dir.iterdir()) if bin_dir.is_dir() else []:
+        target = real(link)
+        if not link.is_symlink() or (
+            target.exists() and not any(target.is_relative_to(path) for path in gone)
+        ):
             continue
-        target = Path(os.path.normpath(link.parent / os.readlink(link)))
-        if applied and target.exists():
-            continue
-        for removed, copy in plan.replaced:
-            if target != removed and removed not in target.parents:
-                continue
-            if copy is None:
-                lines.append(f"{link} -> {target}: its target goes away")
-            else:
-                new = copy / target.relative_to(removed)
-                lines.append(f"{link} -> {target}: repoint it with `ln -sfn {new} {link}`")
-            break
-    return lines
+        parts = target.parts
+        new = next(
+            (
+                paths.user.joinpath(*parts[i:])
+                for i in range(len(parts) - 1)
+                if parts[i] in ("skills", "agents")
+                and (paths.user / parts[i] / parts[i + 1]).exists()
+            ),
+            None,
+        )
+        fix = f"`ln -sfn {shlex.quote(str(new))} {shlex.quote(str(link))}`" if new else "no copy"
+        lines.append(f"{link} -> {target}: {fix}")
+    if lines:
+        print(f"\nSymlinks in {bin_dir} whose target {'will be' if gone else 'is'} gone:")
+        print("\n".join(f"  {line}" for line in lines))
 
 
 # --- main ------------------------------------------------------------------------------------
@@ -612,75 +641,73 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = locate()
     mars = find_mars(args.mars)
-    version = mars_version(mars) if mars else None
-    mars_problem = None
-    if mars is None:
-        mars_problem = "no `mars` found beside `meridian` or on PATH; pass --mars PATH"
-    elif version is None or version < MIN_MARS:
-        found = ".".join(map(str, version)) if version else "unknown"
-        mars_problem = f"{mars} is Mars {found}; this needs 0.41.0 or later (upgrade Meridian)"
-
-    plan = build_plan(paths, mars)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup = Backup(paths.home, paths.home / ".mars-migration-backup" / stamp)
+    problem = mars_problem(mars)
+    plan = build_plan(paths, mars or Path("mars"))
+    if mars is not None and problem is None and plan.writes and not plan.problems:
+        unreadable = check_with_mars(paths, mars, plan.writes)
+        if unreadable:
+            plan.problems.append(
+                f"Mars cannot read the user level this run would write: {unreadable}\n"
+                f"    It writes {'; '.join(plan.origins)}. Fix the source and run again."
+            )
 
     print(f"User level: {paths.user}")
-    print(f"Mars: {mars or 'not found'}{f' ({mars_problem})' if mars_problem else ''}")
+    print(f"Mars: {mars or 'not found'}{f' ({problem})' if problem else ''}")
     if plan.problems:
         print("\nNothing was changed. Fix these first:")
-        for problem in plan.problems:
-            print(f"  - {problem}")
+        print("\n".join(f"  - {line}" for line in plan.problems))
         return 1
     if not plan.steps:
         print("\nNothing to move: this setup is already on the Mars user level.")
+        report_links(paths, [])
         return 0
-    if plan.saves:
-        print(f"Backup: {backup.root}")
+    if args.apply and problem:
+        print(f"\nNothing was changed: {problem}.")
+        return 1
+
+    backup = Backup(paths.home)
+    saves = [
+        path
+        for path in dict.fromkeys(plan.saves)
+        if not any(path != other and path.is_relative_to(other) for other in plan.saves)
+    ]
     print(f"\n{'Steps' if args.apply else 'Steps (dry run; --apply does them)'}:")
-    if plan.saves:
-        print("  0. copy into the backup: " + ", ".join(map(str, dict.fromkeys(plan.saves))))
-    for number, step in enumerate(plan.steps, 1):
-        print(f"  {number}. {step.text}")
-    if args.apply:
-        if mars_problem:
-            print(f"\nNothing was changed: {mars_problem}.")
-            return 1
-        print()
-        number = 0
-        try:
-            for path in dict.fromkeys(plan.saves):
-                backup.save(path)
-            if plan.saves:
-                print("  0. done")
-            for number, step in enumerate(plan.steps, 1):
-                step.run()
-                print(f"  {number}. done")
-        except (StepError, OSError) as exc:
-            print(f"\nStep {number} failed: {exc}")
-            print(
-                "Fix that and run again with --apply: finished steps are skipped. "
-                f"{backup.root} holds a copy of everything as it was before this run."
-            )
-            return 1
+    if saves:
+        print(f"  0. copy into a new folder in {backup.parent}/: {', '.join(map(str, saves))}")
+    for number, (text, _) in enumerate(plan.steps, 1):
+        print(f"  {number}. {text}")
     for note in plan.notes:
         print(f"\nNote: {note}")
-    links = broken_links(plan, args.apply)
-    if links:
-        print("\nSymlinks in ~/.local/bin pointing at a removed path:")
-        for line in links:
-            print(f"  {line}")
-    if args.apply:
-        print("\nDone. Next: run `meridian mars sync` in each project that should get these items.")
-        if backup.root.exists():
-            print(f"Backup: {backup.root}. To roll back:")
-            print("\n".join(f"  {command}" for command in backup.restore_commands(paths.user)))
-            earlier = sorted(p for p in backup.root.parent.iterdir() if p.name < backup.root.name)
-            if earlier:
-                print(
-                    f"Earlier runs left {', '.join(map(str, earlier))}: after a run that was cut "
-                    f"short, roll back from the oldest instead, {earlier[0]}, which holds the "
-                    "setup as it was before the first run."
-                )
+    if not args.apply:
+        report_links(paths, [path for path in saves if not path.is_relative_to(paths.user)])
+        return 0
+
+    print()
+    number = 0
+    try:
+        if saves:
+            backup.write(saves)
+            print(f"  0. done: {backup.root}")
+        for number, (_, run) in enumerate(plan.steps, 1):
+            run()
+            print(f"  {number}. done")
+    except (StepError, OSError, KeyboardInterrupt) as exc:
+        print(f"\nStep {number} failed: {exc or type(exc).__name__}")
+        if backup.root is None:
+            print("Nothing was changed. Fix that and run again with --apply.")
+        else:
+            print(
+                "Fix that and run again with --apply: finished steps are skipped. "
+                f"{backup.root} holds the setup as it was before this run."
+            )
+        report_links(paths, [])
+        return 1
+    print("\nDone. Next: run `meridian mars sync` in each project that should get these items.")
+    oldest = backup.oldest()
+    if oldest is not None:
+        print(f"To roll back to Mars 0.40 / Meridian 0.28, from the oldest backup, {oldest}:")
+        print("\n".join(f"  {c}" for c in restore_commands(oldest, paths.home, paths.user)))
+    report_links(paths, [])
     return 0
 
 
