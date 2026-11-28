@@ -27,8 +27,6 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    CLAUDE_SPAWN_USAGE_VARIANTS,
-    BaseHarnessAdapter,
     BootstrapMode,
     HarnessCapabilities,
     HarnessContract,
@@ -38,8 +36,10 @@ from meridian.lib.harness.adapter import (
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
+    SpawnUsageContractVariants,
     WorkspaceRoots,
 )
+from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     LaunchPorts,
@@ -224,6 +224,28 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
         if token.startswith("--session-id="):
             return token.partition("=")[2].strip()
     return ""
+
+
+CLAUDE_SPAWN_USAGE_VARIANTS = SpawnUsageContractVariants(
+    intro_line="Launch detached, then wait — never block the turn or background-wrap.",
+    double_wrap_bullet=(
+        "NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It\n"
+        "  already detaches — double-wrapping adds nothing and lets the harness kill\n"
+        "  the launcher mid-startup, before it hands off to the detached worker; the\n"
+        "  spawn then fails (recorded and visible, but the work never runs)."
+    ),
+    timeout_bullet=(
+        "NEVER block-foreground a long spawn (omitting --bg). It will outlive your\n"
+        "  Bash command timeout; you lose the thread while the spawn runs on."
+    ),
+    waiting_line=(
+        "To wait for something, start it in the background with a `timeout` that covers it, "
+        "and end your turn; you stay open and are woken when it finishes. A background "
+        "command is stopped at its `timeout`: 30 minutes by default, 2 hours at most. A job "
+        "that must run longer or outlive you has to run detached, with a background watcher "
+        "you restart. Stop anything you no longer need first."
+    ),
+)
 
 
 class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):

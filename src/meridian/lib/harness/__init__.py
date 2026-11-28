@@ -64,7 +64,7 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "store shared by many sessions, as OpenCode's database is)"
     ),
     (
-        "src/meridian/lib/harness/adapter.py::create_session_before_exec() "
+        "src/meridian/lib/harness/adapter_base.py::create_session_before_exec() "
         "(override only when Meridian must create the native session before exec, on a "
         "fresh launch or a fork, never a resume; an assign_session_id() override "
         "must then return LaunchIntent.precreated_session_id; "

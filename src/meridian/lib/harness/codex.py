@@ -13,7 +13,6 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import LaunchIntent, NativeSessionEvidence, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    BaseHarnessAdapter,
     BootstrapMode,
     HarnessCapabilities,
     HarnessContract,
@@ -21,6 +20,7 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
+from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     LaunchPorts,

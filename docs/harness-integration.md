@@ -29,7 +29,8 @@ Read these contracts before implementing:
 
 - [Harness intent](../src/meridian/lib/harness/AGENTS.md)
 - [Harness architecture](../src/meridian/lib/harness/.context/CONTEXT.md)
-- [Adapter API](../src/meridian/lib/harness/adapter.py)
+- [Adapter API](../src/meridian/lib/harness/adapter.py) and the defaults adapters build on
+  ([`adapter_base.py`](../src/meridian/lib/harness/adapter_base.py))
 - [Launch intent](../src/meridian/lib/launch/AGENTS.md)
 
 `HARNESS_EXTENSION_TOUCHPOINTS` in
