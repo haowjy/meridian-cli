@@ -101,7 +101,7 @@ says how to move it. The migration script below does those steps for you.
     sync in a project removes the user-level items the new Mars installed there (they are
     Mars's own records); this release puts them back on its next sync.
 
-## `git-autosync` rows and `meridian sync conflict` are gone
+## `git-autosync` rows are skipped and `meridian sync conflict` is gone
 
 0.24.0 replaced the `git-autosync` hook with the sync daemon and kept what it removed
 working, unused, until the next minor (see

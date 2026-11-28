@@ -310,7 +310,7 @@ Git contexts sync through the `meridian-sync` daemon, which needs no hook row: s
 [context configuration](configuration/context.md). A `[[hooks]] builtin = "git-autosync"`
 row is skipped with a warning that names it, and the other rows load and run; delete it. A
 `remote` or `exclude` key on any row is ignored with a warning, and the row still runs;
-delete the key. See [`git-autosync` rows and `meridian sync conflict` are gone](upgrading.md#git-autosync-rows-and-meridian-sync-conflict-are-gone).
+delete the key. See [`git-autosync` rows are skipped and `meridian sync conflict` is gone](upgrading.md#git-autosync-rows-are-skipped-and-meridian-sync-conflict-is-gone).
 
 ## MCP
 
