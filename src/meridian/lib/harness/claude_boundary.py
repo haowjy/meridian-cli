@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from meridian.lib.core.native_identity import (
     NativeKey,
@@ -35,10 +35,15 @@ class _Record(BaseModel):
     # Older journals carry it and the model forbids extras; nothing reads it.
     recorded_at: object = None
 
-    def observation(self, next_cursor: int) -> NativeObservation:
+    @model_validator(mode="after")
+    def _exact_native_transcript(self) -> _Record:
         path = Path(self.transcript_path)
         if not path.is_absolute() or path.name != f"{self.session_id}.jsonl":
             raise ValueError("not an exact native transcript path")
+        return self
+
+    def observation(self, next_cursor: int) -> NativeObservation:
+        path = Path(self.transcript_path)
         return NativeObservation(
             key=NativeKey("claude", str(path.parent.resolve()), self.session_id),
             entry_operation=_ENTRY_OPERATIONS.get(self.source),
@@ -97,11 +102,8 @@ def read_observations(
     for next_cursor, record in _iter_complete_records(raw[:_READ_LIMIT], cursor=cursor):
         if record is None:
             continue
-        try:
-            if record.launch_nonce == nonce and record.pid == pid:
-                observations.append(record.observation(next_cursor))
-        except ValueError:
-            continue
+        if record.launch_nonce == nonce and record.pid == pid:
+            observations.append(record.observation(next_cursor))
     return NativeObservationBatch(tuple(observations), next_cursor)
 
 

@@ -186,6 +186,10 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
         record("without-socket"),
         record("latest", socket_path=latest, recorded_at=2.0),
         record("too-long", record_pid=pid + 3, socket_path=too_long),
+        {
+            **record("misnamed", record_pid=pid + 4, socket_path=latest),
+            "transcript_path": str(tmp_path / "other.jsonl"),
+        },
         record("future", socket_path=ignored_version, version=3),
     ]
     path.write_bytes(b"\n".join(json.dumps(line).encode() for line in lines) + b'\n{"v":2')
@@ -193,6 +197,8 @@ def test_latest_messaging_socket_uses_last_matching_pid_record(tmp_path):
     assert latest_messaging_socket(path, pid=pid) == latest
     assert latest_messaging_socket(path, pid=pid + 2) is None
     assert latest_messaging_socket(path, pid=pid + 3) == too_long
+    # A record whose identity is rejected gives its pid no inbox either.
+    assert latest_messaging_socket(path, pid=pid + 4) is None
     assert [
         item.key.session_id
         for item in read_observations(path, nonce="nonce", pid=pid, cursor=0).observations
