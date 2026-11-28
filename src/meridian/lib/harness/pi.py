@@ -12,7 +12,6 @@ from meridian.lib.config.loader import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    BaseHarnessAdapter,
     BootstrapMode,
     HarnessCapabilities,
     HarnessContract,
@@ -22,7 +21,9 @@ from meridian.lib.harness.adapter import (
     NativeRelocationResult,
     RecordConfigDirFn,
     SpawnParams,
+    TranscriptView,
 )
+from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     LaunchPorts,
@@ -38,6 +39,7 @@ from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_idle import detect_ttl
+from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_PHASE_EVENT_TYPE,
     redact_pi_command_for_history,
@@ -319,6 +321,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = dialect
         return PiObserver(session_id)
 
+    def reopen_projector(self) -> Callable[[str], TranscriptView] | None:
+        return project_pi_reopen_default
+
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
 
@@ -371,6 +376,12 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         plans: Sequence[NativeRelocation],
     ) -> tuple[NativeRelocationResult, ...]:
         return apply_pi_relocations(plans)
+
+    def bind_launch_paths(
+        self, spec: ResolvedLaunchSpec, *, launch: LaunchPaths, dry_run: bool
+    ) -> ResolvedLaunchSpec:
+        _ = dry_run
+        return spec.model_copy(update={"prompt_file_path": launch.system_prompt.as_posix()})
 
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None

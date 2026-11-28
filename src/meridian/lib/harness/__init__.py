@@ -54,17 +54,26 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "dropped silently and harness_profile() returns None)"
     ),
     (
-        "src/meridian/lib/launch/context.py (the `harness.id ==` branches that bind "
-        "launch-artifact paths into the spec: system prompt file, settings file, report "
-        "output path; add one when the harness's spec takes them)"
+        "adapter bind_launch_paths() (bind the launch-artifact paths the spec reads: "
+        "system prompt file, settings file, report output path)"
     ),
     (
-        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() and "
-        "ops/session_search_index.py (optional: candidate listing without --native, and a "
-        "store shared by many sessions, as OpenCode's database is)"
+        "src/meridian/lib/harness/command_ports.py::_MODULES and a light COMMAND_PORTS "
+        "module (only when the harness delivers child results itself, runs Meridian "
+        "commands in shell tasks it can background, or ships an idle mod, as Pi and "
+        "Claude do; short-lived commands read these without loading any adapter)"
     ),
     (
-        "src/meridian/lib/harness/adapter.py::create_session_before_exec() "
+        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() "
+        "(optional: candidate listing without --native)"
+    ),
+    (
+        "adapter native_store_shared, session_witnesses() and open_session_snapshot() "
+        "(a store shared by many sessions, as OpenCode's database is), and "
+        "reopen_projector() (a reopened view that differs from the stored events, as Pi's)"
+    ),
+    (
+        "src/meridian/lib/harness/adapter_base.py::create_session_before_exec() "
         "(override only when Meridian must create the native session before exec, on a "
         "fresh launch or a fork, never a resume; an assign_session_id() override "
         "must then return LaunchIntent.precreated_session_id; "

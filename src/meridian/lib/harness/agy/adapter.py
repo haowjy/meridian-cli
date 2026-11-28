@@ -25,13 +25,13 @@ from meridian.lib.core.permission_policy import (
 )
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import (
-    BaseHarnessAdapter,
     BootstrapMode,
     HarnessCapabilities,
     HarnessContract,
     SpawnParams,
     WorkspaceRoots,
 )
+from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.agy.permissions import AgyPermissions, compile_agy_permissions
 from meridian.lib.harness.agy.state import (
     AGENT_ENV,

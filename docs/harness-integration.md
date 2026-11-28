@@ -29,7 +29,8 @@ Read these contracts before implementing:
 
 - [Harness intent](../src/meridian/lib/harness/AGENTS.md)
 - [Harness architecture](../src/meridian/lib/harness/.context/CONTEXT.md)
-- [Adapter API](../src/meridian/lib/harness/adapter.py)
+- [Adapter API](../src/meridian/lib/harness/adapter.py) and the defaults adapters build on
+  ([`adapter_base.py`](../src/meridian/lib/harness/adapter_base.py))
 - [Launch intent](../src/meridian/lib/launch/AGENTS.md)
 
 `HARNESS_EXTENSION_TOUCHPOINTS` in
@@ -44,13 +45,15 @@ and the rest of the code asks the adapter or the registry:
 it takes workspace roots, and `read_last_model()` and `native_session_evidence()`
 read its native session files. CLI help and shortcuts derive from `HarnessId`.
 
-Three places outside `lib/harness/` still name harnesses, and a new harness edits
+Two places outside `lib/harness/` still name harnesses, and a new harness edits
 them when it needs the behaviour: `HarnessConfig` in `config/harness_models.py` (its
-`[harness.<id>]` table is dropped until it has a field), the `harness.id ==` branches in
-`launch/context.py` that bind launch-artifact paths into the spec, and the optional
-candidate listing in `ops/session_repair.py`. The other name branches there, such as
-Pi's session role and drain coordinator or OpenCode's version env, are behaviour only
-that harness has. `legacy_native_stores.SUPPORTED` is a closed list of the harnesses
+`[harness.<id>]` table is dropped until it has a field), and the optional candidate
+listing in `ops/session_repair.py`. The name branches left in `launch/`, such as Pi's
+session role and drain coordinator or OpenCode's version env, are behaviour only that
+harness has. Everything else outside `lib/harness/` imports only the contract in
+`adapter.py` and asks the registry, or `command_ports.py` for what short-lived commands
+need; `meridian.dev.lints` rejects importing a
+harness's own module, `adapter_base` or `legacy_native_stores` from there. `legacy_native_stores.SUPPORTED` is a closed list of the harnesses
 older builds wrote chats for; a new harness never joins it. Do not add another harness-name list or
 `== "claude"` branch outside `lib/harness/`; give the adapter a capability instead.
 

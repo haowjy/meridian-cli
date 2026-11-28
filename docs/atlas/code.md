@@ -92,7 +92,9 @@ itself. `launch/process/` runs a primary in the foreground, under a terminal it 
 
 `lib/harness/`: everything harness-specific. Each harness has one adapter, its native store
 reader, its projections (how Meridian's policy becomes the harness's flags and config) and
-its connection (`connections/`). A new harness is one adapter plus registration. Pi's own
+its connection (`connections/`). Everything outside reaches a harness through the contract in
+`adapter.py` and the registry, or, for what short-lived commands ask, `command_ports.py`.
+A new harness is one adapter plus registration. Pi's own
 completion engine (`pi_drain.py` and its `pi_*` parts) lives here too; streaming reaches it
 through the connection's `drain_plan`.
 
@@ -100,7 +102,8 @@ through the connection's `drain_plan`.
 - Paths: `src/meridian/lib/harness`
 
 Enforced: harness code doesn't import `lib/idle` (the launcher owns idle policy), and doesn't
-start bootstrap at import time.
+start bootstrap at import time; code outside `lib/harness/` doesn't import a harness's own
+module, `adapter_base` or `legacy_native_stores` (two legacy-import exceptions are listed).
 
 ## streaming
 

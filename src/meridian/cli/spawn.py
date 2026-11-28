@@ -37,7 +37,7 @@ from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES, ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_command_registry
-from meridian.lib.harness.pi_private_state import hold_pi_bash
+from meridian.lib.harness.command_ports import hold_blocking_command
 from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.launch.resolve import resolve_agent_launch_input
@@ -784,7 +784,7 @@ def _spawn_create(
         raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
 
     fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
-    with hold_pi_bash():
+    with hold_blocking_command():
         if fork_source_ref is not None:
             fork_is_fresh = fork_resolution.is_fresh
             result = spawn_fork_sync(
@@ -1273,7 +1273,7 @@ def _spawn_wait(
 ) -> None:
     output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
-    with hold_pi_bash():
+    with hold_blocking_command():
         result = spawn_wait_sync(
             SpawnWaitInput(
                 spawn_ids=spawn_ids,

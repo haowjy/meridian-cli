@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TypedDict
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import NativeStoreReader
 from meridian.lib.harness.native_witness import FileWitness, Witness, file_witness
-from meridian.lib.harness.opencode_snapshot import opencode_session_witnesses
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 from meridian.lib.ops.session_transcript import (
@@ -129,22 +129,23 @@ class SearchProjection:
         }
 
     def inspect(self, keys: dict[NativeKey, tuple[str, ...]], *, deadline: float) -> None:
-        """Stat cached locators and query each OpenCode DB once; never trust a cached witness."""
-        databases: dict[str, list[NativeKey]] = defaultdict(list)
+        """Stat cached locators and query each shared store once; never trust a cached witness."""
+        databases: dict[tuple[NativeStoreReader, str], list[NativeKey]] = defaultdict(list)
         for key in keys:
-            if key.harness == "opencode":
-                databases[key.native_store].append(key)
+            reader = get_default_harness_registry().find_reader(key.harness)
+            if reader is not None and reader.native_store_shared:
+                databases[(reader, key.native_store)].append(key)
             elif (stored := self.stored.get(key)) is not None:
                 # Refresh resolves absent locators through the exact adapter.
                 with suppress(OSError):
                     self.sources[key] = NativeSource(
                         Path(stored.locator), file_witness(Path(stored.locator))
                     )
-        for database, members in databases.items():
+        for (reader, database), members in databases.items():
             if time.monotonic() >= deadline:
                 break
             try:
-                witnesses = opencode_session_witnesses(
+                witnesses = reader.session_witnesses(
                     Path(database), (key.session_id for key in members)
                 )
                 for key in members:

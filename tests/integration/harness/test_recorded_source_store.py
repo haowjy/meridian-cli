@@ -94,7 +94,7 @@ def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filena
         )
         == selected
     )
-    assert adapter.native_transcript_kind(selected) == "opencode_db"
+    assert adapter.native_transcript_kind(selected) == "native_db"
     selected.unlink()
     assert (
         adapter.resolve_native_session_file(

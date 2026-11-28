@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from meridian.lib.harness.command_ports import CommandPorts
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, CompositionWarning
 from meridian.lib.state.user_paths import get_user_home
 
@@ -52,3 +53,11 @@ def resolve_claude_runtime(
                 )
             )
     return ClaudeRuntimeResolution(plugin_dirs=tuple(directories), warnings=tuple(warnings))
+
+
+def _idle_mod_dir() -> str | None:
+    resolution = resolve_claude_runtime(plugin_names=("meridian-idle",))
+    return resolution.plugin_dirs[0] if resolution.plugin_dirs else None
+
+
+COMMAND_PORTS = CommandPorts(idle_mod_dir=_idle_mod_dir)

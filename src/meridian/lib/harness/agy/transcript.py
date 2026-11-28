@@ -30,7 +30,7 @@ import re
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.harness.adapter import BaseNativeStoreReader
+from meridian.lib.harness.adapter_base import BaseNativeStoreReader
 from meridian.lib.harness.agy.state import is_safe_id
 from meridian.lib.harness.transcript import (
     INJECTED_ROLE,

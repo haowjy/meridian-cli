@@ -74,7 +74,7 @@ class NativeCapture:
         observer = self.observer
         if self.status != "complete" or observer is None:
             return
-        if self.kind == "opencode_db":
+        if self.kind == "native_db":
             yield from self._opencode_records(observer)
             return
         if self.path is None:
@@ -173,7 +173,7 @@ def native_capture(
             "unsupported",
             f"Native capture is unsupported for harness {normalized!r}",
         )
-    elif kind not in {"native_file", "opencode_db"}:
+    elif kind not in {"native_file", "native_db"}:
         capture.fail("unsupported", f"Native capture is unsupported for source kind {kind!r}")
     elif kind == "native_file" and path is None:
         raise FileNotFoundError(f"Session file for '{session_id}' not found")

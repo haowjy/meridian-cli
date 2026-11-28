@@ -54,7 +54,7 @@ def native_source_label(harness: str) -> str:
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "native_file", "opencode_db", "snapshot"]
+    kind: Literal["file", "native_file", "native_db", "snapshot"]
     session_id: str
     harness: str | None
     source_label: str

@@ -25,9 +25,9 @@ from meridian.lib.harness.pi_private_state import (
     DeliveryObservations,
     pi_coordination_dir,
     read_pi_consumption_state,
-    read_pi_private_doc,
 )
 from meridian.lib.harness.pi_work_ledger import PiPrivateWorkLedger
+from meridian.lib.state.json_doc import read_owned_doc
 from meridian.lib.state.paths import observed_launches_path
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 
@@ -112,7 +112,7 @@ class PiDiskWatcher:
         consumption = read_pi_consumption_state(
             self._runtime_root,
             self._spawn_id,
-            on_read=self._record_consumption_read,
+            on_read=self._record_read,
         )
         fault = self._read(self._bash_dir / "delivery-fault.json", DeliveryFault)
         if fault is not None and fault.error:
@@ -164,18 +164,9 @@ class PiDiskWatcher:
             self._state_changed.set()
 
     def _read(self, file: Path, model: type[_Model]) -> _Model | None:
-        try:
-            value = read_pi_private_doc(file, model, spawn_id=self._spawn_id)
-        except (OSError, UnicodeError, ValueError) as exc:
-            self._ledger.record_read_failure(file, str(exc))
-            return None
-        if value is None:
-            self._ledger.clear_read_failure(file)
-            return None
-        self._ledger.clear_read_failure(file)
-        return value
+        return read_owned_doc(file, model, owner=self._spawn_id, on_read=self._record_read)
 
-    def _record_consumption_read(self, file: Path, error: str | None) -> None:
+    def _record_read(self, file: Path, error: str | None) -> None:
         if error is None:
             self._ledger.clear_read_failure(file)
         else:

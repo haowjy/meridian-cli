@@ -13,13 +13,9 @@ import psutil
 import structlog
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
-from meridian.lib.state.json_doc import VersionedPrivateDoc, write_model
-from meridian.lib.state.paths import observed_launches_path
-from meridian.lib.state.spawn_observations import (
-    LaunchKey,
-    LaunchObservations,
-    read_legacy,
-)
+from meridian.lib.harness.command_ports import CommandPorts
+from meridian.lib.state.json_doc import VersionedPrivateDoc, read_owned_doc, write_model
+from meridian.lib.state.spawn_observations import LaunchKey, observed_launches
 
 logger = structlog.get_logger()
 
@@ -87,22 +83,6 @@ def hold_pi_bash() -> Generator[None]:
         yield
     finally:
         path.unlink(missing_ok=True)
-
-
-def read_pi_private_doc(
-    file: Path,
-    model: type[_Model],
-    *,
-    spawn_id: str,
-) -> _Model | None:
-
-    try:
-        value = model.model_validate_json(file.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    if getattr(value, "spawn_id", None) != spawn_id:
-        raise ValueError("private-file parent identity mismatch")
-    return value
 
 
 class BashEvidence(VersionedPrivateDoc):
@@ -175,35 +155,22 @@ def _legacy_entries(ids: Iterable[str]) -> Iterator[str]:
         yield str(LaunchKey(work_id, 1))
 
 
-def read_pi_consumption_state(
+def read_pi_delivery_consumption(
     runtime_root: Path,
     parent_spawn_id: str,
     *,
     on_read: Callable[[Path, str | None], None] | None = None,
 ) -> PiConsumptionState:
-    """Read every result-consumption source for one Pi parent once.
-
-    A damaged source is skipped independently. ``on_read`` receives its diagnostic,
-    or ``None`` after a successful or missing-file read.
-    """
+    """What Pi's spawn-watch delivery consumed for one parent: its receipts and cleared
+    launches, and the files older builds wrote for them. A damaged source is skipped."""
 
     coordination_dir = pi_coordination_dir(runtime_root, parent_spawn_id)
 
     def read(file: Path, model: type[_Model]) -> _Model | None:
-        try:
-            value = read_pi_private_doc(file, model, spawn_id=parent_spawn_id)
-        except (OSError, UnicodeError, ValueError) as exc:
-            if on_read is not None:
-                on_read(file, str(exc))
-            return None
-        if on_read is not None:
-            on_read(file, None)
-        return value
+        return read_owned_doc(file, model, owner=parent_spawn_id, on_read=on_read)
 
     receipts = read(coordination_dir / DELIVERY_RECEIPTS_FILENAME, DeliveryReceipts)
     legacy_receipts = read(coordination_dir / LEGACY_DELIVERY_RECEIPTS_FILENAME, DeliveryReceipts)
-    observations = read(observed_launches_path(runtime_root, parent_spawn_id), LaunchObservations)
-    legacy_observations = read_legacy(runtime_root, parent_spawn_id)
     cleared = read(coordination_dir / CLEARED_LAUNCHES_FILENAME, ClearedLaunches)
     legacy_cleared = read(coordination_dir / LEGACY_CLEARED_SPAWNS_FILENAME, LegacyClearedSpawns)
 
@@ -218,10 +185,6 @@ def read_pi_consumption_state(
         consumed.update(
             _legacy_entries(work_id for ids in legacy_receipts.messages.values() for work_id in ids)
         )
-    if observations is not None:
-        consumed.update(observations.observed_launches)
-    if legacy_observations is not None:
-        consumed.update(legacy_observations.observed_launches)
     if cleared is not None:
         consumed.update(cleared.cleared_launches)
     if legacy_cleared is not None:
@@ -230,3 +193,30 @@ def read_pi_consumption_state(
         consumed_ids=frozenset(consumed),
         receipt_message_ids=frozenset(receipt_message_ids),
     )
+
+
+def read_pi_consumption_state(
+    runtime_root: Path,
+    parent_spawn_id: str,
+    *,
+    on_read: Callable[[Path, str | None], None] | None = None,
+) -> PiConsumptionState:
+    """Every result-consumption source for one Pi parent, each read once: Pi's own and
+    the shared ``observed-launches.json``. A damaged source is skipped independently;
+    ``on_read`` receives its diagnostic, or ``None`` after a successful or missing-file read.
+    """
+
+    own = read_pi_delivery_consumption(runtime_root, parent_spawn_id, on_read=on_read)
+    observed = observed_launches(runtime_root, parent_spawn_id, on_read=on_read)
+    return PiConsumptionState(own.consumed_ids | observed, own.receipt_message_ids)
+
+
+def _consumed_launches(
+    runtime_root: Path, parent_spawn_id: str, on_read: Callable[[Path, str | None], None] | None
+) -> frozenset[str]:
+    return read_pi_delivery_consumption(runtime_root, parent_spawn_id, on_read=on_read).consumed_ids
+
+
+COMMAND_PORTS = CommandPorts(
+    consumed_launches=_consumed_launches, blocking_command_hold=hold_pi_bash
+)

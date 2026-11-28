@@ -12,7 +12,6 @@ from uuid import uuid4
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    BaseHarnessAdapter,
     BootstrapMode,
     HarnessCapabilities,
     HarnessContract,
@@ -20,6 +19,7 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     WorkspaceRoots,
 )
+from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     LaunchPorts,
@@ -85,6 +85,7 @@ from meridian.lib.launch.composition import (
     render_system_instruction_blocks,
     render_task_context,
 )
+from meridian.lib.launch.constants import DRY_RUN_REPORT_PATH
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     ResolvedLaunchSpec,
@@ -399,6 +400,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description
         return prompt.strip()
+
+    def bind_launch_paths(
+        self, spec: ResolvedLaunchSpec, *, launch: LaunchPaths, dry_run: bool
+    ) -> ResolvedLaunchSpec:
+        if spec.interactive:
+            return spec
+        report = DRY_RUN_REPORT_PATH if dry_run else launch.report.as_posix()
+        return spec.model_copy(update={"report_output_path": report})
 
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
