@@ -71,10 +71,11 @@ read marks, but not native source bytes.
 
 `spawn/legacy_rows.py` rewrites rows older builds wrote in the format this build writes:
 v2 rows (0.3.42 and older) become v3, dogfood flat boundary fields fold into v3, and a
-finished row without `launch.lock` (before 0.10.18) gets one. The readers for all three
-stay, for rows the pass has not reached. A rewritten row keeps only the fields it had
-(`exclude_unset`), so every build from 0.3.43 reads it, and it must read back equal to the
-in-memory upgrade before it replaces the file. Each row is re-read under the history gate
+finished row without `launch.lock` (mostly from before 0.10.18) gets one. The readers for
+all three stay, for rows the pass has not reached. The file written is the upgraded raw
+object, validated but not re-serialized: a model dump would drop nested keys this build
+ignores and older builds read (0.3.43 to 0.19 read `launch_policy_snapshot` keys such as
+`schema_version` and `bundle_inventory_prompt`). Each row is re-read under the history gate
 (shared) and its spawn lock, written atomically, and marked in `HistoryChanges`; content
 goes before the lock file, so a crash between them leaves a v3 lockless row the next pass
 finishes. A newer build's row and a restored historical row are never touched.
@@ -86,9 +87,13 @@ marker. An active lockless row whose runner is gone keeps no lock: crash repair 
 would hand them that authority. A cancel naming it records the outcome; doctor then adds
 the lock. These rows do not block the marker, because no later pass would change them.
 
-`legacy-spawn-rows-v1.json` in the runtime root marks a pass with nothing failed or
-deferred. The startup background pass runs only without it; `meridian doctor` always runs,
-because the once-per-process read warning sends people there. The chat journal's
+`legacy-spawn-rows-v1.json` in the runtime root means no later pass of this build would
+change anything, so only a deferred row holds it back; rows this build cannot read stay
+as they are and doctor reports them. The startup background pass runs only without it;
+`meridian doctor` always runs, because the once-per-process read warning sends people
+there. An older build sharing the home can write an old-format row after the marker (a
+0.3.42 spawn writes v2); that is inherent and needs no code, since the readers stay and
+doctor still rewrites it. The chat journal's
 `harness_session_ids` arrays are not rewritten: no release wrote one with an ID in it
 (only `[]` inside 0.5.0 to 0.6.7 `historical_import` records), so they carry nothing, and
 rewriting an append-only journal other builds append to is not worth an empty key.

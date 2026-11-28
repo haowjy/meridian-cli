@@ -51,7 +51,7 @@ The background worker inherits the same open-file description (`dup`/`pass_fds`)
 restores close-on-exec. Release by closing descriptors; never `LOCK_UN`, which unlocks the
 worker too. Harnesses never inherit it. `LaunchSlot` creates the lock before ID
 allocation; `bind_staged()` returns the `LaunchHandle`. Only low-level `start_spawn`
-permits lockless test seeding. Lockless rows otherwise come from builds before 0.10.18;
+permits lockless test seeding. Lockless rows otherwise come mostly from builds before 0.10.18;
 a continue, or the one-time rewrite in `spawn/legacy_rows.py` for a finished row, creates
 their lock under the spawn lock. Never create one for an active lockless row outside a
 command that names it: a free lock would let automatic repair finalize it on PID evidence. For an active lock-backed row, a free lock derives success

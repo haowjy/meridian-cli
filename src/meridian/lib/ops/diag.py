@@ -245,16 +245,9 @@ def _check_legacy_worktree_temp(runtime_root: Path) -> DoctorWarning | None:
 def _legacy_rows_summary(rewritten: tuple[LegacyRow, ...]) -> str | None:
     if not rewritten:
         return None
-    counts = {
-        kind: sum(kind in row.kinds for row in rewritten) for kind in ("v2", "dogfood", "lockless")
-    }
-    shown = ", ".join(row.spawn_id for row in rewritten[:10])
-    more = f" and {len(rewritten) - 10} more" if len(rewritten) > 10 else ""
-    return (
-        f"rewrote {len(rewritten)} spawn row(s) an older Meridian wrote in the current format ("
-        + ", ".join(f"{kind}: {count}" for kind, count in counts.items() if count)
-        + f"): {shown}{more}"
-    )
+    shown = ", ".join(f"{row.spawn_id} ({', '.join(row.changed)})" for row in rewritten[:10])
+    more = f", and {len(rewritten) - 10} more" if len(rewritten) > 10 else ""
+    return f"rewrote {len(rewritten)} spawn row(s) an older Meridian wrote: {shown}{more}"
 
 
 def _repair_stale_session_locks(
@@ -457,9 +450,10 @@ def _doctor_local(
 
     # Unlike the startup pass, doctor ignores the marker: the read warning sends people here.
     legacy = repair_legacy_spawn_rows(runtime_root)
-    if any(row.dogfood for row in (*legacy.rewritten, *legacy.deferred, *legacy.unsettled)):
+    changes = {change for row in legacy.rewritten for change in row.changed}
+    if "dogfood fields" in changes:
         repaired.append("dogfood_spawn_rows")
-    if any(not row.dogfood for row in legacy.rewritten):
+    if changes - {"dogfood fields"}:
         repaired.append("legacy_spawn_rows")
     legacy_rows_summary = _legacy_rows_summary(legacy.rewritten)
     dogfood_failed = tuple(row for row in legacy.failed if row.dogfood)
@@ -499,9 +493,10 @@ def _doctor_local(
             DoctorWarning(
                 code="legacy_spawn_rows_deferred",
                 message=(
-                    f"{len(legacy.deferred)} spawn row(s) an older Meridian wrote may still "
-                    "have a runner from that build; run `meridian doctor` again after it "
-                    "exits to rewrite them: " + ", ".join(row.spawn_id for row in legacy.deferred)
+                    f"{len(legacy.deferred)} spawn row(s) without a launch lock (mostly from "
+                    "before 0.10.18) may still have a runner from an older Meridian; run "
+                    "`meridian doctor` again after it exits to finish them: "
+                    + ", ".join(row.spawn_id for row in legacy.deferred)
                 ),
                 payload={"spawn_ids": [row.spawn_id for row in legacy.deferred]},
             )
@@ -511,11 +506,11 @@ def _doctor_local(
             DoctorWarning(
                 code="legacy_spawn_rows_unsettled",
                 message=(
-                    f"{len(legacy.unsettled)} spawn row(s) an older Meridian wrote are still "
-                    "active with no outcome, and their runner is gone; Meridian does not "
-                    "record an outcome for them on its own. `meridian spawn cancel <id>` "
-                    "records it, and the next `meridian doctor` finishes the rewrite: "
-                    + ", ".join(row.spawn_id for row in legacy.unsettled)
+                    f"{len(legacy.unsettled)} spawn row(s) without a launch lock (mostly from "
+                    "before 0.10.18) are still active with no outcome, and their runner is "
+                    "gone; Meridian does not record an outcome for them on its own. "
+                    "`meridian spawn cancel <id>` records it, and the next `meridian doctor` "
+                    "finishes the rewrite: " + ", ".join(row.spawn_id for row in legacy.unsettled)
                 ),
                 payload={"spawn_ids": [row.spawn_id for row in legacy.unsettled]},
             )
@@ -650,11 +645,15 @@ def _doctor_local(
     derived = overlay_derived(runtime_root, spawns)
     running = [row.id for row in derived if is_active_spawn_status(row.status)]
     # Stored-active but derived-terminal: the runner is gone and no outcome is
-    # persisted yet. Readers already show the crash; --kill-orphans writes it.
+    # persisted yet. Readers already show the crash; --kill-orphans writes it, except
+    # for lockless rows, which legacy_spawn_rows_unsettled names with what does.
+    unsettled = {row.spawn_id for row in legacy.unsettled}
     unpersisted = [
         row.id
         for row, stored in zip(derived, spawns, strict=True)
-        if is_active_spawn_status(stored.status) and not is_active_spawn_status(row.status)
+        if is_active_spawn_status(stored.status)
+        and not is_active_spawn_status(row.status)
+        and row.id not in unsettled
     ]
     if unpersisted:
         warnings.append(

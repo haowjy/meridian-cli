@@ -215,7 +215,8 @@ def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
     assert "ValidationError" in first.failed[1].reason
     assert second.rewritten == ()
     assert [row.spawn_id for row in second.failed] == ["p0", "p1"]
-    assert not (tmp_path / MARKER).exists()
+    # No later pass would read them either, so they leave the marker to doctor.
+    assert (tmp_path / MARKER).exists()
     loaded = read_state(spawns_dir, "p2", include_prompt=False)
     assert loaded is not None
     assert loaded.continue_chat_id == "c3"
@@ -279,6 +280,8 @@ def test_legacy_row_repair_finishes_after_a_crash_and_marks_only_a_clean_pass(
         "runner_pid": 456,
         "status": "succeeded",
         "started_at": "2026-05-01T00:00:00Z",
+        # A key this build ignores but 0.3.43 to 0.10.x read.
+        "launch_policy_snapshot": {"model": "gpt-5.4", "harness": "codex", "schema_version": 1},
         **{f"runner_exit_{name}": None for name in ("code", "status", "error", "at")},
         "exit_code": 0,
         "finished_at": "2026-05-01T00:01:00Z",
@@ -318,7 +321,9 @@ def test_legacy_row_repair_finishes_after_a_crash_and_marks_only_a_clean_pass(
     assert (spawns_dir / "p3" / "state.json").read_bytes() == live_bytes
     assert not (spawns_dir / "p3" / "launch.lock").exists()
     assert not (tmp_path / MARKER).exists()
-    assert json.loads(v2_path.read_text(encoding="utf-8"))["v"] == 3
+    rewritten_v2 = json.loads(v2_path.read_text(encoding="utf-8"))
+    assert rewritten_v2["v"] == 3
+    assert rewritten_v2["launch_policy_snapshot"]["schema_version"] == 1
     assert read_state(spawns_dir, "p1", include_prompt=False) == before
 
     # The old runner exits.
@@ -328,7 +333,7 @@ def test_legacy_row_repair_finishes_after_a_crash_and_marks_only_a_clean_pass(
     second = repair_legacy_spawn_rows(tmp_path)
 
     assert [row.spawn_id for row in second.rewritten] == ["p3"]
-    assert second.clean
+    assert second.done
     assert (tmp_path / MARKER).exists()
     assert all((spawns_dir / spawn_id / "launch.lock").exists() for spawn_id in ("p1", "p2", "p3"))
     assert not (spawns_dir / "p4" / "launch.lock").exists()

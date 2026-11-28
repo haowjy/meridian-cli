@@ -139,37 +139,42 @@ disk once, per project. It changes nothing a command shows. You need do nothing;
 - **What it rewrites.** Rows from 0.3.42 and older (state `v2`) become `v3`. Rows with
   `entry_chat_id`, `exit_chat_id`, `exit_identity` or `trampoline_successor_id` fields (from
   unreleased development builds) are migrated as `meridian doctor` already did; this pass
-  replaces that migration. Finished rows from builds before 0.10.18 get the
-  `spawns/<id>/launch.lock` file every newer launch creates. A rewritten row keeps exactly
-  the fields it had.
+  replaces that migration. Finished rows without the `spawns/<id>/launch.lock` file every
+  newer launch creates (mostly from before 0.10.18) get one. A rewritten row keeps every
+  field it had, including ones this build no longer reads.
 - **What it leaves.** A row a newer Meridian wrote, and history restored from an archive.
   A row whose runner from the older build may still be running waits until that runner
-  exits. A row from before 0.10.18 that is still `running` although its runner is gone gets
-  no launch lock: Meridian never records an outcome for such a row on its own, and the
+  exits. A row without a launch lock that is still `running` although its runner is gone
+  gets no lock: Meridian never records an outcome for such a row on its own, and the
   lock would let it. `meridian spawn cancel <id>` records the outcome; the next
-  `meridian doctor` finishes the row. A row it cannot convert stays as it is.
+  `meridian doctor` finishes the row. A row this build cannot read stays as it is.
 - **When it runs.** In the background when you launch a primary session, until one pass
-  leaves nothing failed or waiting; it then writes
-  `~/.meridian/projects/<project>/legacy-spawn-rows-v1.json` and stops running at launch.
-  `meridian doctor` runs it every time. A pass that is killed resumes on the next one.
+  leaves only rows it can never change (the only thing it waits for is an old runner that
+  may be alive); it then writes `~/.meridian/projects/<project>/legacy-spawn-rows-v1.json`
+  and stops running at launch. `meridian doctor` runs it every time. A pass that is killed
+  resumes on the next one. If an older Meridian still runs against the same home, it can
+  write an old-format row after that; this build reads it as before, and `meridian doctor`
+  rewrites it.
 - **What you see.** Until a project's rows are rewritten, the first command that reads one
   warns once:
 
   ```
-  …/spawns/p12/state.json is a spawn row in a format an older Meridian wrote; `meridian doctor` rewrites such rows in the current format and lists any it cannot.
+  …/spawns/p12/state.json is a spawn row in an older format (v2, or without a launch lock: mostly from before 0.10.18); `meridian doctor` rewrites such rows, or says why it can't.
   ```
 
   `meridian doctor` lists `legacy_spawn_rows` under `repaired` (and `dogfood_spawn_rows` for
-  the development-build rows, as before), with a `legacy_spawn_rows` line naming the rows it
-  rewrote. What it left comes as warnings: `legacy_spawn_rows_failed` (could not convert,
+  the development-build rows, as before), with a `legacy_spawn_rows` line naming each row it
+  rewrote and what changed, e.g. `p1 (v2 to v3, launch lock)`. What it left comes as warnings: `legacy_spawn_rows_failed` (could not convert,
   with the reason), `legacy_spawn_rows_deferred` (old runner may be alive),
-  `legacy_spawn_rows_unsettled` (still running with no runner; cancel it), and, unchanged,
+  `legacy_spawn_rows_unsettled` (still running with no runner; cancel it, so these rows are
+  no longer listed under `dead_spawns_unfinalized`, whose `--kill-orphans` does not settle
+  them), and, unchanged,
   `dogfood_spawn_rows_failed` and `dogfood_index_rearm_failed`. In `--json`,
   `legacy_spawn_rows` is a new field beside `legacy_pi_sessions`.
 - **The one-time native session import says what it found.** When it finds chats an older
-  Meridian recorded without their native session store, it now warns
-  `found N chat(s) in …/sessions.jsonl that an older Meridian recorded without their native
-  session store; importing their native session bindings once` before its usual summary.
+  Meridian recorded without their native session store, its summary line becomes a warning:
+  `warning: found N chat(s) an older Meridian recorded without their native session store in
+  …/sessions.jsonl; imported native sessions for X of Y existing chats; …`.
 - **The chat journal is not rewritten.** The `harness_session_ids` arrays old releases left in
   `sessions.jsonl` (0.5.0 to 0.6.7, inside restored history records) are all empty.
 

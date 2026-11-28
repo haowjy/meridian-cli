@@ -1,8 +1,8 @@
 """Rewrite spawn rows older builds wrote in the format this build writes; once per root.
 
 Three old shapes are rewritten: v2 rows (before 0.3.43), v3 rows with the dogfood
-flat boundary fields, and rows without ``launch.lock`` (before 0.10.18). Readers of
-all three stay, for rows this pass has not reached yet.
+flat boundary fields, and finished rows without ``launch.lock`` (mostly from before
+0.10.18). Readers of all three stay, for rows this pass has not reached yet.
 """
 
 from __future__ import annotations
@@ -69,10 +69,14 @@ def _translate_dogfood(raw: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+type Change = Literal["v2 to v3", "dogfood fields", "launch lock"]
+
+
 @dataclass(frozen=True)
 class LegacyRow:
     spawn_id: str
     kinds: tuple[RowKind, ...]
+    changed: tuple[Change, ...] = ()
     # Why the row failed; empty otherwise.
     reason: str = ""
 
@@ -84,8 +88,9 @@ class LegacyRow:
 @dataclass(frozen=True)
 class LegacyRowRepair:
     rewritten: tuple[LegacyRow, ...]
+    """Rows this pass changed, including deferred or unsettled ones whose content it rewrote."""
     failed: tuple[LegacyRow, ...]
-    """Rows this build cannot rewrite; they stay as they are."""
+    """Rows this build cannot read; they stay as they are, and doctor reports them."""
     deferred: tuple[LegacyRow, ...]
     """Rows whose old-build runner may still be alive; a later pass finishes them."""
     unsettled: tuple[LegacyRow, ...] = ()
@@ -96,8 +101,9 @@ class LegacyRowRepair:
     index_rearm_warning: str | None = None
 
     @property
-    def clean(self) -> bool:
-        return not self.failed and not self.deferred
+    def done(self) -> bool:
+        """No later pass of this build would change anything: only a live runner waits."""
+        return not self.deferred
 
 
 def _kinds(raw: object, has_launch_lock: bool) -> tuple[RowKind, ...]:
@@ -137,6 +143,11 @@ def _read_kinds(state_path: Path, launch_lock: Path) -> tuple[RowKind, ...]:
 
 type _Outcome = Literal["rewritten", "deferred", "unsettled"]
 
+_CONTENT_CHANGES: tuple[tuple[RowKind, Change], ...] = (
+    ("v2", "v2 to v3"),
+    ("dogfood", "dogfood fields"),
+)
+
 
 def _repair_row(
     changes: HistoryChanges, spawns_dir: Path, spawn_id: str
@@ -168,31 +179,35 @@ def _repair_row(
         old_runner_alive = "lockless" in kinds and legacy_runner_alive(
             stored_state_to_record(stored)
         )
-        rewrite_content = "dogfood" in kinds or ("v2" in kinds and not old_runner_alive)
-        if rewrite_content:
-            # Write only the fields the row had: an older v3 reader refuses unknown keys.
-            text = stored.model_dump_json(indent=2, exclude_unset=True) + "\n"
-            if StoredSpawnState.model_validate_json(text) != stored:
-                raise ValueError("the rewritten row would not read back as the same row")
+        changed: list[Change] = []
+        if "dogfood" in kinds or ("v2" in kinds and not old_runner_alive):
+            # Write the upgraded raw object, not a model dump: nested objects such as
+            # launch_policy_snapshot keep keys this build ignores but older builds read.
             changes.mark(HistorySource(kind="spawn", key=spawn_id))
-            atomic_write_text(state_path, text, permissions=PRIVATE_FILE_MODE)
+            atomic_write_text(
+                state_path, json.dumps(candidate, indent=2) + "\n", permissions=PRIVATE_FILE_MODE
+            )
+            changed.extend(change for kind, change in _CONTENT_CHANGES if kind in kinds)
         if old_runner_alive:
-            return "deferred", LegacyRow(spawn_id, kinds)
+            return "deferred", LegacyRow(spawn_id, kinds, tuple(changed))
         if "lockless" in kinds:
             if is_active_spawn_status(stored.status):
-                return "unsettled", LegacyRow(spawn_id, kinds)
+                return "unsettled", LegacyRow(spawn_id, kinds, tuple(changed))
             # Lock creators hold the spawn lock too, so the file is still missing; it is
             # never replaced.
             flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
             os.close(os.open(launch_lock, flags, 0o600))
-    return "rewritten", LegacyRow(spawn_id, kinds)
+            changed.append("launch lock")
+    return "rewritten", LegacyRow(spawn_id, kinds, tuple(changed))
 
 
 def repair_legacy_spawn_rows(runtime_root: Path) -> LegacyRowRepair:
     """Rewrite old-format ``state.json`` rows in place; idempotent and safe to interrupt.
 
     Each row is rewritten atomically and isolated: a row that fails is reported and
-    the pass moves on. The marker is written only after a pass leaves nothing behind.
+    the pass moves on. The marker is written once no later pass would change anything:
+    rows this build cannot read and active lockless rows stay as they are for good, so
+    only a row whose old runner may be alive holds it back.
     """
     spawns_dir = runtime_root / "spawns"
     changes = HistoryChanges(runtime_root)
@@ -200,7 +215,7 @@ def repair_legacy_spawn_rows(runtime_root: Path) -> LegacyRowRepair:
     failed: list[LegacyRow] = []
     deferred: list[LegacyRow] = []
     unsettled: list[LegacyRow] = []
-    buckets = {"rewritten": rewritten, "deferred": deferred, "unsettled": unsettled}
+    left = {"deferred": deferred, "unsettled": unsettled}
     for spawn_id in iter_spawn_ids(spawns_dir):
         kinds: tuple[RowKind, ...] = ()
         try:
@@ -211,13 +226,17 @@ def repair_legacy_spawn_rows(runtime_root: Path) -> LegacyRowRepair:
         except FileNotFoundError:
             continue
         except Exception as exc:
-            failed.append(LegacyRow(spawn_id, kinds, _reason(exc)))
+            failed.append(LegacyRow(spawn_id, kinds, reason=_reason(exc)))
             continue
         if outcome is not None:
-            buckets[outcome[0]].append(outcome[1])
+            bucket, row = outcome
+            if bucket in left:
+                left[bucket].append(row)
+            if row.changed:
+                rewritten.append(row)
     index_rearm_warning = None
     # Dogfood rows quarantined before the rewrite, which may have latched index failure.
-    if any(row.dogfood for row in (*rewritten, *deferred, *unsettled)):
+    if any(row.dogfood for row in rewritten):
         try:
             warnings = HistoryIndex(runtime_root).clear_authority_failure()
             if warnings:
@@ -232,7 +251,7 @@ def repair_legacy_spawn_rows(runtime_root: Path) -> LegacyRowRepair:
         index_rearm_warning=index_rearm_warning,
     )
     marker = runtime_root / MARKER
-    if result.clean and not marker.exists():
+    if result.done and not marker.exists():
         atomic_write_text(
             marker,
             json.dumps({"v": 1, "completed_at": utc_now_iso()}) + "\n",

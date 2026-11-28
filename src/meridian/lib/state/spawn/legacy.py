@@ -84,8 +84,8 @@ def warn_unrepaired_spawn_row(state_path: Path) -> None:
     warn_once(
         ("legacy-spawn-row",),
         lambda: logger.warning(
-            "%s is a spawn row in a format an older Meridian wrote; `meridian doctor` "
-            "rewrites such rows in the current format and lists any it cannot.",
+            "%s is a spawn row in an older format (v2, or without a launch lock: mostly "
+            "from before 0.10.18); `meridian doctor` rewrites such rows, or says why it can't.",
             state_path,
         ),
     )
