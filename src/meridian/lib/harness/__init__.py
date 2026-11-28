@@ -54,9 +54,13 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "dropped silently and harness_profile() returns None)"
     ),
     (
-        "src/meridian/lib/launch/context.py (the `harness.id ==` branches that bind "
-        "launch-artifact paths into the spec: system prompt file, settings file, report "
-        "output path; add one when the harness's spec takes them)"
+        "adapter bind_launch_paths() (bind the launch-artifact paths the spec reads: "
+        "system prompt file, settings file, report output path)"
+    ),
+    (
+        "adapter consumed_by_harness() and blocking_command_hold() (only when the harness "
+        "delivers child results itself or runs Meridian commands in shell tasks it can "
+        "background, as Pi does)"
     ),
     (
         "src/meridian/lib/ops/session_repair.py::_candidate_dirs() "

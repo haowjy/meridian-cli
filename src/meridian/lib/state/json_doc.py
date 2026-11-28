@@ -29,6 +29,34 @@ class VersionedPrivateDoc(BaseModel):
         return value
 
 
+def read_owned_doc(
+    path: Path,
+    model_type: type[ModelT],
+    *,
+    owner: str,
+    on_read: Callable[[Path, str | None], None] | None = None,
+) -> ModelT | None:
+    """One spawn's private coordination file; None when it is missing or damaged.
+
+    A file naming another spawn is damaged. ``on_read`` receives why a damaged file was
+    skipped, or None after a good or missing-file read.
+    """
+
+    try:
+        value = model_type.model_validate_json(path.read_text(encoding="utf-8"))
+        if getattr(value, "spawn_id", None) != owner:
+            raise ValueError("private-file parent identity mismatch")
+    except FileNotFoundError:
+        value = None
+    except (OSError, UnicodeError, ValueError) as exc:
+        if on_read is not None:
+            on_read(path, str(exc))
+        return None
+    if on_read is not None:
+        on_read(path, None)
+    return value
+
+
 def read_model(path: Path, model_type: type[ModelT]) -> ModelT | None:
 
     try:

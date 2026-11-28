@@ -315,11 +315,12 @@ def cmd_idle_mod_path() -> None:
     """Print the bundled Claude idle mod directory."""
 
     try:
-        from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
+        from meridian.lib.core.types import HarnessId
+        from meridian.lib.harness.registry import get_default_harness_registry
 
-        resolution = resolve_claude_runtime(plugin_names=("meridian-idle",))
-        if not resolution.plugin_dirs:
+        mod_dir = get_default_harness_registry().get(HarnessId.CLAUDE).idle_mod_dir()
+        if mod_dir is None:
             raise FileNotFoundError("bundled Claude idle mod was not found")
-        print(resolution.plugin_dirs[0])
+        print(mod_dir)
     except Exception as exc:
         _fail(exc)

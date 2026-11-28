@@ -1,3 +1,6 @@
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
@@ -5,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import HarnessContract, NativeStoreReader, SubprocessHarness
 from meridian.lib.harness.bundle import get_connection_cls, get_launch_ports, get_process_ports
+from meridian.lib.state.spawn_observations import observed_launches
 
 type HarnessEntry = SubprocessHarness
 
@@ -85,6 +89,29 @@ class HarnessRegistry(BaseModel):
             for harness_id, adapter in self._adapters.items()
             if harness_id.launched_by_meridian
         }
+
+    def consumed_launches(
+        self,
+        runtime_root: Path,
+        parent_spawn_id: str,
+        *,
+        on_read: Callable[[Path, str | None], None] | None = None,
+    ) -> frozenset[str]:
+        """Launch keys whose results reached one parent, whichever harness it runs: the
+        shared record ``spawn collect`` and waits keep, and each harness's own delivery
+        record. A damaged source is skipped and reported to ``on_read``."""
+        consumed = set(observed_launches(runtime_root, parent_spawn_id, on_read=on_read))
+        for adapter in self._adapters.values():
+            consumed |= adapter.consumed_by_harness(runtime_root, parent_spawn_id, on_read=on_read)
+        return frozenset(consumed)
+
+    @contextmanager
+    def hold_blocking_command(self) -> Generator[None]:
+        """Every harness's ``blocking_command_hold``, for a command that blocks its caller."""
+        with ExitStack() as stack:
+            for adapter in self._adapters.values():
+                stack.enter_context(adapter.blocking_command_hold())
+            yield
 
     def ids(self) -> tuple[HarnessId, ...]:
         """The harnesses Meridian may exec."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -58,6 +59,7 @@ from meridian.lib.harness.pi_paths import (
     resolve_pi_agent_dir,
     resolve_pi_spawn_session_root,
 )
+from meridian.lib.harness.pi_private_state import hold_pi_bash, read_pi_delivery_consumption
 from meridian.lib.harness.pi_relocate import (
     apply_pi_relocations,
     pi_native_cwd,
@@ -376,6 +378,26 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         plans: Sequence[NativeRelocation],
     ) -> tuple[NativeRelocationResult, ...]:
         return apply_pi_relocations(plans)
+
+    def bind_launch_paths(
+        self, spec: ResolvedLaunchSpec, *, launch: LaunchPaths, dry_run: bool
+    ) -> ResolvedLaunchSpec:
+        _ = dry_run
+        return spec.model_copy(update={"prompt_file_path": launch.system_prompt.as_posix()})
+
+    def consumed_by_harness(
+        self,
+        runtime_root: Path,
+        parent_spawn_id: str,
+        *,
+        on_read: Callable[[Path, str | None], None] | None = None,
+    ) -> frozenset[str]:
+        return read_pi_delivery_consumption(
+            runtime_root, parent_spawn_id, on_read=on_read
+        ).consumed_ids
+
+    def blocking_command_hold(self) -> AbstractContextManager[None]:
+        return hold_pi_bash()
 
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None

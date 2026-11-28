@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Container, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -11,7 +11,12 @@ import psutil
 from pydantic import Field, StrictInt
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.json_doc import VersionedPrivateDoc, mutate_model, read_model
+from meridian.lib.state.json_doc import (
+    VersionedPrivateDoc,
+    mutate_model,
+    read_model,
+    read_owned_doc,
+)
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import observed_launches_path, observed_spawns_path
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
@@ -113,6 +118,32 @@ def read_legacy(runtime_root: Path, parent_spawn_id: str) -> LaunchObservations 
     if legacy is None or legacy.spawn_id != parent_spawn_id:
         return None
     return legacy_view(legacy)
+
+
+def observed_launches(
+    runtime_root: Path,
+    parent_spawn_id: str,
+    *,
+    on_read: Callable[[Path, str | None], None] | None = None,
+) -> frozenset[str]:
+    """Launches ``spawn collect``, ``ack`` and waits recorded as consumed for one parent.
+
+    A damaged record is skipped; ``on_read`` receives its diagnostic (``read_owned_doc``).
+    """
+
+    current = read_owned_doc(
+        observed_launches_path(runtime_root, parent_spawn_id),
+        LaunchObservations,
+        owner=parent_spawn_id,
+        on_read=on_read,
+    )
+    legacy = read_legacy(runtime_root, parent_spawn_id)
+    return frozenset(
+        launch
+        for document in (current, legacy)
+        if document is not None
+        for launch in document.observed_launches
+    )
 
 
 def _pin_live(pin: WaitPin, target: str, consumed: Container[str], now: float) -> bool:

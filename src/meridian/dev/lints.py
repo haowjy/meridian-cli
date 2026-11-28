@@ -323,6 +323,91 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
+# Outside `lib/harness/`, a harness is reached through the adapter contract and the
+# registry: a module named for one harness, the adapters' shared defaults, or the legacy
+# store layouts is the harness's own. Each exception names who retires it.
+_HARNESS_PACKAGE = "meridian.lib.harness"
+_HARNESS_NAMED_SEGMENT = re.compile(r"(?:^|_)(?:claude|codex|opencode|pi|cursor|agy)(?:_|$)")
+_HARNESS_INTERNAL_SEGMENTS = frozenset({"adapter_base", "legacy_native_stores"})
+HARNESS_IMPORT_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("meridian/lib/ops/legacy_native_import.py", "meridian.lib.harness.legacy_native_stores"): (
+        "The one-time import of chats older builds wrote; goes with the old-row readers "
+        "(simplicity sweep move 2)."
+    ),
+    ("meridian/lib/ops/session_repair.py", "meridian.lib.harness.legacy_native_stores"): (
+        "Candidate listing without --native reads the legacy store layouts; it moves "
+        "behind the adapter when move 2 retires legacy_native_stores."
+    ),
+}
+
+
+def _harness_package_paths(sources: Sources) -> frozenset[str]:
+    """Dotted names of the packages under `lib/harness/`, whose imported names are modules."""
+    return frozenset(
+        module.path.removesuffix("/__init__.py").replace("/", ".")
+        for module in sources.python_modules
+        if module.path.startswith(_HARNESS_PREFIX) and module.path.endswith("/__init__.py")
+    ) | {_HARNESS_PACKAGE}
+
+
+def _imported_modules(node: ast.Import | ast.ImportFrom, packages: frozenset[str]) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if node.module is None or node.level:
+        return []
+    if node.module in packages:
+        return [f"{node.module}.{alias.name}" for alias in node.names]
+    return [node.module]
+
+
+def _harness_owned(name: str) -> bool:
+    if not name.startswith(_HARNESS_PACKAGE + "."):
+        return False
+    return any(
+        segment in _HARNESS_INTERNAL_SEGMENTS or _HARNESS_NAMED_SEGMENT.search(segment)
+        for segment in name.removeprefix(_HARNESS_PACKAGE + ".").split(".")
+    )
+
+
+def _harness_owned_imports(sources: Sources) -> list[tuple[str, int, str]]:
+    packages = _harness_package_paths(sources)
+    return [
+        (module.path, node.lineno, name)
+        for module in sources.python_modules
+        if not module.path.startswith(_HARNESS_PREFIX) and module.mentions(_HARNESS_PACKAGE)
+        for node in ast.walk(module.tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name in _imported_modules(node, packages)
+        if _harness_owned(name)
+    ]
+
+
+def harness_specific_import_violations(sources: Sources) -> list[Violation]:
+    """Reject importing a harness's own module from outside `lib/harness/`."""
+
+    return [
+        Violation(
+            path,
+            line,
+            f"{name} is internal to lib/harness/: reach a harness through the adapter "
+            "contract (harness/adapter.py) and the registry, or list the import in "
+            "HARNESS_IMPORT_ALLOWLIST with who retires it.",
+        )
+        for path, line, name in _harness_owned_imports(sources)
+        if (path, name) not in HARNESS_IMPORT_ALLOWLIST
+    ]
+
+
+def stale_harness_import_allowlist(sources: Sources) -> list[Violation]:
+    """Reject allowlist entries that no longer excuse an import."""
+
+    used = {(path, name) for path, _line, name in _harness_owned_imports(sources)}
+    return [
+        Violation(path, 0, f"stale harness-import allowlist entry {name}: delete it")
+        for path, name in sorted(HARNESS_IMPORT_ALLOWLIST.keys() - used)
+    ]
+
+
 def _call_name(function: ast.expr) -> str | None:
     if isinstance(function, ast.Name):
         return function.id
@@ -757,6 +842,8 @@ CHECKS: tuple[Check, ...] = (
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
+    harness_specific_import_violations,
+    stale_harness_import_allowlist,
     import_time_bootstrap_violations,
     launch_path_violations,
     sys_executable_violations,

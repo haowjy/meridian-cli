@@ -110,7 +110,6 @@ from .composition import (
     join_content_blocks,
     replace_capabilities_block,
 )
-from .constants import DRY_RUN_REPORT_PATH
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan, merge_env_overrides, path_within, undo_direnv
 from .permissions import launch_permission_rules
@@ -1468,7 +1467,6 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    report_artifact_path = bindings.launch.report
     system_prompt_path = bindings.launch.system_prompt
     logical_task_cwd = project_paths.execution_cwd.resolve()
     directory_context = LaunchDirectoryContext(
@@ -1755,23 +1753,7 @@ def bind_launch_context(
     run_params = materialized.run_params
     spec = materialized.spec
     composition_warnings = (*composition_warnings, *materialized.warnings)
-    if harness.id == HarnessId.CODEX and not spec.interactive:
-        spec = spec.model_copy(
-            update={
-                "report_output_path": (
-                    DRY_RUN_REPORT_PATH if bindings.dry_run else report_artifact_path.as_posix()
-                )
-            }
-        )
-    elif harness.id == HarnessId.CLAUDE:
-        spec = spec.model_copy(
-            update={
-                "prompt_file_path": system_prompt_path.as_posix(),
-                "settings_file_path": bindings.launch.claude_settings.as_posix(),
-            }
-        )
-    elif harness.id == HarnessId.PI:
-        spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
+    spec = harness.bind_launch_paths(spec, launch=bindings.launch, dry_run=bindings.dry_run)
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value

@@ -516,12 +516,27 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             else super().assign_session_id(intent, store=store)
         )
 
+    def bind_launch_paths(
+        self, spec: ResolvedLaunchSpec, *, launch: LaunchPaths, dry_run: bool
+    ) -> ResolvedLaunchSpec:
+        _ = dry_run
+        return spec.model_copy(
+            update={
+                "prompt_file_path": launch.system_prompt.as_posix(),
+                "settings_file_path": launch.claude_settings.as_posix(),
+            }
+        )
+
+    def idle_mod_dir(self) -> str | None:
+        resolution = resolve_claude_runtime(plugin_names=("meridian-idle",))
+        return resolution.plugin_dirs[0] if resolution.plugin_dirs else None
+
     def resolve_launch_spec(self, run: SpawnParams) -> ResolvedLaunchSpec:
         normalized_effort = None if run.effort is None else str(run.effort).strip()
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
 
-        # prompt_file_path is owned by bind_launch_context, which sets it to
-        # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
+        # prompt_file_path is set at bind (bind_launch_paths) to the launch's
+        # system-prompt.md, the single artifact-dir authority.
         prompt_file_path: str | None = None
         user_turn_content = getattr(run, "user_turn_content", None)
         plugin_names = (_BOUNDARY_PLUGIN,)

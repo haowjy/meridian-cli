@@ -627,3 +627,32 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], NativeStoreReader, P
     def create_session_before_exec(self, request: PreExecSessionRequest) -> str | None: ...
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool: ...
+
+    def bind_launch_paths(
+        self, spec: ResolvedLaunchSpec, *, launch: LaunchPaths, dry_run: bool
+    ) -> ResolvedLaunchSpec:
+        """``spec`` with the launch's artifact paths it reads (system prompt, settings,
+        report file) bound in; unchanged for a harness that takes none."""
+        ...
+
+    def consumed_by_harness(
+        self,
+        runtime_root: Path,
+        parent_spawn_id: str,
+        *,
+        on_read: Callable[[Path, str | None], None] | None = None,
+    ) -> frozenset[str]:
+        """Launch keys whose results this harness's own delivery recorded as reaching the
+        parent, beyond the shared record ``spawn collect`` keeps; a damaged source is
+        skipped and reported to ``on_read``."""
+        ...
+
+    def blocking_command_hold(self) -> AbstractContextManager[None]:
+        """Held while a Meridian command blocks the calling process: a harness whose shell
+        tasks can be backgrounded or reaped marks the task busy for that long."""
+        ...
+
+    def idle_mod_dir(self) -> str | None:
+        """Directory of Meridian's idle mod for this harness's own TUI, for an opt-in
+        outside Meridian; None when it has none."""
+        ...
