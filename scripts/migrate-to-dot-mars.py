@@ -116,7 +116,7 @@ def locate() -> Paths:
 
     # Mars 0.41 reads Mars 0.40's MARS_CONFIG_DIR as MARS_HOME while MARS_HOME is unset.
     config_dir = env_dir("MARS_CONFIG_DIR")
-    user = env_dir("MARS_HOME") or config_dir or home / ".mars"
+    user = env_dir("MARS_HOME") or config_dir or real(home / ".mars")
     meridian_root = (env_dir("MERIDIAN_HOME") or home / ".meridian") / "mars"
     unread = None
     if config_dir is not None:
@@ -560,7 +560,7 @@ def build_plan(paths: Paths, mars: Path) -> Plan:
         plan.delete(source, f", now in {user / source.name}")
     plan.delete(home_src)
     if has_home_project:
-        if home_store == user:
+        if real(home_store) == user:
             for path in sorted(user.iterdir()):
                 if path.name not in USER_LEVEL_FILES:
                     plan.delete(path, " (the home project's old store)")
