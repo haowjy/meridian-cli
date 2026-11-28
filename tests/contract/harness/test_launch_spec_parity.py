@@ -7,18 +7,18 @@ from typing import Any
 
 import pytest
 
-from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.connections.base import ObserverEndpoint
-from meridian.lib.harness.passthrough.codex import CodexPassthrough
-from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     Allow,
     PlatformCommand,
     PlatformRule,
     build_permission_policy,
 )
-from meridian.lib.tools import ToolRule
+from meridian.lib.core.tools import ToolRule
+from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.connections.base import ObserverEndpoint
+from meridian.lib.harness.passthrough.codex import CodexPassthrough
+from meridian.lib.harness.projections.permissions_codex import compile_codex_permissions
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 
 @pytest.mark.parametrize(

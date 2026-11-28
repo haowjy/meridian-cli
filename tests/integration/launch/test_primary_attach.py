@@ -955,7 +955,7 @@ async def test_primary_attach_sigint_during_backend_startup_propagates_and_tears
 
 @pytest.mark.asyncio
 async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> None:
-    from meridian.lib.core.native_identity import (
+    from meridian.lib.state.native_identity import (
         NativeEntryMismatch,
         NativeIdentity,
         NativeKeyFields,

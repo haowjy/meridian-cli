@@ -33,10 +33,8 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.caller import caller_spawn_id
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES, ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.harness.pi_private_state import hold_pi_bash
@@ -93,6 +91,7 @@ from meridian.lib.ops.spawn.read import (
 from meridian.lib.ops.spawn.wait import (
     spawn_wait_sync,
 )
+from meridian.lib.state.caller import caller_spawn_id
 
 logger = structlog.get_logger(__name__)
 _LISTABLE_SPAWN_STATUS_VALUES = tuple(

@@ -9,8 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.mars_roots import MarsRoots, mars_content_roots
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chats
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.ops.config_surface import build_config_surface
@@ -30,6 +29,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
 )
+from meridian.lib.spawn.cleanup import reclaim_session_owned_scopes_for_chats
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_fold import UnsupportedSessionFormat
@@ -275,7 +275,7 @@ def _repair_orphan_runs(
     *,
     runtime_root: Path | None = None,
 ) -> tuple[int, tuple[str, ...]]:
-    from meridian.lib.state.reaper import iter_repair_candidates, reconcile_active_spawn
+    from meridian.lib.spawn.reaper import iter_repair_candidates, reconcile_active_spawn
 
     resolved_runtime_root = runtime_root
     if resolved_runtime_root is None:
@@ -326,7 +326,7 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
         configured_archive_destination,
         recover_legacy_pi_sessions,
     )
-    from meridian.lib.state.reaper import recover_crashed_launches
+    from meridian.lib.spawn.reaper import recover_crashed_launches
 
     def _run_repairs() -> None:
         from contextlib import suppress

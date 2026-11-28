@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from meridian.lib.core.domain import PrimarySessionMetadata
 from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.request import SpawnRequest
-from meridian.lib.launch.types import PrimarySessionMetadata, SessionMode
+from meridian.lib.launch.types import SessionMode
 
 
 def build_session_metadata(request: SpawnRequest) -> PrimarySessionMetadata:

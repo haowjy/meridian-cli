@@ -9,11 +9,11 @@ from pathlib import Path
 import psutil as _psutil
 import pytest
 
-from meridian.lib.core.process_cleanup import (
-    terminate_spawn_scopes,
-)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+from meridian.lib.spawn.cleanup import (
+    terminate_spawn_scopes,
+)
 from meridian.lib.state import spawn_store
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
@@ -93,7 +93,7 @@ def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from meridian.lib.core import process_cleanup
+    from meridian.lib.spawn import cleanup as process_cleanup
 
     record = _persist_spawn(tmp_path)
     released = _scope("released", pid=101)
@@ -151,7 +151,7 @@ def test_session_lease_cleanup_uses_birth_checked_os_liveness(
     expected_skip: bool,
 ) -> None:
     """Only a live, birth-matched session lease survives persisted cleanup."""
-    from meridian.lib.core import process_cleanup
+    from meridian.lib.spawn import cleanup as process_cleanup
 
     record = _persist_spawn(tmp_path)
     scope = _scope(

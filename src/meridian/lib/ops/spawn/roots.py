@@ -7,7 +7,7 @@ from meridian.lib.bootstrap.services import (
     RuntimeWriteContext,
 )
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.ops.runtime import (
     resolve_project_authority,
     resolve_runtime_root_for_read,

@@ -17,9 +17,10 @@ flowchart TD
   streaming["streaming and idle<br/><small>drains events, completion hold, control socket</small>"]:::package
   reach["machines, message, inbox, hooks, notify<br/><small>reaching sessions, people and other machines</small>"]:::package
   config["config, catalog, context, bootstrap<br/><small>settings, Mars, agents, models, paths</small>"]:::package
+  spawn["spawn<br/><small>a spawn's record transitions, cancel, cleanup, reaper</small>"]:::package
   state["state<br/><small>every file Meridian owns, and its locks</small>"]:::package
-  core["core<br/><small>domain types, refs, spawn lifecycle</small>"]:::package
-  platform["platform, safety, telemetry<br/><small>atomic writes, processes, policy, logs</small>"]:::package
+  core["core<br/><small>domain types, refs, policy types; imports nothing above</small>"]:::package
+  platform["platform, safety, telemetry<br/><small>atomic writes, processes, signals, guardrails, logs</small>"]:::package
   surfaces["extensions, plugin_api, server<br/><small>MCP and plugin surfaces</small>"]:::package
   runtime["harness runtimes<br/><small>code that runs inside each harness</small>"]:::package
   tools["project tools<br/><small>artifacts, autosync, kg, mermaid, dev lints</small>"]:::package
@@ -32,6 +33,9 @@ flowchart TD
   streaming -->|"drives the connection of"| harness
   launch -->|"bundle, profiles"| config
   ops -->|"rows, chats, work"| state
+  ops -->|"cancel, doctor repair"| spawn
+  launch -->|"starts and finishes spawns through"| spawn
+  spawn -->|"rows, launch locks"| state
   launch -->|"publishes rows in"| state
   reach -->|"inbox, saved machines"| state
   state -->|"types from"| core
@@ -48,6 +52,7 @@ flowchart TD
   %% at harness 0 450
   %% at streaming 330 450
   %% at config 660 450
+  %% at spawn 0 600
   %% at state 330 600
   %% at tools 660 600
   %% at core 165 750
@@ -122,7 +127,8 @@ inbox, `lib/hooks/` runs user hook rows, and `lib/notify/` sends notifications.
 
 Settings and catalogs. `lib/config/` reads layered config (user, project, local) and edits
 it with its comments kept. `lib/catalog/` holds agents, models and the Mars roots.
-`lib/context/` resolves the KB and work directories. `lib/bootstrap/` prepares a runtime for a
+`lib/context/` resolves the KB and work directories, and a session's runtime context from its
+environment (`resolved.py`: project and runtime root, work item, named context dirs). `lib/bootstrap/` prepares a runtime for a
 read or a write.
 
 - Kind: package
@@ -132,7 +138,7 @@ read or a write.
 ## state
 
 `lib/state/`: every file Meridian owns. Spawn rows, the chat journal, work items, machine IDs,
-saved machines, idle state, the history index and the reaper. It is the authority. SQLite
+saved machines, idle state and the history index. It is the authority. SQLite
 indexes are projections that can be rebuilt.
 
 - Kind: package
@@ -141,21 +147,36 @@ indexes are projections that can be rebuilt.
 - Machines: [a spawn's status](../../src/meridian/lib/state/spawn/.context/state-machines.md), [chats, primaries and work items](../../src/meridian/lib/state/.context/state-machines.md)
 
 Enforced: an authoritative write goes through `lib/state`'s wrappers or the atomic-write helpers.
-The lints flag a raw write.
+The lints flag a raw write. `lib/state` doesn't import `lib/spawn`, even lazily.
+
+## spawn
+
+`lib/spawn/`: one owner for a spawn's lifecycle. `service.py` is the spawn application service,
+the single writer of every terminal status (cancel, completion, dead-launch finalization).
+`lifecycle.py` records the transitions and emits their events to hooks and telemetry,
+`cleanup.py` and `managed_primary.py` tear down process scopes, `reaper.py` recovers crashed
+launches and runs doctor repair.
+
+- Kind: package
+- Paths: `src/meridian/lib/spawn`
+- See: [A spawn](spawn.md)
 
 ## core
 
 `lib/core/`: what every layer shares. Domain types and the spawn status vocabulary, reference
-parsing (`refs.py`), the spawn application service (`spawn_service.py`, which writes every
-terminal status) and lifecycle events. `lib/utils/` has the shared JSON shapes.
+parsing (`refs.py`), the permission policy and tool-rule types a launch records
+(`permission_policy.py`, `tools.py`) and the launch policy snapshot. `lib/utils/` has the shared
+JSON shapes.
 
 - Kind: package
 - Paths: `src/meridian/lib/core`, `src/meridian/lib/utils`
 
+Enforced: `lib/core` imports only `core`, `platform` and `utils`, at any scope.
+
 ## platform
 
-Below everything. `lib/platform/` holds atomic writes, file locks, process launch and process
-scopes. `lib/safety/` holds budget, guardrail and permission policy. `lib/telemetry/` and
+Below everything. `lib/platform/` holds atomic writes, file locks, process launch, process
+scopes and the signal coordinator. `lib/safety/` holds the budget and guardrail checks. `lib/telemetry/` and
 `lib/observability/` hold local JSONL telemetry and debug traces.
 
 - Kind: package

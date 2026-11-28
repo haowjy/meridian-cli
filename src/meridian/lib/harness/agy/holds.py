@@ -74,7 +74,7 @@ def call_env(row: HeldRow) -> dict[str, str]:
     only from the conversation's row; the config set in that shell stays.
     """
 
-    from meridian.lib.core.resolved_context import ResolvedContext
+    from meridian.lib.context.resolved import ResolvedContext
     from meridian.lib.core.types import SpawnId
 
     env = session_free_env(os.environ)
@@ -209,13 +209,13 @@ def _hold_row(hold: _Hold, request: dict[str, Any], proc_dir: Path) -> None:
     # Imported here: the hook shares this package and must not load the launch stack.
     from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
     from meridian.lib.config.project_root import resolve_project_root_resolution
+    from meridian.lib.core.domain import PrimarySessionMetadata
     from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.core.types import SpawnId
     from meridian.lib.launch.primary_hold import PrimaryRow, primary_hold
     from meridian.lib.launch.request import SessionRequest
     from meridian.lib.launch.session_links import republish_chat_links
-    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.ops.runtime import resolve_runtime_root
     from meridian.lib.state import spawn_store
 

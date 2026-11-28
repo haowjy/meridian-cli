@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import NativeKey, PostExit
+from meridian.lib.state.native_identity import NativeKey, PostExit
 
 
 class _Identity(BaseModel):

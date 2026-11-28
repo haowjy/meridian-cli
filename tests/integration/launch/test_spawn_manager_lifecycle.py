@@ -387,7 +387,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
 
     monkeypatch.setattr(
         spawn_manager_module,
-        "terminate_recorded_spawn_scope",
+        "terminate_spawn_scopes",
         _record_reap,
         raising=False,
     )

@@ -7,8 +7,8 @@ and Pi spells ``none`` as ``off``.
 
 from __future__ import annotations
 
+from meridian.lib.core.permission_policy import EnforcementReport, ReportLine
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import EnforcementReport, ReportLine
 
 
 def project_opencode_variant_args(spec: ResolvedLaunchSpec) -> tuple[str, ...]:

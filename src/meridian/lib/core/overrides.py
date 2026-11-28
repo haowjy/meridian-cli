@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
-
-if TYPE_CHECKING:
-    from meridian.lib.catalog.agent import AgentProfile
-    from meridian.lib.catalog.model_aliases import AliasEntry
-    from meridian.lib.config.models import MeridianConfig
 
 _AUTOCOMPACT_TOKEN_MIN = 1000
 _AUTOCOMPACT_PCT_MIN = 1
@@ -142,15 +137,6 @@ def _read_env_string(env_name: str) -> str | None:
     if raw_value is None:
         return None
     normalized = raw_value.strip()
-    if not normalized:
-        return None
-    return normalized
-
-
-def _normalize_optional_string(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
     if not normalized:
         return None
     return normalized
@@ -289,48 +275,6 @@ class RuntimeOverrides(BaseModel):
                 else None
             ),
         )
-
-    @classmethod
-    def from_agent_profile(cls, profile: AgentProfile | None) -> RuntimeOverrides:
-        return cls(
-            resident_rearm_budget=(None if profile is None else profile.resident_rearm_budget)
-        )
-
-    @classmethod
-    def from_alias_entry(cls, alias_entry: AliasEntry | None) -> RuntimeOverrides:
-        if alias_entry is None:
-            return cls()
-        normalized_effort = _normalize_optional_string(alias_entry.default_effort)
-        if normalized_effort == "auto":
-            normalized_effort = None
-        return cls(
-            effort=normalized_effort,
-            autocompact=alias_entry.default_autocompact,
-            autocompact_pct=getattr(alias_entry, "default_autocompact_pct", None),
-        )
-
-    @classmethod
-    def from_config(cls, config: MeridianConfig | None) -> RuntimeOverrides:
-        if config is None:
-            return cls()
-        primary = config.primary
-        return cls(
-            agent=primary.agent,
-            effort=primary.effort,
-            sandbox=primary.sandbox,
-            approval=primary.approval,
-            autocompact=primary.autocompact,
-            autocompact_pct=primary.autocompact_pct,
-            timeout=primary.timeout,
-            resident_rearm_budget=config.resident_rearm_budget,
-        )
-
-    @classmethod
-    def from_spawn_config(cls, config: MeridianConfig | None) -> RuntimeOverrides:
-
-        if config is None:
-            return cls()
-        return cls(resident_rearm_budget=config.resident_rearm_budget)
 
 
 def resolve(*layers: RuntimeOverrides) -> RuntimeOverrides:

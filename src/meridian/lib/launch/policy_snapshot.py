@@ -10,11 +10,11 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.tools import ToolRule, legacy_tool_rules
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.launch_types import ResolvedLaunchRouting, TerminalSurfaceMode
-from meridian.lib.tools import ToolRule, legacy_tool_rules
 
 from .request import SpawnRequest
 from .resolve import ResolvedSkills

@@ -11,12 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.native_identity import (
-    InvalidNativeSession,
-    NativeEntryMismatch,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.codex_rollout import CODEX_ROLLOUT_FILENAME_RE, resolve_exact_rollout
 from meridian.lib.harness.pi_identity import read_header as read_pi_header
@@ -24,6 +18,12 @@ from meridian.lib.harness.pi_identity import resolve_session_file as resolve_pi_
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.platform import get_home_path
+from meridian.lib.state.native_identity import (
+    InvalidNativeSession,
+    NativeEntryMismatch,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+)
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 

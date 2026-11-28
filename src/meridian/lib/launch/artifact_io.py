@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
@@ -19,6 +18,7 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state.atomic import append_text_line
+from meridian.lib.state.native_identity import NativeIdentityError
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 

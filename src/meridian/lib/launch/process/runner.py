@@ -16,11 +16,6 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.core.native_identity import (
-    NativeIdentityError,
-    NativeSessionUnavailable,
-    PrecreatedSession,
-)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     HarnessContract,
@@ -47,15 +42,20 @@ from meridian.lib.launch.artifact_io import (
 from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun
-from meridian.lib.launch.signals import (
+from meridian.lib.ops.work_attachment import activate_work
+from meridian.lib.platform.launch_gate import ProcessIdentity
+from meridian.lib.platform.process_scope.base import scope_from_identity
+from meridian.lib.platform.signals import (
     SignalCallbackReceiver,
     signal_coordinator,
     signal_to_exit_code,
 )
-from meridian.lib.ops.work_attachment import activate_work
-from meridian.lib.platform.launch_gate import ProcessIdentity
-from meridian.lib.platform.process_scope.base import scope_from_identity
 from meridian.lib.state import spawn_store
+from meridian.lib.state.native_identity import (
+    NativeIdentityError,
+    NativeSessionUnavailable,
+    PrecreatedSession,
+)
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import (
     ActivityState,

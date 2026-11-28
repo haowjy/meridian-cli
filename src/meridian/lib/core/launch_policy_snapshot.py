@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.tools import ToolRule, ToolsField
+from meridian.lib.core.tools import ToolRule, ToolsField
 
 
 class LaunchPolicySnapshot(BaseModel):

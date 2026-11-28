@@ -10,10 +10,10 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.core.domain import TerminalSpawnStatus
-from meridian.lib.core.lifecycle import LifecycleEvent
 from meridian.lib.hooks.config import HooksConfig
 from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.registry import HookRegistry
+from meridian.lib.spawn.lifecycle import LifecycleEvent
 
 
 @pytest.mark.parametrize(

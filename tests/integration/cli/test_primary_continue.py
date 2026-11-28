@@ -674,8 +674,8 @@ def test_fork_old_harness_generation_preserves_selected_history(
     _run_primary_continue(project_root, continue_ref=None, fork_ref="older-native", dry_run=True)
     assert original is not None
     assert requests[0].session.forked_from_history_id == original.history_id
+    from meridian.lib.core.domain import PrimarySessionMetadata
     from meridian.lib.launch.session_scope import session_scope
-    from meridian.lib.launch.types import PrimarySessionMetadata
 
     with session_scope(
         launch_slot=LaunchSlot(),

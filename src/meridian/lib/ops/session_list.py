@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
 from meridian.lib.idle.deadline import cache_deadline

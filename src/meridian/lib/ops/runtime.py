@@ -12,7 +12,7 @@ from meridian.lib.config.project_root import (
     ProjectRootSource,
     resolve_project_root_resolution,
 )
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.machines.caller import is_machine_call_without_project
 from meridian.lib.state.paths import resolve_project_paths

@@ -7,18 +7,15 @@ from meridian.lib.bootstrap.services import (
     RuntimeWriteContext,
     build_spawn_application_service_from_roots,
 )
-from meridian.lib.core.caller import same_runtime_root
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.sink import OutputSink
-from meridian.lib.core.spawn_lifecycle import (
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import (
     ACTIVE_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
     is_terminal_spawn_status,
 )
-from meridian.lib.core.spawn_service import CancelOutcome
+from meridian.lib.core.refs import RefNotFound
+from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.locate import (
     resolve_spawn_target,
@@ -29,7 +26,10 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.service import CancelOutcome
 from meridian.lib.state import spawn_store
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord

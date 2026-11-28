@@ -19,7 +19,6 @@ import pytest
 
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.claude import project_slug
@@ -39,6 +38,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.platform.launch_gate import ProcessIdentity
 from meridian.lib.state import session_store
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
@@ -770,8 +770,8 @@ def test_owned_claude_observations_publish_current_chat_while_running(
 
 
 def test_identity_error_before_spawn_allocation_does_not_assert(tmp_path, monkeypatch):
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+    from meridian.lib.state.native_identity import NativeEntryMismatch, NativeKeyFields
 
     context, registry = _build_primary_launch_context(
         project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5"

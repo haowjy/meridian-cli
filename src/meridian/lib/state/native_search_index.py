@@ -8,7 +8,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.core.native_identity import NativeKey
+from meridian.lib.state.native_identity import NativeKey
 
 SCHEMA_VERSION = 1
 PARSER_VERSION = 6

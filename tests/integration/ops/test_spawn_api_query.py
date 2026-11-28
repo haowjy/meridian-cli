@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.wait as spawn_wait
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.ops.spawn.models import (
     SpawnWaitInput,
 )

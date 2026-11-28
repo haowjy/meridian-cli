@@ -5,6 +5,17 @@ from typing import Any
 
 import pytest
 
+from meridian.lib.core.permission_policy import (
+    Allow,
+    Hosts,
+    PermissionPolicy,
+    PlatformCommand,
+    PlatformRule,
+    build_permission_policy,
+    network_policy_name,
+    rule_element,
+)
+from meridian.lib.core.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.permissions_claude import (
     compile_claude_permissions,
@@ -16,17 +27,6 @@ from meridian.lib.harness.projections.project_claude import (
 )
 from meridian.lib.launch.launch_types import ClaudeRuntimeResolution, ResolvedLaunchSpec
 from meridian.lib.launch.permissions import SPAWN_PLATFORM_COMMAND
-from meridian.lib.safety.policy import (
-    Allow,
-    Hosts,
-    PermissionPolicy,
-    PlatformCommand,
-    PlatformRule,
-    build_permission_policy,
-    network_policy_name,
-    rule_element,
-)
-from meridian.lib.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN
 from tests.support.launch import tool_rule
 
 _STRICT_OFFLINE_NETWORK = {

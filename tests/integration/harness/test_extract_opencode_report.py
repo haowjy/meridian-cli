@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
+from meridian.lib.state.native_identity import NativeKey
 from tests.support.launch_paths import launch_paths
 from tests.support.opencode_db import (
     write_opencode_v2_db_session,

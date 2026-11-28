@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from meridian.lib.safety.policy import PlatformCommand, PlatformRule
-from meridian.lib.tools import (
+from meridian.lib.core.permission_policy import PlatformCommand, PlatformRule
+from meridian.lib.core.tools import (
     PLATFORM_ORIGIN,
     ToolRule,
     legacy_platform_tool_rules,
