@@ -2636,7 +2636,7 @@ def spawn_fork_sync(
                 source_ref=normalized_source_ref,
                 command="meridian spawn",
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             return pre_init_failed_output(payload=create_input, exc=exc)
     preparation = _run_spawn_create_preparation(
         create_input,

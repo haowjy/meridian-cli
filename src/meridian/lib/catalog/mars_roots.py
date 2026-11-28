@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
+import meridian
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.python_module import installed_executable
 from meridian.lib.state.user_paths import get_user_home
@@ -55,50 +55,46 @@ def resolve_mars_roots(project_root: Path) -> MarsRoots:
     return MarsRoots(primary=resolved_user_root, scope="user")
 
 
-def mars_content_roots(
-    roots: MarsRoots,
-    *,
-    executable: str | None = None,
-) -> tuple[Path, ...]:
+def mars_content_roots(roots: MarsRoots) -> tuple[Path, ...]:
+    """The installed content layers Mars reads, in its lookup order."""
 
-    fallback_root = mars_fallback_active(roots, executable=executable)
-    if fallback_root is None:
-        return (roots.primary,)
-    return (roots.primary, fallback_root)
+    return (roots.primary,) if roots.user is None else (roots.primary, roots.user)
 
 
-def mars_fallback_active(
-    roots: MarsRoots,
-    *,
-    executable: str | None = None,
-) -> Path | None:
+def mars_fallback_label(roots: MarsRoots) -> Literal["active", "n/a"]:
 
-    if roots.user is None:
-        return None
-    if not mars_supports_fallback_root(executable or resolve_mars_executable()):
-        return None
-    return roots.user
+    return "n/a" if roots.user is None else "active"
 
 
-def mars_fallback_label(
-    roots: MarsRoots,
-    *,
-    executable: str | None = None,
-) -> Literal["active", "unsupported", "n/a"]:
-
-    if roots.user is None:
-        return "n/a"
-    if mars_fallback_active(roots, executable=executable) is not None:
-        return "active"
-    return "unsupported"
+# Mars's error codes for an agent no content layer resolves. ``agent_renamed``: only the
+# ``<name>__<source>`` copies of a name collision exist, and the message names them.
+MARS_AGENT_NOT_FOUND_CODES = frozenset({"agent_not_found", "agent_renamed"})
 
 
-def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
+class MarsAgentNotFoundError(FileNotFoundError):
+    """No content layer Mars reads has the agent, or only its renamed copies."""
 
-    fallback_root = mars_fallback_active(roots, executable=executable)
-    if fallback_root is None:
-        return ()
-    return ("--fallback-root", fallback_root.as_posix())
+    def __init__(self, code: str, message: str) -> None:
+        if code == "agent_not_found":
+            message = f"{message}\nList the agents Mars finds: meridian spawn subagents --all"
+        super().__init__(message)
+
+
+def provided_dir() -> Path:
+    """This build's bundle directory: what ``mars provide`` installs and Mars's provided layer."""
+
+    return Path(meridian.__file__).resolve().parent / "mars"
+
+
+def mars_content_args(roots: MarsRoots) -> tuple[str, ...]:
+    """The content layers after the primary root for a by-name agent or skill lookup.
+
+    The user root, then this build's bundle directory, which answers only a name no
+    installed agent or skill claims.
+    """
+
+    fallback = () if roots.user is None else ("--fallback-root", roots.user.as_posix())
+    return (*fallback, "--provided-root", provided_dir().as_posix())
 
 
 def resolve_mars_executable() -> str | None:
@@ -161,13 +157,15 @@ def ensure_resolved_mars_root(
 
 
 __all__ = [
+    "MARS_AGENT_NOT_FOUND_CODES",
+    "MarsAgentNotFoundError",
     "MarsRoots",
     "ensure_resolved_mars_root",
     "ensure_user_mars_root",
+    "mars_content_args",
     "mars_content_roots",
-    "mars_fallback_active",
-    "mars_fallback_args",
     "mars_fallback_label",
+    "provided_dir",
     "resolve_mars_executable",
     "resolve_mars_roots",
     "user_mars_root",

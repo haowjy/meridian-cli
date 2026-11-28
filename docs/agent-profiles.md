@@ -23,6 +23,18 @@ meridian mars list        # installed agents and skills
 meridian mars list --json # machine-readable
 ```
 
+Mars looks a name up in the project's Mars root, then in user packages
+(`~/.meridian/mars/.mars/agents/`), then among the profiles built into Meridian, which
+Meridian hands it on every lookup. A package or project agent with a built-in profile's
+name replaces it. A name collision Mars renamed (`inbox-router__a`, `inbox-router__b`)
+fails with the error that lists the renamed names instead of falling back to the built-in.
+The one built-in profile today is `inbox-router`, which the
+[meridian-comms](https://github.com/haowjy/meridian-comms) router starts to decide where
+an inbox message goes. It cannot spawn and is not offered to other agents
+(`model-invocable: false`): `meridian spawn subagents --all` lists it with scope
+`provided`, and `meridian mars list` doesn't show it. Its model, harness and effort are set in
+[`[inbox.router]`](configuration.md#the-inbox-router).
+
 ## Format
 
 Each profile is a markdown file with YAML frontmatter:
@@ -277,10 +289,9 @@ source. See [the upgrade notes](upgrading.md#mars-0234).
 
 ## Skills and Skill Variants
 
-Meridian's own operating guidance ships with the binary. Before a launch, Meridian asks
-its Mars to install it into the resolved Mars root with `mars provide`, under
-`.mars/skills/`. Where Mars cannot (a Mars older than 0.20, a held lock, an interrupted
-sync, or a refused bundle), Meridian reads its built-in copies. Every
+Meridian's own operating guidance ships with the binary. A launch reads it in place:
+Mars finds a bundled skill by name in the binary's bundle directory when no installed
+skill has that name, as it does for built-in agents. Every
 launch receives a compact `# Meridian
 skills` trigger list generated from the binary's bundled descriptions, except for
 a skill Mars loaded with non-blank content into the prompt. The agent reads a

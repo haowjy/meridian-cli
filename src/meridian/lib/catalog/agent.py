@@ -3,13 +3,6 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_roots import (
-    mars_content_roots,
-    resolve_mars_roots,
-    user_mars_root,
-)
-from meridian.lib.config.project_root import resolve_project_root_resolution
-
 AgentMode = Literal["primary", "subagent"]
 
 
@@ -122,101 +115,4 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         body=body,
         path=path.resolve(),
         raw_content=markdown,
-    )
-
-
-def _agent_search_dirs(project_root: Path) -> list[Path]:
-    roots = resolve_mars_roots(project_root)
-    return [root / ".mars" / "agents" for root in mars_content_roots(roots)]
-
-
-def scan_agent_profiles(
-    project_root: Path | None = None,
-    search_dirs: list[Path] | None = None,
-    *,
-    search_paths: object | None = None,
-) -> list[AgentProfile]:
-
-    root = resolve_project_root_resolution(project_root).project_root
-    _ = search_paths
-    directories = search_dirs if search_dirs is not None else _agent_search_dirs(root)
-    profiles: list[AgentProfile] = []
-    selected_by_name: dict[str, AgentProfile] = {}
-
-    for directory in directories:
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob("*.md")):
-            try:
-                profile = parse_agent_profile(path)
-            except (OSError, ValueError):
-                continue
-            if profile.name in selected_by_name:
-                continue
-            selected_by_name[profile.name] = profile
-            profiles.append(profile)
-    return profiles
-
-
-def load_agent_profile(
-    name: str,
-    project_root: Path | None = None,
-    *,
-    search_paths: object | None = None,
-) -> AgentProfile:
-
-    normalized = name.strip()
-    if not normalized:
-        raise ValueError("Agent profile name must not be empty.")
-
-    root = resolve_project_root_resolution(project_root).project_root
-
-    roots = resolve_mars_roots(root)
-    profiles = scan_agent_profiles(project_root=root, search_paths=search_paths)
-    for profile in profiles:
-        if profile.path.stem == normalized or profile.name == normalized:
-            return profile
-    # Mars renames every side of a name collision to `<name>__<source>`.
-    renamed = sorted(
-        profile.path.stem for profile in profiles if profile.path.stem.startswith(f"{normalized}__")
-    )
-    if renamed:
-        raise FileNotFoundError(
-            f"Agent '{normalized}' not found: more than one package defines it, so Mars "
-            f"renamed each: {', '.join(renamed)}. Use one of those names."
-        )
-
-    user_root = user_mars_root()
-    if roots.scope == "project":
-        user_profiles = scan_agent_profiles(
-            project_root=root,
-            search_dirs=[user_root / ".mars" / "agents"],
-        )
-        if any(
-            profile.path.stem == normalized or profile.name == normalized
-            for profile in user_profiles
-        ):
-            raise FileNotFoundError(
-                f"Agent '{normalized}' found in user packages ({user_root}); "
-                "add it here: meridian mars add <source>"
-            )
-
-    if roots.scope == "user":
-        raise FileNotFoundError(
-            f"Agent '{normalized}' not found in user packages ({user_root}). "
-            "Run 'meridian mars --user add <source>'."
-        )
-
-    expected_path = Path(".mars") / "agents" / f"{normalized}.md"
-    raise FileNotFoundError(
-        "\n".join(
-            (
-                f"Agent '{normalized}' not found.",
-                "",
-                f"Expected: {expected_path.as_posix()}",
-                "",
-                "Run `meridian mars sync` to populate your agents directory, "
-                "or see README.md for manual setup.",
-            )
-        )
     )

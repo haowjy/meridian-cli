@@ -921,7 +921,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade [NAME]` | Move dependencies to their newest compatible release and sync. The only command that does |
 | `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
-| `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; Meridian runs this itself on launch |
+| `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; `meridian mars sync` runs it for Meridian's bundle |
 | `meridian mars repair` | Rebuild managed state from config and dependencies |
 | `meridian mars doctor` | Check for drift and integrity issues |
 

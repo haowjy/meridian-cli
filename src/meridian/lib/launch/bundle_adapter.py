@@ -16,23 +16,20 @@ stay there; provenance keys without launch semantics remain diagnostic.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
-import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from meridian.lib.bundled_skills import (
-    SYNC_PENDING_MESSAGE,
-    provide_bundled_skills,
-    report_provide_refusal,
-)
 from meridian.lib.catalog.mars_roots import (
+    MARS_AGENT_NOT_FOUND_CODES,
+    MarsAgentNotFoundError,
     MarsRoots,
     ensure_resolved_mars_root,
-    mars_fallback_args,
+    mars_content_args,
     resolve_mars_executable,
     resolve_mars_roots,
 )
@@ -65,10 +62,9 @@ if TYPE_CHECKING:
     from meridian.lib.launch.resolve import ResolvedSkills
 
 
-# First Mars release that resolves effort to a level the model and harness take
-# (``--config-effort``, the effort warning) and carries ``routing.catalog_row``. It also has
-# project-wide tool denies and ``--agent-tool-rules`` (a continued session needs it).
-_MARS_BUNDLE_MIN_VERSION = "0.39.0"
+# First Mars release whose launch bundle takes ``--provided-root`` (every request sends it, so an
+# agent shipped in the wheel resolves) and reports ``agent_not_found`` and ``agent_renamed``.
+_MARS_BUNDLE_MIN_VERSION = "0.41.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 # First Mars release whose bundle carries ``tools.rules`` (typed tool rules).
 _MARS_RULES_MIN_VERSION = "0.17.0"
@@ -80,7 +76,6 @@ class BundleRequest:
 
     agent: str | None
     project_root: Path
-    agent_path: Path | None = None
     model_override: str | None = None
     literal_model: bool = False
     harness_override: str | None = None
@@ -396,7 +391,7 @@ def _build_bundle_command(
         "--root",
         resolved_roots.primary.as_posix(),
     ]
-    command.extend(mars_fallback_args(resolved_roots, executable=mars_binary))
+    command.extend(mars_content_args(resolved_roots))
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -467,10 +462,6 @@ def _extract_error_message(*, stdout: str, stderr: str) -> str:
 
     message = _from_stream(stderr) or _from_stream(stdout)
     return message or "unknown mars error"
-
-
-def _append_error_note(message: str, note: str | None) -> str:
-    return f"{message}\n{note}" if note is not None else message
 
 
 def _describe_read_only_model_resolution(message: str, *, enabled: bool) -> str:
@@ -552,8 +543,8 @@ def _selection_error_message(message: str, report: RouteDecisionReport | None) -
     return "; ".join([message, *details])
 
 
-class MarsAgentToolRulesUnsupportedError(RuntimeError):
-    """The installed Mars does not know ``--agent-tool-rules``."""
+class MarsTooOldError(RuntimeError):
+    """The installed Mars predates a launch-bundle flag Meridian sends."""
 
 
 class MarsSelectionError(RuntimeError):
@@ -564,12 +555,10 @@ class MarsSelectionError(RuntimeError):
         code: str,
         message: str,
         report: RouteDecisionReport | None,
-        *,
-        note: str | None = None,
     ) -> None:
         self.code = code
         self.selection_report = report.model_dump(mode="json") if report is not None else None
-        super().__init__(_append_error_note(_selection_error_message(message, report), note))
+        super().__init__(_selection_error_message(message, report))
 
 
 class _MarsError(BaseModel):
@@ -598,7 +587,6 @@ def _raise_bundle_error(
     stdout: str,
     stderr: str,
     returncode: int | None = None,
-    note: str | None = None,
     models_readonly: bool = False,
 ) -> None:
     try:
@@ -608,13 +596,14 @@ def _raise_bundle_error(
     payload = json_object(raw_payload)
     if payload is not None and json_object(payload.get("error")) is not None:
         envelope = _MarsErrorEnvelope.model_validate(payload)
+        if envelope.error.code in MARS_AGENT_NOT_FOUND_CODES:
+            raise MarsAgentNotFoundError(str(envelope.error.code), str(envelope.error.message))
         raise MarsSelectionError(
             str(envelope.error.code),
             _describe_read_only_model_resolution(
                 str(envelope.error.message), enabled=models_readonly
             ),
             envelope.route_trace,
-            note=note,
         )
     message = _describe_read_only_model_resolution(
         _extract_error_message(stdout=stdout, stderr=stderr),
@@ -627,40 +616,20 @@ def _raise_bundle_error(
         or "invalid subcommand" in normalized
     ):
         raise RuntimeError(
-            _append_error_note(
-                "Mars launch-bundle command is unavailable. Meridian requires mars >= "
-                f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
-                note,
-            )
+            "Mars launch-bundle command is unavailable. Meridian requires mars >= "
+            f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
         )
-    if "--agent-tool-rules" in normalized and (
-        "unexpected argument" in normalized or "unrecognized" in normalized
-    ):
-        raise MarsAgentToolRulesUnsupportedError(
-            "The installed Mars does not accept --agent-tool-rules, which continuing or forking "
-            f"a session needs. Install mars >= {_MARS_BUNDLE_MIN_VERSION}. "
-            f"Error: {message}"
+    # clap's wording for a flag this Mars predates: "unexpected argument '--agent-file' found".
+    unknown_flag = re.search(r"unexpected argument '(--[a-z-]+)'", message)
+    if unknown_flag is not None:
+        raise MarsTooOldError(
+            f"The installed Mars does not accept {unknown_flag.group(1)}. Meridian requires "
+            f"mars >= {_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
         prefix = f"{prefix} (exit {returncode})"
-    raise RuntimeError(_append_error_note(f"{prefix}: {message}", note))
-
-
-def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str | None:
-    agent = (request.agent or "").strip()
-    if (
-        request.agent_path is None
-        or not agent
-        or roots.user is None
-        or not request.agent_path.is_relative_to(roots.user)
-    ):
-        return None
-    return (
-        f"note: '{agent}' comes from user packages ({roots.user}); "
-        "its model aliases must resolve in this project's Mars config. "
-        "Add the package here (meridian mars add <source>) or pass --model."
-    )
+    raise RuntimeError(f"{prefix}: {message}")
 
 
 def _parse_bundle_payload(
@@ -765,9 +734,6 @@ def request_and_resolve(
     roots = resolve_mars_roots(request.project_root)
     command = _build_bundle_command(request, roots=roots)
     ensure_resolved_mars_root(roots, executable=command[0])
-    bundled_source = provide_bundled_skills(roots.primary, executable=command[0])
-    if bundled_source.sync_pending:
-        print(SYNC_PENDING_MESSAGE, file=sys.stderr)
     try:
         result = subprocess.run(
             command,
@@ -794,7 +760,6 @@ def request_and_resolve(
             stdout=result.stdout,
             stderr=result.stderr,
             returncode=result.returncode,
-            note=_fallback_agent_error_note(request, roots),
             models_readonly=request.no_refresh_models,
         )
 
@@ -814,7 +779,6 @@ def request_and_resolve(
         harness_registry=harness_registry,
         mars_executable=command[0],
     )
-    report_provide_refusal(bundled_source)
     if not request.no_refresh_models:
         return bundle
     return replace(
@@ -831,6 +795,7 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     mapping = {
         "cli": ProvenanceLevel.CLI,
         "env": ProvenanceLevel.ENV,
+        "agent-config": ProvenanceLevel.AGENT_CONFIG,
         "overlay-model-policy": ProvenanceLevel.OVERLAY_MODEL_POLICY,
         "overlay": ProvenanceLevel.OVERLAY,
         "settings-model-policy": ProvenanceLevel.SETTINGS_MODEL_POLICY,
@@ -962,6 +927,7 @@ __all__ = [
     "BundleRequest",
     "BundleResult",
     "LoadedSkillEntry",
+    "MarsTooOldError",
     "bundle_to_resolved_policy",
     "request_and_resolve",
     "warnings_to_print",

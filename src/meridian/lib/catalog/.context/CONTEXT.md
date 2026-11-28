@@ -28,9 +28,21 @@ matches can legitimately lack a harness.
 ## Agent profiles
 
 `model-invocable` controls default subagent visibility, not whether a profile
-can be loaded. Keep catalog scanning neutral: explicit agent selection and other
-consumers need every profile. Missing or non-boolean values default to true for
-compatibility. See the [agent catalog](../../launch/.context/CONTEXT.md).
+can be loaded. Missing or non-boolean values default to true for compatibility.
+See the [agent catalog](../../launch/.context/CONTEXT.md).
 
-Mars reads profile skills when building the launch bundle. A separate Meridian
-parse would diverge from the skills actually loaded.
+Meridian has no agent lookup of its own: Mars resolves every name, and Meridian parses
+the file Mars chose (`parse_agent_profile` on the bundle's `agent_source_path`, or
+`mars agents show` through `ops/mars.py` where no bundle is built). A second lookup could
+pick a different file than the one that runs. Mars reads profile skills when building the
+launch bundle for the same reason. Every by-name call to Mars sends `mars_content_args`
+(`mars_roots.py`): the user root as `--fallback-root`, then this build's bundle directory
+as `--provided-root`. A missing agent is `MarsAgentNotFoundError` on every path (spawn,
+`--fork`, configured default) and carries Mars's message; Meridian adds only a hint that
+holds for every layer. Meridian never words its own guess at which layer was searched.
+
+Built-in profiles (`meridian/mars/agents/`, today `inbox-router`) come from that provided
+layer, which answers a name only when no installed agent claims it; a name Mars renamed on
+a collision stays its `agent_renamed` error. They are read in place, never installed
+through `mars provide`: an installed copy could go missing whenever another sync held the
+lock or another Meridian version provided a different bundle.

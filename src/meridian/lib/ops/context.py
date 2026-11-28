@@ -108,7 +108,7 @@ class ContextOutput(BaseModel):
     mars_root: str
     mars_scope: Literal["project", "user"]
     mars_user_root: str | None = None
-    mars_fallback: Literal["active", "unsupported", "n/a"]
+    mars_fallback: Literal["active", "n/a"]
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
     sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)

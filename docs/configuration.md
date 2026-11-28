@@ -11,7 +11,7 @@ Meridian now has two configuration surfaces:
   primary-session defaults.
 
 Meridian reads agents and skills from project packages first, then user packages
-under `~/.meridian/mars/.mars/`, then built-in defaults. Project routing config,
+under `~/.meridian/mars/.mars/`, then the copies built into Meridian. Project routing config,
 targets, aliases, and the models cache still come from the active Mars root.
 Harness-specific directories such as `.claude/`, `.codex/`, `.opencode/`, and
 `.pi/` are Mars targets, not Meridian discovery roots.
@@ -621,6 +621,36 @@ was started with and is stopped after 120 s.
 with a warning. `meridian message` runs outside the harness sandbox, and those files are
 repository content that a sandboxed session can write. The program's answer and the error
 kinds are in [commands.md](commands.md#spawning--monitoring).
+
+## The inbox router
+
+`inbox-router` is an agent profile built into Meridian
+([agent profiles](agent-profiles.md#location)). Its profile runs it on OpenCode with
+`opencode-go/hy4-flash-free`. To run it on something else, set any of `model`, `harness`
+and `effort`:
+
+```toml
+# ~/.meridian/config.toml
+[inbox.router]
+model = "gpt-5.4-mini"
+harness = "codex"
+effort = "low"
+```
+
+These apply to every launch of the agent named `inbox-router`, including a package or
+project agent of that name that replaces the built-in one. They rank below `--model`,
+`--harness`, `--effort` and their `MERIDIAN_*` variables, and above the profile and a Mars
+`[agents.inbox-router]` overlay. A `--model` or `MERIDIAN_MODEL` drops the `harness` set
+here, since that harness was chosen for another model. An effort the model doesn't take
+moves to the nearest level it does, without the warning a typed `--effort` gets.
+Set `model` along with `harness` unless the profile's model runs on that harness; Mars
+refuses the pair otherwise. `harness` is one of `claude`, `codex`, `opencode`, `pi`; `effort` one of `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `auto`. Any other value fails the
+launch and names the file.
+
+**`[inbox]` is read from `~/.meridian/config.toml` only**, like `[message]` above, and
+`meridian config set` doesn't write it. The router reads messages strangers wrote, so a
+file a sandboxed session can write must not pick its model or harness.
 
 ## History ZIP retention
 

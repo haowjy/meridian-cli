@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.native_identity import PrecreatedSession
@@ -277,6 +278,15 @@ def stub_bundle_request_and_resolve(
     ) -> FakeBundleResult:
         _ = harness_registry
         captured_requests.append(request)
+        # Mars's agent lookup, primary root only: tests install profiles under `.mars/agents/`.
+        agent_source_path: str | None = None
+        if request.agent:
+            agent_file = request.project_root / ".mars" / "agents" / f"{request.agent}.md"
+            if not agent_file.is_file():
+                raise MarsAgentNotFoundError(
+                    "agent_not_found", f"agent `{request.agent}` not found"
+                )
+            agent_source_path = agent_file.as_posix()
         resolved_policy = execution_policy or ResolvedExecutionPolicy()
         resolved_provenance = provenance or {"model_source": "cli", "harness_source": "provider"}
         resolved_model_token = (
@@ -295,6 +305,7 @@ def stub_bundle_request_and_resolve(
                 if bundle_network is not None
                 else resolved_policy.network or SandboxDerivedNetwork()
             ),
+            agent_source_path=agent_source_path,
             warnings=warnings,
             tool_rules=tool_rules,
             platform_tool_rules=platform_tool_rules,

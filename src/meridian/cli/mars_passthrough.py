@@ -14,7 +14,7 @@ from meridian import __version__
 from meridian.lib.bundled_skills import WHEEL, provide_bundled_skills, report_provide_refusal
 from meridian.lib.catalog.mars_roots import (
     ensure_user_mars_root,
-    mars_fallback_args,
+    mars_content_args,
     resolve_mars_executable,
     resolve_mars_roots,
     user_mars_root,
@@ -143,7 +143,7 @@ def parse_mars_passthrough(
         selected_root = project_root
     mars_args = [*mars_args, "--root", selected_root.as_posix()]
     if not user_scope and subcommand in {"agents", "skills"}:
-        mars_args.extend(mars_fallback_args(roots, executable=executable))
+        mars_args.extend(mars_content_args(roots))
     return MarsPassthroughRequest(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
