@@ -30,6 +30,7 @@ from meridian.lib.state.paths import LaunchPaths, launch_archive
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
+    warn_unrepaired_spawn_row,
 )
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 from meridian.lib.utils.json_shapes import json_object
@@ -280,8 +281,11 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                         current_chat_id=_str_or_none(raw.get("current_chat_id")),
                     )
                 )
-            candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
+            legacy_v2 = raw.get("v", 2) == 2
+            candidate = upgrade_legacy_spawn_state(raw) if legacy_v2 else raw
             stored = StoredSpawnState.model_validate(candidate)
+            if legacy_v2 and stored.record_mode != "historical":
+                warn_unrepaired_spawn_row(path)
             if stored.id != spawn_id:
                 raise SpawnStateQuarantined(
                     SpawnStateQuarantineReport(

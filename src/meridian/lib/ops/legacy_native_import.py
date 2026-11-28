@@ -231,11 +231,24 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
         deferral.unlink(missing_ok=True)
         imported = sum(counts["imported"] for counts in report.counts.values())
         total = sum(sum(counts.values()) for counts in report.counts.values())
-        print(
-            f"Imported native sessions for {imported} of {total} existing chats; "
-            f"{total - imported} left unbound (details: {marker})",
-            file=sys.stderr,
+        result = (
+            f"native sessions for {imported} of {total} existing chats; "
+            f"{total - imported} left unbound (details: {marker})"
         )
+        # Chats with a native session ID but no store: only older builds wrote those.
+        found = sum(
+            counts[reason]
+            for counts in report.counts.values()
+            for reason in ("imported", "missing", "ambiguous", "ambiguous_id")
+        )
+        if found:
+            print(
+                f"warning: found {found} chat(s) an older Meridian recorded without their "
+                f"native session store in {runtime_root / 'sessions.jsonl'}; imported {result}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Imported {result}", file=sys.stderr)
         return report
 
 
